@@ -368,3 +368,63 @@ def test_flexible_load_can_use_battery_for_load_when_export_is_disabled():
 
     assert result.plan.flows[1].discharge_kwh == pytest.approx(2)
     assert result.plan.flows[1].grid_export_kwh == pytest.approx(0)
+
+
+def _time_limited(monkeypatch, *, feasible=True, gap=0.02):
+    """Run the real solver, then report its answer as a time-limited incumbent."""
+    from custom_components.energy_compass.engine import optimize
+
+    original = optimize.milp
+
+    def limited(**kwargs):
+        result = original(**kwargs)
+        return SimpleNamespace(
+            status=1,
+            x=result.x if feasible else None,
+            message="Time limit reached.",
+            mip_gap=gap,
+        )
+
+    monkeypatch.setattr(optimize, "milp", limited)
+
+
+def test_time_limited_incumbent_raises_timeout_by_default(monkeypatch):
+    _time_limited(monkeypatch)
+    with pytest.raises(SolveError) as caught:
+        solve(problem(((0.5, 0, 1, 0), (0.1, 0, 1, 0)), battery=battery()))
+    assert caught.value.reason == "timeout"
+
+
+def test_time_limited_incumbent_is_published_when_accepted(monkeypatch):
+    source = problem(((0.5, 0, 1, 0), (0.1, 0, 1, 0)), battery=battery())
+    proven = solve(source)
+    assert proven.time_limited is False
+    assert proven.mip_gap == 0.0
+    _time_limited(monkeypatch)
+    plan = solve(source, accept_incumbent=True)
+    assert plan.time_limited is True
+    assert plan.mip_gap == pytest.approx(0.02)
+    assert plan.objective == pytest.approx(proven.objective)
+
+
+def test_time_limit_without_incumbent_still_raises_timeout(monkeypatch):
+    _time_limited(monkeypatch, feasible=False)
+    with pytest.raises(SolveError) as caught:
+        solve(problem(((0.5, 0, 1, 0),), battery=battery()), accept_incumbent=True)
+    assert caught.value.reason == "timeout"
+
+
+def test_accepted_incumbent_is_still_validated(monkeypatch):
+    tiny = 4e-6
+    source = problem(((0, 0, tiny, tiny),))
+    monkeypatch.setattr(
+        "custom_components.energy_compass.engine.optimize.milp",
+        lambda **kwargs: SimpleNamespace(
+            status=1,
+            x=np.array([tiny, tiny, 0, 0, tiny, tiny, 1e-6]),
+            message="Time limit reached.",
+            mip_gap=0.01,
+        ),
+    )
+    with pytest.raises(SolveError, match="invalid solver result"):
+        solve(source, accept_incumbent=True)

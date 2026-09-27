@@ -4,7 +4,7 @@
 
 This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
-**0.1.26**. The mathematical contract behind each rule lives in [model and limitations](model.md);
+**0.1.27**. The mathematical contract behind each rule lives in [model and limitations](model.md);
 installation and dashboards are in the [installation guide](installation.md).
 
 Energy Compass is **advisory**. It computes a plan and publishes it as Home Assistant entities. It
@@ -66,8 +66,9 @@ Each calculation proceeds as follows:
    default), hardware limits, SOC bounds, the carried operating-mode commitment and the active
    **strategy** bundle.
 3. **Solve the base plan.** A mixed-integer linear program minimizes cost (plus strategy weights)
-   under energy balance, battery, grid, mode-duration and export/charge-policy constraints. Only a
-   proven optimum is published.
+   under energy balance, battery, grid, mode-duration and export/charge-policy constraints. The
+   proven optimum is published; when `solve_time_limit_s` runs out first, the best validated
+   solution found so far is published instead and marked `time_limited` with its `mip_gap`.
 4. **Probe consumption.** For each display interval, the solver is rerun with 1 kWh of extra load;
    the cost difference is the *incremental cost of one more kWh*, which is classified into a
    consumption level.
@@ -158,7 +159,7 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
     [*] --> calculating: integration load
-    calculating --> ready: proven optimal plan published
+    calculating --> ready: validated plan published
     calculating --> invalid_input: input or configuration check failed
     calculating --> timeout: solve or worker exceeded budget
     calculating --> infeasible: no plan satisfies all constraints
@@ -173,10 +174,10 @@ stateDiagram-v2
 
 | State | EN / PL label | When it occurs | What stays published |
 | --- | --- | --- | --- |
-| `ready` | Ready / Gotowy | The last calculation produced a proven optimal base plan and it was published. | The new plan. `ready` does not guarantee complete reference coverage — check `reason`. |
+| `ready` | Ready / Gotowy | The last calculation produced a validated base plan and it was published: proven optimal, or the best solution found within `solve_time_limit_s` (`time_limited: true`). | The new plan. `ready` does not guarantee complete reference coverage — check `reason`. |
 | `calculating` | Calculating / Obliczanie | A calculation is queued or running. `reason` says why: `inputs_changed`, `interval_boundary` (periodic refresh due), `inputs_recovered`, `calculating` (worker started), `soc_rebase_pending` (upward SOC jump awaiting confirmation). | The previous plan while it covers now, with `refreshing: true`. An existing alert stays on. |
 | `invalid_input` | Invalid input / Niepoprawne dane | A required source is missing, unavailable, stale, in wrong units, out of range, SOC disagrees with BMS or jumped, daily counters are from the previous day, settings are invalid; also `no_current_interval` and `expired_inputs` when the retained plan no longer covers now. | The previous plan while it covers now (`plan_retained: true`); otherwise nothing. |
-| `timeout` | Timeout / Przekroczony czas | The base solve exceeded `solve_time_limit_s` (default 10 s) or the worker exceeded `total_time_limit_s + 1` (reason `worker_deadline`). | Previous plan within coverage. |
+| `timeout` | Timeout / Przekroczony czas | The base solve reached `solve_time_limit_s` (default 10 s) without any feasible solution, or the worker exceeded `total_time_limit_s + 1` (reason `worker_deadline`). | Previous plan within coverage. |
 | `infeasible` | Infeasible / Brak rozwiązania | The solver proved no plan satisfies every hard constraint (e.g. SOC reserve, terminal rule, a carried mode commitment, Sell only PV deficit, grid limits). | Previous plan within coverage. |
 | `error` | Error / Błąd | Any other solver failure or unexpected exception; `reason` holds the solver reason or exception class. | Previous plan within coverage. |
 | `insufficient_data` | Insufficient data / Za mało danych | Reserved in translations; **not emitted** by the current coordinator — missing data reports `invalid_input`. | — |
@@ -628,6 +629,8 @@ reports `ok`, `eligible`, `scheduled`, `holding` or `overdue`, with
 | `strategy` | Strategy that produced this plan (may lag the select while a recalculation runs). |
 | `autonomy_shortfall_kwh` | Total shortfall below the autonomy floor; `0` = floor met. |
 | `peak_reserve_shortfall_kwh` | Total shortfall below the [peak-period reserve](#peak-period-reserve); `0` = met or off. |
+| `time_limited` | `true` when the base solve hit `solve_time_limit_s` and the best validated solution found so far was published instead of a proven optimum. |
+| `mip_gap` | Relative MIP gap the solver reported for the published plan: `0` = proven optimal; for a time-limited plan, the bound on how far its objective may be from the optimum (e.g. `0.017` = 1.7 %). |
 | `cap_violation_kwh` | Total energy above `grid_friendly` soft caps; `0` = caps met. |
 
 ### Strategy-switch release
@@ -902,7 +905,7 @@ See the [installation guide](installation.md#dashboard-examples).
 | --- | --- |
 | `complete` | Full reference coverage, all probes succeeded. |
 | `available_reference_horizon` | Source coverage shorter than the requested reference horizon; percentiles use what exists. |
-| `reference_horizon_uncovered` | Reserved in translations; not emitted by 0.1.26. |
+| `reference_horizon_uncovered` | Reserved in translations; not emitted by 0.1.27. |
 | `reference_probe_failed` | At least one reference probe failed or timed out. |
 | `short_source_coverage` | Price/forecast coverage ends before the requested planning horizon. |
 | `current_guidance_unavailable` | Current interval probe unknown; later windows may still be valid. |

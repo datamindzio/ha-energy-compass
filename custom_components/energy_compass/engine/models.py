@@ -154,6 +154,8 @@ class Plan:
     balance_start: int | None = None
     balance_missed: bool = False
     peak_reserve_shortfall_kwh: float = 0.0
+    time_limited: bool = False
+    mip_gap: float | None = 0.0
 
 
 @dataclass(frozen=True)
