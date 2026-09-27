@@ -60,26 +60,40 @@ cards:
           \    (valid?.state !== 'on' || !(Date.parse(plan.attributes.valid_until) > now))) return;\n\n  const min = Math.max(now,\
           \ chart.w.globals.minX);\n  const max = chart.w.globals.maxX;\n  if (!Number.isFinite(min) || !Number.isFinite(max)\
           \ || max <= min) return;\n  const stateColors = {\n    CHARGE_PV: '#fdd835',\n    CHARGE_GRID: '#ef5350',\n    DISCHARGE_GRID:\
-          \ '#ab47bc',\n    SELF_CONSUME: '#66bb6a',\n  };\n  const intervals = (plan.attributes.intervals || []).map(row\
-          \ => ({\n    start: Math.max(min, Date.parse(row.start)), end: Math.min(max, Date.parse(row.end)),\n    state: row.state,\n\
-          \  })).filter(row => Number.isFinite(row.start) && row.end > row.start)\n    .sort((a, b) => a.start - b.start);\n\
-          \  const runs = [];\n  for (const interval of intervals) {\n    const lastRun = runs[runs.length - 1];\n    if (lastRun\
-          \ && lastRun.state === interval.state && lastRun.end === interval.start) {\n      lastRun.end = interval.end;\n\
-          \    } else runs.push({...interval});\n  }\n\n  const add = (annotation) => {\n    chart.addXaxisAnnotation(annotation,\
-          \ false);\n    chart.__energyCompassAnnotationIds.push(annotation.id);\n  };\n  runs.forEach((band, index) => add({\n\
-          \    id: 'ec-background-' + index,\n    x: band.start, x2: band.end,\n    fillColor: stateColors[band.state] ||\
-          \ '#78909c', opacity: 0.14,\n    borderColor: 'transparent', strokeDashArray: 0,\n  }));\n\n  runs.forEach((run,\
-          \ index) => {\n    const width = (run.end - run.start) / (max - chart.w.globals.minX) * chart.w.globals.gridWidth;\n\
-          \    const label = width >= 13 ? {\n      text: run.state, position: 'top', orientation: 'vertical', offsetY: 8,\
-          \ offsetX: width / 2,\n      borderWidth: 0,\n      style: {background: 'transparent', color: hass?.themes?.darkMode\
-          \ === false ? '#616161' : '#bdbdbd', fontSize: '9px', fontWeight: 700,\n        padding: {left: 1, right: 1, top:\
-          \ 1, bottom: 1}},\n    } : {text: ''};\n    add({id: 'ec-state-' + index, x: run.start, x2: run.end,\n      fillColor:\
-          \ 'transparent', opacity: 0, borderColor: '#616161', strokeDashArray: 3, label});\n  });\n\n  // Native SVG titles\
-          \ expose even intervals too narrow for a visible label.\n  for (const [index, run] of runs.entries()) {\n    const\
-          \ time = stamp => new Date(stamp).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});\n    const\
-          \ elements = chart.el.querySelectorAll('.ec-state-' + index);\n    for (const element of elements) {\n      const\
-          \ title = document.createElementNS('http://www.w3.org/2000/svg', 'title');\n      title.textContent = `${run.state}\
-          \ · ${time(run.start)}–${time(run.end)}`;\n      element.appendChild(title);\n    }\n  }\n}\n"
+          \ '#ab47bc',\n    SELF_CONSUME: '#66bb6a',\n  };\n  // Grid blocks show the energy-weighted mean of the price they\
+          \ trade at.\n  const priceFields = {\n    CHARGE_GRID: ['buy_per_kwh', 'grid_import_kwh'],\n    DISCHARGE_GRID:\
+          \ ['sell_per_kwh', 'grid_export_kwh'],\n  };\n  const intervals = (plan.attributes.intervals || []).map(row => {\n\
+          \    const from = Date.parse(row.start), to = Date.parse(row.end);\n    const start = Math.max(min, from), end =\
+          \ Math.min(max, to);\n    const [priceKey, energyKey] = priceFields[row.state] || [];\n    const price = priceKey\
+          \ ? Number(row[priceKey]) : NaN;\n    const energy = energyKey ? Number(row[energyKey]) : NaN;\n    // A slot clipped\
+          \ at now or at the chart edge keeps only its visible share of energy.\n    const share = to > from ? (end - start)\
+          \ / (to - from) : 0;\n    return {start, end, state: row.state, price,\n      weight: Number.isFinite(energy) &&\
+          \ energy > 0 ? energy * share : 0};\n  }).filter(row => Number.isFinite(row.start) && row.end > row.start)\n   \
+          \ .sort((a, b) => a.start - b.start);\n  const runs = [];\n  for (const interval of intervals) {\n    let run =\
+          \ runs[runs.length - 1];\n    if (run && run.state === interval.state && run.end === interval.start) {\n      run.end\
+          \ = interval.end;\n    } else {\n      run = {start: interval.start, end: interval.end, state: interval.state,\n\
+          \        weighted: 0, weight: 0, sum: 0, count: 0};\n      runs.push(run);\n    }\n    if (Number.isFinite(interval.price))\
+          \ {\n      run.weighted += interval.price * interval.weight;\n      run.weight += interval.weight;\n      run.sum\
+          \ += interval.price;\n      run.count += 1;\n    }\n  }\n  // Without planned grid energy the block falls back to\
+          \ the plain mean of its slots.\n  const formatPrice = run => {\n    const price = run.weight > 0 ? run.weighted\
+          \ / run.weight : run.count ? run.sum / run.count : NaN;\n    return Number.isFinite(price) ? price.toLocaleString('en-GB',\n\
+          \      {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' PLN/kWh' : '';\n  };\n  for (const run of runs)\
+          \ run.price = formatPrice(run);\n  const describe = run => run.price ? run.state + ' · ' + run.price : run.state;\n\
+          \n  const add = (annotation) => {\n    chart.addXaxisAnnotation(annotation, false);\n    chart.__energyCompassAnnotationIds.push(annotation.id);\n\
+          \  };\n  runs.forEach((band, index) => add({\n    id: 'ec-background-' + index,\n    x: band.start, x2: band.end,\n\
+          \    fillColor: stateColors[band.state] || '#78909c', opacity: 0.14,\n    borderColor: 'transparent', strokeDashArray:\
+          \ 0,\n  }));\n\n  runs.forEach((run, index) => {\n    const width = (run.end - run.start) / (max - chart.w.globals.minX)\
+          \ * chart.w.globals.gridWidth;\n    const label = width >= 13 ? {\n      text: describe(run), position: 'top', orientation:\
+          \ 'vertical', offsetY: 8, offsetX: width / 2,\n      borderWidth: 0,\n      style: {background: 'transparent', color:\
+          \ hass?.themes?.darkMode === false ? '#616161' : '#bdbdbd', fontSize: '9px', fontWeight: 700,\n        padding:\
+          \ {left: 1, right: 1, top: 1, bottom: 1}},\n    } : {text: ''};\n    add({id: 'ec-state-' + index, x: run.start,\
+          \ x2: run.end,\n      fillColor: 'transparent', opacity: 0, borderColor: '#616161', strokeDashArray: 3, label});\n\
+          \  });\n\n  // Native SVG titles expose even intervals too narrow for a visible label.\n  for (const [index, run]\
+          \ of runs.entries()) {\n    const time = stamp => new Date(stamp).toLocaleTimeString('en-GB', {hour: '2-digit',\
+          \ minute: '2-digit'});\n    const elements = chart.el.querySelectorAll('.ec-state-' + index);\n    for (const element\
+          \ of elements) {\n      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');\n      title.textContent\
+          \ = `${run.state} · ${time(run.start)}–${time(run.end)}` +\n        (run.price ? ` · ${run.price}` : '');\n    \
+          \  element.appendChild(title);\n    }\n  }\n}\n"
         updated: "EVAL:function (chart) {\n  // ApexCharts Card 2.2.3 keeps the latest HA state on its shadow-root host.\n\
           \  const hass = chart.el.getRootNode().host?._hass;\n  for (const id of chart.__energyCompassAnnotationIds || [])\
           \ chart.removeAnnotation(id);\n  chart.__energyCompassAnnotationIds = [];\n  const plan = hass?.states['sensor.replace_with_plan'];\n\
@@ -88,26 +102,40 @@ cards:
           \    (valid?.state !== 'on' || !(Date.parse(plan.attributes.valid_until) > now))) return;\n\n  const min = Math.max(now,\
           \ chart.w.globals.minX);\n  const max = chart.w.globals.maxX;\n  if (!Number.isFinite(min) || !Number.isFinite(max)\
           \ || max <= min) return;\n  const stateColors = {\n    CHARGE_PV: '#fdd835',\n    CHARGE_GRID: '#ef5350',\n    DISCHARGE_GRID:\
-          \ '#ab47bc',\n    SELF_CONSUME: '#66bb6a',\n  };\n  const intervals = (plan.attributes.intervals || []).map(row\
-          \ => ({\n    start: Math.max(min, Date.parse(row.start)), end: Math.min(max, Date.parse(row.end)),\n    state: row.state,\n\
-          \  })).filter(row => Number.isFinite(row.start) && row.end > row.start)\n    .sort((a, b) => a.start - b.start);\n\
-          \  const runs = [];\n  for (const interval of intervals) {\n    const lastRun = runs[runs.length - 1];\n    if (lastRun\
-          \ && lastRun.state === interval.state && lastRun.end === interval.start) {\n      lastRun.end = interval.end;\n\
-          \    } else runs.push({...interval});\n  }\n\n  const add = (annotation) => {\n    chart.addXaxisAnnotation(annotation,\
-          \ false);\n    chart.__energyCompassAnnotationIds.push(annotation.id);\n  };\n  runs.forEach((band, index) => add({\n\
-          \    id: 'ec-background-' + index,\n    x: band.start, x2: band.end,\n    fillColor: stateColors[band.state] ||\
-          \ '#78909c', opacity: 0.14,\n    borderColor: 'transparent', strokeDashArray: 0,\n  }));\n\n  runs.forEach((run,\
-          \ index) => {\n    const width = (run.end - run.start) / (max - chart.w.globals.minX) * chart.w.globals.gridWidth;\n\
-          \    const label = width >= 13 ? {\n      text: run.state, position: 'top', orientation: 'vertical', offsetY: 8,\
-          \ offsetX: width / 2,\n      borderWidth: 0,\n      style: {background: 'transparent', color: hass?.themes?.darkMode\
-          \ === false ? '#616161' : '#bdbdbd', fontSize: '9px', fontWeight: 700,\n        padding: {left: 1, right: 1, top:\
-          \ 1, bottom: 1}},\n    } : {text: ''};\n    add({id: 'ec-state-' + index, x: run.start, x2: run.end,\n      fillColor:\
-          \ 'transparent', opacity: 0, borderColor: '#616161', strokeDashArray: 3, label});\n  });\n\n  // Native SVG titles\
-          \ expose even intervals too narrow for a visible label.\n  for (const [index, run] of runs.entries()) {\n    const\
-          \ time = stamp => new Date(stamp).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});\n    const\
-          \ elements = chart.el.querySelectorAll('.ec-state-' + index);\n    for (const element of elements) {\n      const\
-          \ title = document.createElementNS('http://www.w3.org/2000/svg', 'title');\n      title.textContent = `${run.state}\
-          \ · ${time(run.start)}–${time(run.end)}`;\n      element.appendChild(title);\n    }\n  }\n}\n"
+          \ '#ab47bc',\n    SELF_CONSUME: '#66bb6a',\n  };\n  // Grid blocks show the energy-weighted mean of the price they\
+          \ trade at.\n  const priceFields = {\n    CHARGE_GRID: ['buy_per_kwh', 'grid_import_kwh'],\n    DISCHARGE_GRID:\
+          \ ['sell_per_kwh', 'grid_export_kwh'],\n  };\n  const intervals = (plan.attributes.intervals || []).map(row => {\n\
+          \    const from = Date.parse(row.start), to = Date.parse(row.end);\n    const start = Math.max(min, from), end =\
+          \ Math.min(max, to);\n    const [priceKey, energyKey] = priceFields[row.state] || [];\n    const price = priceKey\
+          \ ? Number(row[priceKey]) : NaN;\n    const energy = energyKey ? Number(row[energyKey]) : NaN;\n    // A slot clipped\
+          \ at now or at the chart edge keeps only its visible share of energy.\n    const share = to > from ? (end - start)\
+          \ / (to - from) : 0;\n    return {start, end, state: row.state, price,\n      weight: Number.isFinite(energy) &&\
+          \ energy > 0 ? energy * share : 0};\n  }).filter(row => Number.isFinite(row.start) && row.end > row.start)\n   \
+          \ .sort((a, b) => a.start - b.start);\n  const runs = [];\n  for (const interval of intervals) {\n    let run =\
+          \ runs[runs.length - 1];\n    if (run && run.state === interval.state && run.end === interval.start) {\n      run.end\
+          \ = interval.end;\n    } else {\n      run = {start: interval.start, end: interval.end, state: interval.state,\n\
+          \        weighted: 0, weight: 0, sum: 0, count: 0};\n      runs.push(run);\n    }\n    if (Number.isFinite(interval.price))\
+          \ {\n      run.weighted += interval.price * interval.weight;\n      run.weight += interval.weight;\n      run.sum\
+          \ += interval.price;\n      run.count += 1;\n    }\n  }\n  // Without planned grid energy the block falls back to\
+          \ the plain mean of its slots.\n  const formatPrice = run => {\n    const price = run.weight > 0 ? run.weighted\
+          \ / run.weight : run.count ? run.sum / run.count : NaN;\n    return Number.isFinite(price) ? price.toLocaleString('en-GB',\n\
+          \      {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' PLN/kWh' : '';\n  };\n  for (const run of runs)\
+          \ run.price = formatPrice(run);\n  const describe = run => run.price ? run.state + ' · ' + run.price : run.state;\n\
+          \n  const add = (annotation) => {\n    chart.addXaxisAnnotation(annotation, false);\n    chart.__energyCompassAnnotationIds.push(annotation.id);\n\
+          \  };\n  runs.forEach((band, index) => add({\n    id: 'ec-background-' + index,\n    x: band.start, x2: band.end,\n\
+          \    fillColor: stateColors[band.state] || '#78909c', opacity: 0.14,\n    borderColor: 'transparent', strokeDashArray:\
+          \ 0,\n  }));\n\n  runs.forEach((run, index) => {\n    const width = (run.end - run.start) / (max - chart.w.globals.minX)\
+          \ * chart.w.globals.gridWidth;\n    const label = width >= 13 ? {\n      text: describe(run), position: 'top', orientation:\
+          \ 'vertical', offsetY: 8, offsetX: width / 2,\n      borderWidth: 0,\n      style: {background: 'transparent', color:\
+          \ hass?.themes?.darkMode === false ? '#616161' : '#bdbdbd', fontSize: '9px', fontWeight: 700,\n        padding:\
+          \ {left: 1, right: 1, top: 1, bottom: 1}},\n    } : {text: ''};\n    add({id: 'ec-state-' + index, x: run.start,\
+          \ x2: run.end,\n      fillColor: 'transparent', opacity: 0, borderColor: '#616161', strokeDashArray: 3, label});\n\
+          \  });\n\n  // Native SVG titles expose even intervals too narrow for a visible label.\n  for (const [index, run]\
+          \ of runs.entries()) {\n    const time = stamp => new Date(stamp).toLocaleTimeString('en-GB', {hour: '2-digit',\
+          \ minute: '2-digit'});\n    const elements = chart.el.querySelectorAll('.ec-state-' + index);\n    for (const element\
+          \ of elements) {\n      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');\n      title.textContent\
+          \ = `${run.state} · ${time(run.start)}–${time(run.end)}` +\n        (run.price ? ` · ${run.price}` : '');\n    \
+          \  element.appendChild(title);\n    }\n  }\n}\n"
     annotations:
       position: back
       yaxis:
@@ -328,6 +356,8 @@ cards:
     **Background (14% opacity):** CHARGE_PV yellow · CHARGE_GRID red · DISCHARGE_GRID purple · SELF_CONSUME green.
 
     HOLD and other states gray. Narrow intervals: hover for the label.
+
+    CHARGE_GRID and DISCHARGE_GRID labels add the block''s mean buy / sell price, weighted by planned grid energy.
 
 
     {% set valid = ''binary_sensor.replace_with_forecast_valid'' %}

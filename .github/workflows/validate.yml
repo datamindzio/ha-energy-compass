@@ -36,6 +36,9 @@ jobs:
       - name: Test the cost card (Node built-in test runner)
         working-directory: cards/cost
         run: node --test test-*.mjs
+      - name: Test the dashboard state bands (Node built-in test runner)
+        working-directory: tools/dashboards
+        run: node --test test-*.mjs
 
   hassfest:
     runs-on: ubuntu-24.04
