@@ -199,6 +199,7 @@ async def test_plan_attributes_include_strategy_fields(
     plan = hass.states.get("sensor.strategy_plan")
     assert plan.attributes["strategy"] == "cost_min"
     assert plan.attributes["autonomy_shortfall_kwh"] == 0.0
+    assert plan.attributes["peak_reserve_shortfall_kwh"] == 0.0
     assert plan.attributes["cap_violation_kwh"] == 0.0
     assert await hass.config_entries.async_unload(entry.entry_id)
 

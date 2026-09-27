@@ -176,6 +176,7 @@ class EnergyCompassEntity(CoordinatorEntity):
             attrs["load_quality"] = quality.get("load")
             attrs["strategy"] = data.get("strategy")
             attrs["autonomy_shortfall_kwh"] = data.get("autonomy_shortfall_kwh")
+            attrs["peak_reserve_shortfall_kwh"] = data.get("peak_reserve_shortfall_kwh")
             attrs["cap_violation_kwh"] = data.get("cap_violation_kwh")
         elif self.key == "consumption_cost":
             attrs.update(method="finite_difference", probe_kwh=data.get("probe_kwh"))

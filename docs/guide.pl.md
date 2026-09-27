@@ -4,7 +4,7 @@
 
 Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
-**0.1.25**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
+**0.1.26**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
 instalację i dashboardy — [przewodnik instalacji](installation.md) (EN).
 
 Energy Compass jest **doradczy**. Liczy plan i publikuje go jako encje Home Assistant. Nigdy nie
@@ -328,7 +328,37 @@ Zasady (domyślnie 60 min, 0,1 kW):
 | **Minimalna korzyść epizodu ładowania z sieci** (`minimum_grid_charge_episode_benefit`) | 0 (wył.) | Ten sam próg dla nowych okresów ładowania z sieci; skupia ładowanie w mniej epizodów. |
 | **Kara za import** (`import_penalty_per_kwh`) | 0 | Planistyczna cena cienia za każdą importowaną kWh, w każdej strategii. |
 | **Pobór czuwania falownika** (`idle_drain_kw`) | 0 (wył.) | Stały ubytek energii baterii modelowany w każdym przedziale. |
+| **Zapas baterii na drogie okresy** (`peak_reserve_margin_kwh`) | 0 (wył.) | Energia ponad prognozowaną potrzebę na start drogiego okresu. Zob. [Zapas na drogie okresy](#zapas-na-drogie-okresy). |
 | **Reguła końcowa** (`terminal_mode`) | `preserve_initial` | SOC na końcu ≥ SOC na starcie, albo `value`: energia na końcu wyceniana po `terminal_value_per_kwh`. |
+
+### Zapas na drogie okresy
+
+Prognoza zużycia jest średnią, więc plan, który rozładowuje baterię dokładnie do rezerwy na koniec
+drogiego okresu, mniej więcej co drugi dzień wypada za krótko. `peak_reserve_margin_kwh` każe
+solverowi wchodzić w każdy drogi okres z taką ilością energii ponad prognozowaną potrzebę. Wymaga
+opcji **Ogranicz cenę ładowania baterii z sieci**: drogi okres to ciąg przedziałów z ceną zakupu
+powyżej `maximum_grid_charge_price`, czyli takich, w których baterii nie da się doładować z sieci.
+Cel dotyczy końca taniego przedziału tuż przed takim ciągiem:
+
+```text
+cel wejścia = min(pojemność użytkowa, rezerwa + peak_reserve_margin_kwh + deficyt ciągu / η_rozładowania)
+```
+
+gdzie deficyt to suma `max(0, zużycie − PV)` w ciągu. Przedziały wewnątrz ciągu nie mają celu: plan
+jest przeliczany w trakcie ciągu, a cel w środku kazałby kupować po drogiej cenie, żeby odbudować
+zapas, gdy dom już go zużył — odwrotnie niż ma działać zapas. Z tego samego powodu ciąg, który już
+trwa w chwili liczenia planu, nie dostaje celu, tak jak ciąg, w którym PV pokrywa dom. Cel jest
+**miękki**: niedobór wyceniany jest po medianie drogiej ceny minus sufit i raportowany jako
+`peak_reserve_shortfall_kwh`; nie wchodzi do raportowanych kosztów. Wewnątrz ciągu zapas jest zwykłą
+energią w baterii, więc plan może go sprzedać, gdy sprzedaż daje więcej niż późniejszy zakup. Działa w
+każdej strategii, obok progu autonomii. Ostrzeżenia: `peak_reserve_requires_grid_charge_ceiling`
+(ustawienie powyżej 0 przy wyłączonym limicie ceny) i `peak_reserve_inactive` (w horyzoncie brak
+nadchodzącego drogiego ciągu z deficytem).
+
+Dobór: rozsądny start to 0,25–0,75 kWh. W backteście jednego domu z taryfą dwustrefową 0,5 kWh
+zmniejszyło o połowę liczbę poranków, w których bateria kończyła się przed PV (42 % → 21 %), przy
+koszcie mniej więcej zerowym: zapas nie przepada, jest zużywany później albo wyceniany na końcu
+horyzontu.
 
 ## Poziomy zużycia — BOOST, CHEAP, NORMAL, LIMIT
 
@@ -604,6 +634,7 @@ Diagnostyczny sensor **Balansowanie baterii** (`sensor.<name>_battery_balance`) 
 | --- | --- |
 | `strategy` | Strategia, która wyprodukowała ten plan (może chwilowo różnić się od selecta w trakcie przeliczenia). |
 | `autonomy_shortfall_kwh` | Łączny niedobór poniżej progu autonomii; `0` = próg spełniony. |
+| `peak_reserve_shortfall_kwh` | Łączny niedobór poniżej [zapasu na drogie okresy](#zapas-na-drogie-okresy); `0` = spełniony lub wyłączony. |
 | `cap_violation_kwh` | Łączna energia ponad miękkie limity `grid_friendly`; `0` = limity spełnione. |
 
 ### Zwolnienie przy zmianie strategii
@@ -881,7 +912,7 @@ i językiem. Opis: [przewodnik instalacji](installation.md#dashboard-examples) (
 | --- | --- |
 | `complete` | Pełne pokrycie odniesienia, wszystkie próby udane. |
 | `available_reference_horizon` | Pokrycie źródeł krótsze niż żądany horyzont odniesienia; percentyle z dostępnych danych. |
-| `reference_horizon_uncovered` | Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.25. |
+| `reference_horizon_uncovered` | Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.26. |
 | `reference_probe_failed` | Co najmniej jedna próba odniesienia nie powiodła się lub zabrakło czasu. |
 | `short_source_coverage` | Pokrycie cen/prognoz kończy się przed żądanym horyzontem planowania. |
 | `current_guidance_unavailable` | Próba dla bieżącego przedziału nieznana; późniejsze okna mogą być poprawne. |
@@ -898,6 +929,8 @@ i językiem. Opis: [przewodnik instalacji](installation.md#dashboard-examples) (
 | `autonomy_tail_coarsened` | Ogon 48 h dłuższy niż 192 przedziały, zgrubiony do godzin. |
 | `autonomy_tail_unavailable` | Źródło ogona zawiodło; próg używa tylko horyzontu z cenami. |
 | `grid_charge_ceiling_below_autonomy_weight` | Sufit ceny ładowania z sieci poniżej wagi progu − marża; progu nie dałoby się uzupełnić. |
+| `peak_reserve_requires_grid_charge_ceiling` | `peak_reserve_margin_kwh` powyżej 0, ale **Ogranicz cenę ładowania baterii z sieci** wyłączone — zapas na drogie okresy pominięty. |
+| `peak_reserve_inactive` | W horyzoncie brak nadchodzącego drogiego ciągu z deficytem — zapas nie ma czego chronić. |
 
 ### Wyjątki bezpieczeństwa (`dispatch_policy.safety_exception.reason`)
 

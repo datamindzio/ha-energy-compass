@@ -108,6 +108,25 @@ def _floor_windows(window_ids: tuple[int, ...]) -> tuple[tuple[int, ...], ...]:
     return tuple(tuple(window) for window in windows)
 
 
+_SOFT_FLOORS = (
+    ("soc_slack", "soc_target_kwh", "soc_target_window", "soc_target_weight"),
+    ("peak_slack", "peak_reserve_kwh", "peak_reserve_window", "peak_reserve_weight"),
+)
+
+
+def _active_floor_windows(
+    problem: Problem, targets_name: str, window_name: str, weight_name: str
+) -> tuple[tuple[int, ...], ...]:
+    """Windows of one soft floor; window id -1 marks slots without a floor."""
+    targets = getattr(problem, targets_name)
+    window_ids = getattr(problem, window_name)
+    if not (problem.battery and targets and getattr(problem, weight_name) > 0):
+        return ()
+    return tuple(
+        window for window in _floor_windows(window_ids) if window_ids[window[0]] != -1
+    )
+
+
 def _constrain_balance(
     model: _Model, problem: Problem, vectors: list[dict[str, int]]
 ) -> tuple[list[int], int | None]:
@@ -204,14 +223,22 @@ def _validate_solution(
     drains = drain_schedule(problem)
     lifted = frozenset(problem.balance_lift_slots)
     spent = {day: 0.0 for day in budgets}
-    floor_windows = (
-        _floor_windows(problem.soc_target_window)
-        if battery and problem.soc_target_kwh and problem.soc_target_weight > 0
-        else ()
-    )
-    slack_index_by_slot = {
-        t: vectors[window[0]]["soc_slack"] for window in floor_windows for t in window
-    }
+    floor_slacks = [
+        (
+            getattr(problem, targets_name),
+            {
+                t: vectors[window[0]][slack_key]
+                for window in _active_floor_windows(
+                    problem, targets_name, window_name, weight_name
+                )
+                for t in window
+            },
+            "autonomy floor slack"
+            if slack_key == "soc_slack"
+            else "peak reserve slack",
+        )
+        for slack_key, targets_name, window_name, weight_name in _SOFT_FLOORS
+    ]
     peak_index = vectors[0].get("peak_import")
 
     for index, (slot, variables, fractions) in enumerate(
@@ -243,11 +270,10 @@ def _validate_solution(
                 sum(value(f"mode_{mode}") for mode in MODES), 1, "one operating mode"
             )
         gin, gout, curt = value("gin"), value("gout"), value("curt")
-        if index in slack_index_by_slot:
-            target = problem.soc_target_kwh[index]
-            if target > 0:
-                slack = float(values[slack_index_by_slot[index]])
-                _check(slack >= target - value("energy") - _TOL, "autonomy floor slack")
+        for targets, slack_by_slot, detail in floor_slacks:
+            if index in slack_by_slot and targets[index] > 0:
+                slack = float(values[slack_by_slot[index]])
+                _check(slack >= targets[index] - value("energy") - _TOL, detail)
         if peak_index is not None:
             _check(float(values[peak_index]) >= gin / duration - _TOL, "peak import")
         if "cap_import" in variables:
@@ -715,17 +741,21 @@ def _solve(
         vectors.append(variables)
         daily_fractions.append(day_fractions(slot.start, slot.end, zone))
 
-    if battery and problem.soc_target_kwh and problem.soc_target_weight > 0:
-        for window in _floor_windows(problem.soc_target_window):
+    for slack_key, targets_name, window_name, weight_name in _SOFT_FLOORS:
+        targets = getattr(problem, targets_name)
+        for window in _active_floor_windows(
+            problem, targets_name, window_name, weight_name
+        ):
             slack = model.variable(
-                upper=max(problem.soc_target_kwh[t] for t in window),
-                cost=problem.soc_target_weight,
+                upper=max(targets[t] for t in window),
+                cost=getattr(problem, weight_name),
             )
-            vectors[window[0]]["soc_slack"] = slack
+            vectors[window[0]][slack_key] = slack
             for t in window:
-                target = problem.soc_target_kwh[t]
-                if target > 0:
-                    model.constrain({vectors[t]["energy"]: 1, slack: 1}, target, np.inf)
+                if targets[t] > 0:
+                    model.constrain(
+                        {vectors[t]["energy"]: 1, slack: 1}, targets[t], np.inf
+                    )
     balance_choices, balance_miss = _constrain_balance(model, problem, vectors)
 
     if problem.peak_import_weight > 0:
@@ -850,6 +880,9 @@ def _solve(
     autonomy_shortfall_kwh = sum(
         float(values[v["soc_slack"]]) for v in vectors if "soc_slack" in v
     )
+    peak_reserve_shortfall_kwh = sum(
+        float(values[v["peak_slack"]]) for v in vectors if "peak_slack" in v
+    )
     cap_violation_kwh = sum(
         float(values[v[name]])
         for v in vectors
@@ -877,6 +910,7 @@ def _solve(
             peak_import_kw,
             balance_start=balance_start,
             balance_missed=bool(problem.balance_windows) and balance_start is None,
+            peak_reserve_shortfall_kwh=peak_reserve_shortfall_kwh,
         ),
         tuple(float(values[v["flex_load"]]) for v in vectors) if flexible_load else (),
     )

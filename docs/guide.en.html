@@ -152,7 +152,7 @@
 <p><strong>English</strong> · <a href="guide.pl.html">Polski</a></p>
 <p>This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
-<strong>0.1.25</strong>. The mathematical contract behind each rule lives in <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/model.md">model and limitations</a>;
+<strong>0.1.26</strong>. The mathematical contract behind each rule lives in <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/model.md">model and limitations</a>;
 installation and dashboards are in the <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md">installation guide</a>.</p>
 <p>Energy Compass is <strong>advisory</strong>. It computes a plan and publishes it as Home Assistant entities. It
 never writes inverter registers and sends no messages by itself; controllers and notification
@@ -575,12 +575,39 @@ directly by any other available mode.</p>
 <td>Constant battery drain modelled per interval.</td>
 </tr>
 <tr>
+<td><strong>Battery buffer for expensive periods</strong> (<code>peak_reserve_margin_kwh</code>)</td>
+<td>0 (off)</td>
+<td>Energy kept above the forecast need when an expensive period starts. See <a href="#peak-period-reserve">Peak-period reserve</a>.</td>
+</tr>
+<tr>
 <td><strong>Terminal rule</strong> (<code>terminal_mode</code>)</td>
 <td><code>preserve_initial</code></td>
 <td>End SOC ≥ start SOC, or <code>value</code>: stored energy at the end is credited at <code>terminal_value_per_kwh</code>.</td>
 </tr>
 </tbody>
 </table></section>
+<h3 id="peak-period-reserve">Peak-period reserve</h3>
+<p>The load forecast is a mean, so a plan that drains the battery exactly to the reserve by the end of an
+expensive period falls short on roughly every second day. <code>peak_reserve_margin_kwh</code> asks the solver to
+enter each expensive period with that much energy on top of the forecast need. It requires <strong>Limit
+grid-charging price</strong>: an expensive period is a run of intervals whose buy price is above
+<code>maximum_grid_charge_price</code>, i.e. where the battery cannot be refilled from the grid. The target applies
+to the end of the cheap interval right before the run:</p>
+<pre><code class="language-text">entry target = min(usable capacity, reserve + peak_reserve_margin_kwh + run deficit / η_discharge)
+</code></pre>
+<p>where the deficit sums <code>max(0, load − PV)</code> over the run. Intervals inside the run carry no target: the
+plan is recalculated during the run, and a target there would make it buy at the expensive price to
+rebuild the buffer once the house had used it — the opposite of what the buffer is for. For the same
+reason a run that is already in progress when the plan is calculated gets no target, nor does a run
+where PV covers the house. The target is <strong>soft</strong>: a shortfall is billed at the median expensive price
+minus the ceiling and reported as <code>peak_reserve_shortfall_kwh</code>; reported costs never include it. Inside
+the run the buffer is ordinary stored energy, so the plan may still export it when selling pays more
+than the later purchase. It works in every strategy, next to the autonomy floor. Warnings:
+<code>peak_reserve_requires_grid_charge_ceiling</code> (setting above 0 while the ceiling is off) and
+<code>peak_reserve_inactive</code> (no upcoming expensive run with a deficit in the horizon).</p>
+<p>Sizing: 0.25–0.75 kWh is a reasonable start. In a backtest on one household with a two-zone tariff,
+0.5 kWh halved the mornings that ran out before PV (42 % → 21 %) at roughly neutral cost: the buffer
+is not lost, it is used later or valued at the end of the horizon.</p>
 <h2 id="consumption-levels--boost-cheap-normal-limit">Consumption levels — BOOST, CHEAP, NORMAL, LIMIT</h2>
 <p>The <strong>Consumption compass</strong> answers "how attractive is using one more kWh in this interval?". For
 each display interval (default 60 min over 24 h) the solver reruns with <code>probe_kwh</code> (default
@@ -998,6 +1025,10 @@ reports <code>ok</code>, <code>eligible</code>, <code>scheduled</code>, <code>ho
 <tr>
 <td><code>autonomy_shortfall_kwh</code></td>
 <td>Total shortfall below the autonomy floor; <code>0</code> = floor met.</td>
+</tr>
+<tr>
+<td><code>peak_reserve_shortfall_kwh</code></td>
+<td>Total shortfall below the <a href="#peak-period-reserve">peak-period reserve</a>; <code>0</code> = met or off.</td>
 </tr>
 <tr>
 <td><code>cap_violation_kwh</code></td>
@@ -1492,7 +1523,7 @@ See the <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/in
 </tr>
 <tr>
 <td><code>reference_horizon_uncovered</code></td>
-<td>Reserved in translations; not emitted by 0.1.25.</td>
+<td>Reserved in translations; not emitted by 0.1.26.</td>
 </tr>
 <tr>
 <td><code>reference_probe_failed</code></td>
@@ -1548,6 +1579,14 @@ See the <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/in
 <tr>
 <td><code>grid_charge_ceiling_below_autonomy_weight</code></td>
 <td>Grid-charge ceiling below floor weight − margin; floor could never be refilled.</td>
+</tr>
+<tr>
+<td><code>peak_reserve_requires_grid_charge_ceiling</code></td>
+<td><code>peak_reserve_margin_kwh</code> above 0 but <strong>Limit grid-charging price</strong> off — peak-period reserve skipped.</td>
+</tr>
+<tr>
+<td><code>peak_reserve_inactive</code></td>
+<td>No upcoming expensive run with a deficit in the horizon — peak-period reserve has nothing to protect.</td>
 </tr>
 </tbody>
 </table></section>

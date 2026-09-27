@@ -152,7 +152,7 @@
 <p><a href="guide.en.html">English</a> · <strong>Polski</strong></p>
 <p>Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
-<strong>0.1.25</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
+<strong>0.1.26</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
 instalację i dashboardy — <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md">przewodnik instalacji</a> (EN).</p>
 <p>Energy Compass jest <strong>doradczy</strong>. Liczy plan i publikuje go jako encje Home Assistant. Nigdy nie
 zapisuje rejestrów falownika i sam nie wysyła powiadomień; o wykonaniu planu decydują sterowniki
@@ -581,12 +581,40 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <td>Stały ubytek energii baterii modelowany w każdym przedziale.</td>
 </tr>
 <tr>
+<td><strong>Zapas baterii na drogie okresy</strong> (<code>peak_reserve_margin_kwh</code>)</td>
+<td>0 (wył.)</td>
+<td>Energia ponad prognozowaną potrzebę na start drogiego okresu. Zob. <a href="#zapas-na-drogie-okresy">Zapas na drogie okresy</a>.</td>
+</tr>
+<tr>
 <td><strong>Reguła końcowa</strong> (<code>terminal_mode</code>)</td>
 <td><code>preserve_initial</code></td>
 <td>SOC na końcu ≥ SOC na starcie, albo <code>value</code>: energia na końcu wyceniana po <code>terminal_value_per_kwh</code>.</td>
 </tr>
 </tbody>
 </table></section>
+<h3 id="zapas-na-drogie-okresy">Zapas na drogie okresy</h3>
+<p>Prognoza zużycia jest średnią, więc plan, który rozładowuje baterię dokładnie do rezerwy na koniec
+drogiego okresu, mniej więcej co drugi dzień wypada za krótko. <code>peak_reserve_margin_kwh</code> każe
+solverowi wchodzić w każdy drogi okres z taką ilością energii ponad prognozowaną potrzebę. Wymaga
+opcji <strong>Ogranicz cenę ładowania baterii z sieci</strong>: drogi okres to ciąg przedziałów z ceną zakupu
+powyżej <code>maximum_grid_charge_price</code>, czyli takich, w których baterii nie da się doładować z sieci.
+Cel dotyczy końca taniego przedziału tuż przed takim ciągiem:</p>
+<pre><code class="language-text">cel wejścia = min(pojemność użytkowa, rezerwa + peak_reserve_margin_kwh + deficyt ciągu / η_rozładowania)
+</code></pre>
+<p>gdzie deficyt to suma <code>max(0, zużycie − PV)</code> w ciągu. Przedziały wewnątrz ciągu nie mają celu: plan
+jest przeliczany w trakcie ciągu, a cel w środku kazałby kupować po drogiej cenie, żeby odbudować
+zapas, gdy dom już go zużył — odwrotnie niż ma działać zapas. Z tego samego powodu ciąg, który już
+trwa w chwili liczenia planu, nie dostaje celu, tak jak ciąg, w którym PV pokrywa dom. Cel jest
+<strong>miękki</strong>: niedobór wyceniany jest po medianie drogiej ceny minus sufit i raportowany jako
+<code>peak_reserve_shortfall_kwh</code>; nie wchodzi do raportowanych kosztów. Wewnątrz ciągu zapas jest zwykłą
+energią w baterii, więc plan może go sprzedać, gdy sprzedaż daje więcej niż późniejszy zakup. Działa w
+każdej strategii, obok progu autonomii. Ostrzeżenia: <code>peak_reserve_requires_grid_charge_ceiling</code>
+(ustawienie powyżej 0 przy wyłączonym limicie ceny) i <code>peak_reserve_inactive</code> (w horyzoncie brak
+nadchodzącego drogiego ciągu z deficytem).</p>
+<p>Dobór: rozsądny start to 0,25–0,75 kWh. W backteście jednego domu z taryfą dwustrefową 0,5 kWh
+zmniejszyło o połowę liczbę poranków, w których bateria kończyła się przed PV (42 % → 21 %), przy
+koszcie mniej więcej zerowym: zapas nie przepada, jest zużywany później albo wyceniany na końcu
+horyzontu.</p>
 <h2 id="poziomy-zużycia--boost-cheap-normal-limit">Poziomy zużycia — BOOST, CHEAP, NORMAL, LIMIT</h2>
 <p><strong>Kompas zużycia</strong> odpowiada na pytanie: „jak opłacalne jest zużycie jednej kWh więcej w tym
 przedziale?”. Dla każdego przedziału wyświetlania (domyślnie 60 min w horyzoncie 24 h) solver
@@ -1004,6 +1032,10 @@ utrzymują wybrane okno bez zmian, aby dodatkowe obciążenie wyceniało zużyci
 <tr>
 <td><code>autonomy_shortfall_kwh</code></td>
 <td>Łączny niedobór poniżej progu autonomii; <code>0</code> = próg spełniony.</td>
+</tr>
+<tr>
+<td><code>peak_reserve_shortfall_kwh</code></td>
+<td>Łączny niedobór poniżej <a href="#zapas-na-drogie-okresy">zapasu na drogie okresy</a>; <code>0</code> = spełniony lub wyłączony.</td>
 </tr>
 <tr>
 <td><code>cap_violation_kwh</code></td>
@@ -1501,7 +1533,7 @@ i językiem. Opis: <a href="https://github.com/marino39/ha-energy-compass/blob/m
 </tr>
 <tr>
 <td><code>reference_horizon_uncovered</code></td>
-<td>Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.25.</td>
+<td>Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.26.</td>
 </tr>
 <tr>
 <td><code>reference_probe_failed</code></td>
@@ -1557,6 +1589,14 @@ i językiem. Opis: <a href="https://github.com/marino39/ha-energy-compass/blob/m
 <tr>
 <td><code>grid_charge_ceiling_below_autonomy_weight</code></td>
 <td>Sufit ceny ładowania z sieci poniżej wagi progu − marża; progu nie dałoby się uzupełnić.</td>
+</tr>
+<tr>
+<td><code>peak_reserve_requires_grid_charge_ceiling</code></td>
+<td><code>peak_reserve_margin_kwh</code> powyżej 0, ale <strong>Ogranicz cenę ładowania baterii z sieci</strong> wyłączone — zapas na drogie okresy pominięty.</td>
+</tr>
+<tr>
+<td><code>peak_reserve_inactive</code></td>
+<td>W horyzoncie brak nadchodzącego drogiego ciągu z deficytem — zapas nie ma czego chronić.</td>
 </tr>
 </tbody>
 </table></section>

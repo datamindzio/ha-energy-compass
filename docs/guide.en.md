@@ -4,7 +4,7 @@
 
 This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
-**0.1.25**. The mathematical contract behind each rule lives in [model and limitations](model.md);
+**0.1.26**. The mathematical contract behind each rule lives in [model and limitations](model.md);
 installation and dashboards are in the [installation guide](installation.md).
 
 Energy Compass is **advisory**. It computes a plan and publishes it as Home Assistant entities. It
@@ -322,7 +322,36 @@ Rules (defaults: 60 min, 0.1 kW):
 | **Minimum grid-charge episode benefit** (`minimum_grid_charge_episode_benefit`) | 0 (off) | Same hurdle for new grid-charge periods; consolidates charging into fewer episodes. |
 | **Import penalty** (`import_penalty_per_kwh`) | 0 | Planning-only shadow price per imported kWh, under every strategy. |
 | **Inverter standby loss** (`idle_drain_kw`) | 0 (off) | Constant battery drain modelled per interval. |
+| **Battery buffer for expensive periods** (`peak_reserve_margin_kwh`) | 0 (off) | Energy kept above the forecast need when an expensive period starts. See [Peak-period reserve](#peak-period-reserve). |
 | **Terminal rule** (`terminal_mode`) | `preserve_initial` | End SOC ≥ start SOC, or `value`: stored energy at the end is credited at `terminal_value_per_kwh`. |
+
+### Peak-period reserve
+
+The load forecast is a mean, so a plan that drains the battery exactly to the reserve by the end of an
+expensive period falls short on roughly every second day. `peak_reserve_margin_kwh` asks the solver to
+enter each expensive period with that much energy on top of the forecast need. It requires **Limit
+grid-charging price**: an expensive period is a run of intervals whose buy price is above
+`maximum_grid_charge_price`, i.e. where the battery cannot be refilled from the grid. The target applies
+to the end of the cheap interval right before the run:
+
+```text
+entry target = min(usable capacity, reserve + peak_reserve_margin_kwh + run deficit / η_discharge)
+```
+
+where the deficit sums `max(0, load − PV)` over the run. Intervals inside the run carry no target: the
+plan is recalculated during the run, and a target there would make it buy at the expensive price to
+rebuild the buffer once the house had used it — the opposite of what the buffer is for. For the same
+reason a run that is already in progress when the plan is calculated gets no target, nor does a run
+where PV covers the house. The target is **soft**: a shortfall is billed at the median expensive price
+minus the ceiling and reported as `peak_reserve_shortfall_kwh`; reported costs never include it. Inside
+the run the buffer is ordinary stored energy, so the plan may still export it when selling pays more
+than the later purchase. It works in every strategy, next to the autonomy floor. Warnings:
+`peak_reserve_requires_grid_charge_ceiling` (setting above 0 while the ceiling is off) and
+`peak_reserve_inactive` (no upcoming expensive run with a deficit in the horizon).
+
+Sizing: 0.25–0.75 kWh is a reasonable start. In a backtest on one household with a two-zone tariff,
+0.5 kWh halved the mornings that ran out before PV (42 % → 21 %) at roughly neutral cost: the buffer
+is not lost, it is used later or valued at the end of the horizon.
 
 ## Consumption levels — BOOST, CHEAP, NORMAL, LIMIT
 
@@ -598,6 +627,7 @@ reports `ok`, `eligible`, `scheduled`, `holding` or `overdue`, with
 | --- | --- |
 | `strategy` | Strategy that produced this plan (may lag the select while a recalculation runs). |
 | `autonomy_shortfall_kwh` | Total shortfall below the autonomy floor; `0` = floor met. |
+| `peak_reserve_shortfall_kwh` | Total shortfall below the [peak-period reserve](#peak-period-reserve); `0` = met or off. |
 | `cap_violation_kwh` | Total energy above `grid_friendly` soft caps; `0` = caps met. |
 
 ### Strategy-switch release
@@ -872,7 +902,7 @@ See the [installation guide](installation.md#dashboard-examples).
 | --- | --- |
 | `complete` | Full reference coverage, all probes succeeded. |
 | `available_reference_horizon` | Source coverage shorter than the requested reference horizon; percentiles use what exists. |
-| `reference_horizon_uncovered` | Reserved in translations; not emitted by 0.1.25. |
+| `reference_horizon_uncovered` | Reserved in translations; not emitted by 0.1.26. |
 | `reference_probe_failed` | At least one reference probe failed or timed out. |
 | `short_source_coverage` | Price/forecast coverage ends before the requested planning horizon. |
 | `current_guidance_unavailable` | Current interval probe unknown; later windows may still be valid. |
@@ -889,6 +919,8 @@ See the [installation guide](installation.md#dashboard-examples).
 | `autonomy_tail_coarsened` | 48 h tail longer than 192 intervals, coarsened to hourly. |
 | `autonomy_tail_unavailable` | Tail source failed; floor uses the priced horizon only. |
 | `grid_charge_ceiling_below_autonomy_weight` | Grid-charge ceiling below floor weight − margin; floor could never be refilled. |
+| `peak_reserve_requires_grid_charge_ceiling` | `peak_reserve_margin_kwh` above 0 but **Limit grid-charging price** off — peak-period reserve skipped. |
+| `peak_reserve_inactive` | No upcoming expensive run with a deficit in the horizon — peak-period reserve has nothing to protect. |
 
 ### Safety exceptions (`dispatch_policy.safety_exception.reason`)
 
