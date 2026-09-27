@@ -4,7 +4,7 @@
 
 This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
-**0.1.25**. The mathematical contract behind each rule lives in [model and limitations](model.md);
+**0.1.26**. The mathematical contract behind each rule lives in [model and limitations](model.md);
 installation and dashboards are in the [installation guide](installation.md).
 
 Energy Compass is **advisory**. It computes a plan and publishes it as Home Assistant entities. It
@@ -322,7 +322,31 @@ Rules (defaults: 60 min, 0.1 kW):
 | **Minimum grid-charge episode benefit** (`minimum_grid_charge_episode_benefit`) | 0 (off) | Same hurdle for new grid-charge periods; consolidates charging into fewer episodes. |
 | **Import penalty** (`import_penalty_per_kwh`) | 0 | Planning-only shadow price per imported kWh, under every strategy. |
 | **Inverter standby loss** (`idle_drain_kw`) | 0 (off) | Constant battery drain modelled per interval. |
+| **Battery buffer for expensive periods** (`peak_reserve_margin_kwh`) | 0 (off) | Energy kept above the forecast need when an expensive period starts. See [Peak-period reserve](#peak-period-reserve). |
 | **Terminal rule** (`terminal_mode`) | `preserve_initial` | End SOC ≥ start SOC, or `value`: stored energy at the end is credited at `terminal_value_per_kwh`. |
+
+### Peak-period reserve
+
+The load forecast is a mean, so a plan that drains the battery exactly to the reserve by the end of an
+expensive period falls short on roughly every second day. `peak_reserve_margin_kwh` asks the solver to
+enter each expensive period with that much energy on top of the forecast need. An expensive period is a
+run of intervals whose buy price is above `maximum_grid_charge_price` (when **Limit grid-charging
+price** is on) or above the cheapest price in the horizon. For the cheap interval right before the run
+and for every interval in it, the target is
+
+```text
+target[t] = min(usable capacity, reserve + peak_reserve_margin_kwh + remaining run deficit / η_discharge)
+```
+
+where the deficit counts `max(0, load − PV)` per interval. A run where PV covers the house gets no
+target. The floor is **soft**: the deepest shortfall of each run is billed once at the median expensive
+price minus the threshold, and reported as `peak_reserve_shortfall_kwh`. Reported costs never include
+it. With a flat tariff there is no expensive period, the floor is skipped and the plan carries the
+warning `peak_reserve_no_expensive_period`. It works in every strategy, next to the autonomy floor.
+
+Sizing: 0.25–0.75 kWh is a reasonable start. In a backtest on one household with a two-zone tariff,
+0.5 kWh halved the mornings that ran out before PV (42 % → 21 %) at roughly neutral cost: the buffer
+is not lost, it is used later or valued at the end of the horizon.
 
 ## Consumption levels — BOOST, CHEAP, NORMAL, LIMIT
 
@@ -598,6 +622,7 @@ reports `ok`, `eligible`, `scheduled`, `holding` or `overdue`, with
 | --- | --- |
 | `strategy` | Strategy that produced this plan (may lag the select while a recalculation runs). |
 | `autonomy_shortfall_kwh` | Total shortfall below the autonomy floor; `0` = floor met. |
+| `peak_reserve_shortfall_kwh` | Total shortfall below the [peak-period reserve](#peak-period-reserve); `0` = met or off. |
 | `cap_violation_kwh` | Total energy above `grid_friendly` soft caps; `0` = caps met. |
 
 ### Strategy-switch release
@@ -872,7 +897,7 @@ See the [installation guide](installation.md#dashboard-examples).
 | --- | --- |
 | `complete` | Full reference coverage, all probes succeeded. |
 | `available_reference_horizon` | Source coverage shorter than the requested reference horizon; percentiles use what exists. |
-| `reference_horizon_uncovered` | Reserved in translations; not emitted by 0.1.25. |
+| `reference_horizon_uncovered` | Reserved in translations; not emitted by 0.1.26. |
 | `reference_probe_failed` | At least one reference probe failed or timed out. |
 | `short_source_coverage` | Price/forecast coverage ends before the requested planning horizon. |
 | `current_guidance_unavailable` | Current interval probe unknown; later windows may still be valid. |

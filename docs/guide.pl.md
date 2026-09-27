@@ -4,7 +4,7 @@
 
 Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
-**0.1.25**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
+**0.1.26**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
 instalację i dashboardy — [przewodnik instalacji](installation.md) (EN).
 
 Energy Compass jest **doradczy**. Liczy plan i publikuje go jako encje Home Assistant. Nigdy nie
@@ -328,7 +328,32 @@ Zasady (domyślnie 60 min, 0,1 kW):
 | **Minimalna korzyść epizodu ładowania z sieci** (`minimum_grid_charge_episode_benefit`) | 0 (wył.) | Ten sam próg dla nowych okresów ładowania z sieci; skupia ładowanie w mniej epizodów. |
 | **Kara za import** (`import_penalty_per_kwh`) | 0 | Planistyczna cena cienia za każdą importowaną kWh, w każdej strategii. |
 | **Pobór czuwania falownika** (`idle_drain_kw`) | 0 (wył.) | Stały ubytek energii baterii modelowany w każdym przedziale. |
+| **Zapas baterii na drogie okresy** (`peak_reserve_margin_kwh`) | 0 (wył.) | Energia ponad prognozowaną potrzebę na start drogiego okresu. Zob. [Zapas na drogie okresy](#zapas-na-drogie-okresy). |
 | **Reguła końcowa** (`terminal_mode`) | `preserve_initial` | SOC na końcu ≥ SOC na starcie, albo `value`: energia na końcu wyceniana po `terminal_value_per_kwh`. |
+
+### Zapas na drogie okresy
+
+Prognoza zużycia jest średnią, więc plan, który rozładowuje baterię dokładnie do rezerwy na koniec
+drogiego okresu, mniej więcej co drugi dzień wypada za krótko. `peak_reserve_margin_kwh` każe
+solverowi wchodzić w każdy drogi okres z taką ilością energii ponad prognozowaną potrzebę. Drogi okres
+to ciąg przedziałów z ceną zakupu powyżej `maximum_grid_charge_price` (gdy włączony jest **Limit ceny
+ładowania z sieci**) albo powyżej najtańszej ceny w horyzoncie. Dla taniego przedziału tuż przed
+takim ciągiem i dla każdego przedziału w nim cel wynosi
+
+```text
+cel[t] = min(pojemność użytkowa, rezerwa + peak_reserve_margin_kwh + pozostały deficyt ciągu / η_rozładowania)
+```
+
+gdzie deficyt to `max(0, zużycie − PV)` w każdym przedziale. Ciąg, w którym PV pokrywa dom, nie
+dostaje celu. Próg jest **miękki**: najgłębszy niedobór w każdym ciągu jest wyceniany raz, po medianie
+drogiej ceny minus próg, i raportowany jako `peak_reserve_shortfall_kwh`. Nie wchodzi do raportowanych
+kosztów. Przy płaskiej taryfie nie ma drogiego okresu, próg jest pomijany, a plan dostaje ostrzeżenie
+`peak_reserve_no_expensive_period`. Działa w każdej strategii, obok progu autonomii.
+
+Dobór: rozsądny start to 0,25–0,75 kWh. W backteście jednego domu z taryfą dwustrefową 0,5 kWh
+zmniejszyło o połowę liczbę poranków, w których bateria kończyła się przed PV (42 % → 21 %), przy
+koszcie mniej więcej zerowym: zapas nie przepada, jest zużywany później albo wyceniany na końcu
+horyzontu.
 
 ## Poziomy zużycia — BOOST, CHEAP, NORMAL, LIMIT
 
@@ -604,6 +629,7 @@ Diagnostyczny sensor **Balansowanie baterii** (`sensor.<name>_battery_balance`) 
 | --- | --- |
 | `strategy` | Strategia, która wyprodukowała ten plan (może chwilowo różnić się od selecta w trakcie przeliczenia). |
 | `autonomy_shortfall_kwh` | Łączny niedobór poniżej progu autonomii; `0` = próg spełniony. |
+| `peak_reserve_shortfall_kwh` | Łączny niedobór poniżej [zapasu na drogie okresy](#zapas-na-drogie-okresy); `0` = spełniony lub wyłączony. |
 | `cap_violation_kwh` | Łączna energia ponad miękkie limity `grid_friendly`; `0` = limity spełnione. |
 
 ### Zwolnienie przy zmianie strategii
@@ -881,7 +907,7 @@ i językiem. Opis: [przewodnik instalacji](installation.md#dashboard-examples) (
 | --- | --- |
 | `complete` | Pełne pokrycie odniesienia, wszystkie próby udane. |
 | `available_reference_horizon` | Pokrycie źródeł krótsze niż żądany horyzont odniesienia; percentyle z dostępnych danych. |
-| `reference_horizon_uncovered` | Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.25. |
+| `reference_horizon_uncovered` | Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.26. |
 | `reference_probe_failed` | Co najmniej jedna próba odniesienia nie powiodła się lub zabrakło czasu. |
 | `short_source_coverage` | Pokrycie cen/prognoz kończy się przed żądanym horyzontem planowania. |
 | `current_guidance_unavailable` | Próba dla bieżącego przedziału nieznana; późniejsze okna mogą być poprawne. |

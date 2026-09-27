@@ -238,13 +238,39 @@ battery at usable capacity, which is not a floor. If the grid-charge price ceili
 fires — the solver could otherwise never refill what the floor made it sell — but the ceiling is never
 mutated automatically.
 
+### Peak-period reserve
+
+Independent of strategy and of the autonomy floor, the Planning setting `peak_reserve_margin_kwh`
+(0–100 kWh, default **0 = off**; at 0 the solver model is byte-identical to 0.1.25) adds a second
+soft SOC floor built by `engine/peak_reserve.py`. The expensive threshold is `maximum_grid_charge_price`
+when `limit_grid_charge_price` is on, otherwise the minimum buy price of the horizon; a run is a maximal
+sequence of slots with buy price above it. For a run with a positive deficit, the cheap slot right
+before it (when the run does not start at slot 0) and every slot inside it get
+
+```
+peak_target[t] = min(usable_capacity, reserve + peak_reserve_margin_kwh +
+                     (1/eta_discharge) * sum(max(0, load[tau] - pv[tau]) for tau in (t, run_end]))
+```
+
+and every other slot carries window id `-1` (no floor). Each run is one window with one slack variable,
+billed on its deepest shortfall at `peak_reserve_weight` = median buy price of the expensive slots minus
+the threshold. The floor only sees the priced horizon (no 48-hour tail).
+
+Why a separate floor: the autonomy floor's windows run until PV recovers — evening, night and the next
+morning form one window with one slack — so an evening export that already paid for the window's
+deepest shortfall leaves the morning unprotected, and the floor ignores cheap night grid energy. The
+peak-period floor bounds each window by the tariff instead. With no expensive run, no deficit or a zero
+weight, the floor is skipped and the plan quality carries `peak_reserve_no_expensive_period`. The slack
+total is `Plan.peak_reserve_shortfall_kwh`, exposed as the plan attribute `peak_reserve_shortfall_kwh`;
+it is planning-only and never part of `plan_monetary_cost`, reported costs or consumption probes.
+
 ### Soft caps
 
 `grid_friendly`'s import/export power caps and every strategy's autonomy floor are **soft**: a
 violation becomes a penalized slack variable rather than an infeasible solve, so a strategy always
 returns a plan even under conditions its author did not foresee (a full battery with PV surplus and
 curtailment disabled, load above the configured import cap). The total slack is reported as
-`Plan.cap_violation_kwh` (and `Plan.autonomy_shortfall_kwh` for the floor), both exposed as plan
+`Plan.cap_violation_kwh` (and `Plan.autonomy_shortfall_kwh` / `Plan.peak_reserve_shortfall_kwh` for the floors), all exposed as plan
 sensor attributes — the deployer sees the strategy is fighting its own constraints instead of the plan
 silently failing to solve.
 
