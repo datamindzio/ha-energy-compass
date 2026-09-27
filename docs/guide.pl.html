@@ -1288,7 +1288,10 @@ i po ostatnim unieważnieniu, jest nowszy od planu w pamięci, Poprawna prognoza
 ma stan <code>off</code>, optymalizator jest <code>ready</code> (albo <code>calculating</code> z zachowanym pełnym planem), plan,
 optymalizator i prognoza podają ten sam <code>generated_at</code>, przedziały są ciągłe i obejmują bieżącą
 chwilę, a <code>valid_until</code> jest w przyszłości. Optymalizator poza <code>ready</code>/<code>calculating</code> albo Alert inny
-niż <code>off</code> unieważnia plan w pamięci; plany sprzed unieważnienia nigdy nie są akceptowane. Po
+niż <code>off</code> unieważnia plan w pamięci; plany sprzed unieważnienia nigdy nie są akceptowane. Dopóki błąd trwa, każdy przebieg unieważnia
+ponownie, ale zachowuje czas pierwszego unieważnienia tego planu w pamięci, więc plan policzony po
+nim zostaje przyjęty także wtedy, gdy opublikowano go przy Alercie jeszcze <code>on</code> (encje zmieniają
+stan po kolei). Po
 restarcie Home Assistant sterownik trzyma więc profil bazowy do publikacji kolejnego obliczenia.</p>
 <p>Sterowanie wymaga też świeżej telemetrii: każda encja z <code>telemetry_entities</code> liczbowa i zgłoszona
 w ciągu 30 s, napięcie baterii 400–610 V i SOC 0–100 %. Każda automatyzacja z <code>old_writers</code> musi być

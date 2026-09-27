@@ -1912,7 +1912,7 @@ def test_plan_generated_before_revocation_is_never_accepted(h):
 
 def test_revocation_records_time(h):
     text = BLUEPRINT.read_text()
-    assert text.count("revoked_at=now().isoformat()") == 1
+    assert text.count("else now().isoformat(), revoked_reason=") == 1
 
 
 def _balance_row(h, state, **changes):
@@ -1997,3 +1997,40 @@ def test_balance_rows_are_stable_across_full_soc(h):
 def test_non_boolean_balance_hold_rejected(h, value):
     h.data[P]["attributes"]["intervals"][0]["balance_hold"] = value
     assert h.accept() == {}
+
+
+def _revocation(h):
+    def walk(x):
+        if isinstance(x, dict):
+            value = x.get("variables", {}).get("runtime_update")
+            if isinstance(value, str) and "revoked_reason" in value:
+                return value
+            x = list(x.values())
+        if isinstance(x, list):
+            for v in x:
+                r = walk(v)
+                if r is not None:
+                    return r
+
+    return h.render(walk(h.doc["actions"]))
+
+
+def test_repeated_revocation_keeps_the_first_revocation_time(h):
+    # While an error persists every run revokes again. Moving revoked_at to
+    # each run's now() rejected a plan computed after the first revocation but
+    # published while the alert was still on (sensors update one by one).
+    g = h.accept()["generated_at"]
+    first = (h.now - dt.timedelta(minutes=45)).isoformat()
+    h.set(RT, "restored", runtime={"revoked_generation": g, "revoked_at": first})
+    runtime = _revocation(h)
+    assert runtime["revoked_generation"] == g
+    assert runtime["revoked_at"] == first
+
+
+def test_revoking_a_new_generation_records_the_current_time(h):
+    g = h.accept()["generated_at"]
+    old = (h.now - dt.timedelta(hours=5)).isoformat()
+    h.set(RT, "ok", runtime={"revoked_generation": "older", "revoked_at": old})
+    runtime = _revocation(h)
+    assert runtime["revoked_generation"] == g
+    assert dt.datetime.fromisoformat(runtime["revoked_at"]) == h.now

@@ -713,8 +713,12 @@ ACTIONS = [
                 "{{ states(optimizer_entity) not in ['ready','calculating'] or not is_state(alert_entity,'off') or (trigger.platform|default('') == 'state' and trigger.to_state is not none and ((trigger.entity_id == alert_entity and trigger.to_state.state != 'off') or (trigger.entity_id == optimizer_entity and trigger.to_state.state not in ['ready','calculating']))) }}"
             )
         ],
+        # An error that persists revokes again on every run. Keep the first
+        # revocation time of the same generation: a plan computed after it but
+        # published while the alert was still on (entities update one by one)
+        # must stay acceptable.
         "then": persist(
-            "{{ dict(state_attr(runtime_entity,'runtime') or {}, revoked_generation=(state_attr(cache_entity,'snapshot') or {}).get('generated_at'), revoked_at=now().isoformat(), revoked_reason='Błąd obliczeń lub źródeł: wymagany nowy plan') }}"
+            "{% set rt = state_attr(runtime_entity,'runtime') or {} %}{% set g = (state_attr(cache_entity,'snapshot') or {}).get('generated_at') %}{{ dict(rt, revoked_generation=g, revoked_at=rt.get('revoked_at') if rt.get('revoked_at') and 'revoked_generation' in rt and rt.get('revoked_generation') == g else now().isoformat(), revoked_reason='Błąd obliczeń lub źródeł: wymagany nowy plan') }}"
         ),
     },
     # Re-read a split publication before persisting a failure or touching Deye.
