@@ -329,20 +329,25 @@ Rules (defaults: 60 min, 0.1 kW):
 
 The load forecast is a mean, so a plan that drains the battery exactly to the reserve by the end of an
 expensive period falls short on roughly every second day. `peak_reserve_margin_kwh` asks the solver to
-enter each expensive period with that much energy on top of the forecast need. An expensive period is a
-run of intervals whose buy price is above `maximum_grid_charge_price` (when **Limit grid-charging
-price** is on) or above the cheapest price in the horizon. For the cheap interval right before the run
-and for every interval in it, the target is
+enter each expensive period with that much energy on top of the forecast need. It requires **Limit
+grid-charging price**: an expensive period is a run of intervals whose buy price is above
+`maximum_grid_charge_price`, i.e. where the battery cannot be refilled from the grid. The target applies
+to the end of the cheap interval right before the run:
 
 ```text
-target[t] = min(usable capacity, reserve + peak_reserve_margin_kwh + remaining run deficit / η_discharge)
+entry target = min(usable capacity, reserve + peak_reserve_margin_kwh + run deficit / η_discharge)
 ```
 
-where the deficit counts `max(0, load − PV)` per interval. A run where PV covers the house gets no
-target. The floor is **soft**: the deepest shortfall of each run is billed once at the median expensive
-price minus the threshold, and reported as `peak_reserve_shortfall_kwh`. Reported costs never include
-it. With a flat tariff there is no expensive period, the floor is skipped and the plan carries the
-warning `peak_reserve_no_expensive_period`. It works in every strategy, next to the autonomy floor.
+where the deficit sums `max(0, load − PV)` over the run. Intervals inside the run carry no target: the
+plan is recalculated during the run, and a target there would make it buy at the expensive price to
+rebuild the buffer once the house had used it — the opposite of what the buffer is for. For the same
+reason a run that is already in progress when the plan is calculated gets no target, nor does a run
+where PV covers the house. The target is **soft**: a shortfall is billed at the median expensive price
+minus the ceiling and reported as `peak_reserve_shortfall_kwh`; reported costs never include it. Inside
+the run the buffer is ordinary stored energy, so the plan may still export it when selling pays more
+than the later purchase. It works in every strategy, next to the autonomy floor. Warnings:
+`peak_reserve_requires_grid_charge_ceiling` (setting above 0 while the ceiling is off) and
+`peak_reserve_inactive` (no upcoming expensive run with a deficit in the horizon).
 
 Sizing: 0.25–0.75 kWh is a reasonable start. In a backtest on one household with a two-zone tariff,
 0.5 kWh halved the mornings that ran out before PV (42 % → 21 %) at roughly neutral cost: the buffer
@@ -914,6 +919,8 @@ See the [installation guide](installation.md#dashboard-examples).
 | `autonomy_tail_coarsened` | 48 h tail longer than 192 intervals, coarsened to hourly. |
 | `autonomy_tail_unavailable` | Tail source failed; floor uses the priced horizon only. |
 | `grid_charge_ceiling_below_autonomy_weight` | Grid-charge ceiling below floor weight − margin; floor could never be refilled. |
+| `peak_reserve_requires_grid_charge_ceiling` | `peak_reserve_margin_kwh` above 0 but **Limit grid-charging price** off — peak-period reserve skipped. |
+| `peak_reserve_inactive` | No upcoming expensive run with a deficit in the horizon — peak-period reserve has nothing to protect. |
 
 ### Safety exceptions (`dispatch_policy.safety_exception.reason`)
 

@@ -423,3 +423,44 @@ def test_validate_solution_rejects_understated_peak_slack(monkeypatch):
     _reduce_variable(monkeypatch, 10.0)
     with pytest.raises(SolveError, match="invalid solver result"):
         solve(prob)
+
+
+def test_resolve_inside_peak_run_discharges_instead_of_buying():
+    from custom_components.energy_compass.engine.peak_reserve import (
+        peak_reserve_targets,
+    )
+
+    # already inside the expensive run, SOC covers the forecast deficit exactly
+    rows = [(1.25, 0.0, 0.0, 1.0)] * 4 + [(0.61, 0.0, 0.0, 0.0)] * 4
+    pack = battery(
+        capacity_kwh=20.0,
+        minimum_soc_fraction=0.1,
+        maximum_soc_fraction=1.0,
+        initial_kwh=2.0 + 4.0 / 0.95,
+        eta_charge=0.95,
+        eta_discharge=0.95,
+        wear_per_kwh=0.0,
+    )
+    peak = peak_reserve_targets(
+        tuple(row[0] for row in rows),
+        tuple(row[3] for row in rows),
+        tuple(row[2] for row in rows),
+        cheap_price=0.61,
+        reserve_kwh=2.0,
+        usable_capacity_kwh=20.0,
+        eta_discharge=0.95,
+        margin_kwh=1.0,
+    )
+    prob = problem(
+        rows,
+        battery=pack,
+        mode="value",
+        terminal_value=0.60,
+        peak_reserve_kwh=peak.targets_kwh,
+        peak_reserve_window=peak.window_ids,
+        peak_reserve_weight=0.64,
+        maximum_grid_charge_price=0.61,
+    )
+    plan = solve(prob)
+    assert plan.flows[0].discharge_kwh == pytest.approx(1.0, abs=1e-6)
+    assert plan.flows[0].grid_import_kwh == pytest.approx(0.0, abs=1e-6)

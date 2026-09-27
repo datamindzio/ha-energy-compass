@@ -3,9 +3,15 @@
 Pure math over plain sequences (no `models.py` import), like `autonomy.py`.
 A run is a maximal sequence of slots whose buy price is above `cheap_price`.
 For a run with a positive deficit, the energy at the end of the cheap slot
-right before it, and at the end of every slot inside it, must cover the
-remaining deficit of the run plus `margin_kwh`. The margin stays in the pack
-when the forecast is right; it absorbs load above the forecast otherwise.
+right before it must cover the run's deficit plus `margin_kwh`. The margin
+stays in the pack when the forecast is right; it absorbs load above the
+forecast otherwise.
+
+Slots inside a run carry no floor. The plan is re-solved during the run, and
+a floor there would make the solver buy at the expensive price to rebuild
+the margin (or the forecast need) as soon as the actual load had used it up,
+which is exactly what the margin is meant to prevent. A run already in
+progress at slot 0 therefore gets no floor either.
 """
 
 from dataclasses import dataclass
@@ -49,11 +55,13 @@ def peak_reserve_targets(
     eta_discharge: float,
     margin_kwh: float,
 ) -> PeakReserveResult:
-    """Per-slot floor `reserve + margin + remaining run deficit / eta_discharge`.
+    """Entry floor `reserve + margin + run deficit / eta_discharge` per run.
 
-    Deficits are `max(0, load - pv)` per slot, so a surplus slot inside a run
-    never offsets a deficit elsewhere in it. Targets are clamped to the usable
-    capacity. Runs without a deficit and a non-positive margin get no floor.
+    The floor sits on the cheap slot right before each run. Deficits are
+    `max(0, load - pv)` per slot, so a surplus slot inside a run never offsets
+    a deficit elsewhere in it. Targets are clamped to the usable capacity.
+    Runs without a deficit, a run already in progress at slot 0 and a
+    non-positive margin get no floor.
     """
     count = len(buy_per_kwh)
     if not (len(load_kwh) == len(pv_kwh) == count):
@@ -65,25 +73,17 @@ def peak_reserve_targets(
     if margin_kwh <= 0:
         return PeakReserveResult(tuple(targets), tuple(window_ids))
 
-    def floor(remaining: float) -> float:
-        return min(
-            usable_capacity_kwh,
-            reserve_kwh + margin_kwh + max(0.0, remaining) / eta_discharge,
-        )
-
     window_id = 0
     for first, last in _runs(buy_per_kwh, cheap_price):
-        deficits = [max(0.0, load_kwh[i] - pv_kwh[i]) for i in range(first, last + 1)]
-        remaining = sum(deficits)
-        if remaining <= _EPSILON:
+        if first == 0:
             continue
-        if first > 0:
-            targets[first - 1] = floor(remaining)
-            window_ids[first - 1] = window_id
-        for offset, index in enumerate(range(first, last + 1)):
-            remaining -= deficits[offset]
-            targets[index] = floor(remaining)
-            window_ids[index] = window_id
+        deficit = sum(max(0.0, load_kwh[i] - pv_kwh[i]) for i in range(first, last + 1))
+        if deficit <= _EPSILON:
+            continue
+        targets[first - 1] = min(
+            usable_capacity_kwh, reserve_kwh + margin_kwh + deficit / eta_discharge
+        )
+        window_ids[first - 1] = window_id
         window_id += 1
     return PeakReserveResult(tuple(targets), tuple(window_ids))
 

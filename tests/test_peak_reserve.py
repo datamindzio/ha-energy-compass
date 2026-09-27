@@ -32,20 +32,21 @@ def test_zero_margin_returns_no_floor():
 def test_run_with_cheap_slot_before_it():
     # cheap, expensive, expensive, cheap
     result = _targets((0.61, 1.25, 1.25, 0.61), (0.5, 1.0, 2.0, 0.5), (0, 0, 0, 0))
-    # end of slot 0 must hold reserve + margin + (1 + 2)
-    assert result.targets_kwh == pytest.approx((6.0, 5.0, 3.0, 0.0))
-    assert result.window_ids == (0, 0, 0, -1)
+    # end of slot 0 must hold reserve + margin + (1 + 2); nothing inside the run
+    assert result.targets_kwh == pytest.approx((6.0, 0.0, 0.0, 0.0))
+    assert result.window_ids == (0, -1, -1, -1)
 
 
 def test_eta_scales_the_deficit_not_the_margin():
     result = _targets((0.61, 1.25), (0.0, 0.9), (0.0, 0.0), eta=0.9)
-    assert result.targets_kwh == pytest.approx((2.5 + 0.5 + 1.0, 3.0))
+    assert result.targets_kwh == pytest.approx((2.5 + 0.5 + 1.0, 0.0))
 
 
-def test_run_starting_at_slot_zero_has_no_pre_slot():
+def test_run_already_in_progress_gets_no_floor():
+    # a re-solve inside a run must not buy at the expensive price to rebuild it
     result = _targets((1.25, 1.25, 0.61), (1.0, 1.0, 1.0), (0, 0, 0))
-    assert result.targets_kwh == pytest.approx((4.0, 3.0, 0.0))
-    assert result.window_ids == (0, 0, -1)
+    assert result.targets_kwh == (0.0, 0.0, 0.0)
+    assert result.window_ids == (-1, -1, -1)
 
 
 def test_pv_covered_run_gets_no_floor():
@@ -57,8 +58,8 @@ def test_pv_covered_run_gets_no_floor():
 def test_two_runs_get_separate_windows():
     buy = (0.61, 1.25, 0.61, 1.25)
     result = _targets(buy, (0, 1.0, 0, 1.0), (0, 0, 0, 0))
-    assert result.window_ids == (0, 0, 1, 1)
-    assert result.targets_kwh == pytest.approx((4.0, 3.0, 4.0, 3.0))
+    assert result.window_ids == (0, -1, 1, -1)
+    assert result.targets_kwh == pytest.approx((4.0, 0.0, 4.0, 0.0))
 
 
 def test_surplus_slot_inside_run_does_not_offset_deficit():
@@ -79,7 +80,7 @@ def test_flat_tariff_has_no_expensive_period():
 
 def test_price_equal_to_threshold_is_cheap():
     result = _targets((0.61 + 1e-12, 1.25), (0, 1.0), (0, 0))
-    assert result.window_ids == (0, 0)
+    assert result.window_ids == (0, -1)
 
 
 def test_rejects_mismatched_lengths():

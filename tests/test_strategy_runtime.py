@@ -686,16 +686,40 @@ def test_peak_reserve_absent_by_default():
     assert problem.peak_reserve_weight == 0.0
 
 
-def test_peak_reserve_flat_tariff_warns_and_adds_no_floor():
+def test_peak_reserve_requires_grid_charge_ceiling():
     config = battery_configuration()
     config["settings"].update(peak_reserve_margin_kwh=0.5)
     problem, _, quality = build_problem(config, _soc_state(_NOW), _NOW)
     assert problem.peak_reserve_kwh == ()
     assert problem.peak_reserve_weight == 0.0
-    assert "peak_reserve_no_expensive_period" in quality["warnings"]
+    assert "peak_reserve_requires_grid_charge_ceiling" in quality["warnings"]
 
 
-def test_peak_reserve_uses_grid_charge_ceiling_as_threshold():
+def test_peak_reserve_inactive_without_expensive_run():
+    config = battery_configuration()
+    config["settings"].update(
+        peak_reserve_margin_kwh=0.5,
+        limit_grid_charge_price=True,
+        maximum_grid_charge_price=0.0,
+    )
+    problem, _, quality = build_problem(config, _soc_state(_NOW), _NOW)
+    assert problem.peak_reserve_kwh == ()
+    assert "peak_reserve_inactive" in quality["warnings"]
+
+
+def test_peak_reserve_uses_grid_charge_ceiling_as_threshold(monkeypatch):
+    from custom_components.energy_compass import runtime
+    from custom_components.energy_compass.engine.peak_reserve import (
+        PeakReserveResult,
+    )
+
+    seen = {}
+
+    def fake_targets(buy, load, pv, **kwargs):
+        seen.update(kwargs)
+        return PeakReserveResult(tuple(7.0 for _ in buy), tuple(0 for _ in buy))
+
+    monkeypatch.setattr(runtime, "peak_reserve_targets", fake_targets)
     config = battery_configuration()
     config["settings"].update(
         peak_reserve_margin_kwh=0.5,
@@ -703,9 +727,11 @@ def test_peak_reserve_uses_grid_charge_ceiling_as_threshold():
         maximum_grid_charge_price=-1000,
     )
     problem, _, quality = build_problem(config, _soc_state(_NOW), _NOW)
-    assert any(slot.load_kwh > slot.pv_kwh for slot in problem.slots)
-    assert problem.peak_reserve_weight > 0
-    assert set(problem.peak_reserve_window) == {0}
+    assert seen["cheap_price"] == -1000
+    assert seen["margin_kwh"] == 0.5
     reserve = problem.battery.capacity_kwh * problem.battery.minimum_soc_fraction
-    assert problem.peak_reserve_kwh[-1] == pytest.approx(reserve + 0.5)
-    assert "peak_reserve_no_expensive_period" not in quality["warnings"]
+    assert seen["reserve_kwh"] == pytest.approx(reserve)
+    assert problem.peak_reserve_weight == pytest.approx(1000.0)
+    assert set(problem.peak_reserve_window) == {0}
+    assert problem.peak_reserve_kwh[0] == 7.0
+    assert "peak_reserve_inactive" not in quality["warnings"]

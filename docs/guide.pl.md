@@ -335,20 +335,25 @@ Zasady (domyślnie 60 min, 0,1 kW):
 
 Prognoza zużycia jest średnią, więc plan, który rozładowuje baterię dokładnie do rezerwy na koniec
 drogiego okresu, mniej więcej co drugi dzień wypada za krótko. `peak_reserve_margin_kwh` każe
-solverowi wchodzić w każdy drogi okres z taką ilością energii ponad prognozowaną potrzebę. Drogi okres
-to ciąg przedziałów z ceną zakupu powyżej `maximum_grid_charge_price` (gdy włączony jest **Limit ceny
-ładowania z sieci**) albo powyżej najtańszej ceny w horyzoncie. Dla taniego przedziału tuż przed
-takim ciągiem i dla każdego przedziału w nim cel wynosi
+solverowi wchodzić w każdy drogi okres z taką ilością energii ponad prognozowaną potrzebę. Wymaga
+opcji **Ogranicz cenę ładowania baterii z sieci**: drogi okres to ciąg przedziałów z ceną zakupu
+powyżej `maximum_grid_charge_price`, czyli takich, w których baterii nie da się doładować z sieci.
+Cel dotyczy końca taniego przedziału tuż przed takim ciągiem:
 
 ```text
-cel[t] = min(pojemność użytkowa, rezerwa + peak_reserve_margin_kwh + pozostały deficyt ciągu / η_rozładowania)
+cel wejścia = min(pojemność użytkowa, rezerwa + peak_reserve_margin_kwh + deficyt ciągu / η_rozładowania)
 ```
 
-gdzie deficyt to `max(0, zużycie − PV)` w każdym przedziale. Ciąg, w którym PV pokrywa dom, nie
-dostaje celu. Próg jest **miękki**: najgłębszy niedobór w każdym ciągu jest wyceniany raz, po medianie
-drogiej ceny minus próg, i raportowany jako `peak_reserve_shortfall_kwh`. Nie wchodzi do raportowanych
-kosztów. Przy płaskiej taryfie nie ma drogiego okresu, próg jest pomijany, a plan dostaje ostrzeżenie
-`peak_reserve_no_expensive_period`. Działa w każdej strategii, obok progu autonomii.
+gdzie deficyt to suma `max(0, zużycie − PV)` w ciągu. Przedziały wewnątrz ciągu nie mają celu: plan
+jest przeliczany w trakcie ciągu, a cel w środku kazałby kupować po drogiej cenie, żeby odbudować
+zapas, gdy dom już go zużył — odwrotnie niż ma działać zapas. Z tego samego powodu ciąg, który już
+trwa w chwili liczenia planu, nie dostaje celu, tak jak ciąg, w którym PV pokrywa dom. Cel jest
+**miękki**: niedobór wyceniany jest po medianie drogiej ceny minus sufit i raportowany jako
+`peak_reserve_shortfall_kwh`; nie wchodzi do raportowanych kosztów. Wewnątrz ciągu zapas jest zwykłą
+energią w baterii, więc plan może go sprzedać, gdy sprzedaż daje więcej niż późniejszy zakup. Działa w
+każdej strategii, obok progu autonomii. Ostrzeżenia: `peak_reserve_requires_grid_charge_ceiling`
+(ustawienie powyżej 0 przy wyłączonym limicie ceny) i `peak_reserve_inactive` (w horyzoncie brak
+nadchodzącego drogiego ciągu z deficytem).
 
 Dobór: rozsądny start to 0,25–0,75 kWh. W backteście jednego domu z taryfą dwustrefową 0,5 kWh
 zmniejszyło o połowę liczbę poranków, w których bateria kończyła się przed PV (42 % → 21 %), przy
@@ -924,6 +929,8 @@ i językiem. Opis: [przewodnik instalacji](installation.md#dashboard-examples) (
 | `autonomy_tail_coarsened` | Ogon 48 h dłuższy niż 192 przedziały, zgrubiony do godzin. |
 | `autonomy_tail_unavailable` | Źródło ogona zawiodło; próg używa tylko horyzontu z cenami. |
 | `grid_charge_ceiling_below_autonomy_weight` | Sufit ceny ładowania z sieci poniżej wagi progu − marża; progu nie dałoby się uzupełnić. |
+| `peak_reserve_requires_grid_charge_ceiling` | `peak_reserve_margin_kwh` powyżej 0, ale **Ogranicz cenę ładowania baterii z sieci** wyłączone — zapas na drogie okresy pominięty. |
+| `peak_reserve_inactive` | W horyzoncie brak nadchodzącego drogiego ciągu z deficytem — zapas nie ma czego chronić. |
 
 ### Wyjątki bezpieczeństwa (`dispatch_policy.safety_exception.reason`)
 

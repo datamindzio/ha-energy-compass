@@ -671,13 +671,15 @@ def build_problem(
     peak_reserve_kwh: tuple[float, ...] = ()
     peak_reserve_window: tuple[int, ...] = ()
     peak_reserve_weight_value = 0.0
-    if battery and values["peak_reserve_margin_kwh"] > 0:
+    if (
+        battery
+        and values["peak_reserve_margin_kwh"] > 0
+        and not values["limit_grid_charge_price"]
+    ):
+        autonomy_warnings.append("peak_reserve_requires_grid_charge_ceiling")
+    elif battery and values["peak_reserve_margin_kwh"] > 0:
         buy = tuple(slot.buy_per_kwh for slot in slots)
-        cheap_price = (
-            values["maximum_grid_charge_price"]
-            if values["limit_grid_charge_price"]
-            else min(buy)
-        )
+        cheap_price = values["maximum_grid_charge_price"]
         peak = peak_reserve_targets(
             buy,
             tuple(loads),
@@ -694,7 +696,7 @@ def build_problem(
             peak_reserve_window = peak.window_ids
         else:
             peak_reserve_weight_value = 0.0
-            autonomy_warnings.append("peak_reserve_no_expensive_period")
+            autonomy_warnings.append("peak_reserve_inactive")
     problem = Problem(
         slots,
         SiteLimits(
