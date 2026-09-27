@@ -110,6 +110,9 @@ class Problem:
     soc_target_kwh: tuple[float, ...] = ()
     soc_target_window: tuple[int, ...] = ()
     soc_target_weight: float = 0.0
+    peak_reserve_kwh: tuple[float, ...] = ()
+    peak_reserve_window: tuple[int, ...] = ()
+    peak_reserve_weight: float = 0.0
     peak_import_weight: float = 0.0
     soft_import_cap_kw: float | None = None
     soft_export_cap_kw: float | None = None
@@ -150,6 +153,7 @@ class Plan:
     peak_import_kw: float = 0.0
     balance_start: int | None = None
     balance_missed: bool = False
+    peak_reserve_shortfall_kwh: float = 0.0
 
 
 @dataclass(frozen=True)
