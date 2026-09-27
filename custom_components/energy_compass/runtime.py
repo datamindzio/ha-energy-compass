@@ -43,6 +43,7 @@ from .engine.models import (
 )
 from .engine.normalize import finite, validate_problem
 from .engine.optimize import solve
+from .engine.peak_reserve import peak_reserve_targets, peak_reserve_weight
 from .engine.strategy import resolve_flags, strategy_weights
 from .settings import validate_configuration
 from .sources.battery import SocSettings, validate_soc
@@ -667,6 +668,33 @@ def build_problem(
                 < soc_target_weight - values["autonomy_margin_per_kwh"]
             ):
                 autonomy_warnings.append("grid_charge_ceiling_below_autonomy_weight")
+    peak_reserve_kwh: tuple[float, ...] = ()
+    peak_reserve_window: tuple[int, ...] = ()
+    peak_reserve_weight_value = 0.0
+    if battery and values["peak_reserve_margin_kwh"] > 0:
+        buy = tuple(slot.buy_per_kwh for slot in slots)
+        cheap_price = (
+            values["maximum_grid_charge_price"]
+            if values["limit_grid_charge_price"]
+            else min(buy)
+        )
+        peak = peak_reserve_targets(
+            buy,
+            tuple(loads),
+            tuple(pv),
+            cheap_price=cheap_price,
+            reserve_kwh=battery.capacity_kwh * battery.minimum_soc_fraction,
+            usable_capacity_kwh=battery.capacity_kwh * battery.maximum_soc_fraction,
+            eta_discharge=values["eta_discharge"],
+            margin_kwh=values["peak_reserve_margin_kwh"],
+        )
+        peak_reserve_weight_value = peak_reserve_weight(buy, cheap_price=cheap_price)
+        if peak_reserve_weight_value > 0 and any(i != -1 for i in peak.window_ids):
+            peak_reserve_kwh = peak.targets_kwh
+            peak_reserve_window = peak.window_ids
+        else:
+            peak_reserve_weight_value = 0.0
+            autonomy_warnings.append("peak_reserve_no_expensive_period")
     problem = Problem(
         slots,
         SiteLimits(
@@ -707,6 +735,9 @@ def build_problem(
         soc_target_kwh=soc_target_kwh,
         soc_target_window=soc_target_window,
         soc_target_weight=soc_target_weight,
+        peak_reserve_kwh=peak_reserve_kwh,
+        peak_reserve_window=peak_reserve_window,
+        peak_reserve_weight=peak_reserve_weight_value,
         **weights,
     )
     balance_phase = None
@@ -983,6 +1014,7 @@ def compute(config: dict, states: dict, now: datetime, **history) -> dict:
         "guidance_valid": guidance_valid,
         "strategy": problem.strategy,
         "autonomy_shortfall_kwh": round(plan.autonomy_shortfall_kwh, 3),
+        "peak_reserve_shortfall_kwh": round(plan.peak_reserve_shortfall_kwh, 3),
         "cap_violation_kwh": round(plan.cap_violation_kwh, 3),
         "strategy_released": problem.strategy_changed,
         "generated_at": now.isoformat(),

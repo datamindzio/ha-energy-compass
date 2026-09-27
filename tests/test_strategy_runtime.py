@@ -676,3 +676,36 @@ def test_result_carries_strategy_and_metrics():
     assert result["autonomy_shortfall_kwh"] == 0.0
     assert result["cap_violation_kwh"] == 0.0
     assert result["strategy_released"] is False
+
+
+def test_peak_reserve_absent_by_default():
+    config = battery_configuration()
+    problem, _, _ = build_problem(config, _soc_state(_NOW), _NOW)
+    assert problem.peak_reserve_kwh == ()
+    assert problem.peak_reserve_window == ()
+    assert problem.peak_reserve_weight == 0.0
+
+
+def test_peak_reserve_flat_tariff_warns_and_adds_no_floor():
+    config = battery_configuration()
+    config["settings"].update(peak_reserve_margin_kwh=0.5)
+    problem, _, quality = build_problem(config, _soc_state(_NOW), _NOW)
+    assert problem.peak_reserve_kwh == ()
+    assert problem.peak_reserve_weight == 0.0
+    assert "peak_reserve_no_expensive_period" in quality["warnings"]
+
+
+def test_peak_reserve_uses_grid_charge_ceiling_as_threshold():
+    config = battery_configuration()
+    config["settings"].update(
+        peak_reserve_margin_kwh=0.5,
+        limit_grid_charge_price=True,
+        maximum_grid_charge_price=-1000,
+    )
+    problem, _, quality = build_problem(config, _soc_state(_NOW), _NOW)
+    assert any(slot.load_kwh > slot.pv_kwh for slot in problem.slots)
+    assert problem.peak_reserve_weight > 0
+    assert set(problem.peak_reserve_window) == {0}
+    reserve = problem.battery.capacity_kwh * problem.battery.minimum_soc_fraction
+    assert problem.peak_reserve_kwh[-1] == pytest.approx(reserve + 0.5)
+    assert "peak_reserve_no_expensive_period" not in quality["warnings"]
