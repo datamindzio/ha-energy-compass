@@ -37,4 +37,18 @@ async def async_get_config_entry_diagnostics(hass, entry):
             "tracker": coordinator._balance,
             "report": coordinator.balance_report(),
         },
+        "energy_atlas": _atlas_diagnostics(coordinator, entry),
+    }
+
+
+def _atlas_diagnostics(coordinator, entry):
+    """No site_id, key material, URL or payload (ADR-0019 §9)."""
+    atlas_settings = entry.options.get("atlas", {})
+    if not atlas_settings.get("enabled") or coordinator.atlas is None:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "environment": coordinator.atlas.environment,
+        "sink": coordinator.atlas.status(),
+        "solves_skipped": coordinator.atlas.solves_skipped,
     }

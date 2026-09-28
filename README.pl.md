@@ -47,6 +47,13 @@ W **Planowaniu** opcja **Sell only PV** („sprzedawaj tylko PV”) jest domyśl
 
 **Okresowe balansowanie LFP** (`lfp_balance`), w **Baterii**, jest domyślnie wyłączone. Pakiety LFP potrzebują okresowego pełnego naładowania i krótkiego przetrzymania na górze, aby BMS mógł zbalansować cele i ponownie wyzerować odczyt SOC; przy włączonym ustawieniu Energy Compass śledzi ostatnio zakończony balans i planuje następny, proponując optymalizatorowi jedno okno trzymania wyrównane do pełnej godziny (CHARGE_PV lub CHARGE_GRID; okna w fazie `due` tylko w ciągu następnych 24 h) zamiast osobnego trybu. Diagnostyczny sensor **Balansowanie baterii** oraz ustawienia `balance_interval_days`, `balance_hold_minutes`, `balance_soc_threshold` i `balance_value` opisuje [przewodnik po stanach i strategiach](docs/guide.pl.md#balansowanie-lfp) oraz [kontrakt matematyczny](docs/model.md#lfp-balance) (EN).
 
+**Energy Atlas** (opcjonalnie, domyślnie wyłączone) wysyła telemetrię i rozwiązania do usługi Energy
+Atlas firmy Datamindz do badań międzyinstalacyjnych, po włączeniu w **Konfiguruj → Energy Atlas** i
+zwalidowaniu na staging lub produkcji. Sekret rejestracyjny nigdy nie jest zapisywany — tylko
+wynikowy klucz witryny, przechowywany osobno dla każdego środowiska w
+`.storage/energy_compass_atlas/`. Zobacz [Energy Atlas](docs/guide.pl.md#energy-atlas-opcjonalnie),
+co jest wysyłane i jak działa przełączanie środowisk.
+
 ## Licencja
 
 Kod źródłowy i oryginalna grafika Energy Compass są udostępnione na [licencji Apache 2.0](LICENSE). SciPy i NumPy instalowane są jako osobne zależności i zachowują własne licencje; ich kod nie jest tu dołączony.

@@ -10,6 +10,7 @@ dependencies = [
 test = [
     "pytest-homeassistant-custom-component==0.13.364",
     "ruff==0.16.8",
+    "jsonschema==4.23.0",
 ]
 docs = [
     "markdown==3.8",
@@ -19,3 +20,7 @@ docs = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = ["replan_cooldown: run with the shipped minimum_replan_seconds default"]
+
+[tool.ruff]
+# Vendored verbatim from edge/atlas_sink (energy-atlas ADR-0019 §10); linted there.
+extend-exclude = ["custom_components/energy_compass/atlas_sink"]

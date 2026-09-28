@@ -10,10 +10,12 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 
+from .atlas_env import BASE_URLS
 from .engine.models import InputError, SolveError
 from .engine.optimize import solve
 from .flow_schema import (
     currency_review_schema,
+    number,
     rebind_configuration,
     select,
     settings_schema,
@@ -210,9 +212,79 @@ class Editor(SourceEditor):
     _currency_review_pending = False
 
     async def async_step_menu(self, user_input=None):
-        return self.async_show_menu(
-            step_id="menu",
-            menu_options=["installation", "sources", *GROUPS, "helpers", "preview"],
+        menu_options = ["installation", "sources", *GROUPS, "helpers"]
+        if isinstance(self, config_entries.OptionsFlow):
+            # ADR-0019 §2: Atlas settings live in the options flow only, never in
+            # setup or reconfigure.
+            menu_options.append("energy_atlas")
+        menu_options.append("preview")
+        return self.async_show_menu(step_id="menu", menu_options=menu_options)
+
+    async def async_step_energy_atlas(self, user_input=None):
+        """Opt-in Atlas delivery settings (ADR-0019 §2/§4). Saves immediately, no preview.
+
+        ADR-0019 §3: the glue and sink modules must not load with Atlas off, so
+        `config_flow` (eagerly imported by HA for any config-flow integration)
+        never references `.atlas`/`.atlas_sink` at module scope.
+        """
+        from .atlas.storage import environment_dir, is_registered
+        from .atlas_sink.sink import RegistrationError, register
+
+        current = self.config_entry.options.get("atlas", {})
+        errors = {}
+        if user_input is not None:
+            enabled = user_input["enabled"]
+            environment = user_input["environment"]
+            pv_kwp = user_input.get("pv_kwp")
+            if enabled and pv_kwp is None:
+                errors["pv_kwp"] = "invalid_input"
+            elif enabled and not is_registered(
+                self.hass, self.config_entry.entry_id, environment
+            ):
+                secret = user_input.get("enrollment_secret")
+                if not secret:
+                    errors["base"] = "invalid_input"
+                else:
+                    directory = environment_dir(
+                        self.hass, self.config_entry.entry_id, environment
+                    )
+                    try:
+                        await self.hass.async_add_executor_job(
+                            register, directory, BASE_URLS[environment], secret
+                        )
+                    except RegistrationError as err:
+                        errors["base"] = err.kind
+            if not errors:
+                new_atlas = {"enabled": enabled, "environment": environment}
+                if pv_kwp is not None:
+                    new_atlas["pv_kwp"] = pv_kwp
+                return self.async_create_entry(
+                    title="",
+                    data={**self.config_entry.options, "atlas": new_atlas},
+                )
+        return self.async_show_form(
+            step_id="energy_atlas",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "enabled", default=current.get("enabled", False)
+                    ): selector.BooleanSelector(),
+                    vol.Required(
+                        "environment", default=current.get("environment", "staging")
+                    ): select(["staging", "production"]),
+                    # ADR-0019 §2: no default; required only when enabled.
+                    vol.Optional(
+                        "pv_kwp",
+                        description={"suggested_value": current.get("pv_kwp")},
+                    ): number(0.01, 1000, "kWp"),
+                    vol.Optional("enrollment_secret"): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
         )
 
     async def async_step_installation(self, user_input=None):
@@ -611,8 +683,13 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
         )
         stamp_strategy_change(self._draft, previous, dt_util.utcnow())
         if hasattr(self, "_entry"):
+            # ADR-0019 §2: reconfigure clears options, but atlas settings survive it.
+            atlas = self._entry.options.get("atlas")
             return self.async_update_reload_and_abort(
-                self._entry, data=self._draft, options={}, title=self._draft["name"]
+                self._entry,
+                data=self._draft,
+                options={"atlas": atlas} if atlas else {},
+                title=self._draft["name"],
             )
         return self.async_create_entry(title=self._draft["name"], data=self._draft)
 
@@ -640,4 +717,8 @@ class EnergyCompassOptionsFlow(Editor, config_entries.OptionsFlowWithReload):
         self.hass.config_entries.async_update_entry(
             self.config_entry, title=self._draft["name"]
         )
-        return self.async_create_entry(title="", data={"configuration": self._draft})
+        # ADR-0019 §2: a preview save keeps whatever atlas settings are stored.
+        return self.async_create_entry(
+            title="",
+            data={**self.config_entry.options, "configuration": self._draft},
+        )

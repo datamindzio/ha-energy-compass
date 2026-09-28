@@ -112,6 +112,8 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         self._balance_persist = True
         self._balance_store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.balance")
         self.previous_plan = None
+        # Set by async_setup_entry only when options["atlas"]["enabled"] (ADR-0019 §3).
+        self.atlas = None
 
     async def async_start(self):
         """Restore small observation anchors and attach only this entry's listeners."""
@@ -859,6 +861,11 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                             deepcopy(config),
                             states,
                             now,
+                            atlas_solve_builder=(
+                                self.atlas.solve_builder
+                                if self.atlas and self.atlas.sink
+                                else None
+                            ),
                             previous_soc=self._previous_soc,
                             battery_commitment=deepcopy(self._battery_commitment),
                             export_commitment=deepcopy(self._export_commitment),
@@ -883,6 +890,16 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                         self._worker = None
                     if self._closed:
                         return
+                    # `atlas_solve_payload` is beside the result, never a published
+                    # entity attribute (ADR-0019 §6): pop it before the result can
+                    # reach `_publish_current`/`self.data`, whether or not this
+                    # generation ends up published.
+                    atlas_payload_present = "atlas_solve_payload" in result
+                    atlas_payload = (
+                        result.pop("atlas_solve_payload")
+                        if atlas_payload_present
+                        else None
+                    )
                     # A result superseded only by newer inputs is still fresher
                     # than the retained plan. Publishing it before recalculating
                     # guarantees progress: at 8 kW the SOC crosses the trigger
@@ -892,6 +909,11 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                     # bump the epoch and still discard.
                     current = generation == self._generation
                     if current or epoch == self._epoch:
+                        # Only the actual publish path may feed the sink or count
+                        # a skip: a solve discarded here (superseded epoch) was
+                        # never published, so Atlas must not receive it either.
+                        if self.atlas is not None and atlas_payload_present:
+                            self.atlas.add_solve(atlas_payload)
                         self._previous_soc = result["quality"].pop(
                             "soc_observation", None
                         )
@@ -910,9 +932,13 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                     if not self._closed and generation == self._generation:
                         if self._soc_rebase_deferred(err):
                             break
+                        if self.atlas is not None:
+                            self.atlas.skip_solve()
                         self._invalidate("invalid_input", str(err))
                 except SolveError as err:
                     if not self._closed and generation == self._generation:
+                        if self.atlas is not None:
+                            self.atlas.skip_solve()
                         # The reason alone ("solver_failure") hides which
                         # validation failed; keep the detail for diagnosis.
                         _LOGGER.warning("Advisory calculation failed: %s", err)

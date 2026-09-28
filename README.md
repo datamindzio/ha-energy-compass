@@ -57,6 +57,12 @@ Under **Planning**, **Sell only PV** defaults to on and limits total grid export
 **Periodic LFP balance charge** (`lfp_balance`), under **Battery**, is off by default. LFP packs need a periodic full charge and a short hold at the top so the BMS can balance cells and re-anchor its SOC; with the setting on, Energy Compass tracks the last completed balance and plans the next one, offering the optimizer one hour-aligned CHARGE_PV/CHARGE_GRID hold window (due windows only within the next 24 h) instead of a dedicated mode. The diagnostic **Battery balance** sensor and its `balance_interval_days`, `balance_hold_minutes`, `balance_soc_threshold` and `balance_value` settings are described in the [states and strategies guide](docs/guide.en.md#lfp-balance-charge) and [the mathematical contract](docs/model.md#lfp-balance).
 
 
+**Energy Atlas** (optional, off by default) sends telemetry and solves to Datamindz's Energy Atlas
+service for cross-site research, once opted in under **Configure → Energy Atlas** and validated on
+staging or production. The enrollment secret is never stored, only the resulting site key, kept per
+environment under `.storage/energy_compass_atlas/`. See [Energy Atlas](docs/guide.en.md#energy-atlas-optional)
+for what is sent and how switching environments works.
+
 ## License
 
 Energy Compass source and original artwork are provided under [Apache License 2.0](LICENSE). SciPy and NumPy are installed as separate dependencies and retain their own licenses; their source is not included here.

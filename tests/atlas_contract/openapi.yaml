@@ -1,0 +1,1367 @@
+openapi: 3.1.0
+info:
+  title: Energy Atlas Collector API
+  version: 1.0.0-e0
+  summary: Ingest and read API for Energy Atlas sites (E0).
+  description: |
+    Single source of truth for the collector (Go) and the edge agent `atlas_sink` (Python).
+    Architecture: docs/ARCHITECTURE.md. Decisions: docs/adr/.
+
+    Conventions
+    - All timestamps are RFC 3339 in UTC with `Z` (invariant 1). Non-UTC offsets are rejected (422).
+    - Aggregation window is fixed at 300 s. `window_start` must be a multiple of 300 s since the
+      Unix epoch (a full 5 minutes UTC).
+    - Errors are RFC 9457 `application/problem+json` (`Problem`). `type` is
+      `https://api.fleet.datamindz.io/problems/<slug>`; slugs are listed in `Problem.type`. The
+      base is an opaque identifier kept stable across the host change (ADR-0016 §3), not the API host.
+    - Every response to a site-signed POST carries `Config-ETag` (effective config ETag).
+    - Request bodies may be `Content-Encoding: gzip`. Limit: 1 MiB after decompression (413).
+    - Writes are idempotent on natural keys; a repeated request never changes stored rows.
+    - Unknown fields are rejected (`additionalProperties: false`) with 422 naming the field.
+    - Malformed or missing path/query/header parameters (e.g. non-UUID `site_id`, missing `from`)
+      → 422 `invalid-field`, `errors[].field` = `path.<name>` / `query.<name>` / `header.<Name>`
+      (never 400, never 404). Every operation with parameters lists 422.
+    - Status order on every authenticated operation: 401 → 422 (parameters) → 403 → 404.
+      Auth runs before parameter binding, so unauthenticated callers never learn parameter rules.
+    - No endpoint modifies or deletes `source`, attribute versions or global config versions.
+      Methods not listed here return 405 `method-not-allowed`.
+
+    Authentication (ADR-0003)
+    - `siteSignature`: RFC 9421 HTTP Message Signature by the site's Ed25519 key, profile in
+      ADR-0003 (`keyid` = site_id, components `@method @path @query [content-digest]`, `created`
+      ≤ 300 s old). Status order: 401 (missing/invalid/expired/digest) → 422 malformed parameter →
+      403 site-mismatch → 403 source-mismatch → 404.
+    - `operatorBearer`: operator admin token.
+    - `enrollmentBearer`: enrollment credential secret (`eac_…`), only on `POST /v1/sites`.
+  contact:
+    name: Datamindz
+servers:
+  - url: https://atlas-api.datamindz.io
+    description: production (ADR-0016)
+  - url: https://atlas-api-staging.datamindz.io
+    description: staging (ADR-0016)
+  - url: http://localhost:8080
+    description: local / acceptance tests
+
+tags:
+  - name: site
+    description: Called by the edge agent, signed with the site key.
+  - name: read
+    description: Reads; callable by the site itself (signed) or the operator (bearer).
+  - name: operator
+    description: Operator-only administration and monitoring.
+  - name: health
+    description: Liveness and readiness.
+
+security: []
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /readyz:
+    get:
+      tags: [health]
+      operationId: getReady
+      summary: Readiness probe (ClickHouse reachable, migrations applied)
+      security: []
+      responses:
+        '200':
+          description: Ready.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v1/enrollment-credentials:
+    post:
+      tags: [operator]
+      operationId: createEnrollmentCredential
+      summary: Issue an enrollment credential scoped to one source (S-001)
+      description: The secret is returned only in this response and never again.
+      security: [{ operatorBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnrollmentCredentialCreate' }
+      responses:
+        '201':
+          description: Created. Contains `secret` exactly once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentCredentialWithSecret' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+    get:
+      tags: [operator]
+      operationId: listEnrollmentCredentials
+      summary: List enrollment credentials (never includes secrets)
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200':
+          description: Credentials, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [credentials]
+                properties:
+                  credentials:
+                    type: array
+                    items: { $ref: '#/components/schemas/EnrollmentCredential' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/enrollment-credentials/{credential_id}:
+    parameters:
+      - $ref: '#/components/parameters/CredentialId'
+    get:
+      tags: [operator]
+      operationId: getEnrollmentCredential
+      summary: Read one enrollment credential (never includes the secret)
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200':
+          description: Credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentCredential' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/enrollment-credentials/{credential_id}/revoke:
+    parameters:
+      - $ref: '#/components/parameters/CredentialId'
+    post:
+      tags: [operator]
+      operationId: revokeEnrollmentCredential
+      summary: Revoke an enrollment credential (idempotent)
+      description: Registrations with a revoked credential return 401. Already enrolled sites are unaffected.
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200':
+          description: Revoked (or already revoked); `revoked_at` set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentCredential' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites:
+    post:
+      tags: [site]
+      operationId: registerSite
+      summary: Register a site public key under an enrollment credential (S-001)
+      description: |
+        `source` is taken from the credential, never from the body (a `source` field is an unknown
+        field → 422). Same `public_key` again → 200 with the existing site if the credential has the
+        same source, else 409 `conflict`, site unchanged (`source-mismatch` is only the 403 of
+        `siteSignature`, ADR-0003). A `public_key` whose site key was revoked
+        (`revokeSiteKey`) → 409 `site-key-revoked`, nothing created or changed; checked after auth
+        and before the source check; the edge must generate a new key to re-enrol (ADR-0011).
+        Rate limit 10 requests/hour per client IP (counted before auth) → 429.
+      security: [{ enrollmentBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SiteRegistration' }
+      responses:
+        '201':
+          description: New site created.
+          headers:
+            Config-ETag: { $ref: '#/components/headers/ConfigETag' }
+            Location:
+              description: /v1/sites/{site_id}
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteRegistered' }
+        '200':
+          description: Key already registered; existing site returned, nothing created.
+          headers:
+            Config-ETag: { $ref: '#/components/headers/ConfigETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteRegistered' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    get:
+      tags: [operator]
+      operationId: listSites
+      summary: List sites with source, last-seen and alert state (S-010)
+      security: [{ operatorBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SourceFilter'
+      responses:
+        '200':
+          description: Sites ordered by registered_at ascending.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [sites]
+                properties:
+                  sites:
+                    type: array
+                    items: { $ref: '#/components/schemas/SiteSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    get:
+      tags: [operator]
+      operationId: getSite
+      summary: Operator view of one site - freshness, alert, linked recipients (S-010, S-014)
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200':
+          description: Site.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}/revoke-key:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    post:
+      tags: [operator]
+      operationId: revokeSiteKey
+      summary: Revoke the site's key (idempotent)
+      description: |
+        After revocation every request signed with the key returns 401 and ownership proofs signed
+        with it are invalid. The site's data stays. The edge must re-enrol with a new key
+        (new site_id). Does not change `source`.
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200':
+          description: Revoked (or already revoked).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}/telegram-link:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    delete:
+      tags: [operator]
+      operationId: deleteSiteTelegramLink
+      summary: Remove the Telegram link of a site (S-013, e.g. site sold)
+      description: |
+        Removes the link, sends the removed user one "site unlinked" message, and deletes the
+        user's Telegram identity if this was their last link. A new valid proof can then be linked
+        by another user. Idempotent: 204 also when no link exists.
+      security: [{ operatorBearer: [] }]
+      responses:
+        '204':
+          description: No link exists any more.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}/gaps:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    get:
+      tags: [operator]
+      operationId: getSiteGaps
+      summary: Gaps in the site's 5-minute series over a range (S-010, S-011; ADR-0009)
+      description: >-
+        Uncovered 5-minute slots with start s in [ceil5(from), min(ceil5(to), floor5(now))) and
+        s >= floor5(first observation), merged into maximal runs. The result for a slot does not
+        depend on the chosen `to`. A site without observations returns an empty list.
+      security: [{ operatorBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: Gaps ordered by start.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GapList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}/config:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    get:
+      tags: [read]
+      operationId: getSiteConfig
+      summary: Effective config for the site, with ETag (S-008)
+      security: [{ siteSignature: [] }, { operatorBearer: [] }]
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          description: ETag from a previous response (quoted).
+          schema: { type: string }
+      responses:
+        '200':
+          description: Effective config.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteConfig' }
+        '304':
+          description: Unchanged since the given ETag.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}/config/override:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    put:
+      tags: [operator]
+      operationId: putSiteConfigOverride
+      summary: Set the site's config override (RFC 7396 merge patch on global config) (S-008)
+      description: |
+        Replaces the site's override. The merged effective config is validated; on failure 422 and
+        effective config is unchanged. Override history is append-only.
+      security: [{ operatorBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: '#/components/schemas/ConfigPatch' }
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfigPatch' }
+      responses:
+        '200':
+          description: New effective config of the site.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteConfig' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+    delete:
+      tags: [operator]
+      operationId: deleteSiteConfigOverride
+      summary: Clear the site's override; the site gets the global config (S-008)
+      security: [{ operatorBearer: [] }]
+      responses:
+        '204':
+          description: No override exists any more (idempotent).
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/config:
+    get:
+      tags: [operator]
+      operationId: getGlobalConfig
+      summary: Current global config version
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200':
+          description: Latest global version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalConfigVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [operator]
+      operationId: putGlobalConfig
+      summary: Publish a new global config version (append-only) (S-008)
+      description: The full config document; becomes version max+1. Earlier versions are never changed.
+      security: [{ operatorBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EffectiveConfig' }
+      responses:
+        '201':
+          description: New version created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalConfigVersion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/config/versions:
+    get:
+      tags: [operator]
+      operationId: listGlobalConfigVersions
+      summary: All global config versions, oldest first (S-008)
+      security: [{ operatorBearer: [] }]
+      responses:
+        '200':
+          description: Versions.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [versions]
+                properties:
+                  versions:
+                    type: array
+                    items: { $ref: '#/components/schemas/GlobalConfigVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/sites/{site_id}/telemetry:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    post:
+      tags: [site]
+      operationId: postTelemetry
+      summary: Push a batch of 5-minute windows (S-003)
+      description: |
+        All-or-nothing validation: if any window is invalid, nothing from the batch is stored (422).
+        Valid batches are stored idempotently on (site_id, window_start); response counts new vs
+        already-stored windows. Late and out-of-order windows are accepted.
+      security: [{ siteSignature: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ContentEncoding'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TelemetryBatch' }
+      responses:
+        '200':
+          description: Stored.
+          headers:
+            Config-ETag: { $ref: '#/components/headers/ConfigETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedEncoding' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    get:
+      tags: [read]
+      operationId: getTelemetry
+      summary: Read telemetry over [from, to) at step 5m, 1h or 1d (S-009; ADR-0006, ADR-0009)
+      description: |
+        step=5m returns `windows` (stored windows only, never fabricated, never hourly rows).
+        step=1h / 1d returns `buckets` (only buckets with data). Max range: 5m 31 days, 1h 366 days,
+        1d 3660 days (else 422 `range_too_large`). `tz` only affects 1d bucket boundaries.
+      security: [{ siteSignature: [] }, { operatorBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: step
+          in: query
+          required: true
+          schema: { type: string, enum: [5m, 1h, 1d] }
+        - name: metrics
+          in: query
+          required: false
+          description: |
+            Comma-separated subset of metric base names (`pv_w`, `load_w`, `grid_import_w`,
+            `grid_export_w`, `batt_w`, `soc_pct`, `pv_kwh`, `import_kwh`, `export_kwh`,
+            `batt_chg_kwh`, `batt_dis_kwh`, `ext.<name>`). Default: all. Unknown name → 422.
+          schema: { type: string }
+        - name: tz
+          in: query
+          required: false
+          description: IANA time zone for 1d bucket boundaries; default UTC. Ignored for 5m/1h.
+          schema: { type: string, default: UTC, examples: [Europe/Warsaw] }
+      responses:
+        '200':
+          description: Series.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TelemetrySeries' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}/telemetry/hourly:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    post:
+      tags: [site]
+      operationId: postHourlyTelemetry
+      summary: Push hourly-only history rows from the HA recorder (S-011; ADR-0009)
+      description: Same validation, atomicity and idempotency rules as telemetry; key (site_id, hour_start).
+      security: [{ siteSignature: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ContentEncoding'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HourlyBatch' }
+      responses:
+        '200':
+          description: Stored.
+          headers:
+            Config-ETag: { $ref: '#/components/headers/ConfigETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedEncoding' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/sites/{site_id}/solves:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    post:
+      tags: [site]
+      operationId: postSolves
+      summary: Push optimiser solves (S-006)
+      description: Idempotent on (site_id, solve_ts); all-or-nothing validation.
+      security: [{ siteSignature: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ContentEncoding'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SolveBatch' }
+      responses:
+        '200':
+          description: Stored.
+          headers:
+            Config-ETag: { $ref: '#/components/headers/ConfigETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedEncoding' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    get:
+      tags: [read]
+      operationId: getSolves
+      summary: Read solves with solve_ts in [from, to) (max 31 days), each linked to its attribute version
+      security: [{ siteSignature: [] }, { operatorBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: Solves ordered by solve_ts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SolveList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}/attributes:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    post:
+      tags: [site]
+      operationId: postAttributes
+      summary: Send an attribute snapshot valid from a time (S-007)
+      description: |
+        201 when a new version is stored. 200 (existing version returned, nothing stored) when the
+        canonical attrs hash equals the version in force at `valid_from` (i.e. the latest version with
+        valid_from ≤ the new valid_from). 409 when a version with the same `valid_from` but a different
+        hash exists. Versions are append-only; there is no update or delete.
+      security: [{ siteSignature: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ContentEncoding'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttributeSnapshot' }
+      responses:
+        '201':
+          description: New version stored.
+          headers:
+            Config-ETag: { $ref: '#/components/headers/ConfigETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttributeVersion' }
+        '200':
+          description: Unchanged; the version in force is returned.
+          headers:
+            Config-ETag: { $ref: '#/components/headers/ConfigETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttributeVersion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedEncoding' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    get:
+      tags: [read]
+      operationId: getAttributes
+      summary: Attribute version in force at `at` (latest valid_from ≤ at) (S-007)
+      security: [{ siteSignature: [] }, { operatorBearer: [] }]
+      parameters:
+        - name: at
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Version in force.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttributeVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Site unknown, or no version with valid_from ≤ at.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+components:
+  securitySchemes:
+    siteSignature:
+      type: apiKey
+      in: header
+      name: Signature
+      description: |
+        RFC 9421 signature with the site Ed25519 key; requires `Signature-Input` and, for requests
+        with a body, `Content-Digest` (RFC 9530, sha-256). Profile: ADR-0003.
+    operatorBearer:
+      type: http
+      scheme: bearer
+      description: Operator admin token (env ATLAS_OPERATOR_TOKEN).
+    enrollmentBearer:
+      type: http
+      scheme: bearer
+      description: Enrollment credential secret `eac_<credential_id>_<secret>`.
+
+  parameters:
+    SiteId:
+      name: site_id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/SiteId' }
+    CredentialId:
+      name: credential_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SourceFilter:
+      name: source
+      in: query
+      required: false
+      description: Only sites with this source. Absent = all.
+      schema: { $ref: '#/components/schemas/Source' }
+    From:
+      name: from
+      in: query
+      required: true
+      description: Inclusive start, RFC 3339 UTC. Must be < to (else 422).
+      schema: { type: string, format: date-time }
+    To:
+      name: to
+      in: query
+      required: true
+      description: Exclusive end, RFC 3339 UTC.
+      schema: { type: string, format: date-time }
+    ContentEncoding:
+      name: Content-Encoding
+      in: header
+      required: false
+      description: '`gzip` or absent. Anything else → 415.'
+      schema: { type: string, enum: [gzip, identity] }
+
+  headers:
+    ConfigETag:
+      description: ETag of the site's effective config (quoted sha256 hex of canonical JSON). Differs from the local one → GET config.
+      schema: { type: string, examples: ['"3b1f…"'] }
+    ETag:
+      description: Quoted sha256 hex of the canonical (RFC 8785) JSON of the effective config.
+      schema: { type: string }
+    RetryAfter:
+      description: Seconds until retry is allowed.
+      schema: { type: integer, minimum: 1 }
+
+  responses:
+    BadRequest:
+      description: Malformed JSON or body not decodable (`invalid-body`).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Missing or invalid credential/signature (`unauthenticated`, `credential-invalid`, `signature-invalid`, `signature-expired`, `digest-mismatch`).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Authenticated but not allowed (`site-mismatch`, `source-mismatch`, `operator-only`).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Resource not found (`not-found`).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Conflicts with stored state (`conflict`; `site-key-revoked` on `registerSite` only).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    TooLarge:
+      description: Body > 1 MiB decompressed, or batch > 288 items (`payload-too-large`). Nothing stored.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnsupportedEncoding:
+      description: Content-Encoding other than gzip/identity (`unsupported-encoding`).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unprocessable:
+      description: |
+        Validation failed (`invalid-field`); `errors` names every offending body field or
+        path/query/header parameter (e.g. a `site_id` that is not a UUID → `path.site_id`). Nothing stored.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    RateLimited:
+      description: Rate limit exceeded (`rate-limited`).
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unavailable:
+      description: Not ready (`unavailable`).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    SiteId:
+      type: string
+      format: uuid
+      description: UUIDv7 assigned by the collector.
+
+    Source:
+      type: string
+      enum: [real, simulated]
+      description: Provenance; fixed by the enrollment credential at registration, immutable.
+
+    Timestamp:
+      type: string
+      format: date-time
+      description: RFC 3339, UTC, `Z` suffix.
+
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok] }
+        version:
+          type: string
+          description: |
+            Build version of the collector: the full git commit sha the image was built from
+            (Docker build arg `VERSION`, ADR-0016 §8), `dev` when built without it. Deploy
+            tooling polls it to know a rollout finished. Optional: clients must not require it.
+          example: 3c6b723c0e4f1d2a9b8c7d6e5f4a3b2c1d0e9f8a
+
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: |
+            `https://api.fleet.datamindz.io/problems/<slug>`, slug one of: invalid-body,
+            invalid-field, payload-too-large, unsupported-encoding, unauthenticated,
+            credential-invalid, signature-invalid, signature-expired, digest-mismatch,
+            site-mismatch, source-mismatch, site-key-revoked, operator-only, not-found, method-not-allowed,
+            conflict, rate-limited, unavailable, internal.
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        errors:
+          type: array
+          description: Present for `invalid-field` (and `payload-too-large` when a batch limit is hit).
+          items: { $ref: '#/components/schemas/FieldError' }
+
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, reason]
+      properties:
+        field:
+          type: string
+          description: |
+            Body field: JSON Pointer (RFC 6901), e.g. `/windows/3/window_start`.
+            Parameter: `<in>.<name>` with the name as declared in this contract —
+            `path.<name>` (e.g. `path.site_id`, `path.credential_id`), `query.<name>`
+            (e.g. `query.from`), `header.<Name>` (canonical case, e.g. `header.If-None-Match`).
+            Malformed or missing parameters use reason `wrong_type` or `required`.
+        reason:
+          type: string
+          description: |
+            Machine-readable code: required, wrong_type, unknown_field, out_of_range,
+            not_aligned_5min, not_aligned_hour, not_utc, in_future, duplicate_key_in_batch,
+            too_many_items, not_multiple_of_300, invalid_h3, forbidden_identifying_data,
+            invalid_enum, from_not_before_to, range_too_large, unknown_metric, invalid_tz,
+            invalid_public_key.
+        detail: { type: string }
+
+    EnrollmentCredentialCreate:
+      type: object
+      additionalProperties: false
+      required: [source]
+      properties:
+        source: { $ref: '#/components/schemas/Source' }
+        label: { type: string, maxLength: 100, description: 'Operator note, e.g. "home".' }
+
+    EnrollmentCredential:
+      type: object
+      additionalProperties: false
+      required: [credential_id, source, created_at, revoked_at]
+      properties:
+        credential_id: { type: string, format: uuid }
+        source: { $ref: '#/components/schemas/Source' }
+        label: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        revoked_at:
+          oneOf:
+            - { $ref: '#/components/schemas/Timestamp' }
+            - { type: 'null' }
+
+    EnrollmentCredentialWithSecret:
+      allOf:
+        - { $ref: '#/components/schemas/EnrollmentCredential' }
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              pattern: '^eac_[0-9a-f-]{36}_[A-Za-z0-9_-]{43}$'
+              description: 'Shown once. Use as `Authorization: Bearer <secret>` on POST /v1/sites.'
+
+    SiteRegistration:
+      type: object
+      additionalProperties: false
+      required: [public_key]
+      properties:
+        public_key:
+          type: string
+          description: Ed25519 public key, 32 bytes, base64url without padding.
+          pattern: '^[A-Za-z0-9_-]{43}$'
+
+    SiteRegistered:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, registered_at]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        registered_at: { $ref: '#/components/schemas/Timestamp' }
+
+    Freshness:
+      type: object
+      additionalProperties: false
+      required: [last_seen, last_window_start, last_received_at]
+      description: All null when the site has no telemetry window yet. Hourly backfill rows do not count.
+      properties:
+        last_seen:
+          description: End of the latest stored window (last_window_start + 300 s).
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+        last_window_start:
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+        last_received_at:
+          description: Server receive time of the latest window (by window_start).
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+
+    AlertState:
+      type: object
+      additionalProperties: false
+      required: [active, started_at, opened_at]
+      properties:
+        active: { type: boolean }
+        started_at:
+          description: Last-seen time when the alert opened (data missing since).
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+        opened_at:
+          description: When the evaluator opened the alert.
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+
+    SiteSummary:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, registered_at, key_revoked, freshness, alert_active]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        registered_at: { $ref: '#/components/schemas/Timestamp' }
+        key_revoked: { type: boolean }
+        freshness: { $ref: '#/components/schemas/Freshness' }
+        alert_active: { type: boolean }
+
+    SiteDetail:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, registered_at, enrollment_credential_id, key_revoked_at, freshness, alert, linked_recipients, effective_config]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        registered_at: { $ref: '#/components/schemas/Timestamp' }
+        enrollment_credential_id: { type: string, format: uuid }
+        key_revoked_at:
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+        freshness: { $ref: '#/components/schemas/Freshness' }
+        alert: { $ref: '#/components/schemas/AlertState' }
+        linked_recipients:
+          type: integer
+          minimum: 0
+          maximum: 1
+          description: Number of linked Telegram users (count only, never identities).
+        effective_config: { $ref: '#/components/schemas/EffectiveConfig' }
+
+    Gap:
+      type: object
+      additionalProperties: false
+      required: [start, end, windows, ongoing]
+      properties:
+        start: { $ref: '#/components/schemas/Timestamp' }
+        end: { $ref: '#/components/schemas/Timestamp' }
+        windows: { type: integer, minimum: 1, description: 'Missing 5-minute windows ((end-start)/300 s).' }
+        ongoing: { type: boolean, description: 'Gap reaches the upper bound min(ceil5(to), floor5(now)); it may continue past it. Not clipped to the last observation: trailing silence in a past range is a gap too (ADR-0009).' }
+
+    GapList:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, from, to, gaps]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        from: { $ref: '#/components/schemas/Timestamp' }
+        to: { $ref: '#/components/schemas/Timestamp' }
+        gaps:
+          type: array
+          items: { $ref: '#/components/schemas/Gap' }
+
+    EffectiveConfig:
+      type: object
+      additionalProperties: false
+      required: [push_interval_s]
+      properties:
+        push_interval_s:
+          type: integer
+          minimum: 300
+          maximum: 86400
+          multipleOf: 300
+          description: How often the edge sends buffered items. The window stays 300 s.
+
+    ConfigPatch:
+      type: object
+      additionalProperties: false
+      description: RFC 7396 merge patch applied to the global config. `null` removes a key from the override.
+      properties:
+        push_interval_s:
+          oneOf:
+            - { type: integer, minimum: 300, maximum: 86400, multipleOf: 300 }
+            - { type: 'null' }
+
+    GlobalConfigVersion:
+      type: object
+      additionalProperties: false
+      required: [version, config, created_at]
+      properties:
+        version: { type: integer, minimum: 1 }
+        config: { $ref: '#/components/schemas/EffectiveConfig' }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+
+    SiteConfig:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, global_version, override, config]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        global_version: { type: integer, minimum: 1 }
+        override:
+          description: The site's current merge patch, or null.
+          oneOf: [{ $ref: '#/components/schemas/ConfigPatch' }, { type: 'null' }]
+        config: { $ref: '#/components/schemas/EffectiveConfig' }
+
+    ExtMetrics:
+      type: object
+      description: |
+        Metrics outside the fixed set (Q6), numeric only. E0 known key: `batt_temp_c_avg`.
+        New keys need no migration.
+      maxProperties: 32
+      propertyNames:
+        pattern: '^[a-z][a-z0-9_]{0,63}$'
+      additionalProperties:
+        type: [number, 'null']
+
+    MetricValues:
+      type: object
+      description: Fixed metric set (design). Powers in W, battery + = charge, − = discharge; counters in kWh; null = sensor unavailable.
+      properties:
+        pv_w_avg: { type: [number, 'null'] }
+        pv_w_max: { type: [number, 'null'] }
+        load_w_avg: { type: [number, 'null'] }
+        load_w_max: { type: [number, 'null'] }
+        grid_import_w_avg: { type: [number, 'null'], minimum: 0 }
+        grid_export_w_avg: { type: [number, 'null'], minimum: 0 }
+        batt_w_avg: { type: [number, 'null'] }
+        soc_pct_last: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        pv_kwh_total: { type: [number, 'null'], format: double, minimum: 0 }
+        import_kwh_total: { type: [number, 'null'], format: double, minimum: 0 }
+        export_kwh_total: { type: [number, 'null'], format: double, minimum: 0 }
+        batt_chg_kwh_total: { type: [number, 'null'], format: double, minimum: 0 }
+        batt_dis_kwh_total: { type: [number, 'null'], format: double, minimum: 0 }
+        ext: { $ref: '#/components/schemas/ExtMetrics' }
+
+    TelemetryWindow:
+      description: |
+        One 5-minute window computed on the edge (S-004): powers = time-weighted average + max over
+        the window, counters and SOC = last sample. `window_start` multiple of 300 s UTC and
+        window_start ≤ now (else 422 in_future). `samples` ≥ 1 for `origin=live`; 0 allowed only for
+        `origin=backfill` (HA recorder statistics, sample count unknown).
+      allOf:
+        - { $ref: '#/components/schemas/MetricValues' }
+        - type: object
+          required: [window_start, samples]
+          properties:
+            window_start: { $ref: '#/components/schemas/Timestamp' }
+            samples: { type: integer, minimum: 0, maximum: 32767 }
+            origin: { type: string, enum: [live, backfill], default: live }
+      unevaluatedProperties: false
+
+    TelemetryBatch:
+      type: object
+      additionalProperties: false
+      required: [windows]
+      properties:
+        windows:
+          type: array
+          minItems: 1
+          maxItems: 288
+          description: More than 288 → 413. Duplicate window_start inside one batch → 422.
+          items: { $ref: '#/components/schemas/TelemetryWindow' }
+
+    StoredWindow:
+      allOf:
+        - { $ref: '#/components/schemas/TelemetryWindow' }
+        - type: object
+          required: [origin, received_at]
+          properties:
+            received_at: { $ref: '#/components/schemas/Timestamp' }
+      unevaluatedProperties: false
+
+    HourlyRow:
+      description: One hour from HA long-term statistics; `hour_start` aligned to a full UTC hour.
+      allOf:
+        - { $ref: '#/components/schemas/MetricValues' }
+        - type: object
+          required: [hour_start]
+          properties:
+            hour_start: { $ref: '#/components/schemas/Timestamp' }
+      unevaluatedProperties: false
+
+    HourlyBatch:
+      type: object
+      additionalProperties: false
+      required: [hours]
+      properties:
+        hours:
+          type: array
+          minItems: 1
+          maxItems: 288
+          items: { $ref: '#/components/schemas/HourlyRow' }
+
+    IngestResult:
+      type: object
+      additionalProperties: false
+      required: [accepted, duplicates]
+      properties:
+        accepted: { type: integer, minimum: 0, description: 'Items newly stored.' }
+        duplicates: { type: integer, minimum: 0, description: 'Items already stored (unchanged).' }
+
+    Energy:
+      type: object
+      additionalProperties: false
+      description: kWh from counter differences in the bucket (ADR-0006); null if the counter has no data.
+      properties:
+        pv_kwh: { type: [number, 'null'], format: double }
+        import_kwh: { type: [number, 'null'], format: double }
+        export_kwh: { type: [number, 'null'], format: double }
+        batt_chg_kwh: { type: [number, 'null'], format: double }
+        batt_dis_kwh: { type: [number, 'null'], format: double }
+
+    TelemetryBucket:
+      description: |
+        Aggregate of one 1h or 1d bucket. `*_avg` (incl. `ext`) = time-weighted mean of the
+        averages of the rows used: a 5-minute window weighs 1, a hourly row weighs 12; rows with a
+        null value are skipped per metric (all-window bucket: plain mean of window averages;
+        ADR-0009 T-338). `*_max` = max of row maxima, `soc_pct_last` and `*_kwh_total` = last
+        value in bucket, `energy` from counters. For hours without windows but with an hourly row
+        the hourly row is used and `hourly_only` is true (1h); 1d buckets report
+        `hourly_only_hours`. "Without windows" means no window in the whole stored hour, not only
+        inside [from, to). A hourly row counts wholly toward the bucket of its `hour_start` (never
+        split; ADR-0009 T-313 rules).
+      allOf:
+        - { $ref: '#/components/schemas/MetricValues' }
+        - type: object
+          required: [ts, windows, hourly_only, hourly_only_hours, energy]
+          properties:
+            ts: { $ref: '#/components/schemas/Timestamp' }
+            windows: { type: integer, minimum: 0, description: 'Number of 5-minute windows used.' }
+            hourly_only: { type: boolean, description: 'True when the bucket has no 5-minute windows.' }
+            hourly_only_hours: { type: integer, minimum: 0 }
+            energy: { $ref: '#/components/schemas/Energy' }
+      unevaluatedProperties: false
+
+    TelemetrySeries:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, step, from, to]
+      description: Exactly one of `windows` (step 5m) or `buckets` (1h/1d) is present.
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        step: { type: string, enum: [5m, 1h, 1d] }
+        tz: { type: string }
+        from: { $ref: '#/components/schemas/Timestamp' }
+        to: { $ref: '#/components/schemas/Timestamp' }
+        windows:
+          type: array
+          items: { $ref: '#/components/schemas/StoredWindow' }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/TelemetryBucket' }
+
+    Plan:
+      type: object
+      additionalProperties: false
+      description: Energy Compass plan, one element per step (lengths equal). Flows in kWh per step; soc in kWh at step end; mc in currency/kWh.
+      required: [g_in, g_out, b_c, b_d, soc]
+      properties:
+        g_in: { type: array, items: { type: number } }
+        g_out: { type: array, items: { type: number } }
+        b_c: { type: array, items: { type: number } }
+        b_d: { type: array, items: { type: number } }
+        curt: { type: array, items: { type: number } }
+        soc: { type: array, items: { type: number } }
+        mc: { type: array, items: { type: [number, 'null'] } }
+
+    SolveInputs:
+      type: object
+      additionalProperties: false
+      description: Inputs of the solve per step (same length as the plan). Prices in PLN/kWh, energy in kWh per step.
+      required: [buy, sell, pv, load, soc0_kwh]
+      properties:
+        buy: { type: array, items: { type: number } }
+        sell: { type: array, items: { type: number } }
+        pv: { type: array, items: { type: number } }
+        load: { type: array, items: { type: number } }
+        soc0_kwh: { type: number }
+        params:
+          type: object
+          description: LP parameters snapshot (free-form; values are numbers, strings, booleans or null - checked server-side).
+          additionalProperties: true
+
+    Solve:
+      type: object
+      additionalProperties: false
+      required: [solve_ts, horizon_start, step_s, state, consumption_level, solver_status, plan, inputs]
+      properties:
+        solve_ts: { $ref: '#/components/schemas/Timestamp' }
+        horizon_start: { $ref: '#/components/schemas/Timestamp' }
+        step_s:
+          type: integer
+          minimum: 300
+          maximum: 86400
+          multipleOf: 300
+          description: Plan step in seconds (900 for RCE 15 min, 3600 for hourly); always explicit (invariant 8).
+        state: { type: string, enum: [CHARGE_GRID, CHARGE_PV, SELF_CONSUME, DISCHARGE_GRID, HOLD, CURTAIL] }
+        consumption_level: { type: string, enum: [BOOST, CHEAP, NORMAL, LIMIT] }
+        mc_now: { type: [number, 'null'] }
+        expected_cost_24h: { type: [number, 'null'] }
+        solver_status: { type: string, maxLength: 64 }
+        solve_ms: { type: [integer, 'null'], minimum: 0 }
+        plan: { $ref: '#/components/schemas/Plan' }
+        inputs: { $ref: '#/components/schemas/SolveInputs' }
+
+    SolveBatch:
+      type: object
+      additionalProperties: false
+      required: [solves]
+      properties:
+        solves:
+          type: array
+          minItems: 1
+          maxItems: 288
+          items: { $ref: '#/components/schemas/Solve' }
+
+    StoredSolve:
+      allOf:
+        - { $ref: '#/components/schemas/Solve' }
+        - type: object
+          required: [received_at, attributes_valid_from]
+          properties:
+            received_at: { $ref: '#/components/schemas/Timestamp' }
+            attributes_valid_from:
+              description: valid_from of the attribute version in force at solve_ts (null if none).
+              oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+      unevaluatedProperties: false
+
+    SolveList:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, solves]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        solves:
+          type: array
+          items: { $ref: '#/components/schemas/StoredSolve' }
+
+    AttrsV1:
+      type: object
+      additionalProperties: false
+      description: |
+        Site attributes, schema version 1. No coordinates, addresses, serial numbers or display
+        names (invariant 5): any unknown field → 422 `unknown_field`; string values (any depth,
+        incl. `tariff.*`, `compass_version`, `inverter_model`) that look like coordinates, a street
+        address or a serial number → 422 `forbidden_identifying_data`. Street-address rules
+        (PL postal code + place, street keyword + name + house number) and must-pass/must-flag
+        examples: docs/adr/0012-street-address-detection-in-attrs.md. Location only as H3 res 6.
+      required: [pv_kwp, battery_kwh_nominal, battery_kwh_usable, compass_version]
+      properties:
+        pv_kwp: { type: number, exclusiveMinimum: 0, maximum: 1000 }
+        inverter_model: { type: [string, 'null'], maxLength: 64, pattern: '^[A-Za-z0-9 ._/-]*$' }
+        battery_kwh_nominal: { type: number, minimum: 0, maximum: 10000 }
+        battery_kwh_usable: { type: number, minimum: 0, maximum: 10000 }
+        soc_floor_pct: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        lp:
+          type: object
+          additionalProperties: false
+          properties:
+            eta_c: { type: number, exclusiveMinimum: 0, maximum: 1 }
+            eta_d: { type: number, exclusiveMinimum: 0, maximum: 1 }
+            c_deg: { type: number, minimum: 0 }
+            D: { type: number, minimum: 0 }
+            boost_threshold: { type: [number, 'null'] }
+            cheap_threshold: { type: [number, 'null'] }
+            limit_threshold: { type: [number, 'null'] }
+            terminal_soc_mode: { type: string, enum: [preserve_initial, value] }
+        tariff:
+          type: object
+          additionalProperties: false
+          properties:
+            provider: { type: string, maxLength: 64 }
+            buy_formula: { type: string, maxLength: 256 }
+            sell_formula: { type: string, maxLength: 256 }
+        location:
+          type: [object, 'null']
+          additionalProperties: false
+          required: [h3_res6]
+          properties:
+            h3_res6:
+              type: string
+              description: H3 cell index at resolution 6 (hex, 15 chars, starts with 86). Resolution checked server-side.
+              pattern: '^86[0-9a-f]{13}$'
+        compass_version: { type: string, maxLength: 32 }
+
+    AttributeSnapshot:
+      type: object
+      additionalProperties: false
+      required: [valid_from, schema_version, attrs]
+      properties:
+        valid_from:
+          $ref: '#/components/schemas/Timestamp'
+        schema_version: { type: integer, enum: [1] }
+        attrs: { $ref: '#/components/schemas/AttrsV1' }
+
+    AttributeVersion:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, valid_from, received_at, schema_version, attrs, attrs_hash]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        valid_from: { $ref: '#/components/schemas/Timestamp' }
+        received_at: { $ref: '#/components/schemas/Timestamp' }
+        schema_version: { type: integer }
+        attrs: { $ref: '#/components/schemas/AttrsV1' }
+        attrs_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: sha256 hex of the RFC 8785 canonical JSON of `attrs`.
