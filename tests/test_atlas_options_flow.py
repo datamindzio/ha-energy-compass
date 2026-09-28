@@ -2,16 +2,23 @@
 the §B2 form-error table, WARNING-per-failure log hygiene, and settings preservation.
 """
 
+import functools
 import logging
 
+import httpx
 import pytest
 import voluptuous as vol
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.energy_compass.atlas import bridge as bridge_module
 from custom_components.energy_compass.atlas.storage import environment_dir
 from custom_components.energy_compass.atlas_env import ENROLLMENT_SECRETS
 from custom_components.energy_compass.atlas_sink import sink as atlas_sink_module
-from custom_components.energy_compass.atlas_sink.sink import RegistrationError
+from custom_components.energy_compass.atlas_sink.identity import Identity
+from custom_components.energy_compass.atlas_sink.sink import (
+    RegistrationError,
+    SinkThread,
+)
 from custom_components.energy_compass.settings import default_configuration
 
 STAGING_SECRET = ENROLLMENT_SECRETS["staging"]
@@ -131,11 +138,25 @@ async def test_successful_registration_saves_with_the_baked_secret_and_never_log
         calls.append((directory, base_url, secret))
         from pathlib import Path
 
-        Path(directory).mkdir(parents=True, exist_ok=True)
+        # Like the real register(): the key is persisted before site.json, so the
+        # sink started by the save-triggered reload finds a complete identity.
+        Identity(Path(directory))._ensure_key()
         (Path(directory) / "site.json").write_text('{"site_id": "abc"}')
         return "abc"
 
     monkeypatch.setattr(atlas_sink_module, "register", _register)
+    # The save reloads the entry and the genuine SinkThread starts on the registered
+    # identity. Keep it off the network (no DNS in tests) and make it stop promptly on
+    # unload instead of after its default 30 s tick.
+    monkeypatch.setattr(
+        bridge_module,
+        "SinkThread",
+        functools.partial(
+            SinkThread,
+            tick_s=0.05,
+            transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+        ),
+    )
     entry = _entry(hass)
     with caplog.at_level(logging.DEBUG):
         result = await _open_energy_atlas(hass, entry)
@@ -157,6 +178,7 @@ async def test_successful_registration_saves_with_the_baked_secret_and_never_log
     # first solve finish, then unload, so no Store write timer outlives the test.
     await hass.async_block_till_done(wait_background_tasks=True)
     assert await hass.config_entries.async_unload(entry.entry_id)
+    assert "sink IO loop crashed" not in caplog.text
 
 
 async def test_form_has_no_secret_field(
