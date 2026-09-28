@@ -179,6 +179,26 @@ def test_soc_unit_mismatch_not_fed():
     assert "soc_pct" not in resolve_feed(config, states, NOW)
 
 
+def test_load_power_unit_mismatch_not_fed():
+    # Same check as runtime._soc_value/backfill_service._load_stat: entity reports W,
+    # sources.load.history_unit says kW -> must not be silently fed 1000x too high.
+    config = default_configuration("EUR", "UTC")
+    _recorder_load(config, history_unit="kW")
+    states = {"sensor.load": _state("500", "W")}
+    assert "load_w" not in resolve_feed(config, states, NOW)
+
+
+def test_load_power_matching_or_unknown_unit_is_not_penalized():
+    config = default_configuration("EUR", "UTC")
+    _recorder_load(config, history_unit="kW")
+    assert (
+        resolve_feed(config, {"sensor.load": _state("1.2", "kW")}, NOW)["load_w"]
+        == 1200.0
+    )
+    # No unit_of_measurement at all -> not rejected (same leniency resolve_numeric gives).
+    assert resolve_feed(config, {"sensor.load": _state("1.2")}, NOW)["load_w"] == 1200.0
+
+
 def test_load_power_without_history_unit_not_fed():
     config = default_configuration("EUR", "UTC")
     _recorder_load(config)

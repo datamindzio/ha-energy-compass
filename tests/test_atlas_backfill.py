@@ -161,6 +161,36 @@ def test_atlas_row_skips_a_statistic_whose_unit_does_not_match_the_setting():
     assert row["grid_import_w_avg"] == 500.0  # unaffected sibling measurement
 
 
+def test_atlas_row_skips_a_load_statistic_whose_unit_does_not_match_history_unit():
+    # `_full_config` sets sources.load.history_unit "kW"; a statistic actually
+    # recorded in "W" must not be silently treated as kW (same rule as pv_power above).
+    config = _full_config()
+    entity_at = {"sensor.load": {"mean": 1.1, "max": 1.5}, "sensor.pv": {"mean": 2.0}}
+    row = _atlas_row(config, entity_at, {"sensor.load": "W"})
+    assert "load_w_avg" not in row
+    assert "load_w_max" not in row
+    assert row["pv_w_avg"] == 2000.0  # unaffected sibling measurement
+
+
+def test_atlas_row_skips_a_soc_statistic_whose_unit_does_not_match_soc_options_unit():
+    # default soc_options.unit is "%"; a statistic recorded in "kWh" must be rejected.
+    config = _full_config()
+    entity_at = {"sensor.soc": {"mean": 55}, "sensor.pv": {"mean": 2.0}}
+    row = _atlas_row(config, entity_at, {"sensor.soc": "kWh"})
+    assert "soc_pct_last" not in row
+    assert row["pv_w_avg"] == 2000.0  # unaffected sibling measurement
+
+
+def test_atlas_row_skips_an_energy_counter_statistic_whose_unit_does_not_match():
+    # `_full_config` binds pv_energy with unit "kWh"; a statistic recorded in "Wh"
+    # must not be silently treated as kWh (same rule as the power measurements).
+    config = _full_config()
+    entity_at = {"sensor.pv_energy": {"state": 12.3}, "sensor.pv": {"mean": 2.0}}
+    row = _atlas_row(config, entity_at, {"sensor.pv_energy": "Wh"})
+    assert "pv_kwh_total" not in row
+    assert row["pv_w_avg"] == 2000.0  # unaffected sibling measurement
+
+
 def test_atlas_row_matching_or_unknown_unit_is_not_penalized():
     config = _full_config()
     entity_at = {"sensor.pv": {"mean": 2.0}}

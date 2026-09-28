@@ -28,6 +28,7 @@ from .mapping import (
     _LOAD_POWER_SCALE,
     _bound,
     _load_power_binding,
+    _unit_matches,
     bound_metric,
     tracked_entity_ids,
 )
@@ -152,13 +153,6 @@ def _merge_rows(
         if atlas_row:
             merged.append({"start": _iso(ts), **atlas_row})
     return merged
-
-
-def _unit_matches(actual: str | None, expected: str | None) -> bool:
-    """Same rule as `config_models.resolve_numeric`/`runtime._soc_value`: only reject
-    when both sides are known and disagree; an entity with no recorded unit is not
-    penalized (matches the live feed's leniency when `unit_of_measurement` is absent)."""
-    return not (expected and actual and actual != expected)
 
 
 def _within_bounds(value: float, minimum: float | None, maximum: float | None) -> bool:

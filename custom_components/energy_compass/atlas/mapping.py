@@ -99,14 +99,22 @@ def _resolve_energy_kwh(config: dict, states: dict, now, name: str) -> float | N
         return None
 
 
+def _unit_matches(actual: str | None, expected: str | None) -> bool:
+    """Same rule as `config_models.resolve_numeric`/`runtime._soc_value`: only reject
+    when both sides are known and disagree; an entity with no recorded unit is not
+    penalized (matches the live feed's leniency when `unit_of_measurement` is absent).
+    Shared with `backfill_service.py` (ADR-0019 §8): the same unit-parity rule applies
+    to a live-fed value and to a recorder-statistics aggregate for the same key."""
+    return not (expected and actual and actual != expected)
+
+
 def _resolve_load_w(config: dict, states: dict) -> float | None:
     binding = _load_power_binding(config)
     if binding is None:
         return None
+    entity_binding = EntityBinding.from_dict(binding)
     try:
-        value = finite(
-            resolve_binding(states, EntityBinding.from_dict(binding)), "load power"
-        )
+        value = finite(resolve_binding(states, entity_binding), "load power")
     except InputError:
         return None
     load = config.get("sources", {}).get("load", {})
@@ -114,6 +122,15 @@ def _resolve_load_w(config: dict, states: dict) -> float | None:
     scale = _LOAD_POWER_SCALE.get(load.get("history_unit"))
     if scale is None:
         return None
+    if entity_binding.attribute is None:
+        # Same read as the runtime/backfill: unit_of_measurement mismatch -> not fed.
+        actual = (
+            states[entity_binding.entity_id]
+            .get("attributes", {})
+            .get("unit_of_measurement")
+        )
+        if not _unit_matches(actual, load.get("history_unit")):
+            return None
     sign = load.get("history_sign", 1.0)
     return value * scale * sign
 
