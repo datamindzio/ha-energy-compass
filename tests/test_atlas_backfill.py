@@ -307,6 +307,51 @@ async def test_service_feeds_merged_statistics_to_the_running_sink(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_service_skips_entries_that_were_never_loaded(
+    recorder_mock, hass, enable_custom_integrations, monkeypatch
+):
+    """A config entry that is only `add_to_hass`-ed (never `async_setup`) has no
+    `runtime_data` attribute at all (HA sets it in `async_setup_entry`, deletes it on
+    unload); the service must skip it, not raise `AttributeError`."""
+    never_loaded = MockConfigEntry(
+        domain=DOMAIN, data=default_configuration("EUR", "UTC"), version=2
+    )
+    never_loaded.add_to_hass(hass)
+
+    config = _full_config()
+    on_entry = _registered_entry(hass, config)
+    assert await hass.config_entries.async_setup(on_entry.entry_id)
+    await hass.async_block_till_done()
+
+    monkeypatch.setattr(
+        backfill_service,
+        "statistics_during_period",
+        lambda *a, **k: {},
+    )
+    await hass.services.async_call(DOMAIN, SERVICE_ATLAS_BACKFILL, {}, blocking=True)
+
+    assert len(_FakeSinkThread.instances) == 1  # only the loaded, registered entry
+    assert await hass.config_entries.async_unload(on_entry.entry_id)
+
+
+async def test_service_raises_when_only_never_loaded_entries_exist(
+    recorder_mock, hass, enable_custom_integrations
+):
+    from homeassistant.exceptions import ServiceValidationError
+    from homeassistant.setup import async_setup_component
+
+    never_loaded = MockConfigEntry(
+        domain=DOMAIN, data=default_configuration("EUR", "UTC"), version=2
+    )
+    never_loaded.add_to_hass(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, SERVICE_ATLAS_BACKFILL, {}, blocking=True
+        )
+
+
 async def test_service_skips_entries_not_enabled_or_not_registered(
     recorder_mock, hass, enable_custom_integrations, monkeypatch
 ):

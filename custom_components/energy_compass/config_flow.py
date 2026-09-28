@@ -252,7 +252,8 @@ class Editor(SourceEditor):
             environment = user_input["environment"]
             pv_kwp = user_input.get("pv_kwp")
             if user_input.get("forget_site"):
-                bridge = getattr(self.config_entry.runtime_data, "atlas", None)
+                runtime_data = getattr(self.config_entry, "runtime_data", None)
+                bridge = getattr(runtime_data, "atlas", None)
                 if bridge is not None and bridge.environment == environment:
                     await bridge.async_stop()
                 await self.hass.async_add_executor_job(

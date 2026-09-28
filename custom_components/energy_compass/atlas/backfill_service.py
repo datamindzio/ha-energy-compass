@@ -65,10 +65,14 @@ async def _async_handle_backfill(call: ServiceCall) -> None:
 
 
 def _enabled_registered_coordinators(hass: HomeAssistant) -> list:
-    """Every loaded entry whose Atlas sink is actually running (enabled + registered)."""
+    """Every loaded entry whose Atlas sink is actually running (enabled + registered).
+
+    `runtime_data` only exists on a loaded entry (HA deletes it on unload); a
+    disabled or not-yet-loaded entry must not raise, just be skipped.
+    """
     coordinators = []
     for entry in hass.config_entries.async_entries(DOMAIN):
-        coordinator = entry.runtime_data
+        coordinator = getattr(entry, "runtime_data", None)
         if (
             coordinator is not None
             and coordinator.atlas is not None
@@ -180,7 +184,9 @@ def _soc_stat(config: dict, entity_at: dict) -> float | None:
     capacity_kwh = config.get("settings", {}).get("capacity_kwh")
     try:
         capacity_kwh = float(capacity_kwh)
-    except TypeError, ValueError:
+    except TypeError:
+        capacity_kwh = 0.0
+    except ValueError:
         capacity_kwh = 0.0
     if unit == "kWh" and capacity_kwh <= 0:
         return None

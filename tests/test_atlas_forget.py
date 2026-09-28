@@ -3,9 +3,13 @@
 from typing import ClassVar
 
 import pytest
+from homeassistant.exceptions import ServiceValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.energy_compass.atlas import bridge as bridge_module
+from custom_components.energy_compass.atlas.backfill_service import (
+    SERVICE_ATLAS_BACKFILL,
+)
 from custom_components.energy_compass.atlas.storage import environment_dir
 from custom_components.energy_compass.atlas_sink import sink as atlas_sink_module
 from custom_components.energy_compass.settings import DOMAIN, default_configuration
@@ -155,6 +159,32 @@ async def test_forget_then_save_without_secret_is_a_form_error(
     assert result["errors"] == {"base": "invalid_input"}
     directory = environment_dir(hass, entry.entry_id, "staging")
     assert not directory.exists()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_forget_then_save_without_secret_detaches_the_sink(
+    recorder_mock, hass, enable_custom_integrations
+):
+    """forget_site's async_stop() must leave `bridge.sink` unset, not just stopped:
+    otherwise a save that then errors (no secret) leaves a dead sink wired up, and
+    atlas_backfill would silently enqueue into it instead of raising."""
+    entry = _registered_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await _open_energy_atlas(hass, entry)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"enabled": True, "environment": "staging", "pv_kwp": 5.0, "forget_site": True},
+    )
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "invalid_input"}
+
+    assert entry.runtime_data.atlas.sink is None
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, SERVICE_ATLAS_BACKFILL, {}, blocking=True
+        )
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
