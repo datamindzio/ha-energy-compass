@@ -1586,6 +1586,24 @@ wysyłane po odzyskaniu łączności; własny plan Compass nie jest tym dotknię
 działa na własnym wątku w tle i nigdy nie dzieli harmonogramu z optymalizatorem. Diagnostyka
 (<strong>Urządzenia i usługi → Energy Compass → ⋮ → Pobierz diagnostykę</strong>) zawiera sekcję <code>energy_atlas</code>:
 włączenie, środowisko, stan rejestracji, głębokość kolejki i ewentualnie wstrzymaną wysyłkę.</p>
+<p><strong>Odzyskiwanie: zapomnij witrynę</strong>: jeśli klucz witryny został unieważniony lub koliduje z innym
+źródłem, zaznacz <strong>Zapomnij witrynę w tym środowisku</strong> na tym samym formularzu Energy Atlas i
+zapisz. Usuwa to klucz i zakolejkowane dane wybranego środowiska tylko na tym urządzeniu — sama
+witryna nie jest usuwana po stronie kolektora, operator może ją osobno unieważnić — więc kolejny
+zapis bez sekretu pokazuje ten sam błąd "niezarejestrowane" co przy pierwszej konfiguracji, a zapis
+z nowym sekretem rejestracyjnym rejestruje tam nową witrynę.</p>
+<p><strong>Pokaż dowód własności</strong>: gdy witryna jest włączona i zarejestrowana, menu opcji oferuje
+dodatkową pozycję, <strong>Energy Atlas: pokaż dowód własności</strong>. Generuje ona krótkotrwały podpisany
+dowód (ważny 15 minut, jednorazowy) i wyświetla go do wysłania botowi Energy Atlas, aby powiązać
+witrynę z kontem Datamindz. Dowód jest tylko wyświetlany — nigdy nie jest zapisywany i nigdy nie
+pojawia się w opcjach, diagnostyce ani logach.</p>
+<p><strong>Uzupełnianie historii</strong>: usługa <strong>Energy Atlas: uzupełnij historię</strong>
+(<code>energy_compass.atlas_backfill</code>, opcjonalne pole <strong>Dni</strong>, 1–3650, domyślnie: cała dostępna
+historia) wysyła historyczną telemetrię z rejestratora Home Assistant dla każdego powiązanego
+źródła — statystyki 5-minutowe tam, gdzie rejestrator je jeszcze przechowuje, statystyki godzinowe
+dla starszej historii — do każdego wpisu, który obecnie ma włączone wysyłanie i zarejestrowaną
+witrynę, stosując te same korekty wartości co wysyłka na żywo. Kończy się błędem, jeśli żaden wpis
+obecnie nie kwalifikuje się.</p>
 <h2 id="słownik-kodów-powodów">Słownik kodów powodów</h2>
 <h3 id="powody-pokrycia--jakości-atrybuty-reason-reasons">Powody pokrycia / jakości (atrybuty <code>reason</code>, <code>reasons</code>)</h3>
 <section class="table-scroll"><table>

@@ -27,3 +27,10 @@ def forget_entry(hass, entry_id: str) -> None:
     path = entry_dir(hass, entry_id)
     if path.exists():
         shutil.rmtree(path)
+
+
+def forget_environment(hass, entry_id: str, environment: str) -> None:
+    """Remove one environment's site key (options step "Forget site", ADR-0019 §9 recovery)."""
+    path = environment_dir(hass, entry_id, environment)
+    if path.exists():
+        shutil.rmtree(path)

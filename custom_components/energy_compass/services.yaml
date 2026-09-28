@@ -1,0 +1,11 @@
+atlas_backfill:
+  fields:
+    days:
+      required: false
+      example: 30
+      selector:
+        number:
+          min: 1
+          max: 3650
+          step: 1
+          mode: box

@@ -721,6 +721,7 @@
           "notifications": "Notification preferences",
           "helpers": "Numeric helper bindings",
           "energy_atlas": "Energy Atlas (optional)",
+          "energy_atlas_proof": "Energy Atlas: show ownership proof",
           "preview": "Preview and save"
         }
       },
@@ -823,13 +824,19 @@
           "enabled": "Send to Energy Atlas",
           "environment": "Environment",
           "pv_kwp": "PV capacity (kWp)",
-          "enrollment_secret": "Enrollment secret"
+          "enrollment_secret": "Enrollment secret",
+          "forget_site": "Forget site on this environment"
         },
         "data_description": {
           "environment": "Staging validates the data flow; production is the live collector. Switching keeps each environment's own site and queued data.",
           "pv_kwp": "Installed PV capacity in kWp, 0-1000. Not derived from other Compass settings.",
-          "enrollment_secret": "One-time secret from the operator for the selected environment. Only needed the first time this environment is enabled; ignored once registered."
+          "enrollment_secret": "One-time secret from the operator for the selected environment. Only needed the first time this environment is enabled; ignored once registered.",
+          "forget_site": "Deletes the selected environment's site key and queued data on this device. Recovery from a revoked key or a conflict; the site itself is not deleted at the collector. A new enrollment secret is required to register again."
         }
+      },
+      "energy_atlas_proof": {
+        "title": "Energy Atlas ownership proof",
+        "description": "Send this to the Energy Atlas bot within 15 minutes; it is single-use and not stored anywhere:\n\n{proof}"
       }
     },
     "error": {
@@ -1215,6 +1222,23 @@
     "source_removed": {
       "title": "Source removed",
       "description": "Reconfigure the selected sources for {name}."
+    }
+  },
+  "services": {
+    "atlas_backfill": {
+      "name": "Energy Atlas: backfill history",
+      "description": "Send past telemetry from Home Assistant's recorder history to Energy Atlas for every entry with Atlas enabled and registered.",
+      "fields": {
+        "days": {
+          "name": "Days",
+          "description": "How many days of history to send, counting back from now. Leave empty to send all available history."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "atlas_backfill_not_enabled": {
+      "message": "No Energy Compass entry has Energy Atlas enabled and registered; open Options → Energy Atlas first."
     }
   }
 }

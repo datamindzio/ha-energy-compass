@@ -51,8 +51,11 @@ W **Planowaniu** opcja **Sell only PV** („sprzedawaj tylko PV”) jest domyśl
 Atlas firmy Datamindz do badań międzyinstalacyjnych, po włączeniu w **Konfiguruj → Energy Atlas** i
 zwalidowaniu na staging lub produkcji. Sekret rejestracyjny nigdy nie jest zapisywany — tylko
 wynikowy klucz witryny, przechowywany osobno dla każdego środowiska w
-`.storage/energy_compass_atlas/`. Zobacz [Energy Atlas](docs/guide.pl.md#energy-atlas-opcjonalnie),
-co jest wysyłane i jak działa przełączanie środowisk.
+`.storage/energy_compass_atlas/`. Unieważniony lub kolidujący klucz odzyskuje się przez
+**Zapomnij witrynę w tym środowisku** na tym samym formularzu; pozycja opcji **Energy Atlas: pokaż
+dowód własności** pojawia się po zarejestrowaniu witryny; usługa `energy_compass.atlas_backfill`
+wysyła do niej historyczne dane z rejestratora. Zobacz [Energy Atlas](docs/guide.pl.md#energy-atlas-opcjonalnie),
+co jest wysyłane oraz jak działa przełączanie środowisk, odzyskiwanie i uzupełnianie historii.
 
 ## Licencja
 

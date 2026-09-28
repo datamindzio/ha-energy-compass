@@ -81,6 +81,10 @@ class AtlasBridge:
             self._unsub_stop = None
         if self.sink is not None:
             await self.hass.async_add_executor_job(self.sink.stop, 10)
+            # Detach so callers (add_solve/skip_solve/status, atlas_backfill's
+            # "enabled + registered" check) see a stopped bridge as unregistered
+            # instead of silently feeding a dead SinkThread queue (ADR-0019 §9).
+            self.sink = None
 
     def solve_builder(
         self, problem, plan, analysis, values, config, now

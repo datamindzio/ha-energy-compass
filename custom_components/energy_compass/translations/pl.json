@@ -721,6 +721,7 @@
           "notifications": "Ustawienia powiadomień",
           "helpers": "Pomocniki liczbowe",
           "energy_atlas": "Energy Atlas (opcjonalnie)",
+          "energy_atlas_proof": "Energy Atlas: pokaż dowód własności",
           "preview": "Podgląd i zapis"
         }
       },
@@ -823,13 +824,19 @@
           "enabled": "Wysyłaj do Energy Atlas",
           "environment": "Środowisko",
           "pv_kwp": "Moc instalacji PV (kWp)",
-          "enrollment_secret": "Sekret rejestracyjny"
+          "enrollment_secret": "Sekret rejestracyjny",
+          "forget_site": "Zapomnij witrynę w tym środowisku"
         },
         "data_description": {
           "environment": "Staging waliduje przepływ danych; produkcja to kolektor produkcyjny. Przełączenie zachowuje osobną witrynę i kolejkę danych każdego środowiska.",
           "pv_kwp": "Zainstalowana moc PV w kWp, 0-1000. Nie jest wyliczana z innych ustawień Compass.",
-          "enrollment_secret": "Jednorazowy sekret od operatora dla wybranego środowiska. Potrzebny tylko przy pierwszym włączeniu tego środowiska; ignorowany po rejestracji."
+          "enrollment_secret": "Jednorazowy sekret od operatora dla wybranego środowiska. Potrzebny tylko przy pierwszym włączeniu tego środowiska; ignorowany po rejestracji.",
+          "forget_site": "Usuwa klucz witryny i zakolejkowane dane wybranego środowiska na tym urządzeniu. Odzyskiwanie po unieważnieniu klucza lub konflikcie; sama witryna nie jest usuwana po stronie kolektora. Ponowna rejestracja wymaga nowego sekretu rejestracyjnego."
         }
+      },
+      "energy_atlas_proof": {
+        "title": "Dowód własności Energy Atlas",
+        "description": "Wyślij to do bota Energy Atlas w ciągu 15 minut; jest jednorazowy i nigdzie nie jest zapisywany:\n\n{proof}"
       }
     },
     "error": {
@@ -1215,6 +1222,23 @@
     "source_removed": {
       "title": "Źródło zostało usunięte",
       "description": "Zmień źródła instalacji {name}."
+    }
+  },
+  "services": {
+    "atlas_backfill": {
+      "name": "Energy Atlas: uzupełnij historię",
+      "description": "Wysyła historyczną telemetrię z rejestratora Home Assistant do Energy Atlas dla każdego wpisu z włączonym i zarejestrowanym Energy Atlas.",
+      "fields": {
+        "days": {
+          "name": "Dni",
+          "description": "Ile dni historii wysłać, licząc wstecz od teraz. Puste pole wysyła całą dostępną historię."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "atlas_backfill_not_enabled": {
+      "message": "Żaden wpis Energy Compass nie ma włączonego i zarejestrowanego Energy Atlas; najpierw otwórz Opcje → Energy Atlas."
     }
   }
 }

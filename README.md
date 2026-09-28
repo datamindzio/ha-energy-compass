@@ -60,8 +60,11 @@ Under **Planning**, **Sell only PV** defaults to on and limits total grid export
 **Energy Atlas** (optional, off by default) sends telemetry and solves to Datamindz's Energy Atlas
 service for cross-site research, once opted in under **Configure → Energy Atlas** and validated on
 staging or production. The enrollment secret is never stored, only the resulting site key, kept per
-environment under `.storage/energy_compass_atlas/`. See [Energy Atlas](docs/guide.en.md#energy-atlas-optional)
-for what is sent and how switching environments works.
+environment under `.storage/energy_compass_atlas/`. A revoked or conflicting key recovers with
+**Forget site on this environment** in the same form; an **Energy Atlas: show ownership proof**
+options entry appears once a site is registered; the `energy_compass.atlas_backfill` service sends
+past recorder history to it. See [Energy Atlas](docs/guide.en.md#energy-atlas-optional) for what is
+sent and how switching environments, recovery and backfill work.
 
 ## License
 

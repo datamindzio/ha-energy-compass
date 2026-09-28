@@ -217,17 +217,32 @@ class Editor(SourceEditor):
             # ADR-0019 §2: Atlas settings live in the options flow only, never in
             # setup or reconfigure.
             menu_options.append("energy_atlas")
+            from .atlas.storage import is_registered
+
+            atlas = self.config_entry.options.get("atlas", {})
+            if atlas.get("enabled") and is_registered(
+                self.hass, self.config_entry.entry_id, atlas.get("environment")
+            ):
+                # ADR-0019 §7: proof only offered when there is a site to prove.
+                menu_options.append("energy_atlas_proof")
         menu_options.append("preview")
         return self.async_show_menu(step_id="menu", menu_options=menu_options)
 
     async def async_step_energy_atlas(self, user_input=None):
         """Opt-in Atlas delivery settings (ADR-0019 §2/§4). Saves immediately, no preview.
 
+        Also carries the "Forget site on <environment>" recovery action (ADR-0019 §9):
+        a checked `forget_site` stops that environment's running sink (if it is the
+        one currently active for this entry) and deletes its directory *before* the
+        rest of the form is processed, so an enabled environment with no site left
+        falls straight into the existing "secret required" error path below and a
+        fresh secret in the same submission re-registers it.
+
         ADR-0019 §3: the glue and sink modules must not load with Atlas off, so
         `config_flow` (eagerly imported by HA for any config-flow integration)
         never references `.atlas`/`.atlas_sink` at module scope.
         """
-        from .atlas.storage import environment_dir, is_registered
+        from .atlas.storage import environment_dir, forget_environment, is_registered
         from .atlas_sink.sink import RegistrationError, register
 
         current = self.config_entry.options.get("atlas", {})
@@ -236,6 +251,17 @@ class Editor(SourceEditor):
             enabled = user_input["enabled"]
             environment = user_input["environment"]
             pv_kwp = user_input.get("pv_kwp")
+            if user_input.get("forget_site"):
+                runtime_data = getattr(self.config_entry, "runtime_data", None)
+                bridge = getattr(runtime_data, "atlas", None)
+                if bridge is not None and bridge.environment == environment:
+                    await bridge.async_stop()
+                await self.hass.async_add_executor_job(
+                    forget_environment,
+                    self.hass,
+                    self.config_entry.entry_id,
+                    environment,
+                )
             if enabled and pv_kwp is None:
                 errors["pv_kwp"] = "invalid_input"
             elif enabled and not is_registered(
@@ -282,9 +308,29 @@ class Editor(SourceEditor):
                             type=selector.TextSelectorType.PASSWORD
                         )
                     ),
+                    vol.Optional(
+                        "forget_site", default=False
+                    ): selector.BooleanSelector(),
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_energy_atlas_proof(self, user_input=None):
+        """Show a 15-minute, single-use ownership proof (ADR-0019 §7). Stores nothing."""
+        if user_input is not None:
+            return await self.async_step_menu()
+        from .atlas.storage import environment_dir
+        from .atlas_sink.sink import proof
+
+        atlas = self.config_entry.options.get("atlas", {})
+        environment = atlas["environment"]
+        directory = environment_dir(self.hass, self.config_entry.entry_id, environment)
+        jws = await self.hass.async_add_executor_job(proof, directory, dt_util.utcnow())
+        return self.async_show_form(
+            step_id="energy_atlas_proof",
+            data_schema=vol.Schema({}),
+            description_placeholders={"proof": jws},
         )
 
     async def async_step_installation(self, user_input=None):
