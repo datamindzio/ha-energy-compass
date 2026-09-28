@@ -171,6 +171,9 @@ async def test_diagnostics_never_carry_secrets_or_site_id(
     assert section["sink"]["registered"] is True
     assert "site_id" not in section["sink"]
     assert "site-1" not in str(section)
+    # ADR-0019 §7: the ownership proof itself is never stored, so it must not leak
+    # into diagnostics (or any other persisted state) either.
+    assert "proof" not in str(diagnostics).lower()
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 

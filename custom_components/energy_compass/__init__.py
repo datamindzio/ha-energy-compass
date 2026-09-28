@@ -3,11 +3,16 @@
 from copy import deepcopy
 
 from homeassistant.const import Platform
+from homeassistant.helpers import config_validation as cv
 
 from .coordinator import EnergyCompassCoordinator
-from .settings import default_configuration, explicit_strategy_fields
+from .settings import DOMAIN, default_configuration, explicit_strategy_fields
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT]
+
+# hassfest requires CONFIG_SCHEMA once a domain defines async_setup; this integration is
+# config-entry only (no YAML), same rule as e.g. `config_entry_only_config_schema` users.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass, config) -> bool:

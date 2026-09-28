@@ -9,9 +9,12 @@ from pathlib import Path
 import httpx
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.energy_compass.atlas.backfill_service import (
+    SERVICE_ATLAS_BACKFILL,
+)
 from custom_components.energy_compass.atlas.storage import entry_dir
 from custom_components.energy_compass.runtime import compute
-from custom_components.energy_compass.settings import default_configuration
+from custom_components.energy_compass.settings import DOMAIN, default_configuration
 
 
 def test_config_flow_module_never_imports_atlas_at_top_level():
@@ -81,5 +84,8 @@ async def test_default_options_start_no_thread_no_storage_no_network(
     assert entry.runtime_data.atlas is None
     assert not any(t.name == "atlas-sink" for t in threading.enumerate())
     assert not entry_dir(hass, entry.entry_id).exists()
+    # ADR-0019 §3 "registered but inert": the backfill service exists domain-wide
+    # even though Atlas is off everywhere.
+    assert hass.services.has_service(DOMAIN, SERVICE_ATLAS_BACKFILL)
 
     assert await hass.config_entries.async_unload(entry.entry_id)
