@@ -959,6 +959,27 @@ działa na własnym wątku w tle i nigdy nie dzieli harmonogramu z optymalizator
 (**Urządzenia i usługi → Energy Compass → ⋮ → Pobierz diagnostykę**) zawiera sekcję `energy_atlas`:
 włączenie, środowisko, stan rejestracji, głębokość kolejki i ewentualnie wstrzymaną wysyłkę.
 
+**Odzyskiwanie: zapomnij witrynę**: jeśli klucz witryny został unieważniony lub koliduje z innym
+źródłem, zaznacz **Zapomnij witrynę w tym środowisku** na tym samym formularzu Energy Atlas i
+zapisz. Usuwa to klucz i zakolejkowane dane wybranego środowiska tylko na tym urządzeniu — sama
+witryna nie jest usuwana po stronie kolektora, operator może ją osobno unieważnić — więc kolejny
+zapis bez sekretu pokazuje ten sam błąd "niezarejestrowane" co przy pierwszej konfiguracji, a zapis
+z nowym sekretem rejestracyjnym rejestruje tam nową witrynę.
+
+**Pokaż dowód własności**: gdy witryna jest włączona i zarejestrowana, menu opcji oferuje
+dodatkową pozycję, **Energy Atlas: pokaż dowód własności**. Generuje ona krótkotrwały podpisany
+dowód (ważny 15 minut, jednorazowy) i wyświetla go do wysłania botowi Energy Atlas, aby powiązać
+witrynę z kontem Datamindz. Dowód jest tylko wyświetlany — nigdy nie jest zapisywany i nigdy nie
+pojawia się w opcjach, diagnostyce ani logach.
+
+**Uzupełnianie historii**: usługa **Energy Atlas: uzupełnij historię**
+(`energy_compass.atlas_backfill`, opcjonalne pole **Dni**, 1–3650, domyślnie: cała dostępna
+historia) wysyła historyczną telemetrię z rejestratora Home Assistant dla każdego powiązanego
+źródła — statystyki 5-minutowe tam, gdzie rejestrator je jeszcze przechowuje, statystyki godzinowe
+dla starszej historii — do każdego wpisu, który obecnie ma włączone wysyłanie i zarejestrowaną
+witrynę, stosując te same korekty wartości co wysyłka na żywo. Kończy się błędem, jeśli żaden wpis
+obecnie nie kwalifikuje się.
+
 ## Słownik kodów powodów
 
 ### Powody pokrycia / jakości (atrybuty `reason`, `reasons`)

@@ -1574,6 +1574,23 @@ once it is reachable again; Compass's own plan is unaffected — Atlas delivery 
 background thread and never shares the optimizer's schedule. Diagnostics (<strong>Devices &amp; services →
 Energy Compass → ⋮ → Download diagnostics</strong>) report the <code>energy_atlas</code> section: enabled,
 environment, registration status, queue depth and any halted delivery.</p>
+<p><strong>Recovery: forget a site</strong>: if a site's key was revoked or conflicts with another source, check
+<strong>Forget site on this environment</strong> on the same Energy Atlas form and save. This deletes the
+selected environment's key and queued data on this device only — the site itself is not removed at
+the collector, an operator can revoke it separately — so the next save without a secret shows the
+same "not registered" error as first-time setup, and a save with a fresh enrollment secret
+registers a new site there.</p>
+<p><strong>Show ownership proof</strong>: once a site is enabled and registered, the options menu offers an extra
+entry, <strong>Energy Atlas: show ownership proof</strong>. It generates a short-lived signed proof (valid 15
+minutes, single use) and displays it to send to the Energy Atlas bot to link the site to your
+Datamindz account. The proof is shown only — it is never stored and never appears in options,
+diagnostics or logs.</p>
+<p><strong>Backfill history</strong>: the service <strong>Energy Atlas: backfill history</strong>
+(<code>energy_compass.atlas_backfill</code>, optional field <strong>Days</strong>, 1–3650, default: all available history)
+sends past telemetry from Home Assistant's own recorder history for every entity you have bound —
+5-minute statistics where the recorder still keeps them, hourly statistics for older history — to
+every entry that currently has sending enabled and a registered site, using the same value
+corrections as live delivery. It fails with an error if no entry currently qualifies.</p>
 <h2 id="reason-code-reference">Reason code reference</h2>
 <h3 id="coverage--quality-reasons-reason-reasons-attributes">Coverage / quality reasons (<code>reason</code>, <code>reasons</code> attributes)</h3>
 <section class="table-scroll"><table>

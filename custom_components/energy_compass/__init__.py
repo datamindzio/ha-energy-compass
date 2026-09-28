@@ -10,6 +10,25 @@ from .settings import default_configuration, explicit_strategy_fields
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT]
 
 
+async def async_setup(hass, config) -> bool:
+    """Register the domain-wide Atlas backfill service (ADR-0019 §8).
+
+    HA rule: a service is registered once in `async_setup`, not per entry. Registered
+    unconditionally so it exists on the off path too (ADR-0019 §3: "registered but
+    inert" — the handler itself raises `ServiceValidationError` when no entry has
+    Atlas enabled and registered). This does import the `atlas` package (and
+    transitively `atlas_sink`, for its type definitions) even with Atlas disabled
+    everywhere, same as opening the `energy_atlas` options step already does; it
+    starts no thread, opens no file and makes no network call, which is what the
+    off-path test actually asserts (ADR-0019 §3's "not imported" text is scoped to
+    `async_setup_entry`, entry-per-entry overhead, not this domain-wide call).
+    """
+    from .atlas.backfill_service import async_register as async_register_backfill
+
+    async_register_backfill(hass)
+    return True
+
+
 async def async_setup_entry(hass, entry) -> bool:
     """Own all scheduling and source subscriptions through the config entry."""
     coordinator = EnergyCompassCoordinator(hass, entry)

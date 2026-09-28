@@ -947,6 +947,26 @@ background thread and never shares the optimizer's schedule. Diagnostics (**Devi
 Energy Compass → ⋮ → Download diagnostics**) report the `energy_atlas` section: enabled,
 environment, registration status, queue depth and any halted delivery.
 
+**Recovery: forget a site**: if a site's key was revoked or conflicts with another source, check
+**Forget site on this environment** on the same Energy Atlas form and save. This deletes the
+selected environment's key and queued data on this device only — the site itself is not removed at
+the collector, an operator can revoke it separately — so the next save without a secret shows the
+same "not registered" error as first-time setup, and a save with a fresh enrollment secret
+registers a new site there.
+
+**Show ownership proof**: once a site is enabled and registered, the options menu offers an extra
+entry, **Energy Atlas: show ownership proof**. It generates a short-lived signed proof (valid 15
+minutes, single use) and displays it to send to the Energy Atlas bot to link the site to your
+Datamindz account. The proof is shown only — it is never stored and never appears in options,
+diagnostics or logs.
+
+**Backfill history**: the service **Energy Atlas: backfill history**
+(`energy_compass.atlas_backfill`, optional field **Days**, 1–3650, default: all available history)
+sends past telemetry from Home Assistant's own recorder history for every entity you have bound —
+5-minute statistics where the recorder still keeps them, hourly statistics for older history — to
+every entry that currently has sending enabled and a registered site, using the same value
+corrections as live delivery. It fails with an error if no entry currently qualifies.
+
 ## Reason code reference
 
 ### Coverage / quality reasons (`reason`, `reasons` attributes)

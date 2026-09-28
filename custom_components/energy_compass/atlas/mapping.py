@@ -142,8 +142,12 @@ def _resolve_soc_pct(config: dict, states: dict) -> float | None:
     return soc_percent(value, unit, capacity_kwh)
 
 
-def _bounded(key: str, value: float) -> float | None:
-    """Contract bounds of `MetricValues` (ADR-0019 Amendment T-402); None = not fed."""
+def bound_metric(key: str, value: float) -> float | None:
+    """Contract bounds of `MetricValues` (ADR-0019 Amendment T-402); None = not fed.
+
+    Shared with `backfill_service.py` (ADR-0019 §8): the same clamp/drop rule applies
+    to a live-fed value and to a recorder-statistics aggregate for the same key.
+    """
     if not math.isfinite(value):
         return None
     if key in ("grid_import_w", "grid_export_w"):
@@ -163,7 +167,7 @@ def resolve_feed(config: dict, states: dict, now) -> dict[str, float]:
     """
     feed = {}
     for key, value in _resolve_raw(config, states, now).items():
-        value = _bounded(key, value)
+        value = bound_metric(key, value)
         if value is not None:
             feed[key] = value
     return feed
