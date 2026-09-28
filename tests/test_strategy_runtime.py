@@ -735,3 +735,29 @@ def test_peak_reserve_uses_grid_charge_ceiling_as_threshold(monkeypatch):
     assert set(problem.peak_reserve_window) == {0}
     assert problem.peak_reserve_kwh[0] == 7.0
     assert "peak_reserve_inactive" not in quality["warnings"]
+
+
+def test_result_reports_a_proven_plan_by_default():
+    result = compute(default_configuration("EUR", "UTC"), {}, _NOW)
+    assert result["time_limited"] is False
+    assert result["mip_gap"] == 0.0
+
+
+def test_base_plan_accepts_a_time_limited_incumbent(monkeypatch):
+    from dataclasses import replace
+
+    from custom_components.energy_compass import runtime
+
+    calls = []
+    original = runtime.solve
+
+    def limited(problem, **kwargs):
+        calls.append(kwargs)
+        return replace(original(problem, **kwargs), time_limited=True, mip_gap=0.0123)
+
+    monkeypatch.setattr(runtime, "solve", limited)
+    result = compute(default_configuration("EUR", "UTC"), {}, _NOW)
+    assert calls[0]["accept_incumbent"] is True
+    assert result["status"] == "ready"
+    assert result["time_limited"] is True
+    assert result["mip_gap"] == pytest.approx(0.0123)

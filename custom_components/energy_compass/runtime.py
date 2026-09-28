@@ -912,6 +912,7 @@ def compute(config: dict, states: dict, now: datetime, **history) -> dict:
     plan = solve(
         problem,
         time_limit_s=min(values["solve_time_limit_s"], values["total_time_limit_s"]),
+        accept_incumbent=True,
     )
     remaining = values["total_time_limit_s"] - (perf_counter() - started)
     if remaining <= 0:
@@ -1017,6 +1018,8 @@ def compute(config: dict, states: dict, now: datetime, **history) -> dict:
         "strategy": problem.strategy,
         "autonomy_shortfall_kwh": round(plan.autonomy_shortfall_kwh, 3),
         "peak_reserve_shortfall_kwh": round(plan.peak_reserve_shortfall_kwh, 3),
+        "time_limited": plan.time_limited,
+        "mip_gap": None if plan.mip_gap is None else round(plan.mip_gap, 4),
         "cap_violation_kwh": round(plan.cap_violation_kwh, 3),
         "strategy_released": problem.strategy_changed,
         "generated_at": now.isoformat(),

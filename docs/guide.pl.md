@@ -4,7 +4,7 @@
 
 Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
-**0.1.26**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
+**0.1.27**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
 instalację i dashboardy — [przewodnik instalacji](installation.md) (EN).
 
 Energy Compass jest **doradczy**. Liczy plan i publikuje go jako encje Home Assistant. Nigdy nie
@@ -68,7 +68,9 @@ Każde obliczenie przebiega tak:
    **strategii**.
 3. **Rozwiązanie planu bazowego.** Mieszany program liniowy minimalizuje koszt (plus wagi
    strategii) przy ograniczeniach bilansu energii, baterii, sieci, minimalnego czasu trybu i
-   polityk eksportu/ładowania. Publikowane jest wyłącznie udowodnione optimum.
+   polityk eksportu/ładowania. Publikowane jest udowodnione optimum; gdy wcześniej skończy się
+   `solve_time_limit_s`, publikowane jest najlepsze dotąd znalezione, zwalidowane rozwiązanie
+   oznaczone `time_limited` razem z jego `mip_gap`.
 4. **Próby zużycia.** Dla każdego przedziału wyświetlania solver liczy plan jeszcze raz z
    dodatkowym 1 kWh obciążenia; różnica kosztu to *koszt krańcowy jednej kWh więcej*, klasyfikowany
    na poziom zużycia.
@@ -161,7 +163,7 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
     [*] --> calculating: załadowanie integracji
-    calculating --> ready: opublikowano udowodnione optimum
+    calculating --> ready: opublikowano zwalidowany plan
     calculating --> invalid_input: walidacja wejść lub konfiguracji nieudana
     calculating --> timeout: solver lub worker przekroczył budżet czasu
     calculating --> infeasible: żaden plan nie spełnia ograniczeń
@@ -176,10 +178,10 @@ stateDiagram-v2
 
 | Stan | Etykieta EN / PL | Kiedy występuje | Co pozostaje opublikowane |
 | --- | --- | --- | --- |
-| `ready` | Ready / Gotowy | Ostatnie obliczenie dało udowodnione optimum planu bazowego i zostało opublikowane. | Nowy plan. `ready` nie gwarantuje pełnego pokrycia odniesienia — sprawdź `reason`. |
+| `ready` | Ready / Gotowy | Ostatnie obliczenie dało zwalidowany plan bazowy i zostało opublikowane: udowodnione optimum albo najlepsze rozwiązanie znalezione w `solve_time_limit_s` (`time_limited: true`). | Nowy plan. `ready` nie gwarantuje pełnego pokrycia odniesienia — sprawdź `reason`. |
 | `calculating` | Calculating / Obliczanie | Obliczenie czeka w kolejce lub trwa. `reason` mówi dlaczego: `inputs_changed` (zmiana wejść), `interval_boundary` (termin odświeżenia okresowego), `inputs_recovered` (wejścia wróciły), `calculating` (worker wystartował), `soc_rebase_pending` (skok SOC w górę czeka na potwierdzenie). | Poprzedni plan, dopóki pokrywa bieżący czas, z `refreshing: true`. Istniejący alert pozostaje włączony. |
 | `invalid_input` | Invalid input / Niepoprawne dane | Brak wymaganego źródła, `unavailable`, dane nieaktualne, zła jednostka, wartość poza zakresem, SOC niezgodny z BMS lub skok SOC, liczniki dzienne z poprzedniego dnia, błędne ustawienia; także `no_current_interval` i `expired_inputs`, gdy zachowany plan już nie pokrywa bieżącego czasu. | Poprzedni plan, dopóki pokrywa bieżący czas (`plan_retained: true`); w przeciwnym razie nic. |
-| `timeout` | Timeout / Przekroczony czas | Rozwiązanie bazowe przekroczyło `solve_time_limit_s` (domyślnie 10 s) albo worker przekroczył `total_time_limit_s + 1` (powód `worker_deadline`). | Poprzedni plan w jego pokryciu. |
+| `timeout` | Timeout / Przekroczony czas | Rozwiązanie bazowe osiągnęło `solve_time_limit_s` (domyślnie 10 s) bez żadnego dopuszczalnego rozwiązania albo worker przekroczył `total_time_limit_s + 1` (powód `worker_deadline`). | Poprzedni plan w jego pokryciu. |
 | `infeasible` | Infeasible / Brak rozwiązania | Solver udowodnił, że żaden plan nie spełnia wszystkich twardych ograniczeń (np. rezerwa SOC, reguła końcowa, przeniesione zobowiązanie trybu, deficyt Sell only PV, limity sieci). | Poprzedni plan w jego pokryciu. |
 | `error` | Error / Błąd | Każdy inny błąd solvera lub nieoczekiwany wyjątek; `reason` zawiera powód solvera lub klasę wyjątku. | Poprzedni plan w jego pokryciu. |
 | `insufficient_data` | Insufficient data / Za mało danych | Zarezerwowany w tłumaczeniach; **nie jest emitowany** przez obecny koordynator — brak danych daje `invalid_input`. | — |
@@ -635,6 +637,8 @@ Diagnostyczny sensor **Balansowanie baterii** (`sensor.<name>_battery_balance`) 
 | `strategy` | Strategia, która wyprodukowała ten plan (może chwilowo różnić się od selecta w trakcie przeliczenia). |
 | `autonomy_shortfall_kwh` | Łączny niedobór poniżej progu autonomii; `0` = próg spełniony. |
 | `peak_reserve_shortfall_kwh` | Łączny niedobór poniżej [zapasu na drogie okresy](#zapas-na-drogie-okresy); `0` = spełniony lub wyłączony. |
+| `time_limited` | `true`, gdy rozwiązanie bazowe osiągnęło `solve_time_limit_s` i zamiast udowodnionego optimum opublikowano najlepsze dotąd znalezione, zwalidowane rozwiązanie. |
+| `mip_gap` | Względna luka MIP zgłoszona przez solver dla opublikowanego planu: `0` = udowodnione optimum; dla planu `time_limited` górna granica odległości jego celu od optimum (np. `0.017` = 1,7 %). |
 | `cap_violation_kwh` | Łączna energia ponad miękkie limity `grid_friendly`; `0` = limity spełnione. |
 
 ### Zwolnienie przy zmianie strategii
@@ -912,7 +916,7 @@ i językiem. Opis: [przewodnik instalacji](installation.md#dashboard-examples) (
 | --- | --- |
 | `complete` | Pełne pokrycie odniesienia, wszystkie próby udane. |
 | `available_reference_horizon` | Pokrycie źródeł krótsze niż żądany horyzont odniesienia; percentyle z dostępnych danych. |
-| `reference_horizon_uncovered` | Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.26. |
+| `reference_horizon_uncovered` | Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.27. |
 | `reference_probe_failed` | Co najmniej jedna próba odniesienia nie powiodła się lub zabrakło czasu. |
 | `short_source_coverage` | Pokrycie cen/prognoz kończy się przed żądanym horyzontem planowania. |
 | `current_guidance_unavailable` | Próba dla bieżącego przedziału nieznana; późniejsze okna mogą być poprawne. |

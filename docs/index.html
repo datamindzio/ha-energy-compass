@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Energy Compass v0.1.26: every Home Assistant entity, state, calculation, planning assumption and forecast-quality signal explained.">
+  <meta name="description" content="Energy Compass v0.1.27: every Home Assistant entity, state, calculation, planning assumption and forecast-quality signal explained.">
   <title>Energy Compass — Entity and calculation guide</title>
   <style>
     :root {
@@ -118,7 +118,7 @@
       </picture>
       <span>Energy<br>Compass</span>
     </a>
-    <p class="version">User guide · v0.1.26</p>
+    <p class="version">User guide · v0.1.27</p>
     <nav aria-label="Sections">
       <ul>
         <li><a href="#overview">Reading the compass</a></li>
@@ -142,7 +142,7 @@
     <header>
       <h1>Understand every recommendation.</h1>
       <p class="lead">What Energy Compass entities mean, how their values are calculated, and which assumptions sit behind the plan.</p>
-      <p>This guide describes the Home Assistant integration in <strong>v0.1.26</strong>. Examples use PLN; your installation uses its configured currency. Names are shown in English and Polish.</p>
+      <p>This guide describes the Home Assistant integration in <strong>v0.1.27</strong>. Examples use PLN; your installation uses its configured currency. Names are shown in English and Polish.</p>
     </header>
 
     <section id="overview" aria-labelledby="overview-title">
@@ -219,7 +219,7 @@
         <li>The default <code>preserve_initial</code> terminal rule requires final battery energy at least equal to initial energy. Its terminal credit is zero. In <code>value</code> mode, final energy is credited at <code>terminal_value_per_kwh</code> instead.</li>
         <li>An enabled daily cycle cap limits AC-side charge-plus-discharge throughput to <code>2 × capacity × daily_cycles</code> per local date, less today's observed throughput. SOC efficiency is modeled separately; DC counters need upstream conversion. Zero disables the cap; a positive cap requires a current observed-throughput source.</li>
       </ul>
-      <p>The solver must report an optimum within its limit. Returned flows are independently checked with a 0.000001 kWh absolute tolerance. These are AC-equivalent energy flows; equipment efficiency and usable capacity still need validation against measurements.</p>
+      <p>The solver normally proves an optimum within its limit; if the limit runs out first, the best validated solution found so far is published with <code>time_limited</code> and its <code>mip_gap</code>. Returned flows are independently checked with a 0.000001 kWh absolute tolerance. These are AC-equivalent energy flows; equipment efficiency and usable capacity still need validation against measurements.</p>
       <h3>2. Add hypothetical consumption</h3>
       <p>For every display/reference interval, the integration adds a probe—normally 1 kWh—to forecast household demand. The added energy is spread uniformly in time across that interval and allocated to native slots by elapsed overlap.</p>
       <div class="formula">
@@ -382,7 +382,7 @@
               <tr><th scope="row"><code>presentation</code></th><td>Configured colors, precision, label and cost/window exposure preferences.</td></tr>
               <tr><th scope="row"><code>notification_preferences</code></th><td>Opt-in preferences for the optional notification blueprint. The integration itself sends no messages.</td></tr>
               <tr><th scope="row"><code>monthly_charge_reporting_only</code></th><td>Configured fixed monthly charge, excluded from the optimizer and cost sensors.</td></tr>
-              <tr><th scope="row"><code>attribute_schema_version</code></th><td><code>3</code>; adds <code>strategy</code>, <code>autonomy_shortfall_kwh</code> and <code>cap_violation_kwh</code>; <code>peak_reserve_shortfall_kwh</code> is additive (shortfall below the peak-period reserve set by <code>peak_reserve_margin_kwh</code>, default 0 = off).</td></tr>
+              <tr><th scope="row"><code>attribute_schema_version</code></th><td><code>3</code>; adds <code>strategy</code>, <code>autonomy_shortfall_kwh</code> and <code>cap_violation_kwh</code>; <code>peak_reserve_shortfall_kwh</code> is additive (shortfall below the peak-period reserve set by <code>peak_reserve_margin_kwh</code>, default 0 = off); so are <code>time_limited</code> (base plan accepted at <code>solve_time_limit_s</code> instead of a proven optimum) and <code>mip_gap</code> (the solver's relative gap, 0 = proven optimal).</td></tr>
             </tbody>
           </table>
         </section>
@@ -422,7 +422,7 @@
               <tr><th scope="row"><code>timeout</code></th><td>The base solve or overall calculation exceeded its budget. Check timing, model size and hardware. A single failed probe can instead leave a ready baseline with incomplete guidance.</td></tr>
               <tr><th scope="row"><code>infeasible</code></th><td>No baseline plan satisfies all constraints. Check demand/generation, SOC, reserve, power/export limits, terminal requirements and allowed capabilities.</td></tr>
               <tr><th scope="row"><code>error</code></th><td>Another solver failure or unexpected exception occurred. Inspect reason and integration diagnostics/logs.</td></tr>
-              <tr><th scope="row"><code>insufficient_data</code></th><td>Reserved in translations, but not emitted by the 0.1.26 coordinator. Missing-data validation currently reports <code>invalid_input</code>.</td></tr>
+              <tr><th scope="row"><code>insufficient_data</code></th><td>Reserved in translations, but not emitted by the 0.1.27 coordinator. Missing-data validation currently reports <code>invalid_input</code>.</td></tr>
             </tbody>
           </table>
         </section>
@@ -610,7 +610,7 @@
       </ul>
     </section>
     <footer>
-      <p>Energy Compass v0.1.26 · This guide works online and offline from a repository checkout. Theme follows your system preference. Supporting documentation and source-code links open GitHub.</p>
+      <p>Energy Compass v0.1.27 · This guide works online and offline from a repository checkout. Theme follows your system preference. Supporting documentation and source-code links open GitHub.</p>
       <p><a href="#overview">Back to the guide</a> · <a href="https://github.com/marino39/ha-energy-compass/blob/main/LICENSE">Apache License 2.0</a></p>
     </footer>
   </main>

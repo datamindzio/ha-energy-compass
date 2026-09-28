@@ -152,7 +152,7 @@
 <p><strong>English</strong> · <a href="guide.pl.html">Polski</a></p>
 <p>This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
-<strong>0.1.26</strong>. The mathematical contract behind each rule lives in <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/model.md">model and limitations</a>;
+<strong>0.1.27</strong>. The mathematical contract behind each rule lives in <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/model.md">model and limitations</a>;
 installation and dashboards are in the <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md">installation guide</a>.</p>
 <p>Energy Compass is <strong>advisory</strong>. It computes a plan and publishes it as Home Assistant entities. It
 never writes inverter registers and sends no messages by itself; controllers and notification
@@ -184,8 +184,9 @@ inverters through Solarman: see <a href="#deye-inverter-controller-solarman">Dey
    default), hardware limits, SOC bounds, the carried operating-mode commitment and the active
    <strong>strategy</strong> bundle.</li>
 <li><strong>Solve the base plan.</strong> A mixed-integer linear program minimizes cost (plus strategy weights)
-   under energy balance, battery, grid, mode-duration and export/charge-policy constraints. Only a
-   proven optimum is published.</li>
+   under energy balance, battery, grid, mode-duration and export/charge-policy constraints. The
+   proven optimum is published; when <code>solve_time_limit_s</code> runs out first, the best validated
+   solution found so far is published instead and marked <code>time_limited</code> with its <code>mip_gap</code>.</li>
 <li><strong>Probe consumption.</strong> For each display interval, the solver is rerun with 1 kWh of extra load;
    the cost difference is the <em>incremental cost of one more kWh</em>, which is classified into a
    consumption level.</li>
@@ -323,7 +324,7 @@ attributes carry <code>last_completed</code>, <code>next_due</code>, <code>days_
 <h3 id="availability-rule">Availability rule</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8f0236fbff5e-dark.svg"><img src="assets/diagrams/diagram-8f0236fbff5e.svg" alt="Diagram 3" loading="lazy"></picture></figure>
 <h2 id="optimizer-status--calculation-lifecycle">Optimizer status — calculation lifecycle</h2>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-9c3f93a1af87-dark.svg"><img src="assets/diagrams/diagram-9c3f93a1af87.svg" alt="Diagram 4" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-de6c78ba6f9d-dark.svg"><img src="assets/diagrams/diagram-de6c78ba6f9d.svg" alt="Diagram 4" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -337,7 +338,7 @@ attributes carry <code>last_completed</code>, <code>next_due</code>, <code>days_
 <tr>
 <td><code>ready</code></td>
 <td>Ready / Gotowy</td>
-<td>The last calculation produced a proven optimal base plan and it was published.</td>
+<td>The last calculation produced a validated base plan and it was published: proven optimal, or the best solution found within <code>solve_time_limit_s</code> (<code>time_limited: true</code>).</td>
 <td>The new plan. <code>ready</code> does not guarantee complete reference coverage — check <code>reason</code>.</td>
 </tr>
 <tr>
@@ -355,7 +356,7 @@ attributes carry <code>last_completed</code>, <code>next_due</code>, <code>days_
 <tr>
 <td><code>timeout</code></td>
 <td>Timeout / Przekroczony czas</td>
-<td>The base solve exceeded <code>solve_time_limit_s</code> (default 10 s) or the worker exceeded <code>total_time_limit_s + 1</code> (reason <code>worker_deadline</code>).</td>
+<td>The base solve reached <code>solve_time_limit_s</code> (default 10 s) without any feasible solution, or the worker exceeded <code>total_time_limit_s + 1</code> (reason <code>worker_deadline</code>).</td>
 <td>Previous plan within coverage.</td>
 </tr>
 <tr>
@@ -1031,6 +1032,14 @@ reports <code>ok</code>, <code>eligible</code>, <code>scheduled</code>, <code>ho
 <td>Total shortfall below the <a href="#peak-period-reserve">peak-period reserve</a>; <code>0</code> = met or off.</td>
 </tr>
 <tr>
+<td><code>time_limited</code></td>
+<td><code>true</code> when the base solve hit <code>solve_time_limit_s</code> and the best validated solution found so far was published instead of a proven optimum.</td>
+</tr>
+<tr>
+<td><code>mip_gap</code></td>
+<td>Relative MIP gap the solver reported for the published plan: <code>0</code> = proven optimal; for a time-limited plan, the bound on how far its objective may be from the optimum (e.g. <code>0.017</code> = 1.7 %).</td>
+</tr>
+<tr>
 <td><code>cap_violation_kwh</code></td>
 <td>Total energy above <code>grid_friendly</code> soft caps; <code>0</code> = caps met.</td>
 </tr>
@@ -1523,7 +1532,7 @@ See the <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/in
 </tr>
 <tr>
 <td><code>reference_horizon_uncovered</code></td>
-<td>Reserved in translations; not emitted by 0.1.26.</td>
+<td>Reserved in translations; not emitted by 0.1.27.</td>
 </tr>
 <tr>
 <td><code>reference_probe_failed</code></td>

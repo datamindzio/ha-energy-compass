@@ -33,6 +33,9 @@ _UTC = UTC
 class _Model:
     def __init__(self) -> None:
         self.exact_mip_gap = False
+        self.accept_incumbent = False
+        self.time_limited = False
+        self.mip_gap: float | None = 0.0
         self.cost: list[float] = []
         self.lower: list[float] = []
         self.upper: list[float] = []
@@ -80,6 +83,13 @@ class _Model:
                 **({"mip_rel_gap": 0} if self.exact_mip_gap else {}),
             },
         )
+        # A time-limited run often holds the optimum long before HiGHS can
+        # prove it. Only the base dispatch plan opts in; probes stay exact.
+        if self.accept_incumbent and result.status == 1 and result.x is not None:
+            self.time_limited = True
+            gap = getattr(result, "mip_gap", None)
+            self.mip_gap = float(gap) if gap is not None and isfinite(gap) else None
+            return np.asarray(result.x)
         if result.status != 0 or result.x is None:
             reasons = {1: "timeout", 2: "infeasible", 3: "unbounded"}
             raise SolveError(
@@ -437,9 +447,21 @@ def _validate_solution(
         )
 
 
-def solve(problem: Problem, *, time_limit_s: float = 10.0) -> Plan:
-    """Find a bounded least-cost advisory plan or raise a typed solver error."""
-    return _solve(problem, flexible_load=None, time_limit_s=time_limit_s).plan
+def solve(
+    problem: Problem, *, time_limit_s: float = 10.0, accept_incumbent: bool = False
+) -> Plan:
+    """Find a bounded least-cost advisory plan or raise a typed solver error.
+
+    `accept_incumbent` returns the best validated solution found before the
+    time limit instead of raising `timeout`; the plan is then marked
+    `time_limited` with the solver's final relative MIP gap.
+    """
+    return _solve(
+        problem,
+        flexible_load=None,
+        time_limit_s=time_limit_s,
+        accept_incumbent=accept_incumbent,
+    ).plan
 
 
 def solve_flexible_load(
@@ -473,6 +495,7 @@ def _solve(
     *,
     flexible_load: FlexibleLoadRequest | None,
     time_limit_s: float,
+    accept_incumbent: bool = False,
 ) -> FlexibleLoadPlan:
     validate_problem(problem)
     try:
@@ -487,6 +510,7 @@ def _solve(
         raise InputError("duplicate daily throughput date")
     zone = ZoneInfo(problem.timezone)
     model = _Model()
+    model.accept_incumbent = accept_incumbent
     vectors: list[dict[str, int]] = []
     daily_fractions: list[dict[str, float]] = []
     previous_energy_index: int | None = None
@@ -911,6 +935,8 @@ def _solve(
             balance_start=balance_start,
             balance_missed=bool(problem.balance_windows) and balance_start is None,
             peak_reserve_shortfall_kwh=peak_reserve_shortfall_kwh,
+            time_limited=model.time_limited,
+            mip_gap=model.mip_gap,
         ),
         tuple(float(values[v["flex_load"]]) for v in vectors) if flexible_load else (),
     )

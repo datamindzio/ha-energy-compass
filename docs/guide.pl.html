@@ -152,7 +152,7 @@
 <p><a href="guide.en.html">English</a> · <strong>Polski</strong></p>
 <p>Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
-<strong>0.1.26</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
+<strong>0.1.27</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
 instalację i dashboardy — <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md">przewodnik instalacji</a> (EN).</p>
 <p>Energy Compass jest <strong>doradczy</strong>. Liczy plan i publikuje go jako encje Home Assistant. Nigdy nie
 zapisuje rejestrów falownika i sam nie wysyła powiadomień; o wykonaniu planu decydują sterowniki
@@ -186,7 +186,9 @@ Solarman: zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika 
    <strong>strategii</strong>.</li>
 <li><strong>Rozwiązanie planu bazowego.</strong> Mieszany program liniowy minimalizuje koszt (plus wagi
    strategii) przy ograniczeniach bilansu energii, baterii, sieci, minimalnego czasu trybu i
-   polityk eksportu/ładowania. Publikowane jest wyłącznie udowodnione optimum.</li>
+   polityk eksportu/ładowania. Publikowane jest udowodnione optimum; gdy wcześniej skończy się
+   <code>solve_time_limit_s</code>, publikowane jest najlepsze dotąd znalezione, zwalidowane rozwiązanie
+   oznaczone <code>time_limited</code> razem z jego <code>mip_gap</code>.</li>
 <li><strong>Próby zużycia.</strong> Dla każdego przedziału wyświetlania solver liczy plan jeszcze raz z
    dodatkowym 1 kWh obciążenia; różnica kosztu to <em>koszt krańcowy jednej kWh więcej</em>, klasyfikowany
    na poziom zużycia.</li>
@@ -326,7 +328,7 @@ i <code>threshold_percent</code>.</p>
 <h3 id="reguła-dostępności">Reguła dostępności</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-2f6bcf12dd4c-dark.svg"><img src="assets/diagrams/diagram-2f6bcf12dd4c.svg" alt="Diagram 3" loading="lazy"></picture></figure>
 <h2 id="stan-optymalizatora--cykl-obliczeń">Stan optymalizatora — cykl obliczeń</h2>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-9df4b681a75a-dark.svg"><img src="assets/diagrams/diagram-9df4b681a75a.svg" alt="Diagram 4" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-16e32e6be2ed-dark.svg"><img src="assets/diagrams/diagram-16e32e6be2ed.svg" alt="Diagram 4" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -340,7 +342,7 @@ i <code>threshold_percent</code>.</p>
 <tr>
 <td><code>ready</code></td>
 <td>Ready / Gotowy</td>
-<td>Ostatnie obliczenie dało udowodnione optimum planu bazowego i zostało opublikowane.</td>
+<td>Ostatnie obliczenie dało zwalidowany plan bazowy i zostało opublikowane: udowodnione optimum albo najlepsze rozwiązanie znalezione w <code>solve_time_limit_s</code> (<code>time_limited: true</code>).</td>
 <td>Nowy plan. <code>ready</code> nie gwarantuje pełnego pokrycia odniesienia — sprawdź <code>reason</code>.</td>
 </tr>
 <tr>
@@ -358,7 +360,7 @@ i <code>threshold_percent</code>.</p>
 <tr>
 <td><code>timeout</code></td>
 <td>Timeout / Przekroczony czas</td>
-<td>Rozwiązanie bazowe przekroczyło <code>solve_time_limit_s</code> (domyślnie 10 s) albo worker przekroczył <code>total_time_limit_s + 1</code> (powód <code>worker_deadline</code>).</td>
+<td>Rozwiązanie bazowe osiągnęło <code>solve_time_limit_s</code> (domyślnie 10 s) bez żadnego dopuszczalnego rozwiązania albo worker przekroczył <code>total_time_limit_s + 1</code> (powód <code>worker_deadline</code>).</td>
 <td>Poprzedni plan w jego pokryciu.</td>
 </tr>
 <tr>
@@ -1038,6 +1040,14 @@ utrzymują wybrane okno bez zmian, aby dodatkowe obciążenie wyceniało zużyci
 <td>Łączny niedobór poniżej <a href="#zapas-na-drogie-okresy">zapasu na drogie okresy</a>; <code>0</code> = spełniony lub wyłączony.</td>
 </tr>
 <tr>
+<td><code>time_limited</code></td>
+<td><code>true</code>, gdy rozwiązanie bazowe osiągnęło <code>solve_time_limit_s</code> i zamiast udowodnionego optimum opublikowano najlepsze dotąd znalezione, zwalidowane rozwiązanie.</td>
+</tr>
+<tr>
+<td><code>mip_gap</code></td>
+<td>Względna luka MIP zgłoszona przez solver dla opublikowanego planu: <code>0</code> = udowodnione optimum; dla planu <code>time_limited</code> górna granica odległości jego celu od optimum (np. <code>0.017</code> = 1,7 %).</td>
+</tr>
+<tr>
 <td><code>cap_violation_kwh</code></td>
 <td>Łączna energia ponad miękkie limity <code>grid_friendly</code>; <code>0</code> = limity spełnione.</td>
 </tr>
@@ -1533,7 +1543,7 @@ i językiem. Opis: <a href="https://github.com/marino39/ha-energy-compass/blob/m
 </tr>
 <tr>
 <td><code>reference_horizon_uncovered</code></td>
-<td>Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.26.</td>
+<td>Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.27.</td>
 </tr>
 <tr>
 <td><code>reference_probe_failed</code></td>
