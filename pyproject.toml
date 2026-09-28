@@ -11,6 +11,7 @@ test = [
     "pytest-homeassistant-custom-component==0.13.364",
     "ruff==0.16.8",
     "jsonschema==4.23.0",
+    "pytest-timeout==2.4.0",
 ]
 docs = [
     "markdown==3.8",
@@ -20,6 +21,12 @@ docs = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = ["replan_cooldown: run with the shipped minimum_replan_seconds default"]
+# Slowest test measured at 10.02s (test_real_sink_thread_stops_within_its_bound_despite_a_hanging_transport[10]);
+# 45s gives >=3x headroom. method=thread: hangs in monkeypatched compute() run on
+# hass's executor thread, not just the main test thread, so the signal-based
+# default cannot interrupt them.
+timeout = 45
+timeout_method = "thread"
 
 [tool.ruff]
 # Vendored verbatim from edge/atlas_sink (energy-atlas ADR-0019 §10); linted there.

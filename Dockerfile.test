@@ -1,7 +1,7 @@
 FROM ghcr.io/home-assistant/raspberrypi5-64-homeassistant:2026.9.1@sha256:3637812af79ccc020ad3c61787fedaae14dc89918b1ddfc9e96b8f1077b35943
 
 RUN uv venv --system-site-packages /opt/energy-compass-test
-RUN UV_EXTRA_INDEX_URL= uv pip install --no-config --default-index https://pypi.org/simple --python /opt/energy-compass-test/bin/python scipy==1.18.1 pytest-homeassistant-custom-component==0.13.364 boto3==1.42.97 botocore==1.42.97 ruff==0.16.8 jsonschema==4.23.0
+RUN UV_EXTRA_INDEX_URL= uv pip install --no-config --default-index https://pypi.org/simple --python /opt/energy-compass-test/bin/python scipy==1.18.1 pytest-homeassistant-custom-component==0.13.364 boto3==1.42.97 botocore==1.42.97 ruff==0.16.8 jsonschema==4.23.0 pytest-timeout==2.4.0
 
 WORKDIR /workspace
 ENTRYPOINT ["/opt/energy-compass-test/bin/python"]

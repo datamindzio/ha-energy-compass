@@ -480,7 +480,7 @@ async def test_native_failed_and_superseded_results_preserve_clock(
     monkeypatch.setattr(module, "compute", delayed)
     task = hass.async_create_task(coordinator.async_recalculate())
     try:
-        await completed.wait()
+        await asyncio.wait_for(completed.wait(), 10)
         coordinator._generation += 1
         coordinator._closed = True
     finally:
