@@ -4,7 +4,7 @@
 
 Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
-**0.1.27**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
+**0.1.28**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
 instalację i dashboardy — [przewodnik instalacji](installation.md) (EN).
 
 Energy Compass jest **doradczy**. Liczy plan i publikuje go jako encje Home Assistant. Nigdy nie
@@ -967,7 +967,7 @@ włączenie, środowisko, stan rejestracji, głębokość kolejki i ewentualnie 
 | --- | --- |
 | `complete` | Pełne pokrycie odniesienia, wszystkie próby udane. |
 | `available_reference_horizon` | Pokrycie źródeł krótsze niż żądany horyzont odniesienia; percentyle z dostępnych danych. |
-| `reference_horizon_uncovered` | Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.27. |
+| `reference_horizon_uncovered` | Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.28. |
 | `reference_probe_failed` | Co najmniej jedna próba odniesienia nie powiodła się lub zabrakło czasu. |
 | `short_source_coverage` | Pokrycie cen/prognoz kończy się przed żądanym horyzontem planowania. |
 | `current_guidance_unavailable` | Próba dla bieżącego przedziału nieznana; późniejsze okna mogą być poprawne. |
