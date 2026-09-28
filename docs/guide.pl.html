@@ -145,15 +145,15 @@
         <li><a href="#słownik-kodów-powodów">Słownik kodów powodów</a></li>
       </ul>
     </nav>
-    <a class="download" href="https://github.com/marino39/ha-energy-compass/blob/main/docs/guide.pl.md">Źródło Markdown</a>
+    <a class="download" href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/guide.pl.md">Źródło Markdown</a>
   </aside>
   <main id="main">
 <h1 id="energy-compass--przewodnik-po-stanach-i-strategiach">Energy Compass — przewodnik po stanach i strategiach</h1>
 <p><a href="guide.en.html">English</a> · <strong>Polski</strong></p>
 <p>Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
-<strong>0.1.27</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
-instalację i dashboardy — <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md">przewodnik instalacji</a> (EN).</p>
+<strong>0.1.27</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
+instalację i dashboardy — <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">przewodnik instalacji</a> (EN).</p>
 <p>Energy Compass jest <strong>doradczy</strong>. Liczy plan i publikuje go jako encje Home Assistant. Nigdy nie
 zapisuje rejestrów falownika i sam nie wysyła powiadomień; o wykonaniu planu decydują sterowniki
 i blueprinty powiadomień. Repozytorium zawiera jeden taki sterownik, dla falowników Deye przez
@@ -1059,7 +1059,7 @@ utrzymują wybrane okno bez zmian, aby dodatkowe obciążenie wyceniało zużyci
 nie utknęła w minimalnym czasie starego trybu. Trwający epizod eksportu jest zachowany, żeby jego
 próg nie został naliczony dwa razy.</p>
 <h2 id="automatyczne-przełączanie-strategii">Automatyczne przełączanie strategii</h2>
-<p>Opcjonalny blueprint <a href="https://github.com/marino39/ha-energy-compass/blob/main/blueprints/automation/energy_compass/strategy_switch.yaml"><code>strategy_switch.yaml</code></a>
+<p>Opcjonalny blueprint <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/strategy_switch.yaml"><code>strategy_switch.yaml</code></a>
 wybiera jedną strategię na dobę. Działa o <strong>14:05</strong> (po publikacji cen RCE na następny dzień i
 Solcast), ponawia co godzinę do <strong>20:00</strong>, jeśli brak cen na jutro, a przy starcie Home Assistant
 dokańcza przerwany zapis.</p>
@@ -1104,14 +1104,14 @@ dokańcza przerwany zapis.</p>
 </table></section>
 <p><strong>Ręczna</strong> zmiana selecta blokuje reguły ekonomiczne do następnego udanego uruchomienia
 planowego; reguła alertu nigdy nie jest blokowana. <code>max_export</code> i <code>grid_friendly</code> wybiera się
-wyłącznie ręcznie. Konfiguracja: <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md#import-the-strategy-switch-blueprint">przewodnik instalacji</a>
+wyłącznie ręcznie. Konfiguracja: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#import-the-strategy-switch-blueprint">przewodnik instalacji</a>
 (EN).</p>
 <h2 id="powiadomienia-o-oknach">Powiadomienia o oknach</h2>
-<p>Opcjonalny blueprint <a href="https://github.com/marino39/ha-energy-compass/blob/main/blueprints/automation/energy_compass/notifications.yaml"><code>notifications.yaml</code></a>
+<p>Opcjonalny blueprint <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/notifications.yaml"><code>notifications.yaml</code></a>
 informuje domowników, kiedy dodatkowe zużycie jest tanie (okno korzystne) albo kiedy zaczyna się
 drogie okno <code>LIMIT</code>. Sam Energy Compass niczego nie wysyła; głównym przełącznikiem jest
 <strong>Włącz powiadomienia</strong> w opcjach integracji. Konfiguracja:
-<a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">przewodnik instalacji</a> (EN).</p>
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">przewodnik instalacji</a> (EN).</p>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-d7f8dd1c26f0-dark.svg"><img src="assets/diagrams/diagram-d7f8dd1c26f0.svg" alt="Diagram 12" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
@@ -1180,10 +1180,10 @@ Akcja dostaje <code>notification_title</code>, <code>notification_message</code>
 </tbody>
 </table></section>
 <h2 id="karta-kosztów">Karta kosztów</h2>
-<p>Opcjonalna karta <code>custom:energy-compass-cost-card</code> (<a href="https://github.com/marino39/ha-energy-compass/blob/main/cards/cost"><code>cards/cost/</code></a>) pokazuje koszt
+<p>Opcjonalna karta <code>custom:energy-compass-cost-card</code> (<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/cards/cost"><code>cards/cost/</code></a>) pokazuje koszt
 zakupu energii z sieci, wartość energii oddanej (depozyt prosumencki w polskim net-billingu) i bilans
 <strong>zakup − depozyt</strong>: dziś z pomiarów i planu do północy, a miesiąc i rok ze statystyk. Instalacja
-i pełny opis: <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/cost-card.md">przewodnik karty kosztów</a> (EN).</p>
+i pełny opis: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/cost-card.md">przewodnik karty kosztów</a> (EN).</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -1218,17 +1218,17 @@ i pełny opis: <a href="https://github.com/marino39/ha-energy-compass/blob/main/
 </tr>
 </tbody>
 </table></section>
-<p>Depozyt miesięczny i roczny pochodzi z <a href="https://github.com/marino39/ha-energy-compass/blob/main/blueprints/automation/energy_compass/export_value_counter.yaml">blueprintu licznika wartości eksportu</a>:
+<p>Depozyt miesięczny i roczny pochodzi z <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/export_value_counter.yaml">blueprintu licznika wartości eksportu</a>:
 dodaje każdy przyrost licznika eksportu (<code>export_energy</code>), wyceniony według prognozy ceny
 (<code>export_prices</code>), do pomocnika liczbowego (<code>counter</code>); skoki powyżej <code>max_step_kwh</code> są pomijane.</p>
 <h2 id="sterownik-falownika-deye-solarman">Sterownik falownika Deye (Solarman)</h2>
 <p>Sam Energy Compass nigdy nie zapisuje do falownika. Robi to opcjonalny blueprint
-<a href="https://github.com/marino39/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml"><code>deye_solarman_controller.yaml</code></a>:
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml"><code>deye_solarman_controller.yaml</code></a>:
 wykonuje plan na hybrydowym falowniku Deye przez
 <a href="https://github.com/davidrapan/ha-solarman">integrację Solarman</a>, zapisuje trzy prądy baterii i sześć
 programów czasowych (TOU), a każdy zapis sprawdza odczytem rejestrów. Wymaga pakietu
-<a href="https://github.com/marino39/ha-energy-compass/blob/main/packages/energy_compass_deye.yaml"><code>energy_compass_deye.yaml</code></a>. Instalację opisuje
-<a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">przewodnik instalacji</a> (EN). Oba pliki generuje
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/packages/energy_compass_deye.yaml"><code>energy_compass_deye.yaml</code></a>. Instalację opisuje
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">przewodnik instalacji</a> (EN). Oba pliki generuje
 <code>tools/deye_controller/build.py</code>; zmienia się generator, nie YAML.</p>
 <h3 id="encje-pakietu">Encje pakietu</h3>
 <section class="table-scroll"><table>
@@ -1283,7 +1283,7 @@ programów czasowych (TOU), a każdy zapis sprawdza odczytem rejestrów. Wymaga 
 </table></section>
 <p>Pakiet zakłada domyślne nazwy encji TOU z Solarman (<code>number.inverter_deye_program_1_power</code> …
 <code>time.inverter_deye_program_6_time</code>). Przy innej nazwie urządzenia wygeneruj pakiet z własnym
-prefiksem w <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/builder.html">generatorze YAML</a> albo poleceniem
+prefiksem w <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/builder.html">generatorze YAML</a> albo poleceniem
 <code>python tools/deye_controller/build.py --prefix my_inverter_program_</code>.</p>
 <h3 id="tryby">Tryby</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-ac9c2721d676-dark.svg"><img src="assets/diagrams/diagram-ac9c2721d676.svg" alt="Diagram 13" loading="lazy"></picture></figure>
@@ -1524,8 +1524,8 @@ ustawia progi, na końcu włącza kierunek.</p>
 </tr>
 </tbody>
 </table></section>
-<p>Panel używa kart natywnych oraz ApexCharts Card do prognozy SOC; oba wykresy wymagają ApexCharts Card. <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/builder.html">Generator YAML</a> wypełnia każdą z nich Twoimi encjami, pojemnością
-i językiem. Opis: <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">przewodnik instalacji</a> (EN).</p>
+<p>Panel używa kart natywnych oraz ApexCharts Card do prognozy SOC; oba wykresy wymagają ApexCharts Card. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/builder.html">Generator YAML</a> wypełnia każdą z nich Twoimi encjami, pojemnością
+i językiem. Opis: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">przewodnik instalacji</a> (EN).</p>
 <h2 id="słownik-kodów-powodów">Słownik kodów powodów</h2>
 <h3 id="powody-pokrycia--jakości-atrybuty-reason-reasons">Powody pokrycia / jakości (atrybuty <code>reason</code>, <code>reasons</code>)</h3>
 <section class="table-scroll"><table>

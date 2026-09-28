@@ -8,7 +8,7 @@ blueprint:
 
     Mode `Off` releases control after a confirmed restore, `Simulation` computes targets without writing, `Auto` writes and verifies every register. See the Deye controller section of the Energy Compass guide.
   domain: automation
-  source_url: https://github.com/marino39/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml
+  source_url: https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml
   homeassistant:
     min_version: 2026.9.1
   input:

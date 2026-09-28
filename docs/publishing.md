@@ -1,6 +1,6 @@
 # Publishing the documentation
 
-The guide is published at <https://marino39.github.io/ha-energy-compass/>.
+The guide is published at <https://datamindzio.github.io/ha-energy-compass/>.
 
 GitHub **Settings → Pages → Build and deployment** uses **Deploy from a branch**, with branch **main** and folder **/docs**. GitHub's built-in Pages workflow publishes updates after changes reach that branch. No custom domain, site generator or local build is required. The empty `.nojekyll` file preserves the static HTML as written.
 

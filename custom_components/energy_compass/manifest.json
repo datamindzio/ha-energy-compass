@@ -4,10 +4,10 @@
   "codeowners": ["@marino39"],
   "config_flow": true,
   "dependencies": ["recorder"],
-  "documentation": "https://github.com/marino39/ha-energy-compass",
+  "documentation": "https://github.com/datamindzio/ha-energy-compass",
   "integration_type": "service",
   "iot_class": "calculated",
-  "issue_tracker": "https://github.com/marino39/ha-energy-compass/issues",
+  "issue_tracker": "https://github.com/datamindzio/ha-energy-compass/issues",
   "requirements": ["scipy==1.18.1"],
   "version": "0.1.27"
 }
