@@ -9,7 +9,10 @@ import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.energy_compass.atlas.storage import environment_dir
+from custom_components.energy_compass.atlas.storage import (
+    environment_dir,
+    forget_environment,
+)
 from custom_components.energy_compass.atlas_sink.identity import Identity
 from custom_components.energy_compass.atlas_sink.sink import register
 from custom_components.energy_compass.settings import DOMAIN, default_configuration
@@ -114,6 +117,28 @@ async def test_proof_jws_verifies_and_shape_is_correct(
         "environment": "staging",
         "pv_kwp": 5.0,
     }
+
+
+async def test_proof_step_aborts_when_site_forgotten_after_menu_render(
+    recorder_mock, hass, enable_custom_integrations
+):
+    """The site can be forgotten (another options flow, another tab) between the menu
+    render and this step being submitted; `proof()` would otherwise raise ValueError
+    (no site_id) as an unhandled exception."""
+    entry = _entry(
+        hass, atlas={"enabled": True, "environment": "staging", "pv_kwp": 5.0}
+    )
+    await _register_site(hass, entry)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert "energy_atlas_proof" in result["menu_options"]
+
+    forget_environment(hass, entry.entry_id, "staging")
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "energy_atlas_proof"}
+    )
+    assert result["type"] == "abort"
+    assert result["reason"] == "site_not_registered"
 
 
 async def test_proof_step_closes_back_to_the_menu(

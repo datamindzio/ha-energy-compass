@@ -320,11 +320,16 @@ class Editor(SourceEditor):
         """Show a 15-minute, single-use ownership proof (ADR-0019 §7). Stores nothing."""
         if user_input is not None:
             return await self.async_step_menu()
-        from .atlas.storage import environment_dir
+        from .atlas.storage import environment_dir, is_registered
         from .atlas_sink.sink import proof
 
         atlas = self.config_entry.options.get("atlas", {})
         environment = atlas["environment"]
+        if not is_registered(self.hass, self.config_entry.entry_id, environment):
+            # The site can be forgotten by another flow between the menu render and
+            # this step (ADR-0019 §9 "Forget site"); `proof()` would otherwise raise
+            # ValueError (no site_id).
+            return self.async_abort(reason="site_not_registered")
         directory = environment_dir(self.hass, self.config_entry.entry_id, environment)
         jws = await self.hass.async_add_executor_job(proof, directory, dt_util.utcnow())
         return self.async_show_form(

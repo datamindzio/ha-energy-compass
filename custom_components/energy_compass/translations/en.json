@@ -840,6 +840,9 @@
       "rate_limited": "Too many attempts; try again in an hour.",
       "cannot_connect": "Could not reach the Energy Atlas collector.",
       "unknown": "Registration failed for an unknown reason."
+    },
+    "abort": {
+      "site_not_registered": "This site was forgotten in another window; re-enable Energy Atlas to register a new one."
     }
   },
   "entity": {

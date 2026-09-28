@@ -854,6 +854,9 @@
       "rate_limited": "Zbyt wiele prób; spróbuj ponownie za godzinę.",
       "cannot_connect": "Nie udało się połączyć z kolektorem Energy Atlas.",
       "unknown": "Rejestracja nie powiodła się z nieznanego powodu."
+    },
+    "abort": {
+      "site_not_registered": "Ta witryna została zapomniana w innym oknie; włącz ponownie Energy Atlas, aby zarejestrować nową."
     }
   },
   "entity": {

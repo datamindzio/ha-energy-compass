@@ -150,6 +150,37 @@ def test_atlas_row_non_finite_and_unbound_are_absent():
     assert row == {}
 
 
+def test_atlas_row_skips_a_statistic_whose_unit_does_not_match_the_setting():
+    # `_power_setting` binds pv_power with unit "kW" (mapping.py's target unit); a
+    # statistic actually recorded in "W" must not be silently treated as kW (same
+    # `config_models.resolve_numeric` unit-mismatch rejection the live feed applies).
+    config = _full_config()
+    entity_at = {"sensor.pv": {"mean": 2.0}, "sensor.grid_in": {"mean": 0.5}}
+    row = _atlas_row(config, entity_at, {"sensor.pv": "W"})
+    assert "pv_w_avg" not in row
+    assert row["grid_import_w_avg"] == 500.0  # unaffected sibling measurement
+
+
+def test_atlas_row_matching_or_unknown_unit_is_not_penalized():
+    config = _full_config()
+    entity_at = {"sensor.pv": {"mean": 2.0}}
+    assert _atlas_row(config, entity_at, {"sensor.pv": "kW"})["pv_w_avg"] == 2000.0
+    # No metadata at all for the entity (e.g. never recorded before) -> not rejected,
+    # same leniency `resolve_numeric` gives an absent `unit_of_measurement`.
+    assert _atlas_row(config, entity_at, {})["pv_w_avg"] == 2000.0
+
+
+def test_atlas_row_drops_a_reading_outside_the_setting_minimum_or_maximum():
+    config = _full_config()
+    config["measurements"]["pv_power"] = NumericSetting(
+        entity=EntityBinding("sensor.pv"), unit="kW", minimum=0.0, maximum=10.0
+    ).to_dict()
+    row = _atlas_row(config, {"sensor.pv": {"mean": 15.0}})
+    assert "pv_w_avg" not in row
+    row = _atlas_row(config, {"sensor.pv": {"mean": 5.0}})
+    assert row["pv_w_avg"] == 5000.0
+
+
 def test_merge_rows_groups_by_timestamp_and_round_trips_through_the_vendored_converter():
     config = _full_config()
     per_entity = {
@@ -304,6 +335,75 @@ async def test_service_feeds_merged_statistics_to_the_running_sink(
     assert stats["five_minute"] == [
         {"start": "2027-01-15T08:00:00Z", "pv_w_avg": 2000.0, "pv_w_max": 2500.0}
     ]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_service_feeds_both_five_minute_and_hourly_statistics(
+    recorder_mock, hass, enable_custom_integrations, monkeypatch
+):
+    config = _full_config()
+    entry = _registered_entry(hass, config)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    def _fake_statistics_during_period(
+        hass_, start, end, statistic_ids, period, units, types
+    ):
+        if period == "5minute":
+            return {"sensor.pv": [{"start": 1_800_000_000.0, "mean": 2.0, "max": 2.5}]}
+        if period == "hour":
+            return {"sensor.pv": [{"start": 1_800_003_600.0, "mean": 4.0, "max": 4.5}]}
+        return {}
+
+    monkeypatch.setattr(
+        backfill_service, "statistics_during_period", _fake_statistics_during_period
+    )
+
+    await hass.services.async_call(
+        DOMAIN, SERVICE_ATLAS_BACKFILL, {"days": 30}, blocking=True
+    )
+
+    (sink,) = _FakeSinkThread.instances
+    assert len(sink.backfill_calls) == 1
+    stats = sink.backfill_calls[0]
+    assert len(stats["five_minute"]) == 1
+    assert stats["five_minute"][0]["pv_w_avg"] == 2000.0
+    assert len(stats["hourly"]) == 1
+    assert stats["hourly"][0]["pv_w_avg"] == 4000.0
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_service_skips_a_statistic_whose_recorded_unit_mismatches_the_setting(
+    recorder_mock, hass, enable_custom_integrations, monkeypatch
+):
+    config = _full_config()  # pv_power expects statistics recorded in "kW"
+    entry = _registered_entry(hass, config)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    monkeypatch.setattr(
+        backfill_service,
+        "get_metadata",
+        lambda hass_, *, statistic_ids=None, **kwargs: {
+            "sensor.pv": (1, {"unit_of_measurement": "W"})
+        },
+    )
+    monkeypatch.setattr(
+        backfill_service,
+        "statistics_during_period",
+        lambda hass_, start, end, statistic_ids, period, units, types: (
+            {"sensor.pv": [{"start": 1_800_000_000.0, "mean": 2.0}]}
+            if period == "5minute"
+            else {}
+        ),
+    )
+
+    await hass.services.async_call(
+        DOMAIN, SERVICE_ATLAS_BACKFILL, {"days": 30}, blocking=True
+    )
+
+    (sink,) = _FakeSinkThread.instances
+    assert sink.backfill_calls == []  # unit mismatch -> nothing to feed
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
