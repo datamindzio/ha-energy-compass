@@ -1287,7 +1287,10 @@ last revocation, it is newer than the cached plan, Forecast valid is <code>on</c
 is <code>ready</code> (or <code>calculating</code> while retaining a complete plan), the plan, optimizer and forecast report
 the same <code>generated_at</code>, its intervals are contiguous and cover now, and <code>valid_until</code> is in the future.
 An optimizer outside <code>ready</code>/<code>calculating</code> or an Alert other than <code>off</code> revokes the cached plan; plans
-generated before that revocation are never accepted. After a Home Assistant restart the controller
+generated before that revocation are never accepted. While the error persists, each run revokes
+again but keeps the time of the first revocation of that cached plan, so a plan computed after it
+is accepted even when it was published while the Alert was still <code>on</code> (the entities update one by
+one). After a Home Assistant restart the controller
 therefore stays on the base profile until the next calculation publishes.</p>
 <p>Control also requires fresh telemetry: every entity in <code>telemetry_entities</code> numeric and reported within
 30 s, battery voltage 400–610 V and SOC 0–100 %. Every automation in <code>old_writers</code> must be off and not

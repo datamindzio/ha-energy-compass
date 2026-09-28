@@ -824,7 +824,10 @@ i po ostatnim unieważnieniu, jest nowszy od planu w pamięci, Poprawna prognoza
 ma stan `off`, optymalizator jest `ready` (albo `calculating` z zachowanym pełnym planem), plan,
 optymalizator i prognoza podają ten sam `generated_at`, przedziały są ciągłe i obejmują bieżącą
 chwilę, a `valid_until` jest w przyszłości. Optymalizator poza `ready`/`calculating` albo Alert inny
-niż `off` unieważnia plan w pamięci; plany sprzed unieważnienia nigdy nie są akceptowane. Po
+niż `off` unieważnia plan w pamięci; plany sprzed unieważnienia nigdy nie są akceptowane. Dopóki błąd trwa, każdy przebieg unieważnia
+ponownie, ale zachowuje czas pierwszego unieważnienia tego planu w pamięci, więc plan policzony po
+nim zostaje przyjęty także wtedy, gdy opublikowano go przy Alercie jeszcze `on` (encje zmieniają
+stan po kolei). Po
 restarcie Home Assistant sterownik trzyma więc profil bazowy do publikacji kolejnego obliczenia.
 
 Sterowanie wymaga też świeżej telemetrii: każda encja z `telemetry_entities` liczbowa i zgłoszona

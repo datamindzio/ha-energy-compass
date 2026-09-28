@@ -354,9 +354,10 @@ actions:
       }}'
   then:
   - variables:
-      runtime_update: '{{ dict(state_attr(runtime_entity,''runtime'') or {}, revoked_generation=(state_attr(cache_entity,''snapshot'')
-        or {}).get(''generated_at''), revoked_at=now().isoformat(), revoked_reason=''Błąd obliczeń lub źródeł: wymagany nowy
-        plan'') }}'
+      runtime_update: '{% set rt = state_attr(runtime_entity,''runtime'') or {} %}{% set g = (state_attr(cache_entity,''snapshot'')
+        or {}).get(''generated_at'') %}{{ dict(rt, revoked_generation=g, revoked_at=rt.get(''revoked_at'') if rt.get(''revoked_at'')
+        and ''revoked_generation'' in rt and rt.get(''revoked_generation'') == g else now().isoformat(), revoked_reason=''Błąd
+        obliczeń lub źródeł: wymagany nowy plan'') }}'
   - event: energy_compass_deye_runtime
     event_data:
       runtime: '{{ runtime_update }}'
