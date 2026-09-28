@@ -5,9 +5,9 @@ import re
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.energy_compass.atlas import bridge as bridge_module
 from custom_components.energy_compass.atlas import location
 from custom_components.energy_compass.atlas.location import h3_res6
-from custom_components.energy_compass.atlas import bridge as bridge_module
 from custom_components.energy_compass.atlas.storage import environment_dir
 from custom_components.energy_compass.settings import DOMAIN, default_configuration
 
@@ -39,15 +39,22 @@ def test_invalid_coordinates_give_no_cell(lat, lon):
     assert h3_res6(lat, lon) is None
 
 
-def test_missing_h3_gives_no_cell_and_no_coordinates_in_log(monkeypatch, caplog):
-    monkeypatch.setitem(__import__("sys").modules, "h3", None)
+def test_cell_computation_failure_gives_no_cell_and_no_coordinates_in_log(
+    monkeypatch, caplog
+):
+    def boom(latitude, longitude):
+        raise ValueError(f"{latitude} {longitude}")
+
+    monkeypatch.setattr(
+        "custom_components.energy_compass.atlas.h3_res6.h3_res6_index", boom
+    )
     assert h3_res6(*WARSAW) is None
     assert "52.2297" not in caplog.text and "21.0122" not in caplog.text
 
 
-async def test_async_home_cell_uses_ha_home_coordinates(hass):
+async def test_home_cell_uses_ha_home_coordinates(hass):
     hass.config.latitude, hass.config.longitude = WARSAW
-    assert await location.async_home_h3_res6(hass) == h3_res6(*WARSAW)
+    assert location.home_h3_res6(hass) == h3_res6(*WARSAW)
 
 
 class _CapturingSink:

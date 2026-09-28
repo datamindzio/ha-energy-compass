@@ -173,7 +173,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             if not is_registered(self.hass, self.entry.entry_id, environment):
                 return
             from .atlas import AtlasBridge, build_attrs
-            from .atlas.location import async_home_h3_res6
+            from .atlas.location import home_h3_res6
 
             bridge = AtlasBridge(
                 self.hass, self.entry, self.configuration, new_settings
@@ -183,7 +183,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                     build_attrs(
                         self.configuration,
                         new_settings,
-                        await async_home_h3_res6(self.hass),
+                        home_h3_res6(self.hass),
                     )
                 )
             except Exception:
