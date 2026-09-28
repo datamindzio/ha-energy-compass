@@ -114,6 +114,9 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         self.previous_plan = None
         # Set by async_setup_entry only when options["atlas"]["enabled"] (ADR-0019 §3).
         self.atlas = None
+        # Serializes async_apply_atlas against itself (ADR-0019 §B3, amendment T-411):
+        # a save that starts a new bridge must fully stop the old one first.
+        self._atlas_lock = asyncio.Lock()
 
     async def async_start(self):
         """Restore small observation anchors and attach only this entry's listeners."""
@@ -140,7 +143,50 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_changed
         )
         self._subscribe()
-        await self.async_recalculate()
+        # ADR-0019 §B4 (amendment T-411): the first solve is backgrounded so
+        # `async_setup_entry` returns at once (entities come up with the initial
+        # `status: calculating` data) instead of blocking on the MILP (3.5 min on
+        # the Pi). `async_stop` still waits for `self._worker` if unload lands
+        # while this solve is in flight, and publishes nothing (`self._closed`).
+        self.entry.async_create_background_task(
+            self.hass, self.async_recalculate(), "energy_compass first solve"
+        )
+
+    async def async_apply_atlas(self, new_settings: dict) -> None:
+        """Apply Atlas settings live: start/stop the sink thread, no entry reload.
+
+        ADR-0019 §B3 (amendment T-411). Runs under a lock: stop the current bridge
+        if any (idempotent), detach it, then start a new one only if `new_settings`
+        enables Atlas and that environment is already registered. A start failure
+        is re-raised (the options step rejects the save, form error `unknown`) and
+        `self.atlas` stays `None` either way — a later save or an HA restart retries.
+        """
+        async with self._atlas_lock:
+            if self.atlas is not None:
+                await self.atlas.async_stop()
+                self.atlas = None
+            if not new_settings.get("enabled"):
+                return
+            from .atlas.storage import is_registered
+
+            environment = new_settings["environment"]
+            if not is_registered(self.hass, self.entry.entry_id, environment):
+                return
+            from .atlas import AtlasBridge, build_attrs
+
+            bridge = AtlasBridge(
+                self.hass, self.entry, self.configuration, new_settings
+            )
+            try:
+                await bridge.async_start(build_attrs(self.configuration, new_settings))
+            except Exception:
+                _LOGGER.warning(
+                    "Energy Atlas failed to start on %s after a settings change",
+                    environment,
+                    exc_info=True,
+                )
+                raise
+            self.atlas = bridge
 
     async def async_apply_configuration(self, config: dict) -> None:
         """Adopt a configuration written outside the flows and supersede any run.

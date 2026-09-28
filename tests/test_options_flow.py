@@ -193,6 +193,7 @@ async def test_options_commit_reloads_and_preserves_sources(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     before = entry.runtime_data
     result = await hass.config_entries.options.async_init(entry.entry_id)
     fid = result["flow_id"]
@@ -208,7 +209,7 @@ async def test_options_commit_reloads_and_preserves_sources(
     assert "import 0.4" in result["description_placeholders"]["preview"]
     result = await hass.config_entries.options.async_configure(fid, {"confirm": True})
     assert result["type"] == "create_entry"
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.runtime_data is not before
     assert entry.runtime_data.configuration["sources"] == config["sources"]
     assert float(
@@ -229,6 +230,7 @@ async def test_reconfigure_commits_atomically(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     before = entry.runtime_data
     result = await hass.config_entries.flow.async_init(
         "energy_compass",
@@ -266,6 +268,7 @@ async def test_options_installation_name_updates_entry_title(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     result = await hass.config_entries.options.async_init(entry.entry_id)
     fid = result["flow_id"]
     await hass.config_entries.options.async_configure(
@@ -302,6 +305,7 @@ async def test_presentation_options_update_existing_entities(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     registry = er.async_get(hass)
     registry.async_update_entity(
         "sensor.visibility_expected_net_cost", disabled_by=er.RegistryEntryDisabler.USER
@@ -428,6 +432,7 @@ async def test_infeasible_existing_edit_preserves_entry_and_runtime(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     runtime = entry.runtime_data
     before_data = deepcopy(dict(entry.data))
     before_options = deepcopy(dict(entry.options))

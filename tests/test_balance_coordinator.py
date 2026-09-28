@@ -46,7 +46,7 @@ async def _setup(hass, hass_storage=None, stored=None, config=None):
             "data": stored,
         }
     assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     return entry
 
 
@@ -224,6 +224,7 @@ async def test_battery_balance_sensor_disabled_when_feature_off(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id(

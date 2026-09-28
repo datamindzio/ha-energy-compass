@@ -459,6 +459,7 @@ async def export_entry(recorder_mock, hass, enable_custom_integrations, freezer)
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     yield entry
     await hass.config_entries.async_unload(entry.entry_id)
 
@@ -492,6 +493,7 @@ async def test_current_export_survives_recalculation_and_restart(
         == record
     )
     assert await hass.config_entries.async_setup(export_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert export_entry.runtime_data.data["dispatch_policy"]["new_export_episodes"] == 0
 
 
@@ -759,6 +761,7 @@ async def test_expired_stored_export_record_cannot_pre_pay_a_new_period(
     freezer.move_to("2026-09-18T02:00:00+00:00")
     hass.states.async_set("sensor.soc", "100")
     assert await hass.config_entries.async_setup(export_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = export_entry.runtime_data
     assert coordinator.data["valid"]
     assert coordinator.data["intervals"][0]["discharge_kwh"] == pytest.approx(0)

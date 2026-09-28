@@ -1,6 +1,7 @@
 """Native setup, atomic reconfiguration and operating preferences."""
 
 import json
+import logging
 from copy import deepcopy
 from zoneinfo import ZoneInfo
 
@@ -10,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 
-from .atlas_env import BASE_URLS
+from .atlas_env import BASE_URLS, ENROLLMENT_SECRETS
 from .engine.models import InputError, SolveError
 from .engine.optimize import solve
 from .flow_schema import (
@@ -41,6 +42,13 @@ from .source_management import (
 )
 from .sources.bindings import IntervalBinding
 from .sources.throughput import resolve_daily_throughput
+
+_LOGGER = logging.getLogger(__name__)
+
+# ADR-0019 §B2 (amendment T-411): RegistrationError.kind -> form error, only where
+# they differ. Every other kind (site_key_revoked, site_conflict, rate_limited,
+# cannot_connect, unknown) is used verbatim as the form error slug.
+_REGISTRATION_ERRORS = {"invalid_enrollment_secret": "enrollment_rejected"}
 
 
 def _preview_assumptions(config, problem, values, quality):
@@ -229,19 +237,25 @@ class Editor(SourceEditor):
         return self.async_show_menu(step_id="menu", menu_options=menu_options)
 
     async def async_step_energy_atlas(self, user_input=None):
-        """Opt-in Atlas delivery settings (ADR-0019 §2/§4). Saves immediately, no preview.
+        """Opt-in Atlas delivery settings (ADR-0019 §2/§4, amendment T-411 §B).
+
+        No secret field (§B1): registration uses the baked-in credential from
+        `atlas_env.ENROLLMENT_SECRETS`. Applies live, without a reload, when the
+        entry is loaded (§B3): `self.automatic_reload = False` plus
+        `coordinator.async_apply_atlas(...)` before the save.
 
         Also carries the "Forget site on <environment>" recovery action (ADR-0019 §9):
         a checked `forget_site` stops that environment's running sink (if it is the
         one currently active for this entry) and deletes its directory *before* the
         rest of the form is processed, so an enabled environment with no site left
-        falls straight into the existing "secret required" error path below and a
-        fresh secret in the same submission re-registers it.
+        falls straight into the registration branch below and re-registers with the
+        baked secret, without asking anything.
 
         ADR-0019 §3: the glue and sink modules must not load with Atlas off, so
         `config_flow` (eagerly imported by HA for any config-flow integration)
         never references `.atlas`/`.atlas_sink` at module scope.
         """
+        from .atlas import status_line
         from .atlas.storage import environment_dir, forget_environment, is_registered
         from .atlas_sink.sink import RegistrationError, register
 
@@ -267,9 +281,15 @@ class Editor(SourceEditor):
             elif enabled and not is_registered(
                 self.hass, self.config_entry.entry_id, environment
             ):
-                secret = user_input.get("enrollment_secret")
-                if not secret:
-                    errors["base"] = "invalid_input"
+                secret = ENROLLMENT_SECRETS.get(environment)
+                if secret is None:
+                    errors["base"] = "environment_unavailable"
+                    _LOGGER.warning(
+                        "Energy Atlas registration on %s failed: %s (HTTP %s)",
+                        environment,
+                        "environment_unavailable",
+                        "-",
+                    )
                 else:
                     directory = environment_dir(
                         self.hass, self.config_entry.entry_id, environment
@@ -279,15 +299,52 @@ class Editor(SourceEditor):
                             register, directory, BASE_URLS[environment], secret
                         )
                     except RegistrationError as err:
-                        errors["base"] = err.kind
+                        form_error = _REGISTRATION_ERRORS.get(err.kind, err.kind)
+                        errors["base"] = form_error
+                        _LOGGER.warning(
+                            "Energy Atlas registration on %s failed: %s (HTTP %s)",
+                            environment,
+                            form_error,
+                            err.status if err.status is not None else "-",
+                        )
             if not errors:
                 new_atlas = {"enabled": enabled, "environment": environment}
                 if pv_kwp is not None:
                     new_atlas["pv_kwp"] = pv_kwp
+                # ADR-0019 §B3: only a *loaded* entry applies the change live; a
+                # not-loaded entry (setup failed, or unloaded) keeps the default
+                # `automatic_reload = True` so the save retries setup instead.
+                # `runtime_data`/`coordinator.atlas` are never cleared on unload
+                # (see `async_unload_entry`), so their presence cannot stand in
+                # for "loaded" — only `config_entry.state` can.
+                if self.config_entry.state is config_entries.ConfigEntryState.LOADED:
+                    coordinator = self.config_entry.runtime_data
+                    self.automatic_reload = False
+                    try:
+                        await coordinator.async_apply_atlas(new_atlas)
+                    except Exception:
+                        # Already logged as the one §B2/§B3 WARNING, by
+                        # `async_apply_atlas` itself; this is only the
+                        # blind-except -> form-error translation at the UI
+                        # boundary, so DEBUG (not a second WARNING) here.
+                        _LOGGER.debug(
+                            "Energy Atlas live apply raised; form error unknown",
+                            exc_info=True,
+                        )
+                        errors["base"] = "unknown"
+            if not errors:
                 return self.async_create_entry(
                     title="",
                     data={**self.config_entry.options, "atlas": new_atlas},
                 )
+        runtime_data = getattr(self.config_entry, "runtime_data", None)
+        bridge = getattr(runtime_data, "atlas", None)
+        status = bridge.status() if bridge is not None else {"registered": False}
+        status_text = status_line.render(
+            status,
+            current.get("environment", "staging"),
+            self.hass.config.language,
+        )
         return self.async_show_form(
             step_id="energy_atlas",
             data_schema=vol.Schema(
@@ -303,17 +360,13 @@ class Editor(SourceEditor):
                         "pv_kwp",
                         description={"suggested_value": current.get("pv_kwp")},
                     ): number(0.01, 1000, "kWp"),
-                    vol.Optional("enrollment_secret"): selector.TextSelector(
-                        selector.TextSelectorConfig(
-                            type=selector.TextSelectorType.PASSWORD
-                        )
-                    ),
                     vol.Optional(
                         "forget_site", default=False
                     ): selector.BooleanSelector(),
                 }
             ),
             errors=errors,
+            description_placeholders={"status": status_text},
         )
 
     async def async_step_energy_atlas_proof(self, user_input=None):

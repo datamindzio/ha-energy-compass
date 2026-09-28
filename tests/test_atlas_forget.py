@@ -11,6 +11,7 @@ from custom_components.energy_compass.atlas.backfill_service import (
     SERVICE_ATLAS_BACKFILL,
 )
 from custom_components.energy_compass.atlas.storage import environment_dir
+from custom_components.energy_compass.atlas_env import ENROLLMENT_SECRETS
 from custom_components.energy_compass.atlas_sink import sink as atlas_sink_module
 from custom_components.energy_compass.settings import DOMAIN, default_configuration
 
@@ -85,6 +86,7 @@ async def test_forget_unchecked_leaves_the_site_untouched(
     monkeypatch.setattr(atlas_sink_module, "register", _fail_if_called)
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     directory = environment_dir(hass, entry.entry_id, "staging")
 
@@ -108,6 +110,7 @@ async def test_forget_deletes_the_directory_only_when_confirmed(
 ):
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     directory = environment_dir(hass, entry.entry_id, "staging")
     assert directory.exists()
@@ -128,6 +131,7 @@ async def test_forget_stops_the_running_sink_for_the_active_environment(
 ):
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     assert len(fake_sink) == 1
 
@@ -138,47 +142,64 @@ async def test_forget_stops_the_running_sink_for_the_active_environment(
     )
     assert result["type"] == "create_entry"
     await hass.async_block_till_done()
-    # forget_site's own stop, then the reload's unload stops the (new) sink again.
-    assert 10 in fake_sink[0].stop_calls
+    # No reload (ADR-0019 §B3, T-411): forget's own stop is the only stop, and
+    # disabling never starts a replacement bridge.
+    assert fake_sink[0].stop_calls == [10]
+    assert len(fake_sink) == 1
+    assert entry.runtime_data.atlas is None
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_forget_then_save_without_secret_is_a_form_error(
+async def test_forget_then_save_on_an_unavailable_environment_is_a_form_error(
     recorder_mock, hass, enable_custom_integrations
 ):
-    entry = _registered_entry(hass)
+    # production has no baked secret (ADR-0019 amendment T-411 §B1); forgetting it
+    # and resaving enabled must fail with environment_unavailable, not ask for one.
+    entry = _registered_entry(hass, environment="production")
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     result = await _open_energy_atlas(hass, entry)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"enabled": True, "environment": "staging", "pv_kwp": 5.0, "forget_site": True},
+        {
+            "enabled": True,
+            "environment": "production",
+            "pv_kwp": 5.0,
+            "forget_site": True,
+        },
     )
     assert result["type"] == "form"
-    assert result["errors"] == {"base": "invalid_input"}
-    directory = environment_dir(hass, entry.entry_id, "staging")
+    assert result["errors"] == {"base": "environment_unavailable"}
+    directory = environment_dir(hass, entry.entry_id, "production")
     assert not directory.exists()
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_forget_then_save_without_secret_detaches_the_sink(
+async def test_forget_then_save_on_an_unavailable_environment_detaches_the_sink(
     recorder_mock, hass, enable_custom_integrations
 ):
     """forget_site's async_stop() must leave `bridge.sink` unset, not just stopped:
-    otherwise a save that then errors (no secret) leaves a dead sink wired up, and
-    atlas_backfill would silently enqueue into it instead of raising."""
-    entry = _registered_entry(hass)
+    otherwise a save that then errors (environment_unavailable) leaves a dead sink
+    wired up, and atlas_backfill would silently enqueue into it instead of raising."""
+    entry = _registered_entry(hass, environment="production")
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     result = await _open_energy_atlas(hass, entry)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"enabled": True, "environment": "staging", "pv_kwp": 5.0, "forget_site": True},
+        {
+            "enabled": True,
+            "environment": "production",
+            "pv_kwp": 5.0,
+            "forget_site": True,
+        },
     )
     assert result["type"] == "form"
-    assert result["errors"] == {"base": "invalid_input"}
+    assert result["errors"] == {"base": "environment_unavailable"}
 
     assert entry.runtime_data.atlas.sink is None
     with pytest.raises(ServiceValidationError):
@@ -188,7 +209,7 @@ async def test_forget_then_save_without_secret_detaches_the_sink(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_forget_then_save_with_secret_registers_a_new_site(
+async def test_forget_then_save_registers_a_new_site_with_the_baked_secret(
     recorder_mock, hass, enable_custom_integrations, monkeypatch
 ):
     calls = []
@@ -201,6 +222,7 @@ async def test_forget_then_save_with_secret_registers_a_new_site(
 
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     result = await _open_energy_atlas(hass, entry)
@@ -212,12 +234,11 @@ async def test_forget_then_save_with_secret_registers_a_new_site(
             "environment": "staging",
             "pv_kwp": 5.0,
             "forget_site": True,
-            "enrollment_secret": "new-secret",
         },
     )
     assert result["type"] == "create_entry", result.get("errors")
     assert len(calls) == 1
-    assert calls[0][1] == "new-secret"
+    assert calls[0][1] == ENROLLMENT_SECRETS["staging"]
     directory = environment_dir(hass, entry.entry_id, "staging")
     assert directory.exists()
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -231,6 +252,7 @@ async def test_forget_only_affects_the_selected_environment(
     production_dir.mkdir(parents=True)
     (production_dir / "site.json").write_text('{"site_id": "site-prod"}')
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     result = await _open_energy_atlas(hass, entry)

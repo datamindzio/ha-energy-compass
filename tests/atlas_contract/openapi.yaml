@@ -179,6 +179,11 @@ paths:
         (`revokeSiteKey`) → 409 `site-key-revoked`, nothing created or changed; checked after auth
         and before the source check; the edge must generate a new key to re-enrol (ADR-0011).
         Rate limit 10 requests/hour per client IP (counted before auth) → 429.
+        A `public` credential (ADR-0019 amendment T-411 §A) additionally creates at most
+        `ATLAS_ENROLLMENT_PUBLIC_SITES_PER_DAY` (default 20) new sites per sliding 24 h: checked after
+        auth and after the existing-key checks (so a same-key 200 is never capped or counted), before
+        the insert; over the cap → 429 `rate-limited`, nothing created, `Retry-After` = seconds until the
+        oldest counted site of that credential is 24 h old (rounded up, ≥ 1). Private credentials have no cap.
       security: [{ enrollmentBearer: [] }]
       requestBody:
         required: true
@@ -216,6 +221,7 @@ paths:
       security: [{ operatorBearer: [] }]
       parameters:
         - $ref: '#/components/parameters/SourceFilter'
+        - $ref: '#/components/parameters/PublicEnrollmentFilter'
       responses:
         '200':
           description: Sites ordered by registered_at ascending.
@@ -717,6 +723,14 @@ components:
       required: false
       description: Only sites with this source. Absent = all.
       schema: { $ref: '#/components/schemas/Source' }
+    PublicEnrollmentFilter:
+      name: public_enrollment
+      in: query
+      required: false
+      description: |
+        Only sites whose `public_enrollment` equals this value (`true` or `false`, lower case). Absent =
+        all. Any other value → 422 `invalid-field`, field `query.public_enrollment`, reason `wrong_type`.
+      schema: { type: boolean }
     From:
       name: from
       in: query
@@ -814,6 +828,13 @@ components:
       enum: [real, simulated]
       description: Provenance; fixed by the enrollment credential at registration, immutable.
 
+    PublicEnrollment:
+      type: boolean
+      description: |
+        True when the site was registered with a `public` enrollment credential (derived on read from
+        the credential, immutable). Such a site is unverified while `linked_recipients` is 0 (no
+        ownership proof yet, ADR-0004).
+
     Timestamp:
       type: string
       format: date-time
@@ -886,14 +907,22 @@ components:
       properties:
         source: { $ref: '#/components/schemas/Source' }
         label: { type: string, maxLength: 100, description: 'Operator note, e.g. "home".' }
+        public:
+          type: boolean
+          default: false
+          description: |
+            The secret will be published (baked into a public Energy Compass release, ADR-0019 amendment
+            T-411). Immutable. Sites it registers are marked `public_enrollment: true` and it creates at
+            most `ATLAS_ENROLLMENT_PUBLIC_SITES_PER_DAY` new sites per 24 h (see `registerSite`).
 
     EnrollmentCredential:
       type: object
       additionalProperties: false
-      required: [credential_id, source, created_at, revoked_at]
+      required: [credential_id, source, public, created_at, revoked_at]
       properties:
         credential_id: { type: string, format: uuid }
         source: { $ref: '#/components/schemas/Source' }
+        public: { type: boolean, description: 'Set at creation, immutable (`EnrollmentCredentialCreate.public`).' }
         label: { type: [string, 'null'] }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         revoked_at:
@@ -962,10 +991,11 @@ components:
     SiteSummary:
       type: object
       additionalProperties: false
-      required: [site_id, source, registered_at, key_revoked, freshness, alert_active]
+      required: [site_id, source, public_enrollment, registered_at, key_revoked, freshness, alert_active]
       properties:
         site_id: { $ref: '#/components/schemas/SiteId' }
         source: { $ref: '#/components/schemas/Source' }
+        public_enrollment: { $ref: '#/components/schemas/PublicEnrollment' }
         registered_at: { $ref: '#/components/schemas/Timestamp' }
         key_revoked: { type: boolean }
         freshness: { $ref: '#/components/schemas/Freshness' }
@@ -974,10 +1004,11 @@ components:
     SiteDetail:
       type: object
       additionalProperties: false
-      required: [site_id, source, registered_at, enrollment_credential_id, key_revoked_at, freshness, alert, linked_recipients, effective_config]
+      required: [site_id, source, public_enrollment, registered_at, enrollment_credential_id, key_revoked_at, freshness, alert, linked_recipients, effective_config]
       properties:
         site_id: { $ref: '#/components/schemas/SiteId' }
         source: { $ref: '#/components/schemas/Source' }
+        public_enrollment: { $ref: '#/components/schemas/PublicEnrollment' }
         registered_at: { $ref: '#/components/schemas/Timestamp' }
         enrollment_credential_id: { type: string, format: uuid }
         key_revoked_at:

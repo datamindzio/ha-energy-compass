@@ -40,6 +40,7 @@ async def plain_entry(recorder_mock, hass, enable_custom_integrations, freezer):
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     yield entry
     await hass.config_entries.async_unload(entry.entry_id)
@@ -56,6 +57,7 @@ async def released_entry(recorder_mock, hass, enable_custom_integrations, freeze
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     yield entry
     await hass.config_entries.async_unload(entry.entry_id)

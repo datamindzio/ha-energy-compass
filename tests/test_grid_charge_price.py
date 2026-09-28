@@ -254,11 +254,13 @@ async def test_price_pause_preserves_carried_clock_across_reload(
     record = {"mode": "CHARGE_GRID", "since": "2026-09-18T00:00:00+00:00"}
     await Store(hass, 1, f"energy_compass.{entry.entry_id}.dispatch").async_save(record)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     try:
         assert entry.runtime_data.data["valid"]
         assert entry.runtime_data.data["intervals"][0]["state"] == "HOLD"
         assert entry.runtime_data._battery_commitment == record
         assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
         assert entry.runtime_data.data["valid"]
         assert entry.runtime_data._battery_commitment == record
     finally:

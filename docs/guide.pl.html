@@ -1548,26 +1548,33 @@ nowego wątku w tle, bez nowych plików.</p>
 </tr>
 <tr>
 <td>Środowisko</td>
-<td><strong>staging</strong> (<code>atlas-api-staging.datamindz.io</code>, do walidacji przepływu danych) lub <strong>produkcja</strong> (<code>atlas-api.datamindz.io</code>, kolektor produkcyjny). Najpierw zwaliduj na staging.</td>
+<td><strong>staging</strong> (<code>atlas-api-staging.datamindz.io</code>, do walidacji przepływu danych) lub <strong>produkcja</strong> (<code>atlas-api.datamindz.io</code>, kolektor produkcyjny). Staging waliduje przepływ danych; produkcja nie jest jeszcze dostępna w tym wydaniu (brak wbudowanego poświadczenia).</td>
 </tr>
 <tr>
 <td>Moc instalacji PV (kWp)</td>
 <td>Zainstalowana moc PV, wprowadzana raz; nie jest wyliczana z innych ustawień Compass. Bez wartości domyślnej: wymagana, gdy wysyłanie jest włączone.</td>
 </tr>
-<tr>
-<td>Sekret rejestracyjny</td>
-<td>Jednorazowy sekret od operatora Energy Atlas dla wybranego środowiska. Potrzebny tylko przy pierwszym włączeniu tego środowiska; ignorowany, gdy witryna jest już tam zarejestrowana.</td>
-</tr>
 </tbody>
 </table></section>
+<p><strong>Nie trzeba wpisywać sekretu.</strong> To wydanie rejestruje się współdzielonym <strong>publicznym</strong>
+poświadczeniem wbudowanym w samą integrację — tym samym dla każdej instalacji tej wersji — więc
+każdy korzystający z Energy Compass może nim zarejestrować witrynę; witryna jest
+<strong>niezweryfikowana</strong>, dopóki nie wyślesz <strong>Energy Atlas: pokaż dowód własności</strong> (niżej) do bota
+Energy Atlas. Poświadczenie zmienia się wraz z wydaniem: każda nowa wersja Compass może wysłać
+inne, a stare jest w końcu unieważniane (już zarejestrowane witryny nadal działają — uwierzytelniają
+się własnym kluczem witryny, nie poświadczeniem rejestracyjnym).</p>
+<p>Zapis formularza działa <strong>na żywo</strong>: nie przeładowuje wpisu ani nie dotyka planu, od razu uruchamia
+lub zatrzymuje wątek wysyłki. Opis formularza pokazuje <strong>linię statusu</strong>, więc widać z telefonu, że
+zadziałało: <code>wyłączone</code>, albo <code>zarejestrowano na &lt;środowisko&gt; · ostatnia dostawa &lt;czas | nigdy&gt; ·
+oczekuje &lt;n&gt;</code> (plus <code>zablokowane: &lt;rodzaje&gt;</code>, jeśli wysyłka utknęła).</p>
 <p><strong>Co jest wysyłane</strong>, tylko gdy funkcja jest włączona i tylko dla źródeł powiązanych w sekcji Źródła
 danych: moc PV, import/eksport z sieci i moc baterii, moc obciążenia domowego (tylko w trybie
 rejestratora), SOC baterii oraz liczniki energii PV/importu/eksportu (tylko liczniki, których
 atrybut Home Assistant <code>state_class</code> to <code>total</code>/<code>total_increasing</code>);
 plan każdego rozwiązania Compass wraz z wejściami cen/PV/zużycia; kilka atrybutów instalacji (moc PV
 w kWp, pojemność baterii nominalna i użyteczna, próg SOC, wersja Compass). Nic więcej — brak
-lokalizacji, tekstu taryfy czy modelu falownika, a sam sekret rejestracyjny <strong>nigdy nie jest
-zapisywany</strong> — przechowywany jest tylko klucz witryny wydany w zamian za niego.</p>
+lokalizacji, tekstu taryfy czy modelu falownika, a samo poświadczenie rejestracyjne <strong>nigdy nie
+jest zapisywane</strong> — przechowywany jest tylko klucz witryny wydany w zamian za nie.</p>
 <p><strong>Jak wysyłane są wartości</strong>: moce w W. Powiąż <strong>Moc baterii</strong> tak, by + oznaczał rozładowanie (jak
 w przykładowych dashboardach); Atlas otrzymuje ją jako + = ładowanie. Odczyty spoza zakresów
 kolektora są korygowane, a nie wysyłane jako błędy: ujemna moc importu/eksportu z sieci jest
@@ -1578,9 +1585,9 @@ katalogu konfiguracyjnego Home Assistant, osobny podkatalog na środowisko, wię
 nigdy nie współdzielą klucza, witryny ani kolejki. Jest uwzględniany w kopiach zapasowych Home
 Assistant. Usunięcie integracji go kasuje.</p>
 <p><strong>Przełączanie środowiska</strong>: staging i produkcja są niezależne — każde zachowuje własny klucz,
-witrynę i zakolejkowane dane. Przełączenie na środowisko już zarejestrowane wznawia je (bez ponownej
-rejestracji, bez utraty kolejki); przełączenie na nigdy niezarejestrowane prosi o nowy sekret
-rejestracyjny.</p>
+witrynę i zakolejkowane dane. Przełączenie na środowisko już zarejestrowane wznawia je na żywo (bez
+przeładowania, bez ponownej rejestracji, bez utraty kolejki); przełączenie na nigdy
+niezarejestrowane rejestruje je automatycznie wbudowanym poświadczeniem, bez pytania o cokolwiek.</p>
 <p><strong>Gdy kolektor jest niedostępny</strong>: telemetria i rozwiązania kolejkują się lokalnie (do 30 dni) i są
 wysyłane po odzyskaniu łączności; własny plan Compass nie jest tym dotknięty — wysyłka do Atlas
 działa na własnym wątku w tle i nigdy nie dzieli harmonogramu z optymalizatorem. Diagnostyka
@@ -1590,8 +1597,8 @@ włączenie, środowisko, stan rejestracji, głębokość kolejki i ewentualnie 
 źródłem, zaznacz <strong>Zapomnij witrynę w tym środowisku</strong> na tym samym formularzu Energy Atlas i
 zapisz. Usuwa to klucz i zakolejkowane dane wybranego środowiska tylko na tym urządzeniu — sama
 witryna nie jest usuwana po stronie kolektora, operator może ją osobno unieważnić — więc kolejny
-zapis bez sekretu pokazuje ten sam błąd "niezarejestrowane" co przy pierwszej konfiguracji, a zapis
-z nowym sekretem rejestracyjnym rejestruje tam nową witrynę.</p>
+zapis z nadal włączoną wysyłką automatycznie rejestruje tam nową witrynę, znowu bez pytania o
+cokolwiek.</p>
 <p><strong>Pokaż dowód własności</strong>: gdy witryna jest włączona i zarejestrowana, menu opcji oferuje
 dodatkową pozycję, <strong>Energy Atlas: pokaż dowód własności</strong>. Generuje ona krótkotrwały podpisany
 dowód (ważny 15 minut, jednorazowy) i wyświetla go do wysłania botowi Energy Atlas, aby powiązać
