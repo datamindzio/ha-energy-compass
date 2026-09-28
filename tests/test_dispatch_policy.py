@@ -289,6 +289,7 @@ async def test_direction_commitment_survives_recalculate_and_reload(
         commitment
     )
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     assert coordinator.data["valid"]
     assert coordinator.data["intervals"][0]["state"] == "HOLD"
@@ -311,6 +312,7 @@ async def test_direction_commitment_survives_recalculate_and_reload(
     assert coordinator._battery_commitment == expected
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.runtime_data._battery_commitment == expected
     assert entry.runtime_data.data["intervals"][0]["state"] == "HOLD"
     assert await hass.config_entries.async_unload(entry.entry_id)

@@ -320,6 +320,7 @@ async def grid_charge_entry(recorder_mock, hass, enable_custom_integrations, fre
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     yield entry
     await hass.config_entries.async_unload(entry.entry_id)
 
@@ -350,6 +351,7 @@ async def test_current_grid_charge_survives_recalculation_and_restart(
         == record
     )
     assert await hass.config_entries.async_setup(grid_charge_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert (
         grid_charge_entry.runtime_data.data["dispatch_policy"][
             "new_grid_charge_episodes"

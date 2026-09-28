@@ -271,6 +271,9 @@ async def test_rapid_updates_serialize_jobs_and_discard_old_generation(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    # ADR-0019 §B4: the initial solve is backgrounded; let it finish with the
+    # real `compute` before patching it and driving a controlled recalculation.
+    await hass.async_block_till_done(wait_background_tasks=True)
     started, release = threading.Event(), threading.Event()
     observed = []
     active = []
@@ -420,6 +423,7 @@ async def test_reload_preserves_entity_identity_and_observed_window(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     registry = er.async_get(hass)
     before = {
         item.unique_id: item.entity_id
@@ -428,7 +432,7 @@ async def test_reload_preserves_entity_identity_and_observed_window(
     start = hass.states.get("sensor.stable_next_boost_start").state
     freezer.move_to("2026-09-17T10:05:00+00:00")
     assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     after = {
         item.unique_id: item.entity_id
         for item in er.async_entries_for_config_entry(registry, entry.entry_id)

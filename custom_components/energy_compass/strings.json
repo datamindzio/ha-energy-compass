@@ -819,19 +819,17 @@
       },
       "energy_atlas": {
         "title": "Energy Atlas",
-        "description": "Opt-in delivery of telemetry and solves to Energy Atlas for staging validation or production. The enrollment secret is never stored; only the resulting site key is.",
+        "description": "Opt-in delivery of telemetry and solves to Energy Atlas. No secret to enter: this release enrolls with a shared public credential, so anyone running Energy Compass can register a site with it; a site is unverified until you send \"Show ownership proof\" to the Energy Atlas bot. Staging validates the data flow; production is not available in this release yet.\n\nStatus: {status}",
         "data": {
           "enabled": "Send to Energy Atlas",
           "environment": "Environment",
           "pv_kwp": "PV capacity (kWp)",
-          "enrollment_secret": "Enrollment secret",
           "forget_site": "Forget site on this environment"
         },
         "data_description": {
           "environment": "Staging validates the data flow; production is the live collector. Switching keeps each environment's own site and queued data.",
           "pv_kwp": "Installed PV capacity in kWp, 0-1000. Not derived from other Compass settings.",
-          "enrollment_secret": "One-time secret from the operator for the selected environment. Only needed the first time this environment is enabled; ignored once registered.",
-          "forget_site": "Deletes the selected environment's site key and queued data on this device. Recovery from a revoked key or a conflict; the site itself is not deleted at the collector. A new enrollment secret is required to register again."
+          "forget_site": "Deletes the selected environment's site key and queued data on this device. Recovery from a revoked key or a conflict; the site itself is not deleted at the collector. The next enabled save registers a new key automatically."
         }
       },
       "energy_atlas_proof": {
@@ -848,10 +846,11 @@
       "plan_infeasible": "The base plan is infeasible; review the limits shown below.",
       "plan_timeout": "The base solve timed out; feasibility is unknown.",
       "optimizer_error": "The optimizer could not validate the base plan.",
-      "invalid_enrollment_secret": "Invalid enrollment secret.",
+      "enrollment_rejected": "Enrollment was revoked; update Energy Compass.",
+      "environment_unavailable": "This Energy Compass version cannot enroll on this environment yet.",
       "site_key_revoked": "This site's key was revoked; use \"Forget site\" to re-register.",
       "site_conflict": "This key is already registered under a different source.",
-      "rate_limited": "Too many attempts; try again in an hour.",
+      "rate_limited": "Too many attempts; try again later.",
       "cannot_connect": "Could not reach the Energy Atlas collector.",
       "unknown": "Registration failed for an unknown reason."
     }

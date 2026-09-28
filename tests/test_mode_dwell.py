@@ -188,6 +188,7 @@ async def test_native_named_commitment_replan_reload(
     entry.add_to_hass(hass)
     await Store(hass, 1, f"energy_compass.{entry.entry_id}.dispatch").async_save(stored)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     assert coordinator.data["valid"]
     mode = coordinator.data["intervals"][0]["state"]
@@ -203,6 +204,7 @@ async def test_native_named_commitment_replan_reload(
     assert coordinator.data["intervals"][0]["state"] == mode
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.runtime_data._battery_commitment == commitment
     assert entry.runtime_data.data["intervals"][0]["state"] == mode
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -226,6 +228,7 @@ async def test_native_safety_hold_preserves_original_clock(
         commitment
     )
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     assert coordinator.data["valid"]
     assert coordinator.data["intervals"][0]["state"] == "HOLD"
@@ -237,6 +240,7 @@ async def test_native_safety_hold_preserves_original_clock(
     }
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.runtime_data._battery_commitment == commitment
     assert await hass.config_entries.async_unload(entry.entry_id)
 
@@ -459,6 +463,7 @@ async def test_native_failed_and_superseded_results_preserve_clock(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     original = coordinator._battery_commitment.copy()
     compute = module.compute

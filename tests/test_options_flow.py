@@ -208,7 +208,7 @@ async def test_options_commit_reloads_and_preserves_sources(
     assert "import 0.4" in result["description_placeholders"]["preview"]
     result = await hass.config_entries.options.async_configure(fid, {"confirm": True})
     assert result["type"] == "create_entry"
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.runtime_data is not before
     assert entry.runtime_data.configuration["sources"] == config["sources"]
     assert float(

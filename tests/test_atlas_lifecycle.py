@@ -125,7 +125,9 @@ async def test_first_solve_after_setup_carries_the_payload_builder(
     monkeypatch.setattr(coordinator_module, "compute", _spy)
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    # ADR-0019 §B4 (T-411): the first solve is backgrounded, so it must be waited
+    # for explicitly here.
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert builders and builders[0] is not None
     assert await hass.config_entries.async_unload(entry.entry_id)
 
@@ -174,6 +176,209 @@ async def test_diagnostics_never_carry_secrets_or_site_id(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_saving_atlas_settings_does_not_reload_the_entry(
+    recorder_mock, hass, enable_custom_integrations, fake_sink, monkeypatch
+):
+    """ADR-0019 §B3 (amendment T-411): the Atlas step applies live, no reload —
+    `async_reload`/setup does not run again, the coordinator object and every
+    entity's state/last_changed are unchanged, and no new solve is dispatched."""
+    from custom_components.energy_compass import coordinator as coordinator_module
+
+    reload_calls = []
+    real_reload = hass.config_entries.async_reload
+
+    async def _spy_reload(entry_id):
+        reload_calls.append(entry_id)
+        return await real_reload(entry_id)
+
+    monkeypatch.setattr(hass.config_entries, "async_reload", _spy_reload)
+
+    recalculate_calls = []
+    real_recalculate = coordinator_module.EnergyCompassCoordinator.async_recalculate
+
+    async def _spy_recalculate(self):
+        recalculate_calls.append(1)
+        return await real_recalculate(self)
+
+    monkeypatch.setattr(
+        coordinator_module.EnergyCompassCoordinator,
+        "async_recalculate",
+        _spy_recalculate,
+    )
+
+    entry = _registered_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = entry.runtime_data
+    recalculate_calls.clear()  # drop the initial setup solve
+    before = {
+        state.entity_id: (state.state, state.last_changed)
+        for state in hass.states.async_all()
+    }
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "energy_atlas"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"enabled": True, "environment": "staging", "pv_kwp": 6.0}
+    )
+    assert result["type"] == "create_entry", result.get("errors")
+    await hass.async_block_till_done()
+
+    assert reload_calls == []
+    assert recalculate_calls == []
+    assert entry.runtime_data is coordinator
+    after = {
+        state.entity_id: (state.state, state.last_changed)
+        for state in hass.states.async_all()
+    }
+    assert after == before
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_saving_atlas_settings_on_a_not_loaded_entry_retries_setup_via_reload(
+    recorder_mock, hass, enable_custom_integrations, fake_sink, monkeypatch
+):
+    """ADR-0019 §B3 (amendment T-411): "not-loaded entry -> normal reload". A
+    not-loaded entry (here: unloaded) must NOT go through the live-apply path —
+    `runtime_data`/`coordinator.atlas` are never cleared on unload, so their mere
+    presence is not "loaded"; only `config_entry.state` is. The save must instead
+    keep the default `automatic_reload = True` and let the reload retry setup,
+    rather than calling `async_apply_atlas` on a stale coordinator and starting an
+    orphan sink thread for an entry that isn't set up."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.energy_compass import coordinator as coordinator_module
+
+    entry = _registered_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert entry.state is ConfigEntryState.NOT_LOADED
+
+    apply_calls = []
+    real_apply = coordinator_module.EnergyCompassCoordinator.async_apply_atlas
+
+    async def _spy_apply(self, new_settings):
+        apply_calls.append(new_settings)
+        return await real_apply(self, new_settings)
+
+    monkeypatch.setattr(
+        coordinator_module.EnergyCompassCoordinator, "async_apply_atlas", _spy_apply
+    )
+
+    reload_calls = []
+    real_reload = hass.config_entries.async_reload
+
+    async def _spy_reload(entry_id):
+        reload_calls.append(entry_id)
+        return await real_reload(entry_id)
+
+    monkeypatch.setattr(hass.config_entries, "async_reload", _spy_reload)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "energy_atlas"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"enabled": True, "environment": "staging", "pv_kwp": 6.0}
+    )
+    assert result["type"] == "create_entry", result.get("errors")
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert apply_calls == []
+    assert reload_calls == [entry.entry_id]
+    assert entry.state is ConfigEntryState.LOADED
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_setup_does_not_block_on_the_first_solve(
+    recorder_mock, hass, enable_custom_integrations, fake_sink, monkeypatch
+):
+    """ADR-0019 §B4 (amendment T-411): `async_setup_entry` returns and the entry is
+    LOADED with entities present (`status: calculating`) while the first solve is
+    still blocked; releasing the block publishes the plan; an unload started while
+    the solve is still blocked waits for it and publishes nothing."""
+    import threading
+
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.energy_compass import coordinator as coordinator_module
+
+    block = threading.Event()
+    real_compute = coordinator_module.compute
+
+    def _blocking_compute(*args, **kwargs):
+        block.wait()
+        return real_compute(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator_module, "compute", _blocking_compute)
+
+    entry = _registered_entry(hass)
+    try:
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        assert entry.state is ConfigEntryState.LOADED
+        status = hass.states.get("sensor.mock_title_optimizer_status")
+        assert status is not None
+        assert status.state == "calculating"
+    finally:
+        # Release the blocked executor thread on any assertion failure too:
+        # otherwise fixture teardown hangs forever waiting for it (ADR-0019
+        # §B4's own "unload waits for the in-flight solve" guarantee).
+        block.set()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    status = hass.states.get("sensor.mock_title_optimizer_status")
+    assert status.state != "calculating"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_unload_during_a_blocked_first_solve_waits_and_publishes_nothing(
+    recorder_mock, hass, enable_custom_integrations, fake_sink, monkeypatch
+):
+    import threading
+
+    from custom_components.energy_compass import coordinator as coordinator_module
+
+    block = threading.Event()
+    real_compute = coordinator_module.compute
+    entered = threading.Event()
+
+    def _blocking_compute(*args, **kwargs):
+        entered.set()
+        block.wait()
+        return real_compute(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator_module, "compute", _blocking_compute)
+
+    entry = _registered_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    coordinator = entry.runtime_data
+    # Wait for the executor job to actually reach the blocking compute before
+    # unloading, matching "unload during the blocked first solve".
+    for _ in range(200):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert entered.is_set()
+    try:
+        assert coordinator.data.get("status") == "calculating"
+
+        unload_task = hass.async_create_task(
+            hass.config_entries.async_unload(entry.entry_id)
+        )
+        await asyncio.sleep(0.05)
+        assert not unload_task.done()  # genuinely waiting on the blocked worker
+    finally:
+        # Release the blocked executor thread on any assertion failure too:
+        # otherwise fixture teardown hangs forever waiting for it.
+        block.set()
+    assert await unload_task
+
+    # The now-released compute must not have published through a closed coordinator.
+    assert coordinator.data.get("status") == "calculating"
+
+
 async def test_environment_switch_keeps_separate_directories_and_no_reregistration(
     recorder_mock, hass, enable_custom_integrations, fake_sink, monkeypatch
 ):
@@ -216,12 +421,18 @@ async def test_environment_switch_rows_1_to_4(
     recorder_mock, hass, enable_custom_integrations, fake_sink, monkeypatch
 ):
     """ADR-0019 §5 environment switch table, rows 1-4, walked as one user journey:
-    enabling staging registers it (row 1); switching to production with a secret
-    registers production and stops the staging sink (row 2); switching back to the
+    enabling staging registers it with the baked secret (row 1); switching to
+    production registers production (also baked) and stops the staging sink, live,
+    without a reload (row 2, amendment T-411 §B3); switching back to the
     already-registered staging resumes it without calling `register()` again and
     stops production (row 3); disabling starts no sink and keeps both directories
     (row 4)."""
+    from custom_components.energy_compass.atlas_env import ENROLLMENT_SECRETS
     from custom_components.energy_compass.atlas_sink import sink as atlas_sink_module
+
+    # production has no baked secret by default (ADR-0019 amendment T-411 §B1); give
+    # it one here so this test can walk the full row-2 switch like staging.
+    monkeypatch.setitem(ENROLLMENT_SECRETS, "production", "p1")
 
     register_calls = []
 
@@ -254,30 +465,34 @@ async def test_environment_switch_rows_1_to_4(
     staging_dir = environment_dir(hass, entry.entry_id, "staging")
     production_dir = environment_dir(hass, entry.entry_id, "production")
 
-    # Row 1: enable staging, not yet registered -> registers, sink starts there.
-    await _configure(
-        enabled=True, environment="staging", pv_kwp=5.0, enrollment_secret="s1"
-    )
+    # Row 1: enable staging, not yet registered -> registers with the baked secret,
+    # sink starts there.
+    await _configure(enabled=True, environment="staging", pv_kwp=5.0)
     assert register_calls == [
-        (str(staging_dir), "https://atlas-api-staging.datamindz.io", "s1")
+        (
+            str(staging_dir),
+            "https://atlas-api-staging.datamindz.io",
+            ENROLLMENT_SECRETS["staging"],
+        )
     ]
     assert staging_dir.exists()
     assert len(fake_sink) == 1
     assert fake_sink[0].started
     assert entry.runtime_data.atlas.environment == "staging"
 
-    # Row 2: switch to production with a secret -> registers production, stops staging.
-    await _configure(
-        enabled=True, environment="production", pv_kwp=5.0, enrollment_secret="s2"
-    )
+    # Row 2: switch to production -> registers production, stops staging live (no
+    # reload: same coordinator object, same entity states unaffected by a reload).
+    coordinator = entry.runtime_data
+    await _configure(enabled=True, environment="production", pv_kwp=5.0)
+    assert entry.runtime_data is coordinator
     assert len(register_calls) == 2
     assert register_calls[1] == (
         str(production_dir),
         "https://atlas-api.datamindz.io",
-        "s2",
+        "p1",
     )
     assert production_dir.exists()
-    assert fake_sink[0].stop_calls == [10]  # staging sink stopped on reload
+    assert fake_sink[0].stop_calls == [10]  # staging sink stopped live
     assert len(fake_sink) == 2
     assert fake_sink[1].started
     assert entry.runtime_data.atlas.environment == "production"
@@ -286,7 +501,7 @@ async def test_environment_switch_rows_1_to_4(
     # staging resumes, production stops.
     await _configure(enabled=True, environment="staging", pv_kwp=5.0)
     assert len(register_calls) == 2  # unchanged: staging was already registered
-    assert fake_sink[1].stop_calls == [10]  # production sink stopped on reload
+    assert fake_sink[1].stop_calls == [10]  # production sink stopped live
     assert len(fake_sink) == 3
     assert fake_sink[2].started
     assert entry.runtime_data.atlas.environment == "staging"

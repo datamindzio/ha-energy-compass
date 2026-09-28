@@ -913,9 +913,21 @@ Turn it on in **Settings → Devices & services → Energy Compass → Configure
 | Field | Meaning |
 | --- | --- |
 | Send to Energy Atlas | Off by default. |
-| Environment | **staging** (`atlas-api-staging.datamindz.io`, for validating the data flow) or **production** (`atlas-api.datamindz.io`, the live collector). Validate on staging first. |
+| Environment | **staging** (`atlas-api-staging.datamindz.io`, for validating the data flow) or **production** (`atlas-api.datamindz.io`, the live collector). Staging validates the data flow; production is not available in this release yet (no credential baked in for it). |
 | PV capacity (kWp) | Installed PV capacity, entered once; not derived from other Compass settings. No default: required when sending is on. |
-| Enrollment secret | A one-time secret from the Energy Atlas operator for the chosen environment. Needed only the first time that environment is enabled; ignored once a site is already registered there. |
+
+**No secret to enter.** This release registers with a shared **public** enrollment credential baked
+into the integration itself — the same one for every install of this version — so anyone running
+Energy Compass can register a site with it; the site is **unverified** until you send **Energy
+Atlas: show ownership proof** (below) to the Energy Atlas bot. The credential rotates by release:
+each new Compass version may ship a different one, and the old one is eventually revoked (already
+registered sites keep working — they authenticate by their own site key, not the enrollment
+credential).
+
+Saving the form applies **live**: it does not reload the entry or touch your plan, and it starts or
+stops the delivery thread immediately. The form's description shows a **status line** so you can
+see it worked from your phone: `off`, or `registered on <environment> · last delivery <time |
+never> · waiting <n>` (plus `halted: <kinds>` if delivery is stuck).
 
 **What is sent**, only while enabled and only the entities you have bound in Sources: PV, grid
 import/export and battery power, household load power (recorder mode only), battery SOC, and
@@ -923,8 +935,8 @@ PV/import/export energy counters (only counters
 whose Home Assistant `state_class` is `total`/`total_increasing`); each Compass solve's plan and
 its price/PV/load inputs; a handful of installation attributes (PV kWp, battery capacity and usable
 capacity, SOC floor, the Compass version). Nothing else — no location, tariff text or inverter
-model, and the enrollment secret itself is **never stored**, only the site key issued in exchange
-for it.
+model, and the enrollment credential itself is **never stored**, only the site key issued in
+exchange for it.
 
 **How values are sent**: powers in W. Bind **Battery power** with + = discharge (as in the
 dashboard examples); Atlas receives it as + = charge. Readings outside the collector's ranges are
@@ -937,9 +949,9 @@ share a key, a site or a queue. It is included in Home Assistant backups. Removi
 deletes it.
 
 **Switching environment**: staging and production are independent — each keeps its own key, site
-and queued data. Switching to an environment that was already registered resumes it (no
-re-registration, no lost queue); switching to one that has never been registered asks for a new
-enrollment secret.
+and queued data. Switching to an environment that was already registered resumes it live (no
+reload, no re-registration, no lost queue); switching to one that has never been registered
+registers it automatically with the baked-in credential, without asking for anything.
 
 **When the collector is down**: telemetry and solves queue locally (up to 30 days) and are sent
 once it is reachable again; Compass's own plan is unaffected — Atlas delivery runs on its own
@@ -950,9 +962,8 @@ environment, registration status, queue depth and any halted delivery.
 **Recovery: forget a site**: if a site's key was revoked or conflicts with another source, check
 **Forget site on this environment** on the same Energy Atlas form and save. This deletes the
 selected environment's key and queued data on this device only — the site itself is not removed at
-the collector, an operator can revoke it separately — so the next save without a secret shows the
-same "not registered" error as first-time setup, and a save with a fresh enrollment secret
-registers a new site there.
+the collector, an operator can revoke it separately — so the next save with sending still enabled
+registers a new site there automatically, again without asking for anything.
 
 **Show ownership proof**: once a site is enabled and registered, the options menu offers an extra
 entry, **Energy Atlas: show ownership proof**. It generates a short-lived signed proof (valid 15
