@@ -142,6 +142,7 @@
         <li><a href="#powiadomienia-o-oknach">Powiadomienia o oknach</a></li>
         <li><a href="#karta-kosztów">Karta kosztów</a></li>
         <li><a href="#sterownik-falownika-deye-solarman">Sterownik falownika Deye (Solarman)</a></li>
+        <li><a href="#energy-atlas-opcjonalnie">Energy Atlas (opcjonalnie)</a></li>
         <li><a href="#słownik-kodów-powodów">Słownik kodów powodów</a></li>
       </ul>
     </nav>
@@ -172,6 +173,7 @@ Solarman: zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika 
 <li><a href="#powiadomienia-o-oknach">Powiadomienia o oknach</a></li>
 <li><a href="#karta-kosztów">Karta kosztów</a></li>
 <li><a href="#sterownik-falownika-deye-solarman">Sterownik falownika Deye (Solarman)</a></li>
+<li><a href="#energy-atlas-opcjonalnie">Energy Atlas (opcjonalnie)</a></li>
 <li><a href="#słownik-kodów-powodów">Słownik kodów powodów</a></li>
 </ol>
 <h2 id="jak-to-działa">Jak to działa</h2>
@@ -1526,6 +1528,58 @@ ustawia progi, na końcu włącza kierunek.</p>
 </table></section>
 <p>Panel używa kart natywnych oraz ApexCharts Card do prognozy SOC; oba wykresy wymagają ApexCharts Card. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/builder.html">Generator YAML</a> wypełnia każdą z nich Twoimi encjami, pojemnością
 i językiem. Opis: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">przewodnik instalacji</a> (EN).</p>
+<h2 id="energy-atlas-opcjonalnie">Energy Atlas (opcjonalnie)</h2>
+<p>Energy Atlas to osobna usługa Datamindz, która agreguje zanonimizowaną telemetrię z wielu instalacji
+do celów badawczych i porównawczych. Wysyłanie danych jest <strong>opcjonalne i domyślnie wyłączone</strong>: przy
+wyłączonej opcji Compass działa dokładnie tak samo jak bez tej sekcji — bez połączeń sieciowych, bez
+nowego wątku w tle, bez nowych plików.</p>
+<p>Włącz w <strong>Ustawienia → Urządzenia i usługi → Energy Compass → Konfiguruj → Energy Atlas</strong>:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Pole</th>
+<th>Znaczenie</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Wysyłaj do Energy Atlas</td>
+<td>Domyślnie wyłączone.</td>
+</tr>
+<tr>
+<td>Środowisko</td>
+<td><strong>staging</strong> (<code>atlas-api-staging.datamindz.io</code>, do walidacji przepływu danych) lub <strong>produkcja</strong> (<code>atlas-api.datamindz.io</code>, kolektor produkcyjny). Najpierw zwaliduj na staging.</td>
+</tr>
+<tr>
+<td>Moc instalacji PV (kWp)</td>
+<td>Zainstalowana moc PV, wprowadzana raz; nie jest wyliczana z innych ustawień Compass.</td>
+</tr>
+<tr>
+<td>Sekret rejestracyjny</td>
+<td>Jednorazowy sekret od operatora Energy Atlas dla wybranego środowiska. Potrzebny tylko przy pierwszym włączeniu tego środowiska; ignorowany, gdy witryna jest już tam zarejestrowana.</td>
+</tr>
+</tbody>
+</table></section>
+<p><strong>Co jest wysyłane</strong>, tylko gdy funkcja jest włączona i tylko dla źródeł powiązanych w sekcji Źródła
+danych: moc PV, import/eksport z sieci i moc baterii, SOC baterii oraz liczniki energii PV/importu/
+eksportu (tylko liczniki, których atrybut Home Assistant <code>state_class</code> to <code>total</code>/<code>total_increasing</code>);
+plan każdego rozwiązania Compass wraz z wejściami cen/PV/zużycia; kilka atrybutów instalacji (moc PV
+w kWp, pojemność baterii nominalna i użyteczna, próg SOC, wersja Compass). Nic więcej — brak
+lokalizacji, tekstu taryfy czy modelu falownika, a sam sekret rejestracyjny <strong>nigdy nie jest
+zapisywany</strong> — przechowywany jest tylko klucz witryny wydany w zamian za niego.</p>
+<p><strong>Gdzie przechowywany jest klucz</strong>: <code>.storage/energy_compass_atlas/&lt;id wpisu&gt;/&lt;środowisko&gt;/</code> wewnątrz
+katalogu konfiguracyjnego Home Assistant, osobny podkatalog na środowisko, więc staging i produkcja
+nigdy nie współdzielą klucza, witryny ani kolejki. Jest uwzględniany w kopiach zapasowych Home
+Assistant. Usunięcie integracji go kasuje.</p>
+<p><strong>Przełączanie środowiska</strong>: staging i produkcja są niezależne — każde zachowuje własny klucz,
+witrynę i zakolejkowane dane. Przełączenie na środowisko już zarejestrowane wznawia je (bez ponownej
+rejestracji, bez utraty kolejki); przełączenie na nigdy niezarejestrowane prosi o nowy sekret
+rejestracyjny.</p>
+<p><strong>Gdy kolektor jest niedostępny</strong>: telemetria i rozwiązania kolejkują się lokalnie (do 30 dni) i są
+wysyłane po odzyskaniu łączności; własny plan Compass nie jest tym dotknięty — wysyłka do Atlas
+działa na własnym wątku w tle i nigdy nie dzieli harmonogramu z optymalizatorem. Diagnostyka
+(<strong>Urządzenia i usługi → Energy Compass → ⋮ → Pobierz diagnostykę</strong>) zawiera sekcję <code>energy_atlas</code>:
+włączenie, środowisko, stan rejestracji, głębokość kolejki i ewentualnie wstrzymaną wysyłkę.</p>
 <h2 id="słownik-kodów-powodów">Słownik kodów powodów</h2>
 <h3 id="powody-pokrycia--jakości-atrybuty-reason-reasons">Powody pokrycia / jakości (atrybuty <code>reason</code>, <code>reasons</code>)</h3>
 <section class="table-scroll"><table>

@@ -142,6 +142,7 @@
         <li><a href="#window-notifications">Window notifications</a></li>
         <li><a href="#cost-card">Cost card</a></li>
         <li><a href="#deye-inverter-controller-solarman">Deye inverter controller (Solarman)</a></li>
+        <li><a href="#energy-atlas-optional">Energy Atlas (optional)</a></li>
         <li><a href="#reason-code-reference">Reason code reference</a></li>
       </ul>
     </nav>
@@ -172,6 +173,7 @@ inverters through Solarman: see <a href="#deye-inverter-controller-solarman">Dey
 <li><a href="#window-notifications">Window notifications</a></li>
 <li><a href="#cost-card">Cost card</a></li>
 <li><a href="#deye-inverter-controller-solarman">Deye inverter controller (Solarman)</a></li>
+<li><a href="#energy-atlas-optional">Energy Atlas (optional)</a></li>
 <li><a href="#reason-code-reference">Reason code reference</a></li>
 </ol>
 <h2 id="how-it-works">How it works</h2>
@@ -1515,6 +1517,58 @@ then sets thresholds, then enables the direction.</p>
 </table></section>
 <p>The panel uses native cards plus ApexCharts Card for its SOC forecast; the two charts need ApexCharts Card. The <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/builder.html">YAML builder</a> fills any of them with your entity IDs, capacity and language.
 See the <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">installation guide</a>.</p>
+<h2 id="energy-atlas-optional">Energy Atlas (optional)</h2>
+<p>Energy Atlas is a separate Datamindz service that aggregates anonymised telemetry across sites for
+research and benchmarking. Sending data to it is <strong>opt-in and off by default</strong>: with it off,
+Compass behaves and performs exactly as it does without this section — no network calls, no new
+background thread, no new files.</p>
+<p>Turn it on in <strong>Settings → Devices &amp; services → Energy Compass → Configure → Energy Atlas</strong>:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Send to Energy Atlas</td>
+<td>Off by default.</td>
+</tr>
+<tr>
+<td>Environment</td>
+<td><strong>staging</strong> (<code>atlas-api-staging.datamindz.io</code>, for validating the data flow) or <strong>production</strong> (<code>atlas-api.datamindz.io</code>, the live collector). Validate on staging first.</td>
+</tr>
+<tr>
+<td>PV capacity (kWp)</td>
+<td>Installed PV capacity, entered once; not derived from other Compass settings.</td>
+</tr>
+<tr>
+<td>Enrollment secret</td>
+<td>A one-time secret from the Energy Atlas operator for the chosen environment. Needed only the first time that environment is enabled; ignored once a site is already registered there.</td>
+</tr>
+</tbody>
+</table></section>
+<p><strong>What is sent</strong>, only while enabled and only the entities you have bound in Sources: PV, grid
+import/export and battery power, battery SOC, and PV/import/export energy counters (only counters
+whose Home Assistant <code>state_class</code> is <code>total</code>/<code>total_increasing</code>); each Compass solve's plan and
+its price/PV/load inputs; a handful of installation attributes (PV kWp, battery capacity and usable
+capacity, SOC floor, the Compass version). Nothing else — no location, tariff text or inverter
+model, and the enrollment secret itself is <strong>never stored</strong>, only the site key issued in exchange
+for it.</p>
+<p><strong>Where the key lives</strong>: <code>.storage/energy_compass_atlas/&lt;entry id&gt;/&lt;environment&gt;/</code> inside your
+Home Assistant config directory, one subdirectory per environment so staging and production never
+share a key, a site or a queue. It is included in Home Assistant backups. Removing the integration
+deletes it.</p>
+<p><strong>Switching environment</strong>: staging and production are independent — each keeps its own key, site
+and queued data. Switching to an environment that was already registered resumes it (no
+re-registration, no lost queue); switching to one that has never been registered asks for a new
+enrollment secret.</p>
+<p><strong>When the collector is down</strong>: telemetry and solves queue locally (up to 30 days) and are sent
+once it is reachable again; Compass's own plan is unaffected — Atlas delivery runs on its own
+background thread and never shares the optimizer's schedule. Diagnostics (<strong>Devices &amp; services →
+Energy Compass → ⋮ → Download diagnostics</strong>) report the <code>energy_atlas</code> section: enabled,
+environment, registration status, queue depth and any halted delivery.</p>
 <h2 id="reason-code-reference">Reason code reference</h2>
 <h3 id="coverage--quality-reasons-reason-reasons-attributes">Coverage / quality reasons (<code>reason</code>, <code>reasons</code> attributes)</h3>
 <section class="table-scroll"><table>

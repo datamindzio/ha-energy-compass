@@ -905,8 +905,21 @@ async def async_balance_history(hass, config, now):
     return tuple(samples)
 
 
-def compute(config: dict, states: dict, now: datetime, **history) -> dict:
-    """Use one snapshot and a single deadline for dispatch and consumption probes."""
+def compute(
+    config: dict,
+    states: dict,
+    now: datetime,
+    *,
+    atlas_solve_builder=None,
+    **history,
+) -> dict:
+    """Use one snapshot and a single deadline for dispatch and consumption probes.
+
+    `atlas_solve_builder`, when set, is called with (problem, plan, analysis, values,
+    config, now) inside this executor job, beside the published result (ADR-0019 §6); it
+    owns feeding its own payload to the sink, so `compute()`'s return dict is unchanged
+    whether or not Atlas is enabled.
+    """
     started = perf_counter()
     problem, values, quality = build_problem(config, states, now, **history)
     plan = solve(
@@ -926,6 +939,8 @@ def compute(config: dict, states: dict, now: datetime, **history) -> dict:
     analysis = analyze_consumption(
         probe_problem, plan, settings=compass, budget_s=max(0, remaining - 1.0)
     )
+    if atlas_solve_builder is not None:
+        atlas_solve_builder(problem, plan, analysis, values, config, now)
     flexible_remaining = values["total_time_limit_s"] - (perf_counter() - started)
     flexible = analyze_flexible_loads(
         probe_problem,

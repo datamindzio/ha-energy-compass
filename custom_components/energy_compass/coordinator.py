@@ -112,6 +112,8 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         self._balance_persist = True
         self._balance_store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.balance")
         self.previous_plan = None
+        # Set by async_setup_entry only when options["atlas"]["enabled"] (ADR-0019 §3).
+        self.atlas = None
 
     async def async_start(self):
         """Restore small observation anchors and attach only this entry's listeners."""
@@ -859,6 +861,9 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                             deepcopy(config),
                             states,
                             now,
+                            atlas_solve_builder=(
+                                self.atlas.solve_builder if self.atlas else None
+                            ),
                             previous_soc=self._previous_soc,
                             battery_commitment=deepcopy(self._battery_commitment),
                             export_commitment=deepcopy(self._export_commitment),

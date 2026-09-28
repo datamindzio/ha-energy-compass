@@ -16,8 +16,21 @@ async def async_setup_entry(hass, entry) -> bool:
     entry.runtime_data = coordinator
     try:
         await coordinator.async_start()
+        atlas_settings = entry.options.get("atlas", {})
+        if atlas_settings.get("enabled"):
+            # ADR-0019 §3: only imported/started when Atlas is enabled.
+            from .atlas import AtlasBridge, build_attrs
+
+            coordinator.atlas = AtlasBridge(
+                hass, entry, coordinator.configuration, atlas_settings
+            )
+            await coordinator.atlas.async_start(
+                build_attrs(coordinator.configuration, atlas_settings)
+            )
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:
+        if coordinator.atlas is not None:
+            await coordinator.atlas.async_stop()
         await coordinator.async_stop()
         raise
     return True
@@ -26,9 +39,19 @@ async def async_setup_entry(hass, entry) -> bool:
 async def async_unload_entry(hass, entry) -> bool:
     """Unload entities before releasing the entry's runtime ownership."""
     if await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        await entry.runtime_data.async_stop()
+        coordinator = entry.runtime_data
+        if coordinator.atlas is not None:
+            await coordinator.atlas.async_stop()
+        await coordinator.async_stop()
         return True
     return False
+
+
+async def async_remove_entry(hass, entry) -> None:
+    """Delete every Atlas site key for this entry (ADR-0019 §4); orphaned sites stay in Atlas."""
+    from .atlas import forget_entry
+
+    await hass.async_add_executor_job(forget_entry, hass, entry.entry_id)
 
 
 async def async_migrate_entry(hass, entry) -> bool:

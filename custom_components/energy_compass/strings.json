@@ -720,6 +720,7 @@
           "presentation": "Presentation",
           "notifications": "Notification preferences",
           "helpers": "Numeric helper bindings",
+          "energy_atlas": "Energy Atlas (optional)",
           "preview": "Preview and save"
         }
       },
@@ -814,6 +815,21 @@
           "calibration": "Calibration"
         },
         "description": "Edit fixed rates and separate multipliers, VAT and additions. {detail}"
+      },
+      "energy_atlas": {
+        "title": "Energy Atlas",
+        "description": "Opt-in delivery of telemetry and solves to Energy Atlas for staging validation or production. The enrollment secret is never stored; only the resulting site key is.",
+        "data": {
+          "enabled": "Send to Energy Atlas",
+          "environment": "Environment",
+          "pv_kwp": "PV capacity (kWp)",
+          "enrollment_secret": "Enrollment secret"
+        },
+        "data_description": {
+          "environment": "Staging validates the data flow; production is the live collector. Switching keeps each environment's own site and queued data.",
+          "pv_kwp": "Installed PV capacity in kWp, 0-1000. Not derived from other Compass settings.",
+          "enrollment_secret": "One-time secret from the operator for the selected environment. Only needed the first time this environment is enabled; ignored once registered."
+        }
       }
     },
     "error": {
@@ -824,7 +840,13 @@
       "input_acknowledgement_required": "Confirm the displayed buy and household load inputs separately before saving.",
       "plan_infeasible": "The base plan is infeasible; review the limits shown below.",
       "plan_timeout": "The base solve timed out; feasibility is unknown.",
-      "optimizer_error": "The optimizer could not validate the base plan."
+      "optimizer_error": "The optimizer could not validate the base plan.",
+      "invalid_enrollment_secret": "Invalid enrollment secret.",
+      "site_key_revoked": "This site's key was revoked; use \"Forget site\" to re-register.",
+      "site_conflict": "This key is already registered under a different source.",
+      "rate_limited": "Too many attempts; try again in an hour.",
+      "cannot_connect": "Could not reach the Energy Atlas collector.",
+      "unknown": "Registration failed for an unknown reason."
     }
   },
   "entity": {

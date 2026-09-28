@@ -26,7 +26,8 @@ Solarman: zob. [Sterownik falownika Deye](#sterownik-falownika-deye-solarman).
 10. [Powiadomienia o oknach](#powiadomienia-o-oknach)
 11. [Karta kosztów](#karta-kosztów)
 12. [Sterownik falownika Deye (Solarman)](#sterownik-falownika-deye-solarman)
-13. [Słownik kodów powodów](#słownik-kodów-powodów)
+13. [Energy Atlas (opcjonalnie)](#energy-atlas-opcjonalnie)
+14. [Słownik kodów powodów](#słownik-kodów-powodów)
 
 ## Jak to działa
 
@@ -910,6 +911,46 @@ Generuje je `tools/dashboards/build.py` z zastępczymi identyfikatorami encji:
 
 Panel używa kart natywnych oraz ApexCharts Card do prognozy SOC; oba wykresy wymagają ApexCharts Card. [Generator YAML](builder.html) wypełnia każdą z nich Twoimi encjami, pojemnością
 i językiem. Opis: [przewodnik instalacji](installation.md#dashboard-examples) (EN).
+
+## Energy Atlas (opcjonalnie)
+
+Energy Atlas to osobna usługa Datamindz, która agreguje zanonimizowaną telemetrię z wielu instalacji
+do celów badawczych i porównawczych. Wysyłanie danych jest **opcjonalne i domyślnie wyłączone**: przy
+wyłączonej opcji Compass działa dokładnie tak samo jak bez tej sekcji — bez połączeń sieciowych, bez
+nowego wątku w tle, bez nowych plików.
+
+Włącz w **Ustawienia → Urządzenia i usługi → Energy Compass → Konfiguruj → Energy Atlas**:
+
+| Pole | Znaczenie |
+| --- | --- |
+| Wysyłaj do Energy Atlas | Domyślnie wyłączone. |
+| Środowisko | **staging** (`atlas-api-staging.datamindz.io`, do walidacji przepływu danych) lub **produkcja** (`atlas-api.datamindz.io`, kolektor produkcyjny). Najpierw zwaliduj na staging. |
+| Moc instalacji PV (kWp) | Zainstalowana moc PV, wprowadzana raz; nie jest wyliczana z innych ustawień Compass. |
+| Sekret rejestracyjny | Jednorazowy sekret od operatora Energy Atlas dla wybranego środowiska. Potrzebny tylko przy pierwszym włączeniu tego środowiska; ignorowany, gdy witryna jest już tam zarejestrowana. |
+
+**Co jest wysyłane**, tylko gdy funkcja jest włączona i tylko dla źródeł powiązanych w sekcji Źródła
+danych: moc PV, import/eksport z sieci i moc baterii, SOC baterii oraz liczniki energii PV/importu/
+eksportu (tylko liczniki, których atrybut Home Assistant `state_class` to `total`/`total_increasing`);
+plan każdego rozwiązania Compass wraz z wejściami cen/PV/zużycia; kilka atrybutów instalacji (moc PV
+w kWp, pojemność baterii nominalna i użyteczna, próg SOC, wersja Compass). Nic więcej — brak
+lokalizacji, tekstu taryfy czy modelu falownika, a sam sekret rejestracyjny **nigdy nie jest
+zapisywany** — przechowywany jest tylko klucz witryny wydany w zamian za niego.
+
+**Gdzie przechowywany jest klucz**: `.storage/energy_compass_atlas/<id wpisu>/<środowisko>/` wewnątrz
+katalogu konfiguracyjnego Home Assistant, osobny podkatalog na środowisko, więc staging i produkcja
+nigdy nie współdzielą klucza, witryny ani kolejki. Jest uwzględniany w kopiach zapasowych Home
+Assistant. Usunięcie integracji go kasuje.
+
+**Przełączanie środowiska**: staging i produkcja są niezależne — każde zachowuje własny klucz,
+witrynę i zakolejkowane dane. Przełączenie na środowisko już zarejestrowane wznawia je (bez ponownej
+rejestracji, bez utraty kolejki); przełączenie na nigdy niezarejestrowane prosi o nowy sekret
+rejestracyjny.
+
+**Gdy kolektor jest niedostępny**: telemetria i rozwiązania kolejkują się lokalnie (do 30 dni) i są
+wysyłane po odzyskaniu łączności; własny plan Compass nie jest tym dotknięty — wysyłka do Atlas
+działa na własnym wątku w tle i nigdy nie dzieli harmonogramu z optymalizatorem. Diagnostyka
+(**Urządzenia i usługi → Energy Compass → ⋮ → Pobierz diagnostykę**) zawiera sekcję `energy_atlas`:
+włączenie, środowisko, stan rejestracji, głębokość kolejki i ewentualnie wstrzymaną wysyłkę.
 
 ## Słownik kodów powodów
 
