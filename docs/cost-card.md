@@ -31,7 +31,7 @@ The balance is not an invoice amount or a cash payment; fixed fees and battery w
 2. **Settings → Dashboards → ⋮ → Resources → Add resource**: URL
    `/local/energy-compass/energy-compass-cost-card.js`, type **JavaScript module**. After an update,
    change the URL to `…/energy-compass-cost-card.js?v=2` (any new value) so browsers reload it.
-3. Add the card to a view, for example from the [YAML builder](https://marino39.github.io/ha-energy-compass/builder.html)
+3. Add the card to a view, for example from the [YAML builder](https://datamindzio.github.io/ha-energy-compass/builder.html)
    (section **Cost card**) or [`examples/dashboards/cost_card.yaml`](../examples/dashboards/cost_card.yaml).
    It works best as a full-width card in a Sections view.
 

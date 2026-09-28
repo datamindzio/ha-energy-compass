@@ -25,7 +25,7 @@ import markdown
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 DIAGRAMS = DOCS / "assets" / "diagrams"
-REPO = "https://github.com/marino39/ha-energy-compass/blob/main/"
+REPO = "https://github.com/datamindzio/ha-energy-compass/blob/main/"
 MERMAID_CLI = "@mermaid-js/mermaid-cli@11"
 LANGUAGES = {
     "en": {

@@ -145,15 +145,15 @@
         <li><a href="#reason-code-reference">Reason code reference</a></li>
       </ul>
     </nav>
-    <a class="download" href="https://github.com/marino39/ha-energy-compass/blob/main/docs/guide.en.md">Markdown source</a>
+    <a class="download" href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/guide.en.md">Markdown source</a>
   </aside>
   <main id="main">
 <h1 id="energy-compass--states-and-strategies-guide">Energy Compass — states and strategies guide</h1>
 <p><strong>English</strong> · <a href="guide.pl.html">Polski</a></p>
 <p>This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
-<strong>0.1.27</strong>. The mathematical contract behind each rule lives in <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/model.md">model and limitations</a>;
-installation and dashboards are in the <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md">installation guide</a>.</p>
+<strong>0.1.27</strong>. The mathematical contract behind each rule lives in <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md">model and limitations</a>;
+installation and dashboards are in the <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">installation guide</a>.</p>
 <p>Energy Compass is <strong>advisory</strong>. It computes a plan and publishes it as Home Assistant entities. It
 never writes inverter registers and sends no messages by itself; controllers and notification
 blueprints decide whether to act on the plan. The repository ships one such controller, for Deye
@@ -1051,7 +1051,7 @@ reports <code>ok</code>, <code>eligible</code>, <code>scheduled</code>, <code>ho
 not trapped in the old mode's minimum duration. A current export episode is kept so its hurdle is
 not charged twice.</p>
 <h2 id="automatic-strategy-switching">Automatic strategy switching</h2>
-<p>The optional blueprint <a href="https://github.com/marino39/ha-energy-compass/blob/main/blueprints/automation/energy_compass/strategy_switch.yaml"><code>strategy_switch.yaml</code></a>
+<p>The optional blueprint <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/strategy_switch.yaml"><code>strategy_switch.yaml</code></a>
 picks one strategy per day. It runs at <strong>14:05</strong> (after RCE next-day prices and Solcast), retries
 hourly until <strong>20:00</strong> if next-day prices are missing, and reconciles a half-applied write at Home
 Assistant start.</p>
@@ -1096,12 +1096,12 @@ Assistant start.</p>
 </table></section>
 <p>A <strong>manual</strong> change of the select blocks the economic rules until the next successful scheduled
 run; the alert rule is never blocked. <code>max_export</code> and <code>grid_friendly</code> are manual-only. Setup
-details: <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md#import-the-strategy-switch-blueprint">installation guide</a>.</p>
+details: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#import-the-strategy-switch-blueprint">installation guide</a>.</p>
 <h2 id="window-notifications">Window notifications</h2>
-<p>The optional blueprint <a href="https://github.com/marino39/ha-energy-compass/blob/main/blueprints/automation/energy_compass/notifications.yaml"><code>notifications.yaml</code></a>
+<p>The optional blueprint <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/notifications.yaml"><code>notifications.yaml</code></a>
 tells the household when extra use is cheap (favorable window) or when an expensive <code>LIMIT</code> window
 is starting. Energy Compass itself never sends anything; <strong>Notify enabled</strong> in the integration
-options is the master switch. Setup: <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">installation guide</a>.</p>
+options is the master switch. Setup: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">installation guide</a>.</p>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-4bd0c2bb82d5-dark.svg"><img src="assets/diagrams/diagram-4bd0c2bb82d5.svg" alt="Diagram 12" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
@@ -1170,10 +1170,10 @@ charging. The action receives <code>notification_title</code>, <code>notificatio
 </tbody>
 </table></section>
 <h2 id="cost-card">Cost card</h2>
-<p>The optional card <code>custom:energy-compass-cost-card</code> (<a href="https://github.com/marino39/ha-energy-compass/blob/main/cards/cost"><code>cards/cost/</code></a>) shows the
+<p>The optional card <code>custom:energy-compass-cost-card</code> (<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/cards/cost"><code>cards/cost/</code></a>) shows the
 purchase cost of grid energy, the value of exported energy (the prosumer deposit in Polish
 net-billing) and the balance <strong>purchase − deposit</strong>: today measured and planned to midnight, and
-month and year from statistics. Install and full description: <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/cost-card.md">cost card guide</a>.</p>
+month and year from statistics. Install and full description: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/cost-card.md">cost card guide</a>.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -1208,17 +1208,17 @@ month and year from statistics. Install and full description: <a href="https://g
 </tr>
 </tbody>
 </table></section>
-<p>The month and year deposit comes from the <a href="https://github.com/marino39/ha-energy-compass/blob/main/blueprints/automation/energy_compass/export_value_counter.yaml">export value counter blueprint</a>:
+<p>The month and year deposit comes from the <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/export_value_counter.yaml">export value counter blueprint</a>:
 it adds every increase of the export meter (<code>export_energy</code>), valued at the price forecast
 (<code>export_prices</code>), to a Number helper (<code>counter</code>); jumps above <code>max_step_kwh</code> are ignored.</p>
 <h2 id="deye-inverter-controller-solarman">Deye inverter controller (Solarman)</h2>
 <p>Energy Compass itself never writes to an inverter. The optional blueprint
-<a href="https://github.com/marino39/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml"><code>deye_solarman_controller.yaml</code></a>
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml"><code>deye_solarman_controller.yaml</code></a>
 does: it executes the plan on a Deye hybrid inverter through the
 <a href="https://github.com/davidrapan/ha-solarman">Solarman integration</a>, writing three battery currents and
 the six time-of-use (TOU) programs, and reads every write back from the holding registers. It needs the
-companion package <a href="https://github.com/marino39/ha-energy-compass/blob/main/packages/energy_compass_deye.yaml"><code>energy_compass_deye.yaml</code></a>. Setup steps are in
-the <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">installation guide</a>. Both files are generated by
+companion package <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/packages/energy_compass_deye.yaml"><code>energy_compass_deye.yaml</code></a>. Setup steps are in
+the <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">installation guide</a>. Both files are generated by
 <code>tools/deye_controller/build.py</code>; edit the generator, not the YAML.</p>
 <h3 id="package-entities">Package entities</h3>
 <section class="table-scroll"><table>
@@ -1273,7 +1273,7 @@ the <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/instal
 </table></section>
 <p>The package assumes Solarman's default TOU entity names (<code>number.inverter_deye_program_1_power</code> …
 <code>time.inverter_deye_program_6_time</code>). For another device name, generate the package with your prefix in
-the <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/builder.html">YAML builder</a> or with <code>python tools/deye_controller/build.py --prefix my_inverter_program_</code>.</p>
+the <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/builder.html">YAML builder</a> or with <code>python tools/deye_controller/build.py --prefix my_inverter_program_</code>.</p>
 <h3 id="modes">Modes</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-a6c9a3cacd04-dark.svg"><img src="assets/diagrams/diagram-a6c9a3cacd04.svg" alt="Diagram 13" loading="lazy"></picture></figure>
 <p><strong>Auto</strong> writes; <strong>Simulation</strong> computes every target and records it in <code>runtime</code> without touching the
@@ -1513,8 +1513,8 @@ then sets thresholds, then enables the direction.</p>
 </tr>
 </tbody>
 </table></section>
-<p>The panel uses native cards plus ApexCharts Card for its SOC forecast; the two charts need ApexCharts Card. The <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/builder.html">YAML builder</a> fills any of them with your entity IDs, capacity and language.
-See the <a href="https://github.com/marino39/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">installation guide</a>.</p>
+<p>The panel uses native cards plus ApexCharts Card for its SOC forecast; the two charts need ApexCharts Card. The <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/builder.html">YAML builder</a> fills any of them with your entity IDs, capacity and language.
+See the <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">installation guide</a>.</p>
 <h2 id="reason-code-reference">Reason code reference</h2>
 <h3 id="coverage--quality-reasons-reason-reasons-attributes">Coverage / quality reasons (<code>reason</code>, <code>reasons</code> attributes)</h3>
 <section class="table-scroll"><table>

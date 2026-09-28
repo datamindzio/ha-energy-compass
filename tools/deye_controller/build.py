@@ -1007,7 +1007,7 @@ BLUEPRINT = {
         "name": "Energy Compass Deye (Solarman) controller",
         "description": DESCRIPTION,
         "domain": "automation",
-        "source_url": "https://github.com/marino39/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml",
+        "source_url": "https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml",
         "homeassistant": {"min_version": "2026.9.1"},
         "input": INPUTS,
     },
