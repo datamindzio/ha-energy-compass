@@ -317,7 +317,7 @@ async def test_setup_does_not_block_on_the_first_solve(
     real_compute = coordinator_module.compute
 
     def _blocking_compute(*args, **kwargs):
-        block.wait()
+        assert block.wait(10)
         return real_compute(*args, **kwargs)
 
     monkeypatch.setattr(coordinator_module, "compute", _blocking_compute)
@@ -353,7 +353,7 @@ async def test_unload_during_a_blocked_first_solve_waits_and_publishes_nothing(
 
     def _blocking_compute(*args, **kwargs):
         entered.set()
-        block.wait()
+        assert block.wait(10)
         return real_compute(*args, **kwargs)
 
     monkeypatch.setattr(coordinator_module, "compute", _blocking_compute)

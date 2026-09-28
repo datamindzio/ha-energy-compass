@@ -569,7 +569,7 @@ async def test_superseded_hold_result_cannot_clear_current_record(
         calls += 1
         if calls == 1:
             entered.set()
-            await release.wait()
+            await asyncio.wait_for(release.wait(), 10)
         return await original_history(*args)
 
     def held_then_failed(config, *args, **kwargs):
@@ -584,7 +584,7 @@ async def test_superseded_hold_result_cannot_clear_current_record(
     monkeypatch.setattr(module, "async_history", pause)
     monkeypatch.setattr(module, "compute", held_then_failed)
     task = hass.async_create_task(coordinator.async_recalculate())
-    await entered.wait()
+    await asyncio.wait_for(entered.wait(), 10)
     coordinator._generation += 1
     if change == "configuration":
         coordinator._epoch += 1
