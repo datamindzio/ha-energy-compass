@@ -58,6 +58,7 @@ CAPACITY_KWH = (
 LABELS = {
     "en": {
         "locale": "en-GB",
+        "price_unit": "PLN/kWh",
         "plan_title": "Load / Grid / PV / SoC - history and plan",
         "now": "Now",
         "power_axis": "Power [kW]",
@@ -67,6 +68,7 @@ LABELS = {
 
 **Background (14% opacity):** CHARGE_PV yellow · CHARGE_GRID red · DISCHARGE_GRID purple · SELF_CONSUME green.
 HOLD and other states gray. Narrow intervals: hover for the label.
+CHARGE_GRID and DISCHARGE_GRID labels add the block's mean buy / sell price, weighted by planned grid energy.
 """,
         "refreshing": "**Recalculating - showing the previous plan. The new one replaces it automatically.**",
         "available_until": "Plan available until",
@@ -81,6 +83,7 @@ HOLD and other states gray. Narrow intervals: hover for the label.
     },
     "pl": {
         "locale": "pl-PL",
+        "price_unit": "zł/kWh",
         "plan_title": "Load / Grid / PV / SoC — historia i projekcja",
         "now": "Teraz",
         "power_axis": "Moc [kW]",
@@ -90,6 +93,7 @@ HOLD and other states gray. Narrow intervals: hover for the label.
 
 **Tło (14% krycia):** CHARGE_PV — żółty · CHARGE_GRID — czerwony · DISCHARGE_GRID — fioletowy · SELF_CONSUME — zielony.
 HOLD i pozostałe stany — szary. Krótkie przedziały: opis po najechaniu.
+Przy CHARGE_GRID i DISCHARGE_GRID średnia cena zakupu / sprzedaży w bloku, ważona planowaną energią z / do sieci.
 """,
         "refreshing": "**Przeliczanie — wyświetlany poprzedni plan. Nowy zastąpi go automatycznie.**",
         "available_until": "Plan dostępny do",
@@ -186,7 +190,7 @@ def plan_section(entities=ENTITIES, lang="en", capacity=CAPACITY_KWH):
     e, t = entities, LABELS[lang]
     bands = "EVAL:" + STATE_BANDS.replace("__PLAN__", e["plan"]).replace(
         "__VALID__", e["valid"]
-    ).replace("__LOCALE__", t["locale"])
+    ).replace("__LOCALE__", t["locale"]).replace("__PRICE_UNIT__", t["price_unit"])
     series_spec = [
         ("Load", e["load"], "#42a5f5", "load"),
         ("Grid", e["grid"], "#ef5350", "grid"),
