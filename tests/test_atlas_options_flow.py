@@ -5,8 +5,8 @@ import logging
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.energy_compass import config_flow
 from custom_components.energy_compass.atlas.storage import environment_dir
+from custom_components.energy_compass.atlas_sink import sink as atlas_sink_module
 from custom_components.energy_compass.atlas_sink.sink import RegistrationError
 from custom_components.energy_compass.settings import default_configuration
 
@@ -49,7 +49,7 @@ async def test_registration_failure_kinds_map_to_form_errors(
     def _raise(*args, **kwargs):
         raise RegistrationError(kind)
 
-    monkeypatch.setattr(config_flow, "register", _raise)
+    monkeypatch.setattr(atlas_sink_module, "register", _raise)
     entry = _entry(hass)
     result = await _open_energy_atlas(hass, entry)
     result = await hass.config_entries.options.async_configure(
@@ -72,7 +72,7 @@ async def test_missing_secret_when_not_registered_is_invalid_input(
     def _fail_if_called(*args, **kwargs):
         raise AssertionError("register() must not be called without a secret")
 
-    monkeypatch.setattr(config_flow, "register", _fail_if_called)
+    monkeypatch.setattr(atlas_sink_module, "register", _fail_if_called)
     entry = _entry(hass)
     result = await _open_energy_atlas(hass, entry)
     result = await hass.config_entries.options.async_configure(
@@ -95,7 +95,7 @@ async def test_successful_registration_saves_and_never_stores_the_secret(
         (Path(directory) / "site.json").write_text('{"site_id": "abc"}')
         return "abc"
 
-    monkeypatch.setattr(config_flow, "register", _register)
+    monkeypatch.setattr(atlas_sink_module, "register", _register)
     entry = _entry(hass)
     with caplog.at_level(logging.DEBUG):
         result = await _open_energy_atlas(hass, entry)
@@ -126,7 +126,7 @@ async def test_already_registered_site_ignores_the_secret_field(
     def _fail_if_called(*args, **kwargs):
         raise AssertionError("register() must not be called when already registered")
 
-    monkeypatch.setattr(config_flow, "register", _fail_if_called)
+    monkeypatch.setattr(atlas_sink_module, "register", _fail_if_called)
     entry = _entry(hass)
     directory = environment_dir(hass, entry.entry_id, "staging")
     directory.mkdir(parents=True)

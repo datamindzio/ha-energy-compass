@@ -918,7 +918,8 @@ Turn it on in **Settings → Devices & services → Energy Compass → Configure
 | Enrollment secret | A one-time secret from the Energy Atlas operator for the chosen environment. Needed only the first time that environment is enabled; ignored once a site is already registered there. |
 
 **What is sent**, only while enabled and only the entities you have bound in Sources: PV, grid
-import/export and battery power, battery SOC, and PV/import/export energy counters (only counters
+import/export and battery power, household load power (recorder mode only), battery SOC, and
+PV/import/export energy counters (only counters
 whose Home Assistant `state_class` is `total`/`total_increasing`); each Compass solve's plan and
 its price/PV/load inputs; a handful of installation attributes (PV kWp, battery capacity and usable
 capacity, SOC floor, the Compass version). Nothing else — no location, tariff text or inverter

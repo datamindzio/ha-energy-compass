@@ -10,9 +10,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 
-from .atlas.storage import environment_dir, is_registered
 from .atlas_env import BASE_URLS
-from .atlas_sink.sink import RegistrationError, register
 from .engine.models import InputError, SolveError
 from .engine.optimize import solve
 from .flow_schema import (
@@ -223,7 +221,15 @@ class Editor(SourceEditor):
         return self.async_show_menu(step_id="menu", menu_options=menu_options)
 
     async def async_step_energy_atlas(self, user_input=None):
-        """Opt-in Atlas delivery settings (ADR-0019 §2/§4). Saves immediately, no preview."""
+        """Opt-in Atlas delivery settings (ADR-0019 §2/§4). Saves immediately, no preview.
+
+        ADR-0019 §3: the glue and sink modules must not load with Atlas off, so
+        `config_flow` (eagerly imported by HA for any config-flow integration)
+        never references `.atlas`/`.atlas_sink` at module scope.
+        """
+        from .atlas.storage import environment_dir, is_registered
+        from .atlas_sink.sink import RegistrationError, register
+
         current = self.config_entry.options.get("atlas", {})
         errors = {}
         if user_input is not None:

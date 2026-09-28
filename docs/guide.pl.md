@@ -929,8 +929,9 @@ Włącz w **Ustawienia → Urządzenia i usługi → Energy Compass → Konfigur
 | Sekret rejestracyjny | Jednorazowy sekret od operatora Energy Atlas dla wybranego środowiska. Potrzebny tylko przy pierwszym włączeniu tego środowiska; ignorowany, gdy witryna jest już tam zarejestrowana. |
 
 **Co jest wysyłane**, tylko gdy funkcja jest włączona i tylko dla źródeł powiązanych w sekcji Źródła
-danych: moc PV, import/eksport z sieci i moc baterii, SOC baterii oraz liczniki energii PV/importu/
-eksportu (tylko liczniki, których atrybut Home Assistant `state_class` to `total`/`total_increasing`);
+danych: moc PV, import/eksport z sieci i moc baterii, moc obciążenia domowego (tylko w trybie
+rejestratora), SOC baterii oraz liczniki energii PV/importu/eksportu (tylko liczniki, których
+atrybut Home Assistant `state_class` to `total`/`total_increasing`);
 plan każdego rozwiązania Compass wraz z wejściami cen/PV/zużycia; kilka atrybutów instalacji (moc PV
 w kWp, pojemność baterii nominalna i użyteczna, próg SOC, wersja Compass). Nic więcej — brak
 lokalizacji, tekstu taryfy czy modelu falownika, a sam sekret rejestracyjny **nigdy nie jest

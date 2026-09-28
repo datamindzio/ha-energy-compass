@@ -1,14 +1,20 @@
 """HA state -> Atlas telemetry key mapping (ADR-0019 §6).
 
 Reuses Compass's own measurement reader (`NumericSetting`/`resolve_numeric`,
-`resolve_binding`), never a new normalisation path. Power measurements resolve to kW
-(Compass's own target unit, see `source_flow.py` `output_unit`) and are scaled to W here;
-energy measurements resolve to kWh already.
+`resolve_binding`) and SOC conversion (`balance_tracker.soc_percent`), never a new
+normalisation path. Power measurements resolve to kW (Compass's own target unit, see
+`source_flow.py` `output_unit`) and are scaled to W here; energy measurements resolve
+to kWh already. `sources.load.power` and `sources.soc` carry their own
+unit/sign (`history_unit`/`history_sign`, `soc_options`), applied here the same way
+`sources/history.py` and `runtime._soc` apply them.
 """
 
+from ..balance_tracker import soc_percent
 from ..config_models import NumericSetting, resolve_numeric
 from ..engine.models import InputError
 from ..sources.bindings import EntityBinding, resolve_binding
+
+_LOAD_POWER_SCALE = {"W": 1.0, "kW": 1000.0}
 
 _POWER_MEASUREMENTS = (
     "pv_power",
@@ -93,11 +99,15 @@ def _resolve_load_w(config: dict, states: dict) -> float | None:
     except InputError:
         return None
     try:
-        # `sources.load.power` carries no unit/multiplier (unlike NumericSetting
-        # measurements): recorder-mode load power is Compass's own kW convention.
-        return float(raw) * 1000.0
+        value = float(raw)
     except TypeError, ValueError:
         return None
+    load = config.get("sources", {}).get("load", {})
+    scale = _LOAD_POWER_SCALE.get(load.get("history_unit", "W"))
+    if scale is None:
+        return None
+    sign = load.get("history_sign", 1.0)
+    return value * scale * sign
 
 
 def _resolve_soc_pct(config: dict, states: dict) -> float | None:
@@ -112,8 +122,19 @@ def _resolve_soc_pct(config: dict, states: dict) -> float | None:
         value = float(raw)
     except TypeError, ValueError:
         return None
-    unit = config.get("soc_options", {}).get("unit", "%")
-    return value * 100.0 if unit == "fraction" else value
+    options = config.get("soc_options", {})
+    value *= options.get("sign", 1.0)
+    unit = options.get("unit", "%")
+    capacity_kwh = config.get("settings", {}).get("capacity_kwh")
+    try:
+        capacity_kwh = float(capacity_kwh)
+    except TypeError, ValueError:
+        capacity_kwh = 0.0
+    if unit == "kWh" and capacity_kwh <= 0:
+        return None
+    # Reuses Compass's own SOC->percent conversion (balance_tracker.soc_percent),
+    # the same one the runtime uses to publish `soc_pct_last` (ADR-0019 §6).
+    return soc_percent(value, unit, capacity_kwh)
 
 
 def resolve_feed(config: dict, states: dict, now) -> dict[str, float]:

@@ -65,6 +65,10 @@ class AtlasBridge:
             self.sink.feed(dt_util.utcnow(), feed)
 
     async def _hass_stopping(self, event) -> None:
+        # `async_listen_once` already removed this listener before calling us; drop
+        # our own remover so a later `async_stop()` doesn't call it again (HA logs
+        # "Unable to remove unknown job listener" otherwise).
+        self._unsub_stop = None
         if self.sink is not None:
             await self.hass.async_add_executor_job(self.sink.stop, 5)
 
@@ -81,13 +85,25 @@ class AtlasBridge:
     def solve_builder(
         self, problem, plan, analysis, values, config, now
     ) -> dict | None:
-        """Passed to `runtime.compute()`; feeds the sink and counts a skip (ADR-0019 §6)."""
-        payload = build_solve_payload(problem, plan, analysis, values, config, now)
+        """Passed to `runtime.compute()`; builds the payload only, no side effects.
+
+        `compute()` can still fail or be discarded after this call (timeout,
+        superseded epoch): only `add_solve`/`skip_solve`, called by the
+        coordinator on its actual publish path, may touch the sink or
+        `solves_skipped` (ADR-0019 §6).
+        """
+        return build_solve_payload(problem, plan, analysis, values, config, now)
+
+    def add_solve(self, payload: dict | None) -> None:
+        """Push a solve payload that the coordinator is about to publish."""
         if payload is None:
             self.solves_skipped += 1
         elif self.sink is not None:
             self.sink.add_solve(payload)
-        return payload
+
+    def skip_solve(self) -> None:
+        """Count a solve the coordinator could not publish (failed/invalid solve)."""
+        self.solves_skipped += 1
 
     def status(self) -> dict:
         if self.sink is None:

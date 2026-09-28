@@ -50,10 +50,16 @@ def test_pv_and_grid_power_fed_in_watts():
     assert feed["grid_export_w"] == 0.0
 
 
-def test_load_power_fed_only_in_recorder_mode():
-    config = default_configuration("EUR", "UTC")
+def _recorder_load(config, *, history_unit="kW", history_sign=1.0):
     config["sources"]["load"]["mode"] = "recorder"
     config["sources"]["load"]["power"] = EntityBinding("sensor.load").to_dict()
+    config["sources"]["load"]["history_unit"] = history_unit
+    config["sources"]["load"]["history_sign"] = history_sign
+
+
+def test_load_power_fed_only_in_recorder_mode():
+    config = default_configuration("EUR", "UTC")
+    _recorder_load(config, history_unit="kW")
     states = {"sensor.load": _state("1.2")}
     feed = resolve_feed(config, states, NOW)
     assert feed["load_w"] == 1200.0
@@ -64,6 +70,22 @@ def test_load_power_not_fed_outside_recorder_mode():
     config = default_configuration("EUR", "UTC")  # default mode is daily_estimate
     states = {}
     assert "load_w" not in resolve_feed(config, states, NOW)
+
+
+def test_load_power_watts_unit_is_not_rescaled():
+    config = default_configuration("EUR", "UTC")
+    _recorder_load(config, history_unit="W")
+    states = {"sensor.load": _state("500")}
+    feed = resolve_feed(config, states, NOW)
+    assert feed["load_w"] == 500.0
+
+
+def test_load_power_negative_history_sign_is_applied():
+    config = default_configuration("EUR", "UTC")
+    _recorder_load(config, history_unit="kW", history_sign=-1)
+    states = {"sensor.load": _state("1.2")}
+    feed = resolve_feed(config, states, NOW)
+    assert feed["load_w"] == -1200.0
 
 
 def test_battery_power_prefers_single_measurement():
@@ -103,6 +125,35 @@ def test_soc_percent_left_alone_when_already_percent():
     states = {"sensor.soc": _state("55")}
     feed = resolve_feed(config, states, NOW)
     assert feed["soc_pct"] == 55.0
+
+
+def test_soc_percent_converts_kwh_using_capacity():
+    config = default_configuration("EUR", "UTC")
+    config["sources"]["soc"] = EntityBinding("sensor.soc").to_dict()
+    config["soc_options"]["unit"] = "kWh"
+    config["settings"]["capacity_kwh"] = 10.0
+    states = {"sensor.soc": _state("5")}
+    feed = resolve_feed(config, states, NOW)
+    assert feed["soc_pct"] == 50.0
+
+
+def test_soc_percent_not_fed_when_kwh_and_capacity_unknown():
+    config = default_configuration("EUR", "UTC")
+    config["sources"]["soc"] = EntityBinding("sensor.soc").to_dict()
+    config["soc_options"]["unit"] = "kWh"
+    config["settings"]["capacity_kwh"] = 0
+    states = {"sensor.soc": _state("5")}
+    feed = resolve_feed(config, states, NOW)
+    assert "soc_pct" not in feed
+
+
+def test_soc_percent_applies_sign():
+    config = default_configuration("EUR", "UTC")
+    config["sources"]["soc"] = EntityBinding("sensor.soc").to_dict()
+    config["soc_options"]["sign"] = -1
+    states = {"sensor.soc": _state("55")}
+    feed = resolve_feed(config, states, NOW)
+    assert feed["soc_pct"] == -55.0
 
 
 def test_energy_counters_require_total_state_class():
