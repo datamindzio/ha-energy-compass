@@ -70,6 +70,7 @@ def test_full_telemetry_window_is_contract_valid():
     config["sources"]["soc"] = EntityBinding("sensor.soc").to_dict()
     config["sources"]["load"]["mode"] = "recorder"
     config["sources"]["load"]["power"] = EntityBinding("sensor.load").to_dict()
+    config["sources"]["load"]["history_unit"] = "kW"
     now = datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC)
     states = {
         "sensor.pv": {"state": "2.0", "attributes": {"unit_of_measurement": "kW"}},
@@ -89,8 +90,19 @@ def test_full_telemetry_window_is_contract_valid():
         "sensor.soc": {"state": "55", "attributes": {}},
         "sensor.load": {"state": "1.1", "attributes": {}},
     }
+    for state in states.values():
+        state["last_updated"] = now.isoformat()
     feed = resolve_feed(config, states, now)
-    assert feed  # sanity: something was actually fed
+    # Every key the producer can emit for this fixture (LESSONS: enumerate from the spec).
+    assert set(feed) == {
+        "pv_w",
+        "grid_import_w",
+        "grid_export_w",
+        "batt_w",
+        "pv_kwh_total",
+        "soc_pct",
+        "load_w",
+    }
 
     agg = Aggregator()
     agg.feed(now, feed)
@@ -105,6 +117,49 @@ def test_full_telemetry_window_is_contract_valid():
         ]
     }
     assert schema_errors("TelemetryBatch", payload) == []
+
+
+def test_out_of_range_readings_still_give_a_contract_valid_window():
+    # ADR-0019 Amendment T-402: idle meter -3 W import, BMS 100.4 %, glitching counter.
+    config = default_configuration("EUR", "UTC")
+    config["measurements"]["grid_import_power"] = _power_setting("sensor.grid_in")
+    config["measurements"]["grid_export_power"] = _power_setting("sensor.grid_out")
+    config["measurements"]["grid_import_energy"] = NumericSetting(
+        entity=EntityBinding("sensor.import_energy"), unit="kWh"
+    ).to_dict()
+    config["sources"]["soc"] = EntityBinding("sensor.soc").to_dict()
+    now = datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC)
+    agg = Aggregator()
+    for offset, (grid_in, grid_out, soc, counter) in enumerate(
+        [("-0.003", "-0.001", "100.4", "1.5"), ("-0.002", "0", "100.2", "-0.1")]
+    ):
+        states = {
+            "sensor.grid_in": {"state": grid_in, "attributes": {}},
+            "sensor.grid_out": {"state": grid_out, "attributes": {}},
+            "sensor.soc": {"state": soc, "attributes": {}},
+            "sensor.import_energy": {
+                "state": counter,
+                "attributes": {"state_class": "total_increasing"},
+            },
+        }
+        at = now + timedelta(minutes=offset)
+        for state in states.values():
+            state["last_updated"] = at.isoformat()
+        agg.feed(at, resolve_feed(config, states, at))
+    (window,) = agg.close(now + timedelta(minutes=5))
+    payload = {
+        "windows": [
+            {
+                "window_start": window.window_start.isoformat(),
+                "samples": window.samples,
+                **window.values,
+            }
+        ]
+    }
+    assert schema_errors("TelemetryBatch", payload) == []
+    assert window.values["grid_import_w_avg"] == 0.0
+    assert window.values["soc_pct_last"] == 100.0
+    assert window.values["import_kwh_total"] == 1.5
 
 
 def test_solve_payload_is_contract_valid():

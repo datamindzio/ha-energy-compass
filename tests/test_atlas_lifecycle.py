@@ -109,6 +109,27 @@ async def test_hass_stop_event_stops_the_sink_with_a_five_second_bound(
     assert fake_sink[0].stop_calls == [5]
 
 
+async def test_first_solve_after_setup_carries_the_payload_builder(
+    recorder_mock, hass, enable_custom_integrations, fake_sink, monkeypatch
+):
+    # The bridge is attached before coordinator.async_start() dispatches the first solve.
+    from custom_components.energy_compass import coordinator as coordinator_module
+
+    builders = []
+    real_compute = coordinator_module.compute
+
+    def _spy(*args, atlas_solve_builder=None, **kwargs):
+        builders.append(atlas_solve_builder)
+        return real_compute(*args, atlas_solve_builder=atlas_solve_builder, **kwargs)
+
+    monkeypatch.setattr(coordinator_module, "compute", _spy)
+    entry = _registered_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert builders and builders[0] is not None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_enabled_but_not_registered_warns_and_does_not_start(
     recorder_mock, hass, enable_custom_integrations, fake_sink, caplog
 ):

@@ -15,10 +15,11 @@ async def async_setup_entry(hass, entry) -> bool:
     coordinator = EnergyCompassCoordinator(hass, entry)
     entry.runtime_data = coordinator
     try:
-        await coordinator.async_start()
         atlas_settings = entry.options.get("atlas", {})
         if atlas_settings.get("enabled"):
-            # ADR-0019 §3: only imported/started when Atlas is enabled.
+            # ADR-0019 §3: only imported/started when Atlas is enabled. Started before
+            # the coordinator so the first solve (dispatched by async_start) carries
+            # the payload builder.
             from .atlas import AtlasBridge, build_attrs
 
             coordinator.atlas = AtlasBridge(
@@ -27,6 +28,7 @@ async def async_setup_entry(hass, entry) -> bool:
             await coordinator.atlas.async_start(
                 build_attrs(coordinator.configuration, atlas_settings)
             )
+        await coordinator.async_start()
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:
         if coordinator.atlas is not None:

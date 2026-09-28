@@ -95,15 +95,22 @@ class AtlasBridge:
         return build_solve_payload(problem, plan, analysis, values, config, now)
 
     def add_solve(self, payload: dict | None) -> None:
-        """Push a solve payload that the coordinator is about to publish."""
+        """Push a solve payload that the coordinator is about to publish.
+
+        Not registered (no sink): nothing is sent or counted; diagnostics say
+        `registered: false` instead (ADR-0019 §9).
+        """
+        if self.sink is None:
+            return
         if payload is None:
             self.solves_skipped += 1
-        elif self.sink is not None:
+        else:
             self.sink.add_solve(payload)
 
     def skip_solve(self) -> None:
         """Count a solve the coordinator could not publish (failed/invalid solve)."""
-        self.solves_skipped += 1
+        if self.sink is not None:
+            self.solves_skipped += 1
 
     def status(self) -> dict:
         if self.sink is None:

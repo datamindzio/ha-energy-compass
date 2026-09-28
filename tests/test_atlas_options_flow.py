@@ -3,6 +3,7 @@
 import logging
 
 import pytest
+import voluptuous as vol
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.energy_compass.atlas.storage import environment_dir
@@ -184,3 +185,35 @@ async def test_atlas_survives_reconfigure(
         "environment": "staging",
         "pv_kwp": 5.0,
     }
+
+
+async def test_pv_kwp_has_no_default_and_is_required_when_enabled(
+    recorder_mock, hass, enable_custom_integrations, monkeypatch
+):
+    # ADR-0019 §2: pv_kwp default none, required when enabled.
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("register() must not be called without pv_kwp")
+
+    monkeypatch.setattr(atlas_sink_module, "register", _fail_if_called)
+    entry = _entry(hass)
+    result = await _open_energy_atlas(hass, entry)
+    (pv_kwp,) = [key for key in result["data_schema"].schema if key == "pv_kwp"]
+    assert pv_kwp.default is vol.UNDEFINED
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"enabled": True, "environment": "staging", "enrollment_secret": SECRET},
+    )
+    assert result["errors"] == {"pv_kwp": "invalid_input"}
+    assert "atlas" not in entry.options
+
+
+async def test_disabled_without_pv_kwp_saves(
+    recorder_mock, hass, enable_custom_integrations
+):
+    entry = _entry(hass)
+    result = await _open_energy_atlas(hass, entry)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"enabled": False, "environment": "staging"}
+    )
+    assert result["type"] == "create_entry"
+    assert entry.options["atlas"] == {"enabled": False, "environment": "staging"}

@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime
 
+import pytest
+
 from custom_components.energy_compass.atlas.mapping import (
     resolve_feed,
     tracked_entity_ids,
@@ -89,11 +91,24 @@ def test_load_power_negative_history_sign_is_applied():
 
 
 def test_battery_power_prefers_single_measurement():
+    # Compass battery_power is + = discharge; Atlas batt_w is + = charge (ADR-0019 T-402).
     config = default_configuration("EUR", "UTC")
     config["measurements"]["battery_power"] = _power_setting("sensor.batt")
-    states = {"sensor.batt": _state("-1.0", "kW")}
+    config["measurements"]["battery_charge_power"] = _power_setting("sensor.charge")
+    states = {
+        "sensor.batt": _state("-1.0", "kW"),
+        "sensor.charge": _state("5.0", "kW"),
+    }
     feed = resolve_feed(config, states, NOW)
-    assert feed["batt_w"] == -1000.0
+    assert feed["batt_w"] == 1000.0
+
+
+def test_battery_power_discharge_is_negative_batt_w():
+    config = default_configuration("EUR", "UTC")
+    config["measurements"]["battery_power"] = _power_setting("sensor.batt")
+    states = {"sensor.batt": _state("2.0", "kW")}
+    feed = resolve_feed(config, states, NOW)
+    assert feed["batt_w"] == -2000.0
 
 
 def test_battery_power_falls_back_to_charge_minus_discharge():
@@ -151,9 +166,91 @@ def test_soc_percent_applies_sign():
     config = default_configuration("EUR", "UTC")
     config["sources"]["soc"] = EntityBinding("sensor.soc").to_dict()
     config["soc_options"]["sign"] = -1
-    states = {"sensor.soc": _state("55")}
+    states = {"sensor.soc": _state("-55")}
     feed = resolve_feed(config, states, NOW)
-    assert feed["soc_pct"] == -55.0
+    assert feed["soc_pct"] == 55.0
+
+
+def test_soc_unit_mismatch_not_fed():
+    # Same check as runtime._soc_value: entity reports kWh, Compass expects %.
+    config = default_configuration("EUR", "UTC")
+    config["sources"]["soc"] = EntityBinding("sensor.soc").to_dict()
+    states = {"sensor.soc": _state("5", "kWh")}
+    assert "soc_pct" not in resolve_feed(config, states, NOW)
+
+
+def test_load_power_without_history_unit_not_fed():
+    config = default_configuration("EUR", "UTC")
+    _recorder_load(config)
+    del config["sources"]["load"]["history_unit"]
+    states = {"sensor.load": _state("500")}
+    assert "load_w" not in resolve_feed(config, states, NOW)
+
+
+# Contract bounds of MetricValues (ADR-0019 Amendment 2026-09-28 (T-402)): every bounded
+# key at bound - eps and bound + eps.
+@pytest.mark.parametrize(
+    ("measurement", "key"),
+    [("grid_import_power", "grid_import_w"), ("grid_export_power", "grid_export_w")],
+)
+@pytest.mark.parametrize(
+    ("reading_kw", "fed_w"), [("-0.003", 0.0), ("0", 0.0), ("0.001", 1.0)]
+)
+def test_grid_power_clamped_to_zero(measurement, key, reading_kw, fed_w):
+    config = default_configuration("EUR", "UTC")
+    config["measurements"][measurement] = _power_setting("sensor.grid")
+    feed = resolve_feed(config, {"sensor.grid": _state(reading_kw, "kW")}, NOW)
+    assert feed[key] == fed_w
+
+
+@pytest.mark.parametrize(
+    ("reading", "fed"),
+    [("-0.5", 0.0), ("0", 0.0), ("99.9", 99.9), ("100.4", 100.0), ("250", 100.0)],
+)
+def test_soc_percent_clamped_to_0_100(reading, fed):
+    config = default_configuration("EUR", "UTC")
+    config["sources"]["soc"] = EntityBinding("sensor.soc").to_dict()
+    feed = resolve_feed(config, {"sensor.soc": _state(reading)}, NOW)
+    assert feed["soc_pct"] == pytest.approx(fed)
+
+
+def test_soc_kwh_above_capacity_clamped_to_100():
+    config = default_configuration("EUR", "UTC")
+    config["sources"]["soc"] = EntityBinding("sensor.soc").to_dict()
+    config["soc_options"]["unit"] = "kWh"
+    config["settings"]["capacity_kwh"] = 7.5
+    feed = resolve_feed(config, {"sensor.soc": _state("7.9")}, NOW)
+    assert feed["soc_pct"] == 100.0
+
+
+@pytest.mark.parametrize(
+    ("measurement", "key"),
+    [
+        ("pv_energy", "pv_kwh_total"),
+        ("grid_import_energy", "import_kwh_total"),
+        ("grid_export_energy", "export_kwh_total"),
+    ],
+)
+@pytest.mark.parametrize(("reading", "fed"), [("-0.1", None), ("0", 0.0), ("0.1", 0.1)])
+def test_negative_energy_counter_not_fed(measurement, key, reading, fed):
+    config = default_configuration("EUR", "UTC")
+    config["measurements"][measurement] = _energy_setting("sensor.counter")
+    states = {"sensor.counter": _state(reading, "kWh", state_class="total_increasing")}
+    assert resolve_feed(config, states, NOW).get(key) == fed
+
+
+@pytest.mark.parametrize("reading", ["nan", "inf", "-inf"])
+def test_non_finite_readings_not_fed(reading):
+    config = default_configuration("EUR", "UTC")
+    config["measurements"]["pv_power"] = _power_setting("sensor.pv")
+    config["sources"]["soc"] = EntityBinding("sensor.soc").to_dict()
+    _recorder_load(config)
+    states = {
+        "sensor.pv": _state(reading, "kW"),
+        "sensor.soc": _state(reading),
+        "sensor.load": _state(reading),
+    }
+    assert resolve_feed(config, states, NOW) == {}
 
 
 def test_energy_counters_require_total_state_class():

@@ -914,7 +914,7 @@ Turn it on in **Settings → Devices & services → Energy Compass → Configure
 | --- | --- |
 | Send to Energy Atlas | Off by default. |
 | Environment | **staging** (`atlas-api-staging.datamindz.io`, for validating the data flow) or **production** (`atlas-api.datamindz.io`, the live collector). Validate on staging first. |
-| PV capacity (kWp) | Installed PV capacity, entered once; not derived from other Compass settings. |
+| PV capacity (kWp) | Installed PV capacity, entered once; not derived from other Compass settings. No default: required when sending is on. |
 | Enrollment secret | A one-time secret from the Energy Atlas operator for the chosen environment. Needed only the first time that environment is enabled; ignored once a site is already registered there. |
 
 **What is sent**, only while enabled and only the entities you have bound in Sources: PV, grid
@@ -925,6 +925,11 @@ its price/PV/load inputs; a handful of installation attributes (PV kWp, battery 
 capacity, SOC floor, the Compass version). Nothing else — no location, tariff text or inverter
 model, and the enrollment secret itself is **never stored**, only the site key issued in exchange
 for it.
+
+**How values are sent**: powers in W. Bind **Battery power** with + = discharge (as in the
+dashboard examples); Atlas receives it as + = charge. Readings outside the collector's ranges are
+corrected, not sent as errors: a negative grid import/export power is sent as 0, SOC below 0 % or
+above 100 % as 0 %/100 %, and a negative energy counter or a non-numeric reading is not sent.
 
 **Where the key lives**: `.storage/energy_compass_atlas/<entry id>/<environment>/` inside your
 Home Assistant config directory, one subdirectory per environment so staging and production never

@@ -235,8 +235,10 @@ class Editor(SourceEditor):
         if user_input is not None:
             enabled = user_input["enabled"]
             environment = user_input["environment"]
-            pv_kwp = user_input["pv_kwp"]
-            if enabled and not is_registered(
+            pv_kwp = user_input.get("pv_kwp")
+            if enabled and pv_kwp is None:
+                errors["pv_kwp"] = "invalid_input"
+            elif enabled and not is_registered(
                 self.hass, self.config_entry.entry_id, environment
             ):
                 secret = user_input.get("enrollment_secret")
@@ -253,11 +255,9 @@ class Editor(SourceEditor):
                     except RegistrationError as err:
                         errors["base"] = err.kind
             if not errors:
-                new_atlas = {
-                    "enabled": enabled,
-                    "environment": environment,
-                    "pv_kwp": pv_kwp,
-                }
+                new_atlas = {"enabled": enabled, "environment": environment}
+                if pv_kwp is not None:
+                    new_atlas["pv_kwp"] = pv_kwp
                 return self.async_create_entry(
                     title="",
                     data={**self.config_entry.options, "atlas": new_atlas},
@@ -272,9 +272,11 @@ class Editor(SourceEditor):
                     vol.Required(
                         "environment", default=current.get("environment", "staging")
                     ): select(["staging", "production"]),
-                    vol.Required("pv_kwp", default=current.get("pv_kwp", 1.0)): number(
-                        0.01, 1000, "kWp"
-                    ),
+                    # ADR-0019 §2: no default; required only when enabled.
+                    vol.Optional(
+                        "pv_kwp",
+                        description={"suggested_value": current.get("pv_kwp")},
+                    ): number(0.01, 1000, "kWp"),
                     vol.Optional("enrollment_secret"): selector.TextSelector(
                         selector.TextSelectorConfig(
                             type=selector.TextSelectorType.PASSWORD

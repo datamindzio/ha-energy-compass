@@ -925,7 +925,7 @@ Włącz w **Ustawienia → Urządzenia i usługi → Energy Compass → Konfigur
 | --- | --- |
 | Wysyłaj do Energy Atlas | Domyślnie wyłączone. |
 | Środowisko | **staging** (`atlas-api-staging.datamindz.io`, do walidacji przepływu danych) lub **produkcja** (`atlas-api.datamindz.io`, kolektor produkcyjny). Najpierw zwaliduj na staging. |
-| Moc instalacji PV (kWp) | Zainstalowana moc PV, wprowadzana raz; nie jest wyliczana z innych ustawień Compass. |
+| Moc instalacji PV (kWp) | Zainstalowana moc PV, wprowadzana raz; nie jest wyliczana z innych ustawień Compass. Bez wartości domyślnej: wymagana, gdy wysyłanie jest włączone. |
 | Sekret rejestracyjny | Jednorazowy sekret od operatora Energy Atlas dla wybranego środowiska. Potrzebny tylko przy pierwszym włączeniu tego środowiska; ignorowany, gdy witryna jest już tam zarejestrowana. |
 
 **Co jest wysyłane**, tylko gdy funkcja jest włączona i tylko dla źródeł powiązanych w sekcji Źródła
@@ -936,6 +936,12 @@ plan każdego rozwiązania Compass wraz z wejściami cen/PV/zużycia; kilka atry
 w kWp, pojemność baterii nominalna i użyteczna, próg SOC, wersja Compass). Nic więcej — brak
 lokalizacji, tekstu taryfy czy modelu falownika, a sam sekret rejestracyjny **nigdy nie jest
 zapisywany** — przechowywany jest tylko klucz witryny wydany w zamian za niego.
+
+**Jak wysyłane są wartości**: moce w W. Powiąż **Moc baterii** tak, by + oznaczał rozładowanie (jak
+w przykładowych dashboardach); Atlas otrzymuje ją jako + = ładowanie. Odczyty spoza zakresów
+kolektora są korygowane, a nie wysyłane jako błędy: ujemna moc importu/eksportu z sieci jest
+wysyłana jako 0, SOC poniżej 0 % lub powyżej 100 % jako 0 %/100 %, a ujemny licznik energii lub
+odczyt nieliczbowy nie jest wysyłany.
 
 **Gdzie przechowywany jest klucz**: `.storage/energy_compass_atlas/<id wpisu>/<środowisko>/` wewnątrz
 katalogu konfiguracyjnego Home Assistant, osobny podkatalog na środowisko, więc staging i produkcja

@@ -7,11 +7,20 @@ normalisation path. Power measurements resolve to kW (Compass's own target unit,
 to kWh already. `sources.load.power` and `sources.soc` carry their own
 unit/sign (`history_unit`/`history_sign`, `soc_options`), applied here the same way
 `sources/history.py` and `runtime._soc` apply them.
+
+Every value then passes the contract bounds of `MetricValues` (ADR-0019 Amendment
+2026-09-28 (T-402)): non-finite -> not fed; grid powers clamped to >= 0; SOC clamped to
+0..100; negative energy counters -> not fed. Compass's `battery_power` is + = discharge,
+Atlas `batt_w` is + = charge.
 """
+
+import math
 
 from ..balance_tracker import soc_percent
 from ..config_models import NumericSetting, resolve_numeric
 from ..engine.models import InputError
+from ..engine.normalize import finite
+from ..runtime import _soc_value
 from ..sources.bindings import EntityBinding, resolve_binding
 
 _LOAD_POWER_SCALE = {"W": 1.0, "kW": 1000.0}
@@ -95,15 +104,14 @@ def _resolve_load_w(config: dict, states: dict) -> float | None:
     if binding is None:
         return None
     try:
-        raw = resolve_binding(states, EntityBinding.from_dict(binding))
+        value = finite(
+            resolve_binding(states, EntityBinding.from_dict(binding)), "load power"
+        )
     except InputError:
         return None
-    try:
-        value = float(raw)
-    except TypeError, ValueError:
-        return None
     load = config.get("sources", {}).get("load", {})
-    scale = _LOAD_POWER_SCALE.get(load.get("history_unit", "W"))
+    # Absent unit -> not fed (LoadSource defaults to kWh, which is not a power unit).
+    scale = _LOAD_POWER_SCALE.get(load.get("history_unit"))
     if scale is None:
         return None
     sign = load.get("history_sign", 1.0)
@@ -114,17 +122,14 @@ def _resolve_soc_pct(config: dict, states: dict) -> float | None:
     soc = config.get("sources", {}).get("soc")
     if not soc:
         return None
-    try:
-        raw = resolve_binding(states, EntityBinding.from_dict(soc))
-    except InputError:
-        return None
-    try:
-        value = float(raw)
-    except TypeError, ValueError:
-        return None
     options = config.get("soc_options", {})
-    value *= options.get("sign", 1.0)
     unit = options.get("unit", "%")
+    try:
+        # Same read as the runtime: unit_of_measurement mismatch and non-finite -> not fed.
+        value = _soc_value(states, EntityBinding.from_dict(soc), unit)
+    except InputError, KeyError:
+        return None
+    value *= options.get("sign", 1.0)
     capacity_kwh = config.get("settings", {}).get("capacity_kwh")
     try:
         capacity_kwh = float(capacity_kwh)
@@ -137,12 +142,34 @@ def _resolve_soc_pct(config: dict, states: dict) -> float | None:
     return soc_percent(value, unit, capacity_kwh)
 
 
+def _bounded(key: str, value: float) -> float | None:
+    """Contract bounds of `MetricValues` (ADR-0019 Amendment T-402); None = not fed."""
+    if not math.isfinite(value):
+        return None
+    if key in ("grid_import_w", "grid_export_w"):
+        return max(0.0, value)
+    if key == "soc_pct":
+        return min(100.0, max(0.0, value))
+    if key.endswith("_kwh_total") and value < 0:
+        return None
+    return value
+
+
 def resolve_feed(config: dict, states: dict, now) -> dict[str, float]:
     """Every currently-available Atlas telemetry key/value (ADR-0019 §6 table).
 
     Unbound measurements, `unavailable`/non-numeric states and `*_today` bindings
     (never looked up here) are simply absent from the result.
     """
+    feed = {}
+    for key, value in _resolve_raw(config, states, now).items():
+        value = _bounded(key, value)
+        if value is not None:
+            feed[key] = value
+    return feed
+
+
+def _resolve_raw(config: dict, states: dict, now) -> dict[str, float]:
     feed: dict[str, float] = {}
     pv_w = _resolve_power_w(config, states, now, "pv_power")
     if pv_w is not None:
@@ -156,7 +183,8 @@ def resolve_feed(config: dict, states: dict, now) -> dict[str, float]:
     grid_export_w = _resolve_power_w(config, states, now, "grid_export_power")
     if grid_export_w is not None:
         feed["grid_export_w"] = grid_export_w
-    batt_w = _resolve_power_w(config, states, now, "battery_power")
+    discharge_w = _resolve_power_w(config, states, now, "battery_power")
+    batt_w = None if discharge_w is None else -discharge_w
     if batt_w is None:
         charge = _resolve_power_w(config, states, now, "battery_charge_power")
         discharge = _resolve_power_w(config, states, now, "battery_discharge_power")

@@ -1541,7 +1541,7 @@ background thread, no new files.</p>
 </tr>
 <tr>
 <td>PV capacity (kWp)</td>
-<td>Installed PV capacity, entered once; not derived from other Compass settings.</td>
+<td>Installed PV capacity, entered once; not derived from other Compass settings. No default: required when sending is on.</td>
 </tr>
 <tr>
 <td>Enrollment secret</td>
@@ -1557,6 +1557,10 @@ its price/PV/load inputs; a handful of installation attributes (PV kWp, battery 
 capacity, SOC floor, the Compass version). Nothing else — no location, tariff text or inverter
 model, and the enrollment secret itself is <strong>never stored</strong>, only the site key issued in exchange
 for it.</p>
+<p><strong>How values are sent</strong>: powers in W. Bind <strong>Battery power</strong> with + = discharge (as in the
+dashboard examples); Atlas receives it as + = charge. Readings outside the collector's ranges are
+corrected, not sent as errors: a negative grid import/export power is sent as 0, SOC below 0 % or
+above 100 % as 0 %/100 %, and a negative energy counter or a non-numeric reading is not sent.</p>
 <p><strong>Where the key lives</strong>: <code>.storage/energy_compass_atlas/&lt;entry id&gt;/&lt;environment&gt;/</code> inside your
 Home Assistant config directory, one subdirectory per environment so staging and production never
 share a key, a site or a queue. It is included in Home Assistant backups. Removing the integration

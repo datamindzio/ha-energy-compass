@@ -862,7 +862,9 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                             states,
                             now,
                             atlas_solve_builder=(
-                                self.atlas.solve_builder if self.atlas else None
+                                self.atlas.solve_builder
+                                if self.atlas and self.atlas.sink
+                                else None
                             ),
                             previous_soc=self._previous_soc,
                             battery_commitment=deepcopy(self._battery_commitment),

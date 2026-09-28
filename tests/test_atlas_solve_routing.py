@@ -17,6 +17,7 @@ class _FakeAtlas:
     def __init__(self, solve_builder=None):
         self.sent = []
         self.solves_skipped = 0
+        self.sink = object()  # registered: the coordinator only passes the builder then
         self.solve_builder = solve_builder or (lambda *a: None)
 
     def add_solve(self, payload):
