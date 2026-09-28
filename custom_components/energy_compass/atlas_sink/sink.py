@@ -8,6 +8,7 @@ other thread only ever touch `feed`/`add_solve`/`backfill` (queue puts, O(1), ne
 """
 
 import asyncio
+import contextlib
 import logging
 import queue
 import threading
@@ -167,6 +168,7 @@ class SinkThread(threading.Thread):
             "halted": {},
         }
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._wake: asyncio.Event | None = None
         self._io_thread: threading.Thread | None = None
         self._last_success_at: datetime | None = None
 
@@ -197,7 +199,16 @@ class SinkThread(threading.Thread):
         method's own `join` deadline."""
         self._shutdown_bound = max(0.0, timeout_s - 0.3)
         self._stop_requested.set()
+        self._wake_io()
         self.join(timeout_s)
+
+    def _wake_io(self) -> None:
+        """Cut the IO loop's inter-tick wait short so it sees the stop request now."""
+        loop, wake = self._loop, self._wake
+        if loop is None or wake is None:
+            return  # `_main` is not waiting yet; it re-checks the flag before it does
+        with contextlib.suppress(RuntimeError):  # loop already closed: nothing left to wake
+            loop.call_soon_threadsafe(wake.set)
 
     # -- runs on the "atlas-sink" thread --------------------------------------------------
 
@@ -225,6 +236,7 @@ class SinkThread(threading.Thread):
     # -- runs on the inner "atlas-sink-io" thread's event loop ----------------------------
 
     async def _main(self) -> None:
+        wake = self._wake = asyncio.Event()
         identity = Identity(self._dir)
         outbox = Outbox(self._dir / "outbox.sqlite")
         client: Any = None
@@ -247,7 +259,8 @@ class SinkThread(threading.Thread):
                 self._check_attributes(tracker, sender)
                 await runner.tick()
                 self._publish_status(outbox, sender, registered=True)
-                await asyncio.sleep(self._tick_s)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(wake.wait(), self._tick_s)
             # finish what is already in the queue and flush once more before closing
             await self._drain_queue(runner, outbox)
             self._check_attributes(tracker, sender)
