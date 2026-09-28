@@ -86,6 +86,7 @@ async def test_forget_unchecked_leaves_the_site_untouched(
     monkeypatch.setattr(atlas_sink_module, "register", _fail_if_called)
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     directory = environment_dir(hass, entry.entry_id, "staging")
 
@@ -109,6 +110,7 @@ async def test_forget_deletes_the_directory_only_when_confirmed(
 ):
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     directory = environment_dir(hass, entry.entry_id, "staging")
     assert directory.exists()
@@ -129,6 +131,7 @@ async def test_forget_stops_the_running_sink_for_the_active_environment(
 ):
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     assert len(fake_sink) == 1
 
@@ -154,6 +157,7 @@ async def test_forget_then_save_on_an_unavailable_environment_is_a_form_error(
     # and resaving enabled must fail with environment_unavailable, not ask for one.
     entry = _registered_entry(hass, environment="production")
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     result = await _open_energy_atlas(hass, entry)
@@ -181,6 +185,7 @@ async def test_forget_then_save_on_an_unavailable_environment_detaches_the_sink(
     wired up, and atlas_backfill would silently enqueue into it instead of raising."""
     entry = _registered_entry(hass, environment="production")
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     result = await _open_energy_atlas(hass, entry)
@@ -217,6 +222,7 @@ async def test_forget_then_save_registers_a_new_site_with_the_baked_secret(
 
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     result = await _open_energy_atlas(hass, entry)
@@ -246,6 +252,7 @@ async def test_forget_only_affects_the_selected_environment(
     production_dir.mkdir(parents=True)
     (production_dir / "site.json").write_text('{"site_id": "site-prod"}')
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     result = await _open_energy_atlas(hass, entry)

@@ -102,6 +102,7 @@ async def test_two_entries_unload(recorder_mock, hass, enable_custom_integration
         )
         entry.add_to_hass(hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
         entries.append(entry)
     await hass.async_block_till_done()
     assert entries[0].runtime_data is not entries[1].runtime_data
@@ -200,6 +201,7 @@ async def test_source_disappears_and_recovers(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     assert hass.states.get("binary_sensor.synthetic_forecast_valid").state == "on", (
         entry.runtime_data.data
@@ -234,6 +236,7 @@ async def test_solver_exception_is_diagnostic(
         side_effect=SolveError("timeout"),
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
         await hass.async_block_till_done()
         assert hass.states.get("sensor.synthetic_optimizer_status").state == "timeout"
         assert (
@@ -340,6 +343,7 @@ async def test_registry_rename_follows_identity_and_removal_requires_reconfigure
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     registry.async_update_entity(
         selected.entity_id, new_entity_id="sensor.renamed_limit"
     )
@@ -378,6 +382,7 @@ async def test_unload_discards_late_worker(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     started, release = threading.Event(), threading.Event()
     original = module.compute
@@ -463,6 +468,7 @@ async def test_diagnostic_measurements_do_not_supersede_plans(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     generation = entry.runtime_data._generation
     for value in ("2", "3", "4"):
         hass.states.async_set("sensor.grid_meter", value, {"unit_of_measurement": "kW"})
@@ -515,6 +521,7 @@ async def test_equivalent_forecast_records_do_not_recalculate(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     generation = entry.runtime_data._generation
     hass.states.async_set(
         "sensor.market",
@@ -561,6 +568,7 @@ async def test_optional_registry_removal_does_not_adopt_replacement(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     try:
         registry.async_remove(selected.entity_id)
         hass.states.async_set(selected.entity_id, "999", {"unit_of_measurement": "kW"})
@@ -616,6 +624,7 @@ async def test_missing_future_continuation_recovers_without_losing_current(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     try:
         assert entry.runtime_data.data["valid"]
         assert entry.runtime_data.data["quality"]["missing_sources"] == [
@@ -679,6 +688,7 @@ async def test_inputs_changing_faster_than_a_calculation_still_publish(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     coordinator = entry.runtime_data
     original = module.compute

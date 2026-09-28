@@ -297,6 +297,7 @@ async def test_counter_change_recalculates_without_resetting_daily_budget(
     entry = MockConfigEntry(domain="energy_compass", data=config, version=2)
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     assert (
         coordinator.data["dispatch_policy"]["daily_balances"][0]["remaining_export_kwh"]

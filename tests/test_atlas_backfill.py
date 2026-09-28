@@ -263,6 +263,7 @@ async def test_service_raises_when_nothing_enabled_and_registered(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     from homeassistant.exceptions import ServiceValidationError
@@ -280,6 +281,7 @@ async def test_service_feeds_merged_statistics_to_the_running_sink(
     config = _full_config()
     entry = _registered_entry(hass, config)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     def _fake_statistics_during_period(
@@ -321,6 +323,7 @@ async def test_service_skips_entries_that_were_never_loaded(
     config = _full_config()
     on_entry = _registered_entry(hass, config)
     assert await hass.config_entries.async_setup(on_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     monkeypatch.setattr(
@@ -360,11 +363,13 @@ async def test_service_skips_entries_not_enabled_or_not_registered(
     )
     off_entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(off_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     config = _full_config()
     on_entry = _registered_entry(hass, config)
     assert await hass.config_entries.async_setup(on_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     monkeypatch.setattr(

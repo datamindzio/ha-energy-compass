@@ -90,6 +90,7 @@ async def test_unload_stops_the_sink_with_a_ten_second_bound(
 ):
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     assert fake_sink[0].started
 
@@ -102,6 +103,7 @@ async def test_hass_stop_event_stops_the_sink_with_a_five_second_bound(
 ):
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
@@ -145,6 +147,7 @@ async def test_enabled_but_not_registered_warns_and_does_not_start(
     entry.add_to_hass(hass)
     with caplog.at_level(logging.WARNING):
         assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
         await hass.async_block_till_done()
 
     assert fake_sink == []
@@ -164,6 +167,7 @@ async def test_diagnostics_never_carry_secrets_or_site_id(
 ):
     entry = _registered_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
@@ -391,6 +395,7 @@ async def test_environment_switch_keeps_separate_directories_and_no_reregistrati
 
     entry = _registered_entry(hass, environment="staging")
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     staging_dir = environment_dir(hass, entry.entry_id, "staging")
     assert staging_dir.exists()
@@ -448,6 +453,7 @@ async def test_environment_switch_rows_1_to_4(
     entry = MockConfigEntry(domain="energy_compass", data=config, options={}, version=2)
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     assert fake_sink == []
 
@@ -525,6 +531,7 @@ async def test_remove_entry_deletes_every_environment_directory(
     production_dir.mkdir(parents=True)
     (production_dir / "site.json").write_text('{"site_id": "site-2"}')
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
 
     assert await hass.config_entries.async_remove(entry.entry_id)

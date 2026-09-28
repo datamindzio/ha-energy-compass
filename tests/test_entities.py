@@ -44,6 +44,7 @@ async def test_absent_window_is_unavailable_with_coverage_status(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     window = hass.states.get("sensor.windows_next_limit_start")
     assert window.state == "unavailable"
     depth = hass.states.get("sensor.windows_flexible_energy_depth")
@@ -103,6 +104,7 @@ async def test_unknown_current_probe_keeps_known_future_advice(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert hass.states.get("sensor.future_consumption_compass").state == "unavailable"
     assert hass.states.get("sensor.future_consumption_cost").state == "unavailable"
     assert (
@@ -149,6 +151,7 @@ async def test_helper_precision_and_blueprint_preferences(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     from homeassistant.helpers import entity_registry as er
 
     registry = er.async_get(hass)
@@ -196,6 +199,7 @@ async def test_plan_attributes_include_strategy_fields(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     plan = hass.states.get("sensor.strategy_plan")
     assert plan.attributes["strategy"] == "cost_min"
     assert plan.attributes["autonomy_shortfall_kwh"] == 0.0
@@ -223,6 +227,7 @@ async def test_plan_strategy_attribute_is_a_scalar_not_a_list(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     plan = hass.states.get("sensor.scalar_plan")
     assert isinstance(plan.attributes["strategy"], str)
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -245,6 +250,7 @@ async def test_attribute_schema_version_is_three(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     plan = hass.states.get("sensor.schema_plan")
     assert plan.attributes["attribute_schema_version"] == 3
     assert await hass.config_entries.async_unload(entry.entry_id)

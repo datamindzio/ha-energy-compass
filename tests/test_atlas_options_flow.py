@@ -153,6 +153,10 @@ async def test_successful_registration_saves_with_the_baked_secret_and_never_log
     assert STAGING_SECRET not in str(entry.options)
     assert STAGING_SECRET not in str(entry.data)
     assert STAGING_SECRET not in caplog.text
+    # The save reloads the not-loaded entry (ADR-0019 §B3): let that setup and its
+    # first solve finish, then unload, so no Store write timer outlives the test.
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_form_has_no_secret_field(
@@ -183,6 +187,10 @@ async def test_already_registered_site_does_not_register_again(
     )
     assert result["type"] == "create_entry"
     assert entry.options["atlas"]["enabled"] is True
+    # The save reloads the not-loaded entry (ADR-0019 §B3): let that setup and its
+    # first solve finish, then unload, so no Store write timer outlives the test.
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_live_apply_start_failure_shows_unknown_and_does_not_save(
@@ -249,6 +257,10 @@ async def test_atlas_survives_a_preview_save(
         "environment": "staging",
         "pv_kwp": 5.0,
     }
+    # The save reloads the not-loaded entry (ADR-0019 §B3): let that setup and its
+    # first solve finish, then unload, so no Store write timer outlives the test.
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_atlas_survives_reconfigure(

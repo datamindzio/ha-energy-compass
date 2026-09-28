@@ -258,6 +258,7 @@ async def test_native_options_save_power_floor(
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     result = await hass.config_entries.options.async_init(entry.entry_id)
     fid = result["flow_id"]
     form = await hass.config_entries.options.async_configure(

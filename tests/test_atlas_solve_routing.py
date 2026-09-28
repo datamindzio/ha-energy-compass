@@ -42,6 +42,7 @@ async def _setup(hass):
     entry = MockConfigEntry(domain="energy_compass", data=_config(), version=3)
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     await hass.async_block_till_done()
     return entry
 
