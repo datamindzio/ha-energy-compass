@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Energy Atlas Collector API
-  version: 1.0.0-e0
-  summary: Ingest and read API for Energy Atlas sites (E0).
+  version: 1.1.0-w1
+  summary: Ingest and read API for Energy Atlas sites (E0) and the web app's public and signed-in reads (W1).
   description: |
     Single source of truth for the collector (Go) and the edge agent `atlas_sink` (Python).
     Architecture: docs/ARCHITECTURE.md. Decisions: docs/adr/.
@@ -33,6 +33,24 @@ info:
       403 site-mismatch → 403 source-mismatch → 404.
     - `operatorBearer`: operator admin token.
     - `enrollmentBearer`: enrollment credential secret (`eac_…`), only on `POST /v1/sites`.
+    - `webSession` (W1, ADR-0023): cookie `atlas_session` issued by `startOperatorSession` (operator)
+      or `createWebSession` (home owner, bot `/web` link). Operator = same rights as `operatorBearer`
+      on operations that list `webSession`; home owner = only sites linked to them in the bot — any
+      other `site_id` → 404 `not-found` (never 403). Status order 401 → 422 → 403 → 404.
+    - `cfAccessJwt` (W1): header `Cf-Access-Jwt-Assertion` added by Cloudflare Access, verified
+      against the Access JWKS (ADR-0023 §3); only on `startOperatorSession`.
+
+    Web app (W1, docs/PRD-web.md; ADR-0020…0025)
+    - Paths under `/v1/public/`, `/v1/web/` and `/auth/` exist only on the web hosts
+      (`ATLAS_WEB_HOSTS`: `atlas.datamindz.io`, `atlas-staging.datamindz.io`); on other hosts they
+      answer 404 `not-found`. The SPA itself (`/`, `/assets/…`, `/geo/…`) is not part of this contract.
+    - Public operations (tag `public`) need no authentication and are rate limited per client IP
+      (60 requests/min, token bucket; ADR-0021 §7). Status order: 429 → 422 → 404 → 503.
+      They answer from the fleet snapshot (ADR-0021 §4, `generated_at`); no snapshot or one older
+      than 5 min → 503 `unavailable`.
+    - Real sites appear in public responses only as `SourceAggregate.real` of the country and of
+      voivodeships and as `PublicRegionView.unlocated.real`; never in cells, cards, curves or ids
+      (ADR-0021 §5, PRD W2). Definitions of stale, current output, capacity: ADR-0021 §3.
   contact:
     name: Datamindz
 servers:
@@ -52,6 +70,10 @@ tags:
     description: Operator-only administration and monitoring.
   - name: health
     description: Liveness and readiness.
+  - name: public
+    description: Anonymous reads of the public fleet map (W1, web hosts only).
+  - name: web
+    description: Web app sign-in and signed-in reads (W1, web hosts only).
 
 security: []
 
@@ -184,6 +206,10 @@ paths:
         auth and after the existing-key checks (so a same-key 200 is never capped or counted), before
         the insert; over the cap → 429 `rate-limited`, nothing created, `Retry-After` = seconds until the
         oldest counted site of that credential is 24 h old (rounded up, ≥ 1). Private credentials have no cap.
+        A `bulk` credential (ADR-0024 §1, W1 fixture/simulator, `simulated` only) skips the per-IP limit:
+        if the bearer's `credential_id` names an existing non-revoked bulk credential the limiter is not
+        consulted before auth; if such a request then fails authentication it is counted for the client IP
+        afterwards (429 instead of 401 when that IP is over the limit). All other credentials: unchanged.
       security: [{ enrollmentBearer: [] }]
       requestBody:
         required: true
@@ -307,12 +333,13 @@ paths:
     get:
       tags: [operator]
       operationId: getSiteGaps
-      summary: Gaps in the site's 5-minute series over a range (S-010, S-011; ADR-0009)
+      summary: Gaps in the site's 5-minute series over a range (S-010, S-011, S-110; ADR-0009)
       description: >-
         Uncovered 5-minute slots with start s in [ceil5(from), min(ceil5(to), floor5(now))) and
         s >= floor5(first observation), merged into maximal runs. The result for a slot does not
         depend on the chosen `to`. A site without observations returns an empty list.
-      security: [{ operatorBearer: [] }]
+        Also callable with `webSession` (home owner: linked sites only, else 404).
+      security: [{ operatorBearer: [] }, { webSession: [] }]
       parameters:
         - $ref: '#/components/parameters/From'
         - $ref: '#/components/parameters/To'
@@ -503,7 +530,9 @@ paths:
         step=5m returns `windows` (stored windows only, never fabricated, never hourly rows).
         step=1h / 1d returns `buckets` (only buckets with data). Max range: 5m 31 days, 1h 366 days,
         1d 3660 days (else 422 `range_too_large`). `tz` only affects 1d bucket boundaries.
-      security: [{ siteSignature: [] }, { operatorBearer: [] }]
+        Also callable with `webSession` (S-108 live view and today's totals; home owner: linked
+        sites only, else 404).
+      security: [{ siteSignature: [] }, { operatorBearer: [] }, { webSession: [] }]
       parameters:
         - $ref: '#/components/parameters/From'
         - $ref: '#/components/parameters/To'
@@ -515,7 +544,7 @@ paths:
           in: query
           required: false
           description: |
-            Comma-separated subset of metric base names (`pv_w`, `load_w`, `grid_import_w`,
+            Comma-separated subset of metric base names (`pv_w`, `wind_w`, `load_w`, `grid_import_w`,
             `grid_export_w`, `batt_w`, `soc_pct`, `pv_kwh`, `import_kwh`, `export_kwh`,
             `batt_chg_kwh`, `batt_dis_kwh`, `ext.<name>`). Default: all. Unknown name → 422.
           schema: { type: string }
@@ -688,6 +717,368 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
+  /v1/enrollment-credentials/{credential_id}/purge:
+    parameters:
+      - $ref: '#/components/parameters/CredentialId'
+    post:
+      tags: [operator]
+      operationId: purgeCredentialSites
+      summary: Delete the sites (or old data) registered with a simulated credential - safe reset (S-112; ADR-0024 §4)
+      description: |
+        Only for credentials with `source: simulated` (a `real` credential → 409 `conflict`, nothing deleted).
+        Affects exactly the sites whose registration used this credential; every DELETE also requires
+        `sites.source = 'simulated'`, so no real site can match. Any affected site with a Telegram link →
+        409 `conflict` (unlink first). `data_before: null` deletes the sites and all their rows (sites,
+        key revocations, attribute versions, config overrides, telemetry, hourly rows, solves, alerts);
+        `data_before: T` deletes only telemetry (`window_start < T`), hourly rows (`hour_start < T`) and
+        solves (`solve_ts < T`) of those sites. Idempotent. The credential itself is not revoked.
+      security: [{ operatorBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PurgeRequest' }
+      responses:
+        '200':
+          description: Deleted (or nothing left to delete).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurgeResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/sites/{site_id}/plan-vs-actual:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    get:
+      tags: [read, web]
+      operationId: getPlanVsActual
+      summary: Plan in force vs actual per plan step for one local day (S-109; ADR-0015)
+      description: |
+        Same numbers as the S-012 Grafana panel "plan vs actual": both select from the shared
+        parameterized view `plan_vs_actual(site_id, from, to)` (migration). Day = [local midnight of
+        `day` in `tz`, next local midnight) → `from`/`to` in UTC (23, 24 or 25 h). A row per step t in
+        force (ADR-0015: the step t of the solve with the greatest `solve_ts` among solves having a step
+        at t), `from ≤ t < to`; planned flows converted to kW (kWh per step / step hours); actual = mean
+        of the 5-min windows w with t ≤ w.window_start < t + step_s (null when none). No solve in force in
+        the day → `has_plan: false`, `steps: []` (the UI then draws actual from `getTelemetry` step=5m).
+      security: [{ operatorBearer: [] }, { webSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Day'
+        - $ref: '#/components/parameters/Tz'
+      responses:
+        '200':
+          description: Steps ordered by t.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanVsActual' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}/daily-cost:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    get:
+      tags: [read, web]
+      operationId: getDailyCost
+      summary: Modelled and realised cost of one local day (S-109; S-012 parity ±0.01 PLN)
+      description: |
+        Same numbers as the S-012 Grafana `daily-cost` dashboard for the range [from, to) of the local
+        day (see `getPlanVsActual`): both select from the shared parameterized view
+        `daily_cost(site_id, from, to)`. Modelled = Σ over steps in force (plan g_in × buy − g_out × sell);
+        realised = Σ over 5-min windows of counter energy (import × buy − export × sell) at the price of
+        the step in force (ADR-0015, ADR-0006 reset handling). `null` when there is nothing to price.
+      security: [{ operatorBearer: [] }, { webSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Day'
+        - $ref: '#/components/parameters/Tz'
+      responses:
+        '200':
+          description: Cost of the day.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailyCost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}/alerts:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    get:
+      tags: [read, web]
+      operationId: listSiteAlerts
+      summary: No-data alerts opened in [from, to) (max 366 days), newest first (S-110)
+      description: No recipient identity is ever returned (ADR-0014); only whether a message was sent.
+      security: [{ operatorBearer: [] }, { webSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: Alerts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteAlertList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/sites/{site_id}/attributes/versions:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    get:
+      tags: [read, web]
+      operationId: listAttributeVersions
+      summary: All attribute versions with changed fields, ordered by valid_from (S-110)
+      security: [{ operatorBearer: [] }, { webSession: [] }]
+      responses:
+        '200':
+          description: Versions (empty list when the site never sent attributes).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttributeVersionList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/public/regions/{region_id}:
+    parameters:
+      - $ref: '#/components/parameters/RegionId'
+    get:
+      tags: [public]
+      operationId: getPublicRegion
+      summary: A region with its ancestors and children, each with totals split by source (S-101, S-102)
+      description: |
+        `PL` → children = 16 voivodeships; a voivodeship → its counties; a county → its municipalities;
+        a municipality → no children (its assets: `listPublicRegionAssets`). Children ordered by name
+        (Polish collation). Numbers: ADR-0021 §3. Unknown region id → 404.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SourceView'
+      responses:
+        '200':
+          description: Region view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicRegionView' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/public/regions/{region_id}/assets:
+    parameters:
+      - $ref: '#/components/parameters/RegionId'
+    get:
+      tags: [public]
+      operationId: listPublicRegionAssets
+      summary: Simulated assets of a municipality grouped by H3 res-6 cell (S-101 markers)
+      description: |
+        Only municipality ids (7 digits); a country/voivodeship/county id → 422 `invalid-field`
+        `{field: "path.region_id", reason: "wrong_level"}`. Only simulated assets, never real ones.
+        `source=real` → `cells: []` and `real_withheld: true`. Cells ordered by `h3_res6`, assets in a
+        cell by `asset_id`.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SourceView'
+      responses:
+        '200':
+          description: Cells with assets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicMunicipalityAssets' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/public/assets/{asset_id}:
+    parameters:
+      - $ref: '#/components/parameters/AssetId'
+    get:
+      tags: [public]
+      operationId: getPublicAsset
+      summary: Public card of one simulated asset (S-103)
+      description: A real site's id, or any id not in the snapshot → 404 (indistinguishable).
+      security: []
+      responses:
+        '200':
+          description: Asset card.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicAsset' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/public/assets/{asset_id}/output:
+    parameters:
+      - $ref: '#/components/parameters/AssetId'
+    get:
+      tags: [public]
+      operationId: getPublicAssetOutput
+      summary: Output curve of a simulated asset over [from, to), stored 5-min windows only (S-103)
+      description: |
+        Range ≤ 48 h (else 422 `range_too_large`), so any local day fits. One point per stored window,
+        `output_kw` = the kind's generation metric / 1000 (null when the metric is null). Never
+        fabricated, never hourly rows. Reads ClickHouse (not the snapshot); p95 < 300 ms.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: Output points ordered by window_start.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicAssetOutput' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /auth/operator:
+    get:
+      tags: [web]
+      operationId: startOperatorSession
+      summary: Operator sign-in behind Cloudflare Access; sets the session cookie (S-105; ADR-0023 §3)
+      description: |
+        Reached by top-level navigation through the Access application on this path (prod) or host
+        (staging). Valid JWT whose `email` is in `ATLAS_WEB_OPERATOR_EMAILS` → new operator session,
+        303 to `/my`. Missing/invalid JWT → 401 `unauthenticated`. Valid JWT of another e-mail or a
+        service token → 403 `operator-only`.
+      security: [{ cfAccessJwt: [] }]
+      responses:
+        '303':
+          description: Signed in.
+          headers:
+            Location:
+              description: Always `/my`.
+              schema: { type: string, enum: [/my] }
+            Set-Cookie:
+              description: '`atlas_session=<token>; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=34560000`'
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/web/sessions:
+    post:
+      tags: [web]
+      operationId: createWebSession
+      summary: Exchange a bot `/web` sign-in token for a home-owner session (S-106; ADR-0023 §4)
+      description: |
+        The SPA reads the token from the link fragment (`/signin#t=<token>`) and posts it. Valid iff the
+        token exists, is unused, `now < expires_at` (10 min) and its chat still has ≥ 1 linked site; then
+        it is marked used (single use, serialized) and a session starts. Expired, used, unknown, malformed
+        or no-longer-linked → 401 `signin-link-invalid` (one answer for all). Counted in the public
+        per-IP rate limit.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebSignIn' }
+      responses:
+        '204':
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              description: '`atlas_session=<token>; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=34560000`'
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /v1/web/session:
+    delete:
+      tags: [web]
+      operationId: deleteWebSession
+      summary: Sign out on this device (S-105, S-106)
+      description: |
+        Ends the session of the presented cookie (if any) and clears the cookie; always 204
+        (idempotent, no cookie needed). An operator's SPA then navigates to `/cdn-cgi/access/logout`.
+      security: []
+      responses:
+        '204':
+          description: Signed out.
+          headers:
+            Set-Cookie:
+              description: '`atlas_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`'
+              schema: { type: string }
+        '404':
+          description: Not a web host (ADR-0023 §1).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/web/me:
+    get:
+      tags: [web]
+      operationId: getWebMe
+      summary: Who is signed in (never a Telegram identity or e-mail)
+      security: [{ webSession: [] }]
+      responses:
+        '200':
+          description: Principal.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebMe' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/web/sites:
+    get:
+      tags: [web]
+      operationId: listWebSites
+      summary: Sites of the signed-in user with health, paged (S-107)
+      description: |
+        Operator: all sites (the UI opens with `source=real`, W9); home owner: linked sites only.
+        Order: `alert.active` desc, `registered_at` asc, `site_id` asc; `next_cursor` continues after the
+        last row (null = last page). `gaps_7d` = `getSiteGaps` over [now − 7 d, now).
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SourceFilter'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: One page of sites.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebSiteList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/web/sites/{site_id}:
+    parameters:
+      - $ref: '#/components/parameters/SiteId'
+    get:
+      tags: [web]
+      operationId: getWebSite
+      summary: One site with health and its latest stored window (S-107, S-108)
+      description: Home owner and a site not linked to them → 404.
+      security: [{ webSession: [] }]
+      responses:
+        '200':
+          description: Site.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebSite' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
 components:
   securitySchemes:
     siteSignature:
@@ -705,6 +1096,18 @@ components:
       type: http
       scheme: bearer
       description: Enrollment credential secret `eac_<credential_id>_<secret>`.
+    webSession:
+      type: apiKey
+      in: cookie
+      name: atlas_session
+      description: |
+        Web session (ADR-0023 §2): 32 random bytes base64url, stored as sha256; HttpOnly, Secure,
+        SameSite=Lax, host-only. Idle timeout 30 days. Missing/unknown/ended/expired → 401 `unauthenticated`.
+    cfAccessJwt:
+      type: apiKey
+      in: header
+      name: Cf-Access-Jwt-Assertion
+      description: Cloudflare Access application token (RS256), checked per ADR-0023 §3.
 
   parameters:
     SiteId:
@@ -750,6 +1153,48 @@ components:
       description: '`gzip` or absent. Anything else → 415.'
       schema: { type: string, enum: [gzip, identity] }
 
+    RegionId:
+      name: region_id
+      in: path
+      required: true
+      description: '`PL`, TERYT voivodeship (2 digits), county (4) or municipality (7) code (ADR-0021 §1).'
+      schema: { type: string, pattern: '^(PL|[0-9]{2}|[0-9]{4}|[0-9]{7})$', examples: [PL, '14', '1465', '1465011'] }
+    AssetId:
+      name: asset_id
+      in: path
+      required: true
+      description: Public asset id (ADR-0021 §5); never a site id.
+      schema: { $ref: '#/components/schemas/AssetId' }
+    SourceView:
+      name: source
+      in: query
+      required: false
+      description: Which source splits to return. `all` (default) = both.
+      schema: { type: string, enum: [all, real, simulated], default: all }
+    Day:
+      name: day
+      in: query
+      required: true
+      description: Local calendar day `YYYY-MM-DD` in `tz` (else 422 reason `invalid_day`).
+      schema: { type: string, format: date, examples: ['2026-09-28'] }
+    Tz:
+      name: tz
+      in: query
+      required: false
+      description: IANA time zone of `day`; default UTC (the SPA sends the browser's zone). Unknown → 422 `invalid_tz`.
+      schema: { type: string, default: UTC, examples: [Europe/Warsaw] }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque `next_cursor` of the previous page. Not produced by the server → 422 reason `invalid_cursor`.
+      schema: { type: string, maxLength: 512 }
+
   headers:
     ConfigETag:
       description: ETag of the site's effective config (quoted sha256 hex of canonical JSON). Differs from the local one → GET config.
@@ -768,7 +1213,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Unauthorized:
-      description: Missing or invalid credential/signature (`unauthenticated`, `credential-invalid`, `signature-invalid`, `signature-expired`, `digest-mismatch`).
+      description: Missing or invalid credential/signature/session (`unauthenticated`, `credential-invalid`, `signature-invalid`, `signature-expired`, `digest-mismatch`; `signin-link-invalid` on `createWebSession` only).
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -867,7 +1312,8 @@ components:
             invalid-field, payload-too-large, unsupported-encoding, unauthenticated,
             credential-invalid, signature-invalid, signature-expired, digest-mismatch,
             site-mismatch, source-mismatch, site-key-revoked, operator-only, not-found, method-not-allowed,
-            conflict, rate-limited, unavailable, internal.
+            conflict, rate-limited, unavailable, internal, signin-link-invalid (401 of `createWebSession`
+            only, W1).
         title: { type: string }
         status: { type: integer }
         detail: { type: string }
@@ -897,7 +1343,8 @@ components:
             not_aligned_5min, not_aligned_hour, not_utc, in_future, duplicate_key_in_batch,
             too_many_items, not_multiple_of_300, invalid_h3, forbidden_identifying_data,
             invalid_enum, from_not_before_to, range_too_large, unknown_metric, invalid_tz,
-            invalid_public_key.
+            invalid_public_key, invalid_combination (W1 `bulk`), wrong_level (W1 region level),
+            invalid_cursor (W1 paging), invalid_day (W1 `day`, not YYYY-MM-DD).
         detail: { type: string }
 
     EnrollmentCredentialCreate:
@@ -914,15 +1361,23 @@ components:
             The secret will be published (baked into a public Energy Compass release, ADR-0019 amendment
             T-411). Immutable. Sites it registers are marked `public_enrollment: true` and it creates at
             most `ATLAS_ENROLLMENT_PUBLIC_SITES_PER_DAY` new sites per 24 h (see `registerSite`).
+        bulk:
+          type: boolean
+          default: false
+          description: |
+            W1 (ADR-0024 §1): registrations with this credential skip the per-IP registration limit.
+            Only with `source: simulated` and `public: false`, else 422 `invalid-field`
+            `{field: "/bulk", reason: "invalid_combination"}`. Immutable.
 
     EnrollmentCredential:
       type: object
       additionalProperties: false
-      required: [credential_id, source, public, created_at, revoked_at]
+      required: [credential_id, source, public, bulk, created_at, revoked_at]
       properties:
         credential_id: { type: string, format: uuid }
         source: { $ref: '#/components/schemas/Source' }
         public: { type: boolean, description: 'Set at creation, immutable (`EnrollmentCredentialCreate.public`).' }
+        bulk: { type: boolean, description: 'Set at creation, immutable (`EnrollmentCredentialCreate.bulk`, W1).' }
         label: { type: [string, 'null'] }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         revoked_at:
@@ -1106,6 +1561,8 @@ components:
       properties:
         pv_w_avg: { type: [number, 'null'] }
         pv_w_max: { type: [number, 'null'] }
+        wind_w_avg: { type: [number, 'null'], minimum: 0, description: 'Wind generation (W1, ADR-0022 §3).' }
+        wind_w_max: { type: [number, 'null'], minimum: 0 }
         load_w_avg: { type: [number, 'null'] }
         load_w_max: { type: [number, 'null'] }
         grid_import_w_avg: { type: [number, 'null'], minimum: 0 }
@@ -1378,8 +1835,14 @@ components:
       properties:
         valid_from:
           $ref: '#/components/schemas/Timestamp'
-        schema_version: { type: integer, enum: [1] }
-        attrs: { $ref: '#/components/schemas/AttrsV1' }
+        schema_version:
+          type: integer
+          enum: [1, 2]
+          description: Selects the schema `attrs` is validated against (1 → AttrsV1, 2 → AttrsV2; ADR-0022).
+        attrs:
+          oneOf:
+            - { $ref: '#/components/schemas/AttrsV1' }
+            - { $ref: '#/components/schemas/AttrsV2' }
 
     AttributeVersion:
       type: object
@@ -1391,8 +1854,408 @@ components:
         valid_from: { $ref: '#/components/schemas/Timestamp' }
         received_at: { $ref: '#/components/schemas/Timestamp' }
         schema_version: { type: integer }
-        attrs: { $ref: '#/components/schemas/AttrsV1' }
+        attrs:
+          oneOf:
+            - { $ref: '#/components/schemas/AttrsV1' }
+            - { $ref: '#/components/schemas/AttrsV2' }
         attrs_hash:
           type: string
           pattern: '^[0-9a-f]{64}$'
           description: sha256 hex of the RFC 8785 canonical JSON of `attrs`.
+
+    AttrsV2:
+      type: object
+      additionalProperties: false
+      description: |
+        Site attributes, schema version 2 (W1, ADR-0022): any asset kind. Same identifying-data rules
+        as AttrsV1 (ADR-0012). `capacity_kw` = installed generation capacity (kWp for PV, kW for wind).
+      required: [kind, capacity_kw]
+      properties:
+        kind: { type: string, enum: [pv, wind] }
+        capacity_kw: { type: number, exclusiveMinimum: 0, maximum: 100000 }
+        location:
+          type: [object, 'null']
+          additionalProperties: false
+          required: [h3_res6]
+          properties:
+            h3_res6:
+              type: string
+              description: H3 cell index at resolution 6 (hex, 15 chars, starts with 86). Resolution checked server-side.
+              pattern: '^86[0-9a-f]{13}$'
+        pv_kwp: { type: number, exclusiveMinimum: 0, maximum: 1000 }
+        inverter_model: { type: [string, 'null'], maxLength: 64, pattern: '^[A-Za-z0-9 ._/-]*$' }
+        battery_kwh_nominal: { type: number, minimum: 0, maximum: 10000 }
+        battery_kwh_usable: { type: number, minimum: 0, maximum: 10000 }
+        soc_floor_pct: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        tariff:
+          type: object
+          additionalProperties: false
+          properties:
+            provider: { type: string, maxLength: 64 }
+            buy_formula: { type: string, maxLength: 256 }
+            sell_formula: { type: string, maxLength: 256 }
+        compass_version: { type: string, maxLength: 32 }
+
+    PurgeRequest:
+      type: object
+      additionalProperties: false
+      required: [data_before]
+      properties:
+        data_before:
+          description: null = delete the sites entirely; a timestamp = delete only time-series rows before it.
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+
+    PurgeResult:
+      type: object
+      additionalProperties: false
+      required: [credential_id, mode, data_before, sites]
+      properties:
+        credential_id: { type: string, format: uuid }
+        mode: { type: string, enum: [sites, data] }
+        data_before:
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+        sites:
+          type: integer
+          minimum: 0
+          description: Sites of the credential affected by this call (`sites` mode - deleted; `data` mode - trimmed).
+
+    AssetId:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{22}$'
+      description: base64url (no padding) of the first 16 bytes of SHA-256("atlas-public-asset-v1:" + lower-case site_id).
+
+    AssetKind:
+      type: string
+      enum: [pv, wind, unknown]
+      description: From the attribute version in force (ADR-0022 §2). `unknown` never appears in public cells or cards.
+
+    RegionLevel:
+      type: string
+      enum: [country, voivodeship, county, municipality]
+
+    RegionRef:
+      type: object
+      additionalProperties: false
+      required: [region_id, level, name]
+      properties:
+        region_id: { type: string, pattern: '^(PL|[0-9]{2}|[0-9]{4}|[0-9]{7})$' }
+        level: { $ref: '#/components/schemas/RegionLevel' }
+        name: { type: string, description: PRG name (Polish). }
+
+    SourceAggregate:
+      type: object
+      additionalProperties: false
+      required: [asset_count, capacity_kw, current_output_kw, without_current_data]
+      description: ADR-0021 §3. `without_current_data` = assets without a current output (stale, kind unknown or metric null).
+      properties:
+        asset_count: { type: integer, minimum: 0 }
+        capacity_kw: { type: number, minimum: 0 }
+        current_output_kw: { type: number, minimum: 0 }
+        without_current_data: { type: integer, minimum: 0 }
+
+    RegionTotals:
+      type: object
+      additionalProperties: false
+      required: [real_withheld]
+      description: |
+        `simulated` present iff source ∈ {all, simulated}. `real` present iff source ∈ {all, real} and the
+        level is country or voivodeship. `real_withheld` true iff source ∈ {all, real} and the level is
+        county or municipality (the UI then says "real sites: shown at voivodeship level"; no number, not
+        even 0, PRD W2).
+      properties:
+        simulated: { $ref: '#/components/schemas/SourceAggregate' }
+        real: { $ref: '#/components/schemas/SourceAggregate' }
+        real_withheld: { type: boolean }
+
+    RegionAggregate:
+      type: object
+      additionalProperties: false
+      required: [region_id, level, name, totals]
+      properties:
+        region_id: { type: string, pattern: '^(PL|[0-9]{2}|[0-9]{4}|[0-9]{7})$' }
+        level: { $ref: '#/components/schemas/RegionLevel' }
+        name: { type: string }
+        totals: { $ref: '#/components/schemas/RegionTotals' }
+
+    PublicRegionView:
+      type: object
+      additionalProperties: false
+      required: [generated_at, source, region, ancestors, children]
+      properties:
+        generated_at: { $ref: '#/components/schemas/Timestamp' }
+        source: { type: string, enum: [all, real, simulated] }
+        region: { $ref: '#/components/schemas/RegionAggregate' }
+        ancestors:
+          type: array
+          description: From the country down to the parent; empty for `PL`.
+          items: { $ref: '#/components/schemas/RegionRef' }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/RegionAggregate' }
+        unlocated:
+          type: object
+          additionalProperties: false
+          description: Only for `PL`. Assets without a location or outside every municipality, counted only in the country totals; keys follow `source`.
+          properties:
+            real: { type: integer, minimum: 0 }
+            simulated: { type: integer, minimum: 0 }
+
+    PublicAssetSummary:
+      type: object
+      additionalProperties: false
+      required: [asset_id, kind, capacity_kw, current_output_kw, last_seen, stale]
+      properties:
+        asset_id: { $ref: '#/components/schemas/AssetId' }
+        kind: { $ref: '#/components/schemas/AssetKind' }
+        capacity_kw: { type: [number, 'null'] }
+        current_output_kw: { type: [number, 'null'], description: 'null = no current data (ADR-0021 §3).' }
+        last_seen:
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+        stale: { type: boolean }
+
+    PublicCell:
+      type: object
+      additionalProperties: false
+      required: [h3_res6, lat, lng, asset_count, assets]
+      properties:
+        h3_res6: { type: string, pattern: '^86[0-9a-f]{13}$' }
+        lat: { type: number, description: 'Cell centre latitude, 4 decimals.' }
+        lng: { type: number, description: 'Cell centre longitude, 4 decimals.' }
+        asset_count: { type: integer, minimum: 1 }
+        assets:
+          type: array
+          items: { $ref: '#/components/schemas/PublicAssetSummary' }
+
+    PublicMunicipalityAssets:
+      type: object
+      additionalProperties: false
+      required: [generated_at, source, region, real_withheld, cells]
+      properties:
+        generated_at: { $ref: '#/components/schemas/Timestamp' }
+        source: { type: string, enum: [all, real, simulated] }
+        region: { $ref: '#/components/schemas/RegionRef' }
+        real_withheld: { type: boolean, description: 'true iff source ∈ {all, real}.' }
+        cells:
+          type: array
+          items: { $ref: '#/components/schemas/PublicCell' }
+
+    PublicAsset:
+      type: object
+      additionalProperties: false
+      required: [generated_at, asset_id, source, kind, capacity_kw, h3_res6, lat, lng, region_path, current_output_kw, output_window_start, last_seen, stale]
+      properties:
+        generated_at: { $ref: '#/components/schemas/Timestamp' }
+        asset_id: { $ref: '#/components/schemas/AssetId' }
+        source: { type: string, enum: [simulated] }
+        kind: { type: string, enum: [pv, wind] }
+        capacity_kw: { type: number }
+        h3_res6: { type: string, pattern: '^86[0-9a-f]{13}$' }
+        lat: { type: number }
+        lng: { type: number }
+        region_path:
+          type: array
+          description: Country, voivodeship, county, municipality.
+          minItems: 4
+          maxItems: 4
+          items: { $ref: '#/components/schemas/RegionRef' }
+        current_output_kw: { type: [number, 'null'] }
+        output_window_start:
+          description: window_start of the window the current output comes from; null when there is none.
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+        last_seen:
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+        stale: { type: boolean }
+
+    PublicAssetOutput:
+      type: object
+      additionalProperties: false
+      required: [asset_id, kind, from, to, points]
+      properties:
+        asset_id: { $ref: '#/components/schemas/AssetId' }
+        kind: { type: string, enum: [pv, wind] }
+        from: { $ref: '#/components/schemas/Timestamp' }
+        to: { $ref: '#/components/schemas/Timestamp' }
+        points:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [window_start, output_kw]
+            properties:
+              window_start: { $ref: '#/components/schemas/Timestamp' }
+              output_kw: { type: [number, 'null'] }
+
+    WebSignIn:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: { type: string, maxLength: 256, description: 'From the link fragment `#t=`. Any value that is not a live token → 401 `signin-link-invalid`.' }
+
+    WebMe:
+      type: object
+      additionalProperties: false
+      required: [principal, site_count]
+      properties:
+        principal: { type: string, enum: [operator, home_owner] }
+        site_count: { type: integer, minimum: 0, description: 'Operator - all sites; home owner - linked sites.' }
+
+    WebSiteSummary:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, registered_at, kind, capacity_kw, freshness, stale, alert, gaps_7d]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        registered_at: { $ref: '#/components/schemas/Timestamp' }
+        kind: { $ref: '#/components/schemas/AssetKind' }
+        capacity_kw: { type: [number, 'null'] }
+        freshness: { $ref: '#/components/schemas/Freshness' }
+        stale: { type: boolean, description: 'ADR-0021 §3 (3 × effective push_interval_s).' }
+        alert: { $ref: '#/components/schemas/AlertState' }
+        gaps_7d:
+          type: object
+          additionalProperties: false
+          required: [count, duration_s]
+          properties:
+            count: { type: integer, minimum: 0 }
+            duration_s: { type: integer, minimum: 0, description: 'Σ gap windows × 300.' }
+
+    WebSiteList:
+      type: object
+      additionalProperties: false
+      required: [sites, next_cursor]
+      properties:
+        sites:
+          type: array
+          items: { $ref: '#/components/schemas/WebSiteSummary' }
+        next_cursor: { type: [string, 'null'] }
+
+    WebSite:
+      allOf:
+        - { $ref: '#/components/schemas/WebSiteSummary' }
+        - type: object
+          required: [push_interval_s, latest_window]
+          properties:
+            push_interval_s: { type: integer, minimum: 300 }
+            latest_window:
+              description: The stored window with the greatest window_start (null when none). The live view shows it with its time, or "no fresh data" when `stale`.
+              oneOf: [{ $ref: '#/components/schemas/StoredWindow' }, { type: 'null' }]
+      unevaluatedProperties: false
+
+    PlanActualValues:
+      type: object
+      additionalProperties: false
+      required: [grid_import_kw, grid_export_kw, batt_charge_kw, batt_discharge_kw]
+      properties:
+        grid_import_kw: { type: [number, 'null'] }
+        grid_export_kw: { type: [number, 'null'] }
+        batt_charge_kw: { type: [number, 'null'] }
+        batt_discharge_kw: { type: [number, 'null'] }
+        soc_kwh: { type: [number, 'null'], description: Plan only (kWh at step end). }
+        soc_pct: { type: [number, 'null'], description: Actual only (last SOC in the step). }
+
+    PlanVsActual:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, day, tz, from, to, has_plan, steps]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        day: { type: string, format: date }
+        tz: { type: string }
+        from: { $ref: '#/components/schemas/Timestamp' }
+        to: { $ref: '#/components/schemas/Timestamp' }
+        has_plan: { type: boolean }
+        steps:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [t, step_s, plan, actual]
+            properties:
+              t: { $ref: '#/components/schemas/Timestamp' }
+              step_s: { type: integer, minimum: 300, multipleOf: 300 }
+              plan: { $ref: '#/components/schemas/PlanActualValues' }
+              actual: { $ref: '#/components/schemas/PlanActualValues' }
+
+    DailyCost:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, day, tz, from, to, currency, has_plan, modelled_cost, realised_cost]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        day: { type: string, format: date }
+        tz: { type: string }
+        from: { $ref: '#/components/schemas/Timestamp' }
+        to: { $ref: '#/components/schemas/Timestamp' }
+        currency: { type: string, enum: [PLN] }
+        has_plan: { type: boolean }
+        modelled_cost: { type: [number, 'null'] }
+        realised_cost: { type: [number, 'null'] }
+
+    SiteAlert:
+      type: object
+      additionalProperties: false
+      required: [alert_id, started_at, opened_at, resolved_at, alert_message_sent, resolve_message_sent]
+      properties:
+        alert_id: { type: string, format: uuid }
+        started_at:
+          description: Last-seen time when the alert opened (data missing since).
+          allOf: [{ $ref: '#/components/schemas/Timestamp' }]
+        opened_at: { $ref: '#/components/schemas/Timestamp' }
+        resolved_at:
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+        alert_message_sent:
+          type: [boolean, 'null']
+          description: 'true = a Telegram message was delivered; false = nobody to send to (ADR-0014) or not yet; null = unknown (alerts handled before W1).'
+        resolve_message_sent:
+          type: [boolean, 'null']
+
+    SiteAlertList:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, from, to, alerts]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        from: { $ref: '#/components/schemas/Timestamp' }
+        to: { $ref: '#/components/schemas/Timestamp' }
+        alerts:
+          type: array
+          items: { $ref: '#/components/schemas/SiteAlert' }
+
+    AttributeVersionEntry:
+      type: object
+      additionalProperties: false
+      required: [valid_from, received_at, schema_version, attrs, attrs_hash, changed_fields]
+      properties:
+        valid_from: { $ref: '#/components/schemas/Timestamp' }
+        received_at: { $ref: '#/components/schemas/Timestamp' }
+        schema_version: { type: integer }
+        attrs:
+          oneOf:
+            - { $ref: '#/components/schemas/AttrsV1' }
+            - { $ref: '#/components/schemas/AttrsV2' }
+        attrs_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        changed_fields:
+          type: array
+          items: { type: string }
+          description: |
+            JSON Pointers rooted at this entry's `attrs` object (not the response body), sorted, of every
+            leaf that was added, removed or changed vs the previous version by valid_from; for the first
+            version every leaf present. Leaves = non-object values incl. null. Example: previous
+            `{"pv_kwp":9.6,"tariff":{"provider":"Tauron"}}`, this `{"pv_kwp":10,"tariff":{"provider":"Tauron","buy_formula":"x"}}`
+            → `["/pv_kwp", "/tariff/buy_formula"]`.
+
+    AttributeVersionList:
+      type: object
+      additionalProperties: false
+      required: [site_id, source, versions]
+      properties:
+        site_id: { $ref: '#/components/schemas/SiteId' }
+        source: { $ref: '#/components/schemas/Source' }
+        versions:
+          type: array
+          items: { $ref: '#/components/schemas/AttributeVersionEntry' }
