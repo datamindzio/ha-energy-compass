@@ -847,6 +847,14 @@ Only battery modes listed in `commissioned_battery_modes` are controlled; any ot
 Voltage before its thresholds were proven) keeps the base profile. With Voltage allowed, a target
 outside 495–560 V is refused.
 
+In Voltage mode the pack voltage sags under discharge (about 0.7 V at 7 kW) and the LFP curve is flat
+(515–528 V spans roughly 30–70 %), so a `DISCHARGE_GRID` voltage target is reached within seconds of
+starting. With `discharge_energy_entity` set and reported within 120 s, a `DISCHARGE_GRID` interval in
+Voltage mode instead ends once the counter has risen by the planned `discharge_kwh` (0.05 kWh
+tolerance) since the controller's first run in that interval (`runtime.slot_energy`); the TOU program
+voltage is then 49.6 (496 V), so the inverter only stops on its own at that floor. Without a fresh counter
+the voltage target applies as before. Capacity mode and `CHARGE_GRID` are unchanged.
+
 ### Writes and confirmation
 
 Each change writes one entity through `number.set_value` or `select.select_option`, then reads holding
@@ -885,6 +893,7 @@ then sets thresholds, then enables the direction.
 | `relinquish_current` | 18 A | charge/discharge current of the base profile |
 | `eta` | 0.9747 | one-way battery efficiency |
 | `commissioned_battery_modes` | Capacity | battery modes allowed for physical control |
+| `discharge_energy_entity` | none | cumulative battery discharge energy (kWh); in Voltage mode ends `DISCHARGE_GRID` intervals on planned energy |
 | `old_writers` | none | automations that must be off before any write |
 
 ### Dashboard examples

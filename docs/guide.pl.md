@@ -858,6 +858,14 @@ Sterowane są tylko tryby baterii z listy `commissioned_battery_modes`; każdy i
 przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Voltage cel poza zakresem
 495–560 V jest odrzucany.
 
+W trybie Voltage napięcie pakietu spada pod obciążeniem rozładowania (ok. 0,7 V przy 7 kW), a krzywa LFP
+jest płaska (515–528 V to ok. 30–70 %), więc cel napięciowy `DISCHARGE_GRID` jest osiągany kilka sekund
+po starcie. Gdy ustawiono `discharge_energy_entity` i licznik zgłosił się w ciągu 120 s, przedział
+`DISCHARGE_GRID` w trybie Voltage kończy się, gdy licznik wzrośnie o zaplanowane `discharge_kwh`
+(tolerancja 0,05 kWh) od pierwszego przebiegu sterownika w tym przedziale (`runtime.slot_energy`);
+napięcie programu TOU wynosi wtedy 49,6 (496 V), więc falownik sam zatrzyma się dopiero na tym progu. Bez
+świeżego licznika obowiązuje cel napięciowy jak dotąd. Tryb Capacity i `CHARGE_GRID` bez zmian.
+
 ### Zapis i potwierdzenie
 
 Każda zmiana zapisuje jedną encję przez `number.set_value` lub `select.select_option`, a potem
@@ -896,6 +904,7 @@ Teksty `runtime.reason` są w tej wersji po polsku.
 | `relinquish_current` | 18 A | prąd ładowania/rozładowania profilu bazowego |
 | `eta` | 0,9747 | sprawność baterii w jedną stronę |
 | `commissioned_battery_modes` | Capacity | tryby baterii dopuszczone do sterowania fizycznego |
+| `discharge_energy_entity` | brak | licznik energii rozładowania baterii (kWh); w trybie Voltage kończy przedziały `DISCHARGE_GRID` po zaplanowanej energii |
 | `old_writers` | brak | automatyzacje, które muszą być wyłączone przed każdym zapisem |
 
 ### Przykładowe dashboardy
