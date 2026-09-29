@@ -572,6 +572,68 @@ def test_voltage_safety_and_pv_uncapped(h):
     assert d["valid"] and d["desired"][h.ctx["charge_entity"]] == 14
 
 
+COUNTER = "sensor.inverter_deye_total_battery_discharge"
+
+
+def voltage_sell(counter=True):
+    """DISCHARGE_GRID of 2 kWh in Voltage mode, pack sagging below the curve target."""
+    inputs = INPUTS | {"commissioned_battery_modes": ["Capacity", "Voltage"]}
+    if counter:
+        inputs |= {"discharge_energy_entity": COUNTER}
+    h = Harness(inputs)
+    h.set(COUNTER, "5600.0")
+    h.data[h.ctx["operation_entity"]]["state"] = "Voltage"
+    h.data[P]["attributes"]["intervals"][0].update(
+        state="DISCHARGE_GRID", charge_kwh=0, discharge_kwh=2.0, end_soc_kwh=19.2
+    )
+    # 53.1 V curve target; 7 kW of discharge pulls the pack to 52.46 V.
+    h.data[h.ctx["voltage_entity"]]["state"] = "524.6"
+    return h
+
+
+def test_voltage_sell_ends_on_discharged_energy_not_sag():
+    h = voltage_sell()
+    r = Runner(h)
+    r.run()
+    d = h.decision()
+    sell = f"select.{PREFIX}{d['active_tou']}_charging"
+    assert d["energy_mode"] and not d["target_reached"]
+    assert d["desired"][h.ctx["discharge_entity"]] > 0
+    assert d["desired"][sell] == "Sell" and d["target_voltage"] == 49.6
+    assert h.data[RT]["attributes"]["runtime"]["slot_energy"]["discharge"] == 5600.0
+    h.set(COUNTER, "5601.9")
+    d = h.decision()
+    assert not d["target_reached"] and d["discharged_kwh"] == 1.9
+    h.set(COUNTER, "5601.96")
+    r.run()
+    d = h.decision()
+    assert d["target_reached"] and d["desired"][h.ctx["discharge_entity"]] == 0
+    assert d["desired"][sell] == "Disabled"
+    assert h.data[RT]["attributes"]["runtime"]["reached_key"] == d["reached_key"]
+
+
+def test_voltage_sell_without_fresh_counter_keeps_voltage_target():
+    for h in [voltage_sell(counter=False), voltage_sell()]:
+        if h.ctx["discharge_energy_entity"]:
+            h.data[COUNTER]["last_reported"] = (
+                h.now - dt.timedelta(seconds=121)
+            ).isoformat()
+        h.accept()
+        d = h.decision()
+        assert not d["energy_mode"] and d["target_reached"]
+        assert d["target_voltage"] == 53.1
+        assert d["desired"][h.ctx["discharge_entity"]] == 0
+
+
+def test_voltage_sell_counts_from_start_of_each_row():
+    h = voltage_sell()
+    h.accept()
+    h.set(RT, "ok", runtime={"slot_energy": {"key": ["old"], "discharge": 5590.0}})
+    d = h.decision()
+    assert d["discharged_kwh"] == 0 and not d["target_reached"]
+    assert d["slot_energy"] == {"key": d["reached_key"], "discharge": 5600.0}
+
+
 def test_generation_consistency_and_session(h):
     h.data[F]["attributes"]["generated_at"] = "other"
     assert h.accept() == {}

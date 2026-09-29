@@ -1351,6 +1351,13 @@ controller cannot limit PV.</p>
 <p>Only battery modes listed in <code>commissioned_battery_modes</code> are controlled; any other mode (for example
 Voltage before its thresholds were proven) keeps the base profile. With Voltage allowed, a target
 outside 495–560 V is refused.</p>
+<p>In Voltage mode the pack voltage sags under discharge (about 0.7 V at 7 kW) and the LFP curve is flat
+(515–528 V spans roughly 30–70 %), so a <code>DISCHARGE_GRID</code> voltage target is reached within seconds of
+starting. With <code>discharge_energy_entity</code> set and reported within 120 s, a <code>DISCHARGE_GRID</code> interval in
+Voltage mode instead ends once the counter has risen by the planned <code>discharge_kwh</code> (0.05 kWh
+tolerance) since the controller's first run in that interval (<code>runtime.slot_energy</code>); the TOU program
+voltage is then 49.6 (496 V), so the inverter only stops on its own at that floor. Without a fresh counter
+the voltage target applies as before. Capacity mode and <code>CHARGE_GRID</code> are unchanged.</p>
 <h3 id="writes-and-confirmation">Writes and confirmation</h3>
 <p>Each change writes one entity through <code>number.set_value</code> or <code>select.select_option</code>, then reads holding
 registers 108–177 from <code>solarman_device</code> and compares the raw value. A register that does not confirm
@@ -1479,6 +1486,11 @@ then sets thresholds, then enables the direction.</p>
 <td><code>commissioned_battery_modes</code></td>
 <td>Capacity</td>
 <td>battery modes allowed for physical control</td>
+</tr>
+<tr>
+<td><code>discharge_energy_entity</code></td>
+<td>none</td>
+<td>cumulative battery discharge energy (kWh); in Voltage mode ends <code>DISCHARGE_GRID</code> intervals on planned energy</td>
 </tr>
 <tr>
 <td><code>old_writers</code></td>

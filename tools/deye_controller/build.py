@@ -148,6 +148,12 @@ INPUTS = {
                     "select": {"multiple": True, "options": ["Capacity", "Voltage"]}
                 },
             },
+            "discharge_energy_entity": {
+                "name": "Battery discharge energy counter",
+                "description": "Optional cumulative battery discharge energy in kWh (for example Total Battery Discharge). In Voltage mode a DISCHARGE_GRID row then ends after its planned discharge energy, not at a target voltage that the sag under load reaches within seconds.",
+                "default": "",
+                "selector": {"entity": {"filter": {"domain": "sensor"}}},
+            },
             "hold_grid_current": number(
                 "HOLD grid current",
                 "Grid charging current written in HOLD.",
@@ -359,6 +365,18 @@ DECISION = r"""
 {% set charge_cap = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
 {% set discharge_cap = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
 {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
+{# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
+   jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
+   zatrzaskiwal sie po kilkunastu sekundach (29.09). Ze swiezym licznikiem
+   energii rozladowania wiersz konczy sie po oddaniu zaplanowanej energii,
+   liczonej od pierwszego przebiegu wiersza (runtime slot_energy). #}
+{% set energy_mode = states(operation_entity) == 'Voltage' and discharge_energy_entity is string and discharge_energy_entity != ''
+  and is_number(states(discharge_energy_entity))
+  and 0 <= t - as_timestamp(states[discharge_energy_entity].last_reported,0) <= 120 %}
+{% set counted = states(discharge_energy_entity)|float(0) if energy_mode else 0 %}
+{% set slot = rt.get('slot_energy') %}
+{% set slot_start = slot.get('discharge')|float if energy_mode and slot is mapping and slot.get('key') == reached_key and is_number(slot.get('discharge')) else counted %}
+{% set discharged = [0, counted - slot_start]|max %}
 {% set target_soc = 10.0 %}
 {% set target_voltage = 49.6 %}
 {% set charge = relinquish_current if state == 'BASE' else (charge_cap if state in ['CHARGE_PV','SELF_CONSUME'] else 0) %}
@@ -403,7 +421,11 @@ DECISION = r"""
     {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
     {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
     {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
-    {% if (states(operation_entity)=='Capacity' and soc <= target_soc) or (states(operation_entity)=='Voltage' and v <= target_voltage*10) %}{% set discharge=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+    {% if energy_mode %}
+      {# Falownik zatrzymuje sie sam dopiero na progu 49,6 V; koniec wiersza wyznacza licznik. #}
+      {% set target_voltage = 49.6 %}
+      {% if discharged >= [0, ns.row.discharge_kwh|float]|max - 0.05 %}{% set discharge=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+    {% elif (states(operation_entity)=='Capacity' and soc <= target_soc) or (states(operation_entity)=='Voltage' and v <= target_voltage*10) %}{% set discharge=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
   {% endif %}
 {% endif %}
 {# HOLD/CURTAIL: rozladowanie 0 A, ladowanie i siec hold_grid_current (1 A).
@@ -474,6 +496,8 @@ DECISION = r"""
   retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
   row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
   requested_mode=states(mode_entity), commissioned=commissioned, target_reached=ns.reached, reached_key=reached_key, voltage=v, soc=soc, target_voltage=target_voltage, target_soc=target_soc,
+  energy_mode=energy_mode, discharged_kwh=discharged|round(3),
+  slot_energy=dict(key=reached_key, discharge=slot_start) if energy_mode else rt.get('slot_energy'),
   warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' else '') }}
 """
 
@@ -605,6 +629,7 @@ INITIAL = {
     "soc_entity": Input("soc_entity"),
     "operation_entity": Input("operation_entity"),
     "commissioned_battery_modes": Input("commissioned_battery_modes"),
+    "discharge_energy_entity": Input("discharge_energy_entity"),
     "hold_grid_current": Input("hold_grid_current"),
     "balance_grid_current": Input("balance_grid_current"),
     "telemetry_entities": Input("telemetry_entities"),
@@ -763,7 +788,7 @@ ACTIONS = [
         }
     },
     *persist(
-        "{{ dict(state_attr(runtime_entity,'runtime') or {}, reached_key=decision.reached_key if decision.target_reached else (state_attr(runtime_entity,'runtime') or {}).get('reached_key'), desired=decision.desired, requested_mode=decision.requested_mode, battery_mode_commissioned=decision.commissioned, state=decision.state, accepted_generation=decision.generation, original_deadline=decision.deadline, active_tou=decision.active_tou, retained=decision.retained, code='ok' if decision.valid else 'blocked', reason=decision.reason, warning=decision.warning, takeover_blocked=not decision.writers_safe, since=(state_attr(runtime_entity,'runtime') or {}).get('since',now().isoformat()) if (state_attr(runtime_entity,'runtime') or {}).get('reason') == decision.reason else now().isoformat()) }}"
+        "{{ dict(state_attr(runtime_entity,'runtime') or {}, reached_key=decision.reached_key if decision.target_reached else (state_attr(runtime_entity,'runtime') or {}).get('reached_key'), slot_energy=decision.slot_energy, desired=decision.desired, requested_mode=decision.requested_mode, battery_mode_commissioned=decision.commissioned, state=decision.state, accepted_generation=decision.generation, original_deadline=decision.deadline, active_tou=decision.active_tou, retained=decision.retained, code='ok' if decision.valid else 'blocked', reason=decision.reason, warning=decision.warning, takeover_blocked=not decision.writers_safe, since=(state_attr(runtime_entity,'runtime') or {}).get('since',now().isoformat()) if (state_attr(runtime_entity,'runtime') or {}).get('reason') == decision.reason else now().isoformat()) }}"
     ),
     {
         "if": [
