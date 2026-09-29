@@ -1798,35 +1798,44 @@ components:
         battery_kwh_nominal: { type: number, minimum: 0, maximum: 10000 }
         battery_kwh_usable: { type: number, minimum: 0, maximum: 10000 }
         soc_floor_pct: { type: [number, 'null'], minimum: 0, maximum: 100 }
-        lp:
-          type: object
-          additionalProperties: false
-          properties:
-            eta_c: { type: number, exclusiveMinimum: 0, maximum: 1 }
-            eta_d: { type: number, exclusiveMinimum: 0, maximum: 1 }
-            c_deg: { type: number, minimum: 0 }
-            D: { type: number, minimum: 0 }
-            boost_threshold: { type: [number, 'null'] }
-            cheap_threshold: { type: [number, 'null'] }
-            limit_threshold: { type: [number, 'null'] }
-            terminal_soc_mode: { type: string, enum: [preserve_initial, value] }
-        tariff:
-          type: object
-          additionalProperties: false
-          properties:
-            provider: { type: string, maxLength: 64 }
-            buy_formula: { type: string, maxLength: 256 }
-            sell_formula: { type: string, maxLength: 256 }
-        location:
-          type: [object, 'null']
-          additionalProperties: false
-          required: [h3_res6]
-          properties:
-            h3_res6:
-              type: string
-              description: H3 cell index at resolution 6 (hex, 15 chars, starts with 86). Resolution checked server-side.
-              pattern: '^86[0-9a-f]{13}$'
+        lp: { $ref: '#/components/schemas/AttrsLp' }
+        tariff: { $ref: '#/components/schemas/AttrsTariff' }
+        location: { $ref: '#/components/schemas/AttrsLocation' }
         compass_version: { type: string, maxLength: 32 }
+
+    AttrsLp:
+      type: object
+      additionalProperties: false
+      description: Optimizer parameters; shared by AttrsV1 and AttrsV2 (ADR-0022 §1 "same types and limits as V1").
+      properties:
+        eta_c: { type: number, exclusiveMinimum: 0, maximum: 1 }
+        eta_d: { type: number, exclusiveMinimum: 0, maximum: 1 }
+        c_deg: { type: number, minimum: 0 }
+        D: { type: number, minimum: 0 }
+        boost_threshold: { type: [number, 'null'] }
+        cheap_threshold: { type: [number, 'null'] }
+        limit_threshold: { type: [number, 'null'] }
+        terminal_soc_mode: { type: string, enum: [preserve_initial, value] }
+
+    AttrsTariff:
+      type: object
+      additionalProperties: false
+      description: Tariff; shared by AttrsV1 and AttrsV2. String values are scanned for identifying data (ADR-0012).
+      properties:
+        provider: { type: string, maxLength: 64 }
+        buy_formula: { type: string, maxLength: 256 }
+        sell_formula: { type: string, maxLength: 256 }
+
+    AttrsLocation:
+      type: [object, 'null']
+      additionalProperties: false
+      description: Site location, H3 res 6 only; shared by AttrsV1 and AttrsV2.
+      required: [h3_res6]
+      properties:
+        h3_res6:
+          type: string
+          description: H3 cell index at resolution 6 (hex, 15 chars, starts with 86). Resolution checked server-side.
+          pattern: '^86[0-9a-f]{13}$'
 
     AttributeSnapshot:
       type: object
@@ -1873,27 +1882,14 @@ components:
       properties:
         kind: { type: string, enum: [pv, wind] }
         capacity_kw: { type: number, exclusiveMinimum: 0, maximum: 100000 }
-        location:
-          type: [object, 'null']
-          additionalProperties: false
-          required: [h3_res6]
-          properties:
-            h3_res6:
-              type: string
-              description: H3 cell index at resolution 6 (hex, 15 chars, starts with 86). Resolution checked server-side.
-              pattern: '^86[0-9a-f]{13}$'
+        location: { $ref: '#/components/schemas/AttrsLocation' }
         pv_kwp: { type: number, exclusiveMinimum: 0, maximum: 1000 }
         inverter_model: { type: [string, 'null'], maxLength: 64, pattern: '^[A-Za-z0-9 ._/-]*$' }
         battery_kwh_nominal: { type: number, minimum: 0, maximum: 10000 }
         battery_kwh_usable: { type: number, minimum: 0, maximum: 10000 }
         soc_floor_pct: { type: [number, 'null'], minimum: 0, maximum: 100 }
-        tariff:
-          type: object
-          additionalProperties: false
-          properties:
-            provider: { type: string, maxLength: 64 }
-            buy_formula: { type: string, maxLength: 256 }
-            sell_formula: { type: string, maxLength: 256 }
+        lp: { $ref: '#/components/schemas/AttrsLp' }
+        tariff: { $ref: '#/components/schemas/AttrsTariff' }
         compass_version: { type: string, maxLength: 32 }
 
     PurgeRequest:

@@ -203,11 +203,11 @@ class SinkThread(threading.Thread):
         self.join(timeout_s)
 
     def _wake_io(self) -> None:
-        """Cut the IO loop's inter-tick wait short so it sees the stop request now."""
+        """Interrupt the inter-tick wait on the IO loop so a stop is not delayed by `tick_s`."""
         loop, wake = self._loop, self._wake
         if loop is None or wake is None:
-            return  # `_main` is not waiting yet; it re-checks the flag before it does
-        with contextlib.suppress(RuntimeError):  # loop already closed: nothing left to wake
+            return
+        with contextlib.suppress(RuntimeError):  # loop already closed
             loop.call_soon_threadsafe(wake.set)
 
     # -- runs on the "atlas-sink" thread --------------------------------------------------
