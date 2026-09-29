@@ -1561,9 +1561,11 @@ import/export and battery power, household load power (recorder mode only), batt
 PV/import/export energy counters (only counters
 whose Home Assistant <code>state_class</code> is <code>total</code>/<code>total_increasing</code>); each Compass solve's plan and
 its price/PV/load inputs; a handful of installation attributes (PV kWp, battery capacity and usable
-capacity, SOC floor, the Compass version). Nothing else — no location, tariff text or inverter
-model, and the enrollment credential itself is <strong>never stored</strong>, only the site key issued in
-exchange for it.</p>
+capacity, SOC floor, the Compass version) and the coarse location of your Home Assistant home zone
+as an H3 resolution-6 cell (a hexagon of roughly 36 km², so Atlas can count your site in its
+voivodeship). The cell is computed once, when delivery starts, and your exact coordinates are never
+stored or sent. Nothing else — no tariff text or inverter model, and the enrollment credential
+itself is <strong>never stored</strong>, only the site key issued in exchange for it.</p>
 <p><strong>How values are sent</strong>: powers in W. Bind <strong>Battery power</strong> with + = discharge (as in the
 dashboard examples); Atlas receives it as + = charge. Readings outside the collector's ranges are
 corrected, not sent as errors: a negative grid import/export power is sent as 0, SOC below 0 % or

@@ -173,12 +173,19 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             if not is_registered(self.hass, self.entry.entry_id, environment):
                 return
             from .atlas import AtlasBridge, build_attrs
+            from .atlas.location import home_h3_res6
 
             bridge = AtlasBridge(
                 self.hass, self.entry, self.configuration, new_settings
             )
             try:
-                await bridge.async_start(build_attrs(self.configuration, new_settings))
+                await bridge.async_start(
+                    build_attrs(
+                        self.configuration,
+                        new_settings,
+                        home_h3_res6(self.hass),
+                    )
+                )
             except Exception:
                 _LOGGER.warning(
                     "Energy Atlas failed to start on %s after a settings change",
