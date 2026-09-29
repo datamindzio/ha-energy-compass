@@ -150,7 +150,7 @@ INPUTS = {
             },
             "discharge_energy_entity": {
                 "name": "Battery discharge energy counter",
-                "description": "Optional cumulative battery discharge energy in kWh (for example Total Battery Discharge). In Voltage mode a DISCHARGE_GRID row then ends after its planned discharge energy, not at a target voltage that the sag under load reaches within seconds.",
+                "description": "Optional cumulative battery discharge energy in kWh (for example Total Battery Discharge). Solarman reports it only on change; add a heartbeat of the same inverter to Telemetry heartbeat. In Voltage mode a DISCHARGE_GRID row then ends after its planned discharge energy, not at a target voltage that the sag under load reaches within seconds.",
                 "default": "",
                 "selector": {"entity": {"filter": {"domain": "sensor"}}},
             },
@@ -369,10 +369,11 @@ DECISION = r"""
    jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
    zatrzaskiwal sie po kilkunastu sekundach (29.09). Ze swiezym licznikiem
    energii rozladowania wiersz konczy sie po oddaniu zaplanowanej energii,
-   liczonej od pierwszego przebiegu wiersza (runtime slot_energy). #}
+   liczonej od pierwszego przebiegu wiersza (runtime slot_energy). Licznik
+   Solarman zglasza sie tylko przy zmianie (w spoczynku nawet godzinami), wiec
+   jego swiezosc gwarantuje heartbeat telemetrii tego samego falownika. #}
 {% set energy_mode = states(operation_entity) == 'Voltage' and discharge_energy_entity is string and discharge_energy_entity != ''
-  and is_number(states(discharge_energy_entity))
-  and 0 <= t - as_timestamp(states[discharge_energy_entity].last_reported,0) <= 120 %}
+  and is_number(states(discharge_energy_entity)) %}
 {% set counted = states(discharge_energy_entity)|float(0) if energy_mode else 0 %}
 {% set slot = rt.get('slot_energy') %}
 {% set slot_start = slot.get('discharge')|float if energy_mode and slot is mapping and slot.get('key') == reached_key and is_number(slot.get('discharge')) else counted %}

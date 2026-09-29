@@ -849,11 +849,11 @@ outside 495–560 V is refused.
 
 In Voltage mode the pack voltage sags under discharge (about 0.7 V at 7 kW) and the LFP curve is flat
 (515–528 V spans roughly 30–70 %), so a `DISCHARGE_GRID` voltage target is reached within seconds of
-starting. With `discharge_energy_entity` set and reported within 120 s, a `DISCHARGE_GRID` interval in
-Voltage mode instead ends once the counter has risen by the planned `discharge_kwh` (0.05 kWh
+starting. With a numeric `discharge_energy_entity`, a `DISCHARGE_GRID` interval in Voltage mode instead ends once the counter has risen by the planned `discharge_kwh` (0.05 kWh
 tolerance) since the controller's first run in that interval (`runtime.slot_energy`); the TOU program
-voltage is then 49.6 (496 V), so the inverter only stops on its own at that floor. Without a fresh counter
-the voltage target applies as before. Capacity mode and `CHARGE_GRID` are unchanged.
+voltage is then 49.6 (496 V), so the inverter only stops on its own at that floor. Solarman reports the counter only when
+it changes, so its freshness comes from the `telemetry_entities` heartbeat of the same inverter. Without a
+numeric counter the voltage target applies as before. Capacity mode and `CHARGE_GRID` are unchanged.
 
 ### Writes and confirmation
 

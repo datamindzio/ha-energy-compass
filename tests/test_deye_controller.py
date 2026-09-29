@@ -612,17 +612,26 @@ def test_voltage_sell_ends_on_discharged_energy_not_sag():
     assert h.data[RT]["attributes"]["runtime"]["reached_key"] == d["reached_key"]
 
 
-def test_voltage_sell_without_fresh_counter_keeps_voltage_target():
+def test_voltage_sell_without_numeric_counter_keeps_voltage_target():
     for h in [voltage_sell(counter=False), voltage_sell()]:
         if h.ctx["discharge_energy_entity"]:
-            h.data[COUNTER]["last_reported"] = (
-                h.now - dt.timedelta(seconds=121)
-            ).isoformat()
+            h.set(COUNTER, "unavailable")
         h.accept()
         d = h.decision()
         assert not d["energy_mode"] and d["target_reached"]
         assert d["target_voltage"] == 53.1
         assert d["desired"][h.ctx["discharge_entity"]] == 0
+
+
+def test_voltage_sell_counter_reported_only_on_change():
+    # Solarman does not re-report an unchanged counter; an idle hour must not
+    # drop the row back to the voltage target, which the sag reaches at once.
+    h = voltage_sell()
+    h.data[COUNTER]["last_reported"] = (h.now - dt.timedelta(hours=2)).isoformat()
+    h.accept()
+    d = h.decision()
+    assert d["energy_mode"] and not d["target_reached"]
+    assert d["desired"][h.ctx["discharge_entity"]] > 0
 
 
 def test_voltage_sell_counts_from_start_of_each_row():

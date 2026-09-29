@@ -860,11 +860,11 @@ przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Volt
 
 W trybie Voltage napięcie pakietu spada pod obciążeniem rozładowania (ok. 0,7 V przy 7 kW), a krzywa LFP
 jest płaska (515–528 V to ok. 30–70 %), więc cel napięciowy `DISCHARGE_GRID` jest osiągany kilka sekund
-po starcie. Gdy ustawiono `discharge_energy_entity` i licznik zgłosił się w ciągu 120 s, przedział
-`DISCHARGE_GRID` w trybie Voltage kończy się, gdy licznik wzrośnie o zaplanowane `discharge_kwh`
+po starcie. Gdy `discharge_energy_entity` ma wartość liczbową, przedział `DISCHARGE_GRID` w trybie Voltage kończy się, gdy licznik wzrośnie o zaplanowane `discharge_kwh`
 (tolerancja 0,05 kWh) od pierwszego przebiegu sterownika w tym przedziale (`runtime.slot_energy`);
-napięcie programu TOU wynosi wtedy 49,6 (496 V), więc falownik sam zatrzyma się dopiero na tym progu. Bez
-świeżego licznika obowiązuje cel napięciowy jak dotąd. Tryb Capacity i `CHARGE_GRID` bez zmian.
+napięcie programu TOU wynosi wtedy 49,6 (496 V), więc falownik sam zatrzyma się dopiero na tym progu. Solarman
+zgłasza licznik tylko przy zmianie, więc jego świeżość zapewnia heartbeat `telemetry_entities` tego samego
+falownika. Bez liczbowej wartości licznika obowiązuje cel napięciowy jak dotąd. Tryb Capacity i `CHARGE_GRID` bez zmian.
 
 ### Zapis i potwierdzenie
 

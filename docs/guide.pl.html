@@ -1364,11 +1364,11 @@ przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Volt
 495–560 V jest odrzucany.</p>
 <p>W trybie Voltage napięcie pakietu spada pod obciążeniem rozładowania (ok. 0,7 V przy 7 kW), a krzywa LFP
 jest płaska (515–528 V to ok. 30–70 %), więc cel napięciowy <code>DISCHARGE_GRID</code> jest osiągany kilka sekund
-po starcie. Gdy ustawiono <code>discharge_energy_entity</code> i licznik zgłosił się w ciągu 120 s, przedział
-<code>DISCHARGE_GRID</code> w trybie Voltage kończy się, gdy licznik wzrośnie o zaplanowane <code>discharge_kwh</code>
+po starcie. Gdy <code>discharge_energy_entity</code> ma wartość liczbową, przedział <code>DISCHARGE_GRID</code> w trybie Voltage kończy się, gdy licznik wzrośnie o zaplanowane <code>discharge_kwh</code>
 (tolerancja 0,05 kWh) od pierwszego przebiegu sterownika w tym przedziale (<code>runtime.slot_energy</code>);
-napięcie programu TOU wynosi wtedy 49,6 (496 V), więc falownik sam zatrzyma się dopiero na tym progu. Bez
-świeżego licznika obowiązuje cel napięciowy jak dotąd. Tryb Capacity i <code>CHARGE_GRID</code> bez zmian.</p>
+napięcie programu TOU wynosi wtedy 49,6 (496 V), więc falownik sam zatrzyma się dopiero na tym progu. Solarman
+zgłasza licznik tylko przy zmianie, więc jego świeżość zapewnia heartbeat <code>telemetry_entities</code> tego samego
+falownika. Bez liczbowej wartości licznika obowiązuje cel napięciowy jak dotąd. Tryb Capacity i <code>CHARGE_GRID</code> bez zmian.</p>
 <h3 id="zapis-i-potwierdzenie">Zapis i potwierdzenie</h3>
 <p>Każda zmiana zapisuje jedną encję przez <code>number.set_value</code> lub <code>select.select_option</code>, a potem
 odczytuje rejestry 108–177 z <code>solarman_device</code> i porównuje surową wartość. Rejestr bez potwierdzenia
