@@ -9,8 +9,14 @@
           "currency": "Waluta (bez automatycznej konwersji)",
           "timezone": "Strefa czasowa",
           "preset": "Opcjonalny profil dostawcy",
+          "settlement": "Rozliczenie prosumenckie",
+          "inverter": "Falownik",
           "pv_enabled": "Włącz fotowoltaikę",
           "battery_enabled": "Włącz baterię"
+        },
+        "data_description": {
+          "settlement": "Jednorazowo, przy tworzeniu instalacji, wstępnie wypełnia edytowalne ustawienia planowania i ceny sprzedaży. Profile polskie wymagają waluty PLN. Nie ustawia cen taryf.",
+          "inverter": "Jednorazowo, przy tworzeniu instalacji, wstępnie wypełnia edytowalne strojenie falownika (pobór własny, interwał odświeżania)."
         }
       },
       "installation": {
@@ -409,7 +415,8 @@
       "input_acknowledgement_required": "Potwierdź osobno pokazane źródła zakupu i zużycia domu przed zapisem.",
       "plan_infeasible": "Plan bazowy jest niewykonalny; sprawdź pokazane ograniczenia.",
       "plan_timeout": "Przekroczono czas optymalizacji; wykonalność jest nieznana.",
-      "optimizer_error": "Optymalizator nie mógł zweryfikować planu bazowego."
+      "optimizer_error": "Optymalizator nie mógł zweryfikować planu bazowego.",
+      "settlement_currency": "Polskie profile rozliczenia wymagają waluty PLN."
     },
     "abort": {
       "reconfigure_successful": "Zapisano konfigurację."

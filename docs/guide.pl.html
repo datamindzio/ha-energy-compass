@@ -202,7 +202,8 @@ Solarman: zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika 
 <h3 id="kadencja-przeliczeń">Kadencja przeliczeń</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-baf6f443c8a8-dark.svg"><img src="assets/diagrams/diagram-baf6f443c8a8.svg" alt="Diagram 2" loading="lazy"></picture></figure>
 <ul>
-<li><strong>Okresowo:</strong> <code>refresh_minutes</code> (domyślnie 15, maks. 60), wyrównane do zegara.</li>
+<li><strong>Okresowo:</strong> <code>refresh_minutes</code> (domyślnie 15, maks. 60), wyrównane do zegara; profil startowy
+  Deye hybrydowy wypełnia wartość 60.</li>
 <li><strong>Na zmianę wejść:</strong> najwyżej raz na <code>minimum_replan_seconds</code> (domyślnie 900 s, <code>0</code> wyłącza),
   dopóki istnieje ważny plan; SOC liczy się jako zmieniony dopiero po przesunięciu o
   <code>soc_trigger_percent</code> (domyślnie 5 %) od wartości, która uruchomiła ostatnie obliczenie.</li>
@@ -211,6 +212,99 @@ Solarman: zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika 
 <li><strong>Ważność planu:</strong> nowy plan jest ważny do <code>generated_at + 2 × refresh_minutes</code>, nie dłużej niż
   pokrycie prognozy.</li>
 </ul>
+<h3 id="profile-startowe-nowe-instalacje">Profile startowe (nowe instalacje)</h3>
+<p>Dwie osie na pierwszym formularzu (<strong>Użytkownik</strong>), <strong>Rozliczenie prosumenckie</strong> i <strong>Falownik</strong>,
+jednorazowo wypełniają edytowalne strojenie nowej instalacji. Każda oś jest wybierana raz; obie
+domyślnie mają wartość <strong>Ogólne</strong> (brak przypisań), a wybór profilu od razu stosuje jego przypisania
+do wersji roboczej. Wartości przypięte poniżej (0,20, 0,60, 0,13) zostały zmierzone lub wyznaczone
+na jednej instalacji — taryfa zakupu G12, sprzedaż RCE w net-billingu i bateria LFP Deye — i są
+punktem startowym, nie uniwersalnym domyślnym ustawieniem.</p>
+<p><strong>Oś rozliczenia:</strong></p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Profil</th>
+<th>Waluta</th>
+<th>Wypełnia</th>
+<th>Podstawa</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>generic</code></td>
+<td>dowolna</td>
+<td>brak</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>pl_net_billing</code></td>
+<td>PLN</td>
+<td><code>import_penalty_per_kwh</code> 0,20 · <code>terminal_mode</code> <code>value</code> · <code>terminal_value_per_kwh</code> 0,60 · <code>sell_multiplier</code> 1,23 <em>(tylko z presetem <code>pse</code> lub <code>pse_solcast</code>)</em></td>
+<td>wyznaczone na jednej instalacji</td>
+</tr>
+<tr>
+<td><code>pl_net_metering_80</code></td>
+<td>PLN</td>
+<td><code>sell_multiplier</code> 0,8</td>
+<td>współczynnik opustu, instalacje ≤ 10 kWp</td>
+</tr>
+<tr>
+<td><code>pl_net_metering_70</code></td>
+<td>PLN</td>
+<td><code>sell_multiplier</code> 0,7</td>
+<td>współczynnik opustu, instalacje &gt; 10 kWp</td>
+</tr>
+</tbody>
+</table></section>
+<p><strong>Oś falownika:</strong></p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Profil</th>
+<th>Wypełnia</th>
+<th>Podstawa</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>generic</code></td>
+<td>brak</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>deye_hybrid</code></td>
+<td><code>idle_drain_kw</code> 0,13 · <code>refresh_minutes</code> 60</td>
+<td><code>idle_drain_kw</code> zmierzone na instalacji; <code>refresh_minutes</code> to kompromis specyficzny dla Deye</td>
+</tr>
+</tbody>
+</table></section>
+<p>Każda wstępnie wypełniona wartość pozostaje w pełni edytowalna i nigdy nie jest ponownie
+zastosowana po utworzeniu instalacji — ani przez Konfiguruj, ani przez Rekonfiguruj. Dopóki nowa
+instalacja jest jeszcze konfigurowana, zmiana presetu w kroku Instalacja ponownie wylicza profil
+rozliczenia: mnożnik sprzedaży 1,23 jest dodawany lub usuwany zgodnie z presetem, chyba że został
+już ręcznie zmieniony. Powiązanie wstępnie wypełnionego klucza z pomocnikiem nadpisuje wartość przy
+zapisie; Podgląd oznacza ten klucz jako zmieniony, podając pomocnika i jego efektywną wartość.</p>
+<p>Polskie profile rozliczenia wymagają waluty PLN; wybór takiego profilu z inną walutą jest odrzucany.
+Profile startowe nigdy nie ustawiają ceny taryfy (<code>buy_rate</code>, <code>sell_rate</code>, <code>buy_addition</code>,
+<code>sell_addition</code>, <code>monthly_charge</code>) i nigdy nie dotykają ustawienia należącego do strategii.</p>
+<p><strong>Sell only PV</strong> (<code>limit_export_to_pv</code>, „sprzedawaj tylko PV”) pozostaje włączone przy każdym
+profilu rozliczenia — polski prosument może sprzedawać tylko energię z własnej instalacji PV — i
+jest wyłączane przez przełączenie na strategię <code>max_export</code> albo przez bezpośrednie ustawienie
+<code>limit_export_to_pv</code> na wył.; jawne ustawienie pozostaje w mocy mimo zmiany strategii.</p>
+<p>Mnożnik depozytu 1,23 obowiązuje tylko razem z presetem surowego RCE (<code>pse</code>, <code>pse_solcast</code>); z
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/examples/rce-sell-price.yaml"><code>examples/rce-sell-price.yaml</code></a>, który sam już stosuje próg i
+mnożnik 1,23, zostaw mnożnik sprzedaży na 1 (zob. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/tariff-helper.md">pomocnik taryfy</a>).</p>
+<p><code>sell_multiplier</code> w systemie opustów to jednorazowa kopia współczynnika, a nie odnośnik do ceny
+zakupu: to przybliżenie (roczny bilans kWh i niedopasowanie stref G12 nie są modelowane), a
+późniejsza zmiana ceny zakupu go nie aktualizuje.</p>
+<p>Podgląd pokazuje pochodzenie profili startowych dla profilowanej nowej instalacji: które klucze
+wypełniła każda oś, każdą wartość zmienioną po wypełnieniu (także klucz powiązany z pomocnikiem,
+wraz z jego efektywną wartością) oraz uwagi dotyczące rozliczenia — Sell only PV wyłączone, źródło
+sprzedaży stosujące już własny mnożnik rozliczeniowy, surowe ceny RCE bez progu 0 lub sprzedaż w
+systemie opustów, która przestała śledzić zakup — widoczne tylko dla instalacji, które użyły
+profilu startowego.</p>
+<p>Wybór, razem z wersją profili startowych, która go wyliczyła, jest zapisywany we wpisie
+konfiguracji (<code>setup_profiles</code>) i trafia do diagnostyki.</p>
 <h2 id="przegląd-encji">Przegląd encji</h2>
 <p><code>&lt;name&gt;</code> to tytuł wpisu integracji.</p>
 <section class="table-scroll"><table>
@@ -596,6 +690,8 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 </tr>
 </tbody>
 </table></section>
+<p>Profile startowe mogą wstępnie wypełnić karę za import, pobór czuwania i regułę końcową dla nowych
+instalacji; zob. <a href="#profile-startowe-nowe-instalacje">Profile startowe</a>.</p>
 <h3 id="zapas-na-drogie-okresy">Zapas na drogie okresy</h3>
 <p>Prognoza zużycia jest średnią, więc plan, który rozładowuje baterię dokładnie do rezerwy na koniec
 drogiego okresu, mniej więcej co drugi dzień wypada za krótko. <code>peak_reserve_margin_kwh</code> każe
@@ -1231,7 +1327,9 @@ wykonuje plan na hybrydowym falowniku Deye przez
 programów czasowych (TOU), a każdy zapis sprawdza odczytem rejestrów. Wymaga pakietu
 <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/packages/energy_compass_deye.yaml"><code>energy_compass_deye.yaml</code></a>. Instalację opisuje
 <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">przewodnik instalacji</a> (EN). Oba pliki generuje
-<code>tools/deye_controller/build.py</code>; zmienia się generator, nie YAML.</p>
+<code>tools/deye_controller/build.py</code>; zmienia się generator, nie YAML. Profil startowy
+<code>deye_hybrid</code> wypełnia <code>idle_drain_kw</code> 0,13 i <code>refresh_minutes</code> 60 dla nowej instalacji; zob.
+<a href="#profile-startowe-nowe-instalacje">Profile startowe</a>.</p>
 <h3 id="encje-pakietu">Encje pakietu</h3>
 <section class="table-scroll"><table>
 <thead>

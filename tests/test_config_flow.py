@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -7,7 +8,8 @@ from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.energy_compass.config_models import LoadSource
+from custom_components.energy_compass import config_flow
+from custom_components.energy_compass.config_models import LoadSource, NumericSetting
 from custom_components.energy_compass.engine.models import InputError, SolveError
 from custom_components.energy_compass.flow_schema import settings_schema, snapshot
 from custom_components.energy_compass.runtime import build_problem, freshness_deadline
@@ -15,6 +17,10 @@ from custom_components.energy_compass.settings import (
     default_configuration,
     merged_configuration,
     validate_configuration,
+)
+from custom_components.energy_compass.setup_profiles import (
+    INVERTER_PROFILES,
+    SETTLEMENT_PROFILES,
 )
 from custom_components.energy_compass.sources.bindings import (
     EntityBinding,
@@ -701,3 +707,661 @@ async def test_recorder_preview_pairs_sample_counts_with_coverage_segments(
     assert (
         "2026-09-17T11:00:00+00:00 → 2026-09-17T12:00:00+00:00 fallback 0/1" in summary
     )
+
+
+def _user_payload(**overrides):
+    payload = {
+        "name": "Fresh",
+        "currency": "EUR",
+        "timezone": "UTC",
+        "preset": "generic",
+        "settlement": "generic",
+        "inverter": "generic",
+        "pv_enabled": False,
+        "battery_enabled": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
+async def test_user_step_offers_setup_profiles_with_generic_defaults(
+    recorder_mock, hass, enable_custom_integrations
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    defaults = {str(key): key.default() for key in result["data_schema"].schema}
+    assert defaults["settlement"] == "generic"
+    assert defaults["inverter"] == "generic"
+    fields = {str(key): value for key, value in result["data_schema"].schema.items()}
+    settlement_values = {
+        option["value"] for option in fields["settlement"].config["options"]
+    }
+    assert settlement_values == set(SETTLEMENT_PROFILES)
+    inverter_values = {
+        option["value"] for option in fields["inverter"].config["options"]
+    }
+    assert inverter_values == set(INVERTER_PROFILES)
+
+
+async def test_pl_net_billing_deye_prefills_new_entry(
+    recorder_mock, hass, enable_custom_integrations
+):
+    with (
+        patch.object(
+            config_flow,
+            "profile_assignments",
+            wraps=config_flow.profile_assignments,
+        ) as spy_assignments,
+        patch.object(
+            config_flow, "apply_assignments", wraps=config_flow.apply_assignments
+        ) as spy_apply,
+        patch.object(
+            config_flow,
+            "reconcile_assignments",
+            wraps=config_flow.reconcile_assignments,
+        ) as spy_reconcile,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            "energy_compass", context={"source": config_entries.SOURCE_USER}
+        )
+        fid = result["flow_id"]
+        menu = await hass.config_entries.flow.async_configure(
+            fid,
+            _user_payload(
+                currency="PLN",
+                timezone="Europe/Warsaw",
+                preset="pse",
+                settlement="pl_net_billing",
+                inverter="deye_hybrid",
+            ),
+        )
+        assert menu["type"] == "menu"
+
+        flow = hass.config_entries.flow._progress[fid]
+        planning = await flow.async_step_planning()
+        planning_defaults = {
+            str(key): key.default() for key in planning["data_schema"].schema
+        }
+        assert planning_defaults["import_penalty_per_kwh"] == 0.2
+        assert planning_defaults["terminal_mode"] == "value"
+        assert planning_defaults["terminal_value_per_kwh"] == 0.6
+        assert planning_defaults["refresh_minutes"] == 60
+
+        tariff_values = await flow.async_step_tariff_values()
+        tariff_defaults = {
+            str(key): key.default() for key in tariff_values["data_schema"].schema
+        }
+        assert tariff_defaults["sell_multiplier"] == 1.23
+
+        battery = await flow.async_step_battery()
+        battery_defaults = {
+            str(key): key.default() for key in battery["data_schema"].schema
+        }
+        assert battery_defaults["idle_drain_kw"] == 0.13
+
+        await hass.config_entries.flow.async_configure(fid, {"next_step_id": "preview"})
+        result = await hass.config_entries.flow.async_configure(
+            fid,
+            {
+                "confirm": True,
+                "confirm_buy_source": True,
+                "confirm_load_source": True,
+            },
+        )
+        assert result["type"] == "create_entry"
+        baseline = default_configuration("PLN", "Europe/Warsaw")["settings"]
+        changed = {
+            key: value
+            for key, value in result["data"]["settings"].items()
+            if baseline.get(key) != value
+        }
+        assert changed == {
+            "import_penalty_per_kwh": 0.2,
+            "terminal_mode": "value",
+            "terminal_value_per_kwh": 0.6,
+            "sell_multiplier": 1.23,
+            "idle_drain_kw": 0.13,
+            "refresh_minutes": 60,
+            "limit_floor": 0.8,
+        }
+        assert result["data"]["setup_profiles"] == {
+            "revision": 1,
+            "settlement": "pl_net_billing",
+            "inverter": "deye_hybrid",
+        }
+        assert result["data"]["explicit_strategy_fields"] == []
+
+        assert spy_assignments.called
+        assert spy_apply.called
+        assert spy_reconcile.called
+        assert spy_reconcile.call_count == 1
+        assert spy_reconcile.call_args.args[1] == spy_reconcile.call_args.args[2]
+
+
+async def test_generic_profiles_are_a_no_op(
+    recorder_mock, hass, enable_custom_integrations
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(currency="EUR", timezone="UTC", preset="generic"),
+    )
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "preview"})
+    result = await hass.config_entries.flow.async_configure(
+        fid,
+        {"confirm": True, "confirm_buy_source": True, "confirm_load_source": True},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"]["settings"] == default_configuration("EUR", "UTC")["settings"]
+    assert result["data"]["setup_profiles"] == {
+        "revision": 1,
+        "settlement": "generic",
+        "inverter": "generic",
+    }
+
+
+async def test_pl_settlement_rejects_non_pln_currency(
+    recorder_mock, hass, enable_custom_integrations
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    result = await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(currency="EUR", settlement="pl_net_billing"),
+    )
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"settlement": "settlement_currency"}
+    assert not hass.config_entries.async_entries("energy_compass")
+
+    result = await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            settlement="pl_net_billing",
+        ),
+    )
+    assert result["type"] == "menu"
+    flow = hass.config_entries.flow._progress[fid]
+    tariff_values = await flow.async_step_tariff_values()
+    tariff_defaults = {
+        str(key): key.default() for key in tariff_values["data_schema"].schema
+    }
+    assert tariff_defaults["sell_multiplier"] == 1
+
+
+async def test_user_step_error_preserves_all_submitted_fields(
+    recorder_mock, hass, enable_custom_integrations
+):
+    """A settlement_currency error on the user step must redisplay every
+    submitted field, not just settlement/inverter (name/timezone/preset/PV/
+    battery were reverting to defaults)."""
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    submitted = _user_payload(
+        name="Chata",
+        currency="EUR",
+        timezone="Europe/Warsaw",
+        preset="pse",
+        settlement="pl_net_billing",
+        pv_enabled=True,
+        battery_enabled=True,
+    )
+    result = await hass.config_entries.flow.async_configure(fid, submitted)
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"settlement": "settlement_currency"}
+    defaults = {str(key): key.default() for key in result["data_schema"].schema}
+    assert defaults["name"] == "Chata"
+    assert defaults["currency"] == "EUR"
+    assert defaults["timezone"] == "Europe/Warsaw"
+    assert defaults["preset"] == "pse"
+    assert defaults["pv_enabled"] is True
+    assert defaults["battery_enabled"] is True
+
+    result = await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            name="Chata",
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            preset="pse",
+            settlement="pl_net_billing",
+            pv_enabled=True,
+            battery_enabled=True,
+        ),
+    )
+    assert result["type"] == "menu"
+    flow = hass.config_entries.flow._progress[fid]
+    assert flow._draft["preset"] == "pse"
+    assert flow._draft["settings"]["sell_multiplier"] == 1.23
+
+
+async def test_new_entry_installation_keeps_pln_for_pl_settlement(
+    recorder_mock, hass, enable_custom_integrations
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            settlement="pl_net_billing",
+        ),
+    )
+    result = await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "installation"}
+    )
+    assert result["step_id"] == "installation"
+    result = await hass.config_entries.flow.async_configure(
+        fid,
+        {
+            "name": "Fresh",
+            "currency": "EUR",
+            "timezone": "Europe/Warsaw",
+            "preset": "generic",
+            "pv_enabled": False,
+            "battery_enabled": False,
+        },
+    )
+    assert result["type"] == "form"
+    assert result["step_id"] == "installation"
+    assert result["errors"] == {"currency": "settlement_currency"}
+    flow = hass.config_entries.flow._progress[fid]
+    assert flow._draft["currency"] == "PLN"
+
+
+@pytest.mark.parametrize(
+    "user_preset,installation_preset,expected,prefilled",
+    [
+        ("pse", "generic", 1, False),
+        ("generic", "pse", 1.23, True),
+        ("pse", "pse_solcast", 1.23, True),
+    ],
+)
+async def test_installation_preset_change_reresolves_untouched_sell_multiplier(
+    recorder_mock,
+    hass,
+    enable_custom_integrations,
+    user_preset,
+    installation_preset,
+    expected,
+    prefilled,
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            preset=user_preset,
+            settlement="pl_net_billing",
+            inverter="deye_hybrid",
+        ),
+    )
+    await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "installation"}
+    )
+    await hass.config_entries.flow.async_configure(
+        fid,
+        {
+            "name": "Fresh",
+            "currency": "PLN",
+            "timezone": "Europe/Warsaw",
+            "preset": installation_preset,
+            "pv_enabled": False,
+            "battery_enabled": False,
+        },
+    )
+    flow = hass.config_entries.flow._progress[fid]
+    tariff_values = await flow.async_step_tariff_values()
+    tariff_defaults = {
+        str(key): key.default() for key in tariff_values["data_schema"].schema
+    }
+    assert tariff_defaults["sell_multiplier"] == expected
+
+    preview = await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "preview"}
+    )
+    text = preview["description_placeholders"]["preview"]
+    prefilled_line = next(
+        line
+        for line in text.splitlines()
+        if line.startswith("Pre-filled by settlement")
+    )
+    assert (f"sell_multiplier {expected:g}" in prefilled_line) == prefilled
+    assert "Edited after pre-fill" not in text
+
+    result = await hass.config_entries.flow.async_configure(
+        fid,
+        {"confirm": True, "confirm_buy_source": True, "confirm_load_source": True},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"]["settings"]["sell_multiplier"] == expected
+    assert result["data"]["preset"] == installation_preset
+
+
+@pytest.mark.parametrize(
+    "user_preset,edited,installation_preset,edited_line",
+    [
+        ("pse", 1.0, "generic", None),
+        (
+            "generic",
+            1.1,
+            "pse",
+            "Edited after pre-fill: sell_multiplier 1.23 → 1.1.",
+        ),
+    ],
+)
+async def test_installation_preset_change_keeps_edited_sell_multiplier(
+    recorder_mock,
+    hass,
+    enable_custom_integrations,
+    user_preset,
+    edited,
+    installation_preset,
+    edited_line,
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            preset=user_preset,
+            settlement="pl_net_billing",
+            inverter="deye_hybrid",
+        ),
+    )
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "tariffs"})
+    await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "tariff_values"}
+    )
+    await hass.config_entries.flow.async_configure(fid, {"sell_multiplier": edited})
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "menu"})
+    await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "installation"}
+    )
+    await hass.config_entries.flow.async_configure(
+        fid,
+        {
+            "name": "Fresh",
+            "currency": "PLN",
+            "timezone": "Europe/Warsaw",
+            "preset": installation_preset,
+            "pv_enabled": False,
+            "battery_enabled": False,
+        },
+    )
+    preview = await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "preview"}
+    )
+    text = preview["description_placeholders"]["preview"]
+    if edited_line is not None:
+        assert edited_line in text
+    else:
+        for line in text.splitlines():
+            if "Pre-filled by" in line or "Edited after pre-fill" in line:
+                assert "sell_multiplier" not in line
+
+    result = await hass.config_entries.flow.async_configure(
+        fid,
+        {"confirm": True, "confirm_buy_source": True, "confirm_load_source": True},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"]["settings"]["sell_multiplier"] == edited
+
+
+@pytest.mark.parametrize(
+    "user_preset,installation_preset,shadow_after,bound_line",
+    [
+        ("pse", "generic", 1, None),
+        (
+            "generic",
+            "pse",
+            1.23,
+            (
+                "Edited after pre-fill: sell_multiplier 1.23 → helper "
+                "input_number.sell_factor (1.1)."
+            ),
+        ),
+    ],
+)
+async def test_installation_preset_change_reconciles_helper_bound_shadow(
+    recorder_mock,
+    hass,
+    enable_custom_integrations,
+    user_preset,
+    installation_preset,
+    shadow_after,
+    bound_line,
+):
+    hass.states.async_set("input_number.sell_factor", "1.1")
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            preset=user_preset,
+            settlement="pl_net_billing",
+            inverter="deye_hybrid",
+        ),
+    )
+
+    # Bind sell_multiplier to a helper through the menu (source_flow.py:1064-1138).
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "helpers"})
+    await hass.config_entries.flow.async_configure(
+        fid, {"setting": "sell_multiplier", "mode": "entity"}
+    )
+    await hass.config_entries.flow.async_configure(
+        fid, {"entity_id": "input_number.sell_factor"}
+    )
+    menu = await hass.config_entries.flow.async_configure(
+        fid,
+        {
+            "source_unit": "",
+            "multiplier": 1,
+            "check_age": False,
+            "max_age_hours": 24,
+        },
+    )
+    assert menu["type"] == "menu"
+
+    flow = hass.config_entries.flow._progress[fid]
+    binding = deepcopy(flow._draft["helpers"]["sell_multiplier"])
+    expected_shadow_before = 1.23 if user_preset == "pse" else 1
+    assert flow._draft["settings"]["sell_multiplier"] == expected_shadow_before
+
+    # Preset change through the Installation step.
+    await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "installation"}
+    )
+    await hass.config_entries.flow.async_configure(
+        fid,
+        {
+            "name": "Fresh",
+            "currency": "PLN",
+            "timezone": "Europe/Warsaw",
+            "preset": installation_preset,
+            "pv_enabled": False,
+            "battery_enabled": False,
+        },
+    )
+    assert flow._draft["settings"]["sell_multiplier"] == shadow_after
+    assert flow._draft["helpers"]["sell_multiplier"] == binding
+    effective = validate_configuration(
+        flow._draft,
+        snapshot(hass, flow._draft),
+        dt_util.utcnow(),
+        sources=False,
+    )["sell_multiplier"]
+    assert effective == 1.1
+
+    bound_preview = await flow.async_step_preview()
+    bound_text = bound_preview["description_placeholders"]["preview"]
+    if bound_line is not None:
+        assert bound_line in bound_text
+    else:
+        for line in bound_text.splitlines():
+            if "Pre-filled by" in line or "Edited after pre-fill" in line:
+                assert "sell_multiplier" not in line
+
+    # Unbind: mode fixed only pops the helper (source_flow.py:1067-1068).
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "helpers"})
+    await hass.config_entries.flow.async_configure(
+        fid, {"setting": "sell_multiplier", "mode": "fixed"}
+    )
+    assert "sell_multiplier" not in flow._draft["helpers"]
+    assert flow._draft["settings"]["sell_multiplier"] == shadow_after
+
+    preview = await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "preview"}
+    )
+    text = preview["description_placeholders"]["preview"]
+    assert "Edited after pre-fill" not in text
+    prefilled_line = next(
+        line
+        for line in text.splitlines()
+        if line.startswith("Pre-filled by settlement")
+    )
+    assert ("sell_multiplier 1.23" in prefilled_line) == (installation_preset == "pse")
+
+    result = await hass.config_entries.flow.async_configure(
+        fid,
+        {"confirm": True, "confirm_buy_source": True, "confirm_load_source": True},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"]["settings"]["sell_multiplier"] == shadow_after
+    assert "sell_multiplier" not in result["data"]["helpers"]
+    assert result["data"]["preset"] == installation_preset
+
+
+async def test_preview_lists_setup_profile_provenance(
+    recorder_mock, hass, enable_custom_integrations
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    menu = await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            preset="pse",
+            settlement="pl_net_billing",
+            inverter="deye_hybrid",
+        ),
+    )
+    assert menu["type"] == "menu"
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "planning"})
+    await hass.config_entries.flow.async_configure(fid, {"terminal_value_per_kwh": 0.5})
+    preview = await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "preview"}
+    )
+    text = preview["description_placeholders"]["preview"]
+    assert (
+        "Pre-filled by inverter Deye hybrid (Solarman): idle_drain_kw 0.13, "
+        "refresh_minutes 60." in text
+    )
+    assert "Edited after pre-fill: terminal_value_per_kwh 0.6 → 0.5." in text
+
+    result = await hass.config_entries.flow.async_configure(
+        fid,
+        {"confirm": True, "confirm_buy_source": True, "confirm_load_source": True},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"]["settings"]["terminal_value_per_kwh"] == 0.5
+
+
+async def test_preview_reports_helper_bound_prefill(
+    recorder_mock, hass, enable_custom_integrations
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    menu = await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            preset="pse",
+            settlement="pl_net_billing",
+            inverter="deye_hybrid",
+        ),
+    )
+    assert menu["type"] == "menu"
+
+    flow = hass.config_entries.flow._progress[fid]
+    flow._draft["helpers"]["idle_drain_kw"] = NumericSetting(
+        entity=EntityBinding("input_number.standby_loss"),
+        unit="kW",
+        source_unit="kW",
+        max_age_seconds=None,
+    ).to_dict()
+    hass.states.async_set(
+        "input_number.standby_loss", "0.2", {"unit_of_measurement": "kW"}
+    )
+
+    result = await flow.async_step_preview()
+    text = result["description_placeholders"]["preview"]
+    assert (
+        "Edited after pre-fill: idle_drain_kw 0.13 → helper "
+        "input_number.standby_loss (0.2)." in text
+    )
+
+
+async def test_preview_warns_net_metering_copy(
+    recorder_mock, hass, enable_custom_integrations
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    menu = await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            preset="generic",
+            settlement="pl_net_metering_80",
+            inverter="generic",
+        ),
+    )
+    assert menu["type"] == "menu"
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "tariffs"})
+    await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "tariff_values"}
+    )
+    await hass.config_entries.flow.async_configure(
+        fid, {"buy_rate": 1.0, "sell_rate": 0}
+    )
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "menu"})
+    preview = await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "preview"}
+    )
+    text = preview["description_placeholders"]["preview"]
+    assert "Note: net-metering sell is a copy, not linked to buy" in text

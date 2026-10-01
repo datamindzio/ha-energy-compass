@@ -178,8 +178,8 @@
       <h3>Tariff transformation</h3>
       <div class="formula"><p>effective price = normalized source price × multiplier × VAT factor + addition</p><p>VAT factor = 1 + VAT percent / 100 when enabled; otherwise 1</p></div>
       <p>The addition is applied after the VAT factor. Fixed rates use the same transformation. Include applicable variable charges once; do not apply VAT again to a source that already contains it. Fixed monthly charges are reporting metadata and do not affect dispatch or the extra-kWh calculation.</p>
-      <p>Negative prices remain valid in the generic integration. Clipping an export price to zero or applying a deposit valuation factor requires an explicitly prepared source or suitable configuration; neither is an automatic assumption for every RCE installation.</p>
-      <p>First setup requires separate confirmation of the displayed buy source and household load source. Every preview and save validates current inputs and solves a bounded base plan. An infeasible or timed-out plan cannot be saved; extra-consumption guidance is calculated after saving. Existing installations retain their original final confirmation.</p>
+      <p>Negative prices remain valid in the generic integration. Clipping an export price to zero or applying a deposit valuation factor requires an explicitly prepared source or suitable configuration; neither is an automatic assumption for every RCE installation. The PL net-billing setup profile pre-fills the 1.23 deposit factor only together with a PSE preset, and it never clips negative prices.</p>
+      <p>First setup requires separate confirmation of the displayed buy source and household load source. Every preview and save validates current inputs and solves a bounded base plan. An infeasible or timed-out plan cannot be saved; extra-consumption guidance is calculated after saving. Existing installations retain their original final confirmation. The first-setup form also offers two optional setup-profile selectors, for settlement and inverter tuning.</p>
       <h3>Load forecast from history</h3>
       <p>The Plan and Forecast valid sensors expose <code>load_quality</code>: selected source, actual forecast method, per-segment history sample counts, and fallback coverage. <code>fallback_fraction</code> measures elapsed forecast time, including separate repeated daylight-saving hours. Recorder fallback raises <code>load_history_fallback</code> even when its estimated energy is zero. This detailed attribute is excluded from recorder history.</p>
       <p>The history model averages complete hourly consumption samples by local hour and day group. With <code>group_weekends</code> enabled, weekdays share one group and weekends another; otherwise each weekday has its own group. Defaults use 14 days of history and at least two samples per bucket.</p>
@@ -197,6 +197,7 @@
           <li>Probe-failure policy: <code>absolute_fallback</code>. Grid charging, battery export and curtailment: disabled.</li>
           <li>Default budgets: 10 seconds for the base plan, 2 seconds per probe and 60 seconds overall. Performance allows up to 30 seconds for each solve and 300 seconds overall. Probes share the remaining time after the base calculation and a one-second finishing reserve.</li>
           <li>Default periodic refresh: 15 minutes, configurable up to one hour. Significant source changes can trigger earlier recalculation; validity boundaries only validate sources and advance cached advice.</li>
+          <li>Optional setup profiles may pre-fill some of these values once, for a new installation only; see <a href="guide.en.html#setup-profiles-new-installations">setup profiles</a> in the guide.</li>
         </ul>
       </details>
     </section>

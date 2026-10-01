@@ -90,7 +90,8 @@ flowchart TD
     R --> PUB[Publish new plan]
 ```
 
-- **Periodic:** `refresh_minutes` (default 15, max 60) aligned to the wall clock.
+- **Periodic:** `refresh_minutes` (default 15, max 60) aligned to the wall clock; the Deye hybrid
+  setup profile pre-fills 60.
 - **Input-driven:** at most once per `minimum_replan_seconds` (default 900 s, `0` disables) while a
   valid plan is retained; SOC counts as changed only after moving `soc_trigger_percent` (default
   5 %) from the value that started the last calculation.
@@ -98,6 +99,63 @@ flowchart TD
   dropped, mode clocks tick) without a solve.
 - **Plan lifetime:** a new plan is valid until `generated_at + 2 × refresh_minutes`, capped by
   forecast coverage.
+
+### Setup profiles (new installations)
+
+Two axes on the first (**User**) setup form, **Prosumer settlement** and **Inverter**, pre-fill
+editable tuning for a brand-new installation. Each axis is chosen once; both default to **Generic**
+(no assignments), and picking a profile applies its assignments to the draft immediately. The
+pinned values below (0.20, 0.60, 0.13) were measured or backtested on one site — a G12 buy tariff,
+net-billing RCE sell and a Deye LFP battery — and are a starting point, not a universal default.
+
+**Settlement axis:**
+
+| Profile | Currency | Pre-fills | Basis |
+| --- | --- | --- | --- |
+| `generic` | any | none | — |
+| `pl_net_billing` | PLN | `import_penalty_per_kwh` 0.20 · `terminal_mode` `value` · `terminal_value_per_kwh` 0.60 · `sell_multiplier` 1.23 *(only with preset `pse` or `pse_solcast`)* | backtested on one site |
+| `pl_net_metering_80` | PLN | `sell_multiplier` 0.8 | net-metering ratio, installations ≤ 10 kWp |
+| `pl_net_metering_70` | PLN | `sell_multiplier` 0.7 | net-metering ratio, installations > 10 kWp |
+
+**Inverter axis:**
+
+| Profile | Pre-fills | Basis |
+| --- | --- | --- |
+| `generic` | none | — |
+| `deye_hybrid` | `idle_drain_kw` 0.13 · `refresh_minutes` 60 | `idle_drain_kw` is site-measured; `refresh_minutes` is a Deye-specific trade-off |
+
+Every pre-filled value stays fully editable and is never re-applied once the entry exists — not by
+Configure, not by Reconfigure. While a new installation is still being set up, changing the preset on
+the Installation step re-resolves the settlement profile: the 1.23 sell multiplier is added or
+dropped to track the preset unless you have already edited it. Binding a pre-filled key to a helper
+overrides the pre-fill at save time; the Preview lists that key as edited, naming the helper and its
+effective value.
+
+Polish settlement profiles require currency PLN; choosing one with another currency is rejected. Setup
+profiles never set a tariff price (`buy_rate`, `sell_rate`, `buy_addition`, `sell_addition`,
+`monthly_charge`) and never touch a strategy-owned setting.
+
+**Sell only PV** (`limit_export_to_pv`) stays on with every settlement profile — a Polish prosumer may
+only sell energy produced by their own PV — and is turned off either by switching to the `max_export`
+strategy or by setting `limit_export_to_pv` to off directly; the explicit setting persists across
+strategy changes.
+
+The 1.23 deposit multiplier applies only together with a raw-RCE preset (`pse`, `pse_solcast`); with
+[`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml), which already applies the floor and
+the 1.23 factor itself, keep the sell multiplier at 1 (see [tariff helper](tariff-helper.md)).
+
+Net-metering's `sell_multiplier` is a one-time copy of the ratio, not a link to the buy price: it is
+an approximation (the yearly kWh bank and G12 band mismatch are not modelled), and a later edit to
+the buy price does not update it.
+
+Preview shows setup-profile provenance for a profiled new entry: which keys each axis pre-filled, any
+value edited after pre-fill (including a helper-bound key, with the helper's effective value), and
+settlement notes — Sell only PV off, a sell source that already applies its own settlement multiplier,
+raw RCE prices not floored at 0, or a net-metering sell that no longer tracks buy — shown only for
+installations that used a setup profile.
+
+The selection, together with the setup-profiles revision that resolved it, is stored on the config
+entry (`setup_profiles`) and included in diagnostics.
 
 ## Entity overview
 
@@ -326,6 +384,9 @@ Rules (defaults: 60 min, 0.1 kW):
 | **Inverter standby loss** (`idle_drain_kw`) | 0 (off) | Constant battery drain modelled per interval. |
 | **Battery buffer for expensive periods** (`peak_reserve_margin_kwh`) | 0 (off) | Energy kept above the forecast need when an expensive period starts. See [Peak-period reserve](#peak-period-reserve). |
 | **Terminal rule** (`terminal_mode`) | `preserve_initial` | End SOC ≥ start SOC, or `value`: stored energy at the end is credited at `terminal_value_per_kwh`. |
+
+Setup profiles can pre-fill the import penalty, standby loss and terminal rule for new installations;
+see [Setup profiles](#setup-profiles-new-installations).
 
 ### Peak-period reserve
 
@@ -762,7 +823,9 @@ does: it executes the plan on a Deye hybrid inverter through the
 the six time-of-use (TOU) programs, and reads every write back from the holding registers. It needs the
 companion package [`energy_compass_deye.yaml`](../packages/energy_compass_deye.yaml). Setup steps are in
 the [installation guide](installation.md#deye-inverter-controller). Both files are generated by
-`tools/deye_controller/build.py`; edit the generator, not the YAML.
+`tools/deye_controller/build.py`; edit the generator, not the YAML. The `deye_hybrid` setup profile
+pre-fills `idle_drain_kw` 0.13 and `refresh_minutes` 60 for a new installation; see
+[Setup profiles](#setup-profiles-new-installations).
 
 ### Package entities
 

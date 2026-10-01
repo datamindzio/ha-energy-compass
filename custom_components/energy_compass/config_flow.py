@@ -3,6 +3,7 @@
 import json
 import logging
 from copy import deepcopy
+from types import MappingProxyType
 from zoneinfo import ZoneInfo
 
 import voluptuous as vol
@@ -32,6 +33,17 @@ from .settings import (
     merged_configuration,
     stamp_strategy_change,
     validate_configuration,
+)
+from .setup_profiles import (
+    AXES,
+    apply_assignments,
+    currency_error,
+    preview_lines,
+    profile_assignments,
+    profile_options,
+    reconcile_assignments,
+    selection_record,
+    settlement_notes,
 )
 from .source_flow import SourceEditor
 from .source_management import (
@@ -218,6 +230,8 @@ class Editor(SourceEditor):
 
     _existing_installation = False
     _currency_review_pending = False
+    _setup_selections: MappingProxyType = MappingProxyType({})
+    _profile_assignments: tuple = ()
 
     async def async_step_menu(self, user_input=None):
         menu_options = ["installation", "sources", *GROUPS, "helpers"]
@@ -411,6 +425,27 @@ class Editor(SourceEditor):
             currency_changed = candidate["currency"] != self._draft["currency"]
             if currency_changed:
                 candidate["settings"]["calibration"] = "unvalidated"
+            current_assignments = None
+            if not self._existing_installation and self._setup_selections:
+                err = currency_error(self._setup_selections, candidate["currency"])
+                if err:
+                    errors["currency"] = err
+                    return self.async_show_form(
+                        step_id="installation",
+                        data_schema=self._installation_schema(),
+                        errors=errors,
+                    )
+                current_assignments = profile_assignments(
+                    self._setup_selections, candidate["preset"]
+                )
+                reconcile_assignments(
+                    candidate["settings"],
+                    self._profile_assignments,
+                    current_assignments,
+                    baseline=default_configuration(
+                        candidate["currency"], candidate["timezone"]
+                    )["settings"],
+                )
             try:
                 validate_configuration(
                     {**candidate, "helpers": {}} if currency_changed else candidate,
@@ -419,6 +454,8 @@ class Editor(SourceEditor):
                     sources=False,
                 )
                 self._draft = candidate
+                if current_assignments is not None:
+                    self._profile_assignments = current_assignments
                 if currency_changed and self._existing_installation:
                     self._currency_review_pending = True
                     return await self.async_step_currency_review()
@@ -706,6 +743,16 @@ class Editor(SourceEditor):
                     f"\nDaily AC-side battery throughput: {origin}; measured {observed:g} kWh; "
                     f"cap {cap:g} kWh; remaining today {remaining:g} kWh."
                 )
+            profile_lines = preview_lines(
+                candidate.get("setup_profiles"),
+                self._profile_assignments,
+                candidate["settings"],
+                candidate.get("helpers", {}),
+                values,
+                new_entry=not self._existing_installation,
+            ) + settlement_notes(candidate, problem, values, states)
+            if profile_lines:
+                preview += "\n" + "\n".join(profile_lines)
             if solver_error:
                 preview += "\n" + _solver_failure_detail(problem, values, solver_error)
             elif user_input is not None and user_input.get("confirm") is True:
@@ -745,12 +792,65 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 3
 
+    def _user_schema(self, selections):
+        return vol.Schema(
+            {
+                vol.Required(
+                    "name", default=self._draft["name"]
+                ): selector.TextSelector(),
+                vol.Required(
+                    "currency", default=self._draft["currency"]
+                ): selector.TextSelector(),
+                vol.Required(
+                    "timezone", default=self._draft["timezone"]
+                ): selector.TextSelector(),
+                vol.Required(
+                    "preset", default=self._draft.get("preset", "generic")
+                ): select(
+                    [
+                        {"value": "generic", "label": "Generic"},
+                        *(
+                            {"value": key, "label": preset.name}
+                            for key, preset in PRESETS.items()
+                        ),
+                    ]
+                ),
+                **{
+                    vol.Required(axis, default=selections.get(axis, "generic")): select(
+                        profile_options(axis, self.hass.config.language)
+                    )
+                    for axis in AXES
+                },
+                vol.Required(
+                    "pv_enabled", default=self._draft["sources"]["pv"]["enabled"]
+                ): selector.BooleanSelector(),
+                vol.Required(
+                    "battery_enabled",
+                    default=self._draft["sources"]["battery_enabled"],
+                ): selector.BooleanSelector(),
+            }
+        )
+
     async def async_step_user(self, user_input=None):
         self._draft = default_configuration(
             getattr(self.hass.config, "currency", "EUR") or "EUR",
             self.hass.config.time_zone,
         )
         if user_input is not None:
+            self._draft["name"] = user_input["name"]
+            self._draft["currency"] = user_input["currency"]
+            self._draft["timezone"] = user_input["timezone"]
+            self._draft["preset"] = user_input["preset"]
+            self._draft["sources"]["pv"]["enabled"] = user_input["pv_enabled"]
+            self._draft["sources"]["battery_enabled"] = user_input["battery_enabled"]
+            selections = {axis: user_input.get(axis, "generic") for axis in AXES}
+            err = currency_error(selections, user_input["currency"])
+            if err:
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=self._user_schema(selections),
+                    errors={"settlement": err},
+                )
             if user_input["currency"] == "PLN" and user_input["preset"] in (
                 "pse_solcast",
                 "pse",
@@ -759,17 +859,20 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
             preset = PRESETS.get(user_input["preset"])
             if preset and preset.soc_unit:
                 self._draft["soc_options"]["unit"] = preset.soc_unit
+            assignments = profile_assignments(selections, user_input["preset"])
+            apply_assignments(self._draft["settings"], assignments)
+            self._draft["setup_profiles"] = selection_record(selections)
+            self._setup_selections = selections
+            self._profile_assignments = assignments
             result = await self.async_step_installation(user_input)
             if result["type"] != "form":
                 return result
             return self.async_show_form(
                 step_id="user",
-                data_schema=self._installation_schema(),
+                data_schema=self._user_schema(selections),
                 errors=result["errors"],
             )
-        return self.async_show_form(
-            step_id="user", data_schema=self._installation_schema()
-        )
+        return self.async_show_form(step_id="user", data_schema=self._user_schema({}))
 
     async def async_step_reconfigure(self, user_input=None):
         self._entry = self._get_reconfigure_entry()

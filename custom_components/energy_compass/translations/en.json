@@ -9,8 +9,14 @@
           "currency": "Currency",
           "timezone": "Timezone",
           "preset": "Preset",
+          "settlement": "Prosumer settlement",
+          "inverter": "Inverter",
           "pv_enabled": "Pv enabled",
           "battery_enabled": "Battery enabled"
+        },
+        "data_description": {
+          "settlement": "Pre-fills editable planning and sell-price values once, when this installation is created. Polish profiles require currency PLN. No tariff prices are set.",
+          "inverter": "Pre-fills editable inverter tuning (standby loss, refresh interval) once, when this installation is created."
         }
       },
       "installation": {
@@ -402,7 +408,8 @@
       "input_acknowledgement_required": "Confirm the displayed buy and household load inputs separately before saving.",
       "plan_infeasible": "The base plan is infeasible; review the limits shown below.",
       "plan_timeout": "The base solve timed out; feasibility is unknown.",
-      "optimizer_error": "The optimizer could not validate the base plan."
+      "optimizer_error": "The optimizer could not validate the base plan.",
+      "settlement_currency": "Polish settlement profiles require currency PLN."
     },
     "abort": {
       "reconfigure_successful": "Configuration saved."

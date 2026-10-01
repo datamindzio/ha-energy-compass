@@ -1,6 +1,6 @@
 # Source contracts
 
-Energy Compass binds sources through Home Assistant selectors and validates a preview before trusting a recommendation. The integration does not require any particular price, solar, battery, or load provider. Provider presets suggest visible mappings that users can change.
+Energy Compass binds sources through Home Assistant selectors and validates a preview before trusting a recommendation. The integration does not require any particular price, solar, battery, or load provider. Provider presets suggest visible mappings that users can change. Setup profiles pre-fill tuning only, never sources.
 
 ## Observed provider schemas
 
