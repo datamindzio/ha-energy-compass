@@ -1333,9 +1333,9 @@ wyłączona i nieuruchomiona.</p>
 </tr>
 <tr>
 <td><code>DISCHARGE_GRID</code></td>
-<td>0 A / z planu, ≤ limit</td>
+<td>0 A / z planu, ≤ limit; po osiągnięciu celu <code>reached_discharge_current</code>, ≤ limit</td>
 <td>0 A</td>
-<td>Sell w aktywnym programie, cel SOC z planu, moc z planu, ≤ <code>max_power_w</code></td>
+<td>Sell w aktywnym programie, cel SOC z planu, moc z planu, ≤ <code>max_power_w</code>; po osiągnięciu celu Disabled</td>
 </tr>
 <tr>
 <td><code>HOLD</code>, <code>CURTAIL</code></td>
@@ -1359,7 +1359,11 @@ Limit mocy nigdy nie jest przekroczony. Przy SOC 100 % prąd ładowania spada do
 przedziału przez <code>eta</code> w pełnej długości przedziału. Cel SOC używa <code>capacity_kwh</code>; cel napięcia wynika
 ze stałej krzywej wysokonapięciowej baterii LFP (496–536 V dla 10–90 %, przy 100 % 584 V przy
 ładowaniu albo 544 V przy rozładowaniu). Osiągnięty cel w <code>CHARGE_GRID</code>/<code>DISCHARGE_GRID</code> jest
-zatrzaskiwany dla danego przedziału planu. W wierszu balansowania LFP (<code>balance_hold: true</code>) prąd
+zatrzaskiwany dla danego przedziału planu. Po osiągnięciu celu <code>DISCHARGE_GRID</code> kierunek zmienia się na
+Disabled, ale rozładowanie zostaje na <code>reached_discharge_current</code> (1 A, ok. 530 W przy 530 V, nigdy
+powyżej limitu), więc bateria pokrywa bazowe zużycie domu bez sprzedaży, a większe obciążenia idą z
+sieci; 0 A oddałoby całe zużycie domu sieci przy pełnej baterii. Przedział z planowanym <code>discharge_kwh</code>
+poniżej tolerancji 0,05 kWh (eksport planowany z PV) jest osiągnięty od razu. W wierszu balansowania LFP (<code>balance_hold: true</code>) prąd
 ładowania zostaje przy 100 %, <code>CHARGE_GRID</code> celuje w 100 %, a prąd z sieci wynosi co najmniej
 <code>balance_grid_current</code>. <code>CURTAIL</code> wykonuje profil <code>HOLD</code> z ostrzeżeniem, bo sterownik nie ogranicza PV.</p>
 <p>Sterowane są tylko tryby baterii z listy <code>commissioned_battery_modes</code>; każdy inny tryb (np. Voltage
@@ -1485,6 +1489,11 @@ ustawia progi, na końcu włącza kierunek.</p>
 <td><code>balance_grid_current</code></td>
 <td>2 A</td>
 <td>minimalny prąd z sieci w wierszu balansowania LFP</td>
+</tr>
+<tr>
+<td><code>reached_discharge_current</code></td>
+<td>1 A</td>
+<td>prąd rozładowania po osiągnięciu celu przedziału <code>DISCHARGE_GRID</code> (kierunek Disabled, bez sprzedaży)</td>
 </tr>
 <tr>
 <td><code>relinquish_current</code></td>

@@ -607,9 +607,38 @@ def test_voltage_sell_ends_on_discharged_energy_not_sag():
     h.set(COUNTER, "5601.96")
     r.run()
     d = h.decision()
-    assert d["target_reached"] and d["desired"][h.ctx["discharge_entity"]] == 0
+    floor = h.ctx["reached_discharge_current"]
+    assert d["target_reached"] and d["desired"][h.ctx["discharge_entity"]] == floor
     assert d["desired"][sell] == "Disabled"
     assert h.data[RT]["attributes"]["runtime"]["reached_key"] == d["reached_key"]
+
+
+def test_reached_sell_row_keeps_small_discharge_for_house():
+    """01.10 17:00: a DISCHARGE_GRID row with 0.025 kWh planned discharge (export
+    from PV) was reached at once; 0 A sent ~420 W of house load to the grid at a
+    full battery. The reached row keeps reached_discharge_current without Sell."""
+    h = voltage_sell()
+    h.data[P]["attributes"]["intervals"][0].update(
+        discharge_kwh=0.025, end_soc_kwh=24.9
+    )
+    r = Runner(h)
+    r.run()
+    d = h.decision()
+    sell = f"select.{PREFIX}{d['active_tou']}_charging"
+    floor = h.ctx["reached_discharge_current"]
+    assert floor == 1
+    assert d["target_reached"] and d["desired"][h.ctx["discharge_entity"]] == floor
+    assert d["desired"][sell] == "Disabled"
+    assert float(h.data[h.ctx["discharge_entity"]]["state"]) == floor
+    # The latch of the same row keeps the floor, the grid current stays 0 A.
+    d = h.decision()
+    assert d["target_reached"] and d["desired"][h.ctx["discharge_entity"]] == floor
+    assert d["desired"][h.ctx["grid_entity"]] == 0
+    # 0 A restores the previous profile; the floor never exceeds the power cap.
+    h.ctx["reached_discharge_current"] = 0
+    assert h.decision()["desired"][h.ctx["discharge_entity"]] == 0
+    h.ctx["reached_discharge_current"] = 50
+    assert h.decision()["desired"][h.ctx["discharge_entity"]] <= h.ctx["max_current"]
 
 
 def test_voltage_sell_without_numeric_counter_keeps_voltage_target():
@@ -620,7 +649,10 @@ def test_voltage_sell_without_numeric_counter_keeps_voltage_target():
         d = h.decision()
         assert not d["energy_mode"] and d["target_reached"]
         assert d["target_voltage"] == 53.1
-        assert d["desired"][h.ctx["discharge_entity"]] == 0
+        assert (
+            d["desired"][h.ctx["discharge_entity"]]
+            == h.ctx["reached_discharge_current"]
+        )
 
 
 def test_voltage_sell_counter_reported_only_on_change():
