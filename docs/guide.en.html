@@ -1322,9 +1322,9 @@ running.</p>
 </tr>
 <tr>
 <td><code>DISCHARGE_GRID</code></td>
-<td>0 A / planned, ≤ cap</td>
+<td>0 A / planned, ≤ cap; after the target is reached <code>reached_discharge_current</code>, ≤ cap</td>
 <td>0 A</td>
-<td>Sell on the active program, target SOC from the plan, power = planned, ≤ <code>max_power_w</code></td>
+<td>Sell on the active program, target SOC from the plan, power = planned, ≤ <code>max_power_w</code>; Disabled after the target is reached</td>
 </tr>
 <tr>
 <td><code>HOLD</code>, <code>CURTAIL</code></td>
@@ -1347,7 +1347,12 @@ a pack voltage crossing a step boundary does not rewrite the ceiling on every sa
 power cap is never exceeded. At 100 % SOC the charge current becomes 0 A. Planned currents convert interval kWh with
 <code>eta</code> over the full interval. Target SOC uses <code>capacity_kwh</code>; target voltage follows a fixed
 high-voltage LFP curve (496–536 V for 10–90 %, 584 V charging or 544 V discharging at 100 %). A reached
-target in <code>CHARGE_GRID</code>/<code>DISCHARGE_GRID</code> is latched for that plan interval. In an LFP balance row
+target in <code>CHARGE_GRID</code>/<code>DISCHARGE_GRID</code> is latched for that plan interval. A reached <code>DISCHARGE_GRID</code>
+interval switches the direction to Disabled but keeps <code>reached_discharge_current</code> (1 A, about 530 W at
+530 V, never above the cap) on discharge, so the battery covers the house base load without selling and
+larger loads come from the grid; 0 A would send the whole house load to the grid at a full battery. An
+interval whose planned <code>discharge_kwh</code> is below the 0.05 kWh tolerance (export planned from PV) is reached
+at once. In an LFP balance row
 (<code>balance_hold: true</code>) the charge current stays on at 100 %, <code>CHARGE_GRID</code> targets 100 % and the grid
 current is at least <code>balance_grid_current</code>. <code>CURTAIL</code> runs the <code>HOLD</code> profile with a warning, because the
 controller cannot limit PV.</p>
@@ -1474,6 +1479,11 @@ then sets thresholds, then enables the direction.</p>
 <td><code>balance_grid_current</code></td>
 <td>2 A</td>
 <td>minimum grid current in an LFP balance row</td>
+</tr>
+<tr>
+<td><code>reached_discharge_current</code></td>
+<td>1 A</td>
+<td>discharge current after a <code>DISCHARGE_GRID</code> interval reached its target (direction Disabled, no selling)</td>
 </tr>
 <tr>
 <td><code>relinquish_current</code></td>

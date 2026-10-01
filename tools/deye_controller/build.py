@@ -163,6 +163,15 @@ INPUTS = {
                 1,
                 "A",
             ),
+            "reached_discharge_current": number(
+                "Reached discharge current",
+                "Discharge current kept after a DISCHARGE_GRID interval reached its target. The TOU direction is Disabled, so the battery only covers the house up to this current and does not sell; 0 A sends the whole house load to the grid.",
+                1,
+                0,
+                50,
+                1,
+                "A",
+            ),
             "balance_grid_current": number(
                 "Balance grid current",
                 "Minimum grid charging current in an LFP balance row.",
@@ -390,6 +399,12 @@ DECISION = r"""
 {% set slot = rt.get('slot_energy') %}
 {% set slot_start = slot.get('discharge')|float if energy_mode and slot is mapping and slot.get('key') == reached_key and is_number(slot.get('discharge')) else counted %}
 {% set discharged = [0, counted - slot_start]|max %}
+{# Po osiagnieciu celu DISCHARGE_GRID kierunek Disabled, ale rozladowanie nie 0 A:
+   przy 0 A dom szedl z sieci po 1,25 zl przy baterii 100 % (01.10 17:00, wiersz
+   z 0,025 kWh rozladowania osiagniety od razu, ~420 W importu). Maly prad
+   (1 A ~ 530 W) pokrywa baze domu bez sprzedazy (Zero Export To Load), a wieksze
+   obciazenia nie oprozniaja baterii zaplanowanej na wieczorna sprzedaz. #}
+{% set reached_discharge = [discharge_cap, reached_discharge_current]|min %}
 {% set target_soc = 10.0 %}
 {% set target_voltage = 49.6 %}
 {% set charge = relinquish_current if state == 'BASE' else (charge_cap if state in ['CHARGE_PV','SELF_CONSUME'] else 0) %}
@@ -437,8 +452,8 @@ DECISION = r"""
     {% if energy_mode %}
       {# Falownik zatrzymuje sie sam dopiero na progu 49,6 V; koniec wiersza wyznacza licznik. #}
       {% set target_voltage = 49.6 %}
-      {% if discharged >= [0, ns.row.discharge_kwh|float]|max - 0.05 %}{% set discharge=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
-    {% elif (states(operation_entity)=='Capacity' and soc <= target_soc) or (states(operation_entity)=='Voltage' and v <= target_voltage*10) %}{% set discharge=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+      {% if discharged >= [0, ns.row.discharge_kwh|float]|max - 0.05 %}{% set discharge=reached_discharge %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+    {% elif (states(operation_entity)=='Capacity' and soc <= target_soc) or (states(operation_entity)=='Voltage' and v <= target_voltage*10) %}{% set discharge=reached_discharge %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
   {% endif %}
 {% endif %}
 {# HOLD/CURTAIL: rozladowanie 0 A, ladowanie i siec hold_grid_current (1 A).
@@ -459,7 +474,7 @@ DECISION = r"""
   {% set charge = hold_grid_current %}{% set discharge = 0 %}
   {% set grid = hold_grid_current %}{% set direction = 'Grid' %}
 {% endif %}
-{% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+{% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
 {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
 {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
 {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
@@ -644,6 +659,7 @@ INITIAL = {
     "commissioned_battery_modes": Input("commissioned_battery_modes"),
     "discharge_energy_entity": Input("discharge_energy_entity"),
     "hold_grid_current": Input("hold_grid_current"),
+    "reached_discharge_current": Input("reached_discharge_current"),
     "balance_grid_current": Input("balance_grid_current"),
     "telemetry_entities": Input("telemetry_entities"),
     "eta": Input("eta"),

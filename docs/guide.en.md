@@ -830,7 +830,7 @@ running.
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | cap / cap | 0 A | all Disabled, SOC 10 % |
 | `CHARGE_GRID` | cap / 0 A | planned grid share, ≤ `max_grid_current` | Grid on the active program, target SOC from the plan |
-| `DISCHARGE_GRID` | 0 A / planned, ≤ cap | 0 A | Sell on the active program, target SOC from the plan, power = planned, ≤ `max_power_w` |
+| `DISCHARGE_GRID` | 0 A / planned, ≤ cap; after the target is reached `reached_discharge_current`, ≤ cap | 0 A | Sell on the active program, target SOC from the plan, power = planned, ≤ `max_power_w`; Disabled after the target is reached |
 | `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, target SOC = planned end SOC rounded down |
 | base (release, invalid plan) | `relinquish_current` / `relinquish_current` | 0 A | all Disabled, SOC 10 %, 49.6 (496 V), power `max_power_w` |
 
@@ -841,7 +841,12 @@ a pack voltage crossing a step boundary does not rewrite the ceiling on every sa
 power cap is never exceeded. At 100 % SOC the charge current becomes 0 A. Planned currents convert interval kWh with
 `eta` over the full interval. Target SOC uses `capacity_kwh`; target voltage follows a fixed
 high-voltage LFP curve (496–536 V for 10–90 %, 584 V charging or 544 V discharging at 100 %). A reached
-target in `CHARGE_GRID`/`DISCHARGE_GRID` is latched for that plan interval. In an LFP balance row
+target in `CHARGE_GRID`/`DISCHARGE_GRID` is latched for that plan interval. A reached `DISCHARGE_GRID`
+interval switches the direction to Disabled but keeps `reached_discharge_current` (1 A, about 530 W at
+530 V, never above the cap) on discharge, so the battery covers the house base load without selling and
+larger loads come from the grid; 0 A would send the whole house load to the grid at a full battery. An
+interval whose planned `discharge_kwh` is below the 0.05 kWh tolerance (export planned from PV) is reached
+at once. In an LFP balance row
 (`balance_hold: true`) the charge current stays on at 100 %, `CHARGE_GRID` targets 100 % and the grid
 current is at least `balance_grid_current`. `CURTAIL` runs the `HOLD` profile with a warning, because the
 controller cannot limit PV.
@@ -893,6 +898,7 @@ then sets thresholds, then enables the direction.
 | `max_grid_current` | 16 A | grid charging current cap |
 | `hold_grid_current` | 1 A | charge and grid current in `HOLD` |
 | `balance_grid_current` | 2 A | minimum grid current in an LFP balance row |
+| `reached_discharge_current` | 1 A | discharge current after a `DISCHARGE_GRID` interval reached its target (direction Disabled, no selling) |
 | `relinquish_current` | 18 A | charge/discharge current of the base profile |
 | `eta` | 0.9747 | one-way battery efficiency |
 | `commissioned_battery_modes` | Capacity | battery modes allowed for physical control |

@@ -841,7 +841,7 @@ wyłączona i nieuruchomiona.
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | limit / limit | 0 A | wszystkie Disabled, SOC 10 % |
 | `CHARGE_GRID` | limit / 0 A | planowana część sieciowa, ≤ `max_grid_current` | Grid w aktywnym programie, cel SOC z planu |
-| `DISCHARGE_GRID` | 0 A / z planu, ≤ limit | 0 A | Sell w aktywnym programie, cel SOC z planu, moc z planu, ≤ `max_power_w` |
+| `DISCHARGE_GRID` | 0 A / z planu, ≤ limit; po osiągnięciu celu `reached_discharge_current`, ≤ limit | 0 A | Sell w aktywnym programie, cel SOC z planu, moc z planu, ≤ `max_power_w`; po osiągnięciu celu Disabled |
 | `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, cel SOC = końcowy SOC planu zaokrąglony w dół |
 | bazowy (zwolnienie, nieważny plan) | `relinquish_current` / `relinquish_current` | 0 A | wszystkie Disabled, SOC 10 %, 49,6 (496 V), moc `max_power_w` |
 
@@ -853,7 +853,11 @@ Limit mocy nigdy nie jest przekroczony. Przy SOC 100 % prąd ładowania spada do
 przedziału przez `eta` w pełnej długości przedziału. Cel SOC używa `capacity_kwh`; cel napięcia wynika
 ze stałej krzywej wysokonapięciowej baterii LFP (496–536 V dla 10–90 %, przy 100 % 584 V przy
 ładowaniu albo 544 V przy rozładowaniu). Osiągnięty cel w `CHARGE_GRID`/`DISCHARGE_GRID` jest
-zatrzaskiwany dla danego przedziału planu. W wierszu balansowania LFP (`balance_hold: true`) prąd
+zatrzaskiwany dla danego przedziału planu. Po osiągnięciu celu `DISCHARGE_GRID` kierunek zmienia się na
+Disabled, ale rozładowanie zostaje na `reached_discharge_current` (1 A, ok. 530 W przy 530 V, nigdy
+powyżej limitu), więc bateria pokrywa bazowe zużycie domu bez sprzedaży, a większe obciążenia idą z
+sieci; 0 A oddałoby całe zużycie domu sieci przy pełnej baterii. Przedział z planowanym `discharge_kwh`
+poniżej tolerancji 0,05 kWh (eksport planowany z PV) jest osiągnięty od razu. W wierszu balansowania LFP (`balance_hold: true`) prąd
 ładowania zostaje przy 100 %, `CHARGE_GRID` celuje w 100 %, a prąd z sieci wynosi co najmniej
 `balance_grid_current`. `CURTAIL` wykonuje profil `HOLD` z ostrzeżeniem, bo sterownik nie ogranicza PV.
 
@@ -904,6 +908,7 @@ Teksty `runtime.reason` są w tej wersji po polsku.
 | `max_grid_current` | 16 A | limit prądu ładowania z sieci |
 | `hold_grid_current` | 1 A | prąd ładowania i z sieci w `HOLD` |
 | `balance_grid_current` | 2 A | minimalny prąd z sieci w wierszu balansowania LFP |
+| `reached_discharge_current` | 1 A | prąd rozładowania po osiągnięciu celu przedziału `DISCHARGE_GRID` (kierunek Disabled, bez sprzedaży) |
 | `relinquish_current` | 18 A | prąd ładowania/rozładowania profilu bazowego |
 | `eta` | 0,9747 | sprawność baterii w jedną stronę |
 | `commissioned_battery_modes` | Capacity | tryby baterii dopuszczone do sterowania fizycznego |
