@@ -7,6 +7,7 @@ module under test, so the module cannot drift from the pinned contract.
 import dataclasses
 import inspect
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -835,3 +836,77 @@ def test_profile_strings_exact():
             assert "inverter" not in options_data
         if "options" in doc:
             assert "settlement_currency" not in doc["options"].get("error", {})
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _format_value(value):
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, (int, float)):
+        return f"{value:g}"
+    return str(value)
+
+
+def _current_profile_keys() -> set[str]:
+    keys: set[str] = set()
+    for profiles in sp.CURRENT.axes.values():
+        keys.update(profiles.keys())
+    return keys
+
+
+def _current_pinned_assignments() -> list[tuple[str, object]]:
+    assignments: list[tuple[str, object]] = []
+    for profiles in sp.CURRENT.axes.values():
+        for profile in profiles.values():
+            assignments.extend(profile.settings.items())
+            if profile.sell_ratio is not None:
+                assignments.append(("sell_multiplier", profile.sell_ratio))
+            if profile.raw_rce_sell_multiplier is not None:
+                assignments.append(("sell_multiplier", profile.raw_rce_sell_multiplier))
+    return assignments
+
+
+def _section(text: str, heading: str) -> str:
+    lines = text.splitlines()
+    start = next(
+        (i + 1 for i, line in enumerate(lines) if line.strip() == heading), None
+    )
+    assert start is not None, f"heading {heading!r} not found"
+    end = next(
+        (i for i in range(start, len(lines)) if re.match(r"^#{1,6}\s", lines[i])),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def test_setup_profile_docs():
+    guide_en = (REPO_ROOT / "docs" / "guide.en.md").read_text(encoding="utf-8")
+    guide_pl = (REPO_ROOT / "docs" / "guide.pl.md").read_text(encoding="utf-8")
+
+    section_en = _section(guide_en, "### Setup profiles (new installations)")
+    section_pl = _section(guide_pl, "### Profile startowe (nowe instalacje)")
+
+    profile_keys = _current_profile_keys()
+    assignments = _current_pinned_assignments()
+
+    # Polish prose uses a comma decimal separator throughout the existing
+    # guide (e.g. "0,20"); the Markdown section mirrors that convention.
+    for section, decimal_separator in ((section_en, "."), (section_pl, ",")):
+        for key in profile_keys:
+            assert f"`{key}`" in section, f"profile key {key!r} missing from section"
+        for key, value in assignments:
+            assert f"`{key}`" in section, f"setting key {key!r} missing from section"
+            formatted = _format_value(value).replace(".", decimal_separator)
+            assert formatted in section, (
+                f"value {formatted!r} for {key!r} missing from section"
+            )
+
+    installation = (REPO_ROOT / "docs" / "installation.md").read_text(encoding="utf-8")
+    assert "guide.en.md#setup-profiles-new-installations" in installation
+
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    readme_pl = (REPO_ROOT / "README.pl.md").read_text(encoding="utf-8")
+    assert "setup profiles" in readme.lower()
+    assert "profile startowe" in readme_pl.lower()

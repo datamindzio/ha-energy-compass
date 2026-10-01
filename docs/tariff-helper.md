@@ -55,4 +55,4 @@ Connect it under **Tariffs → Sell source → Interval forecast**:
 | Publication path, optional | `attributes.published_at` |
 | Maximum age, if checking age | `4500` seconds |
 
-The published prices already include the floor and multiplier, so set the sell transformation to multiplier `1`, VAT disabled and addition `0`. Tomorrow's prices usually appear in the early afternoon; until then the forecast covers today only.
+The published prices already include the floor and multiplier, so set the sell transformation to multiplier `1`, VAT disabled and addition `0`. Tomorrow's prices usually appear in the early afternoon; until then the forecast covers today only. If you chose the PL net-billing setup profile with a PSE preset, it pre-filled sell multiplier 1.23 for a raw RCE source; reset it to 1 with this template. The Preview warns when both apply.
