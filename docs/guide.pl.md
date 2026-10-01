@@ -846,7 +846,10 @@ wyłączona i nieuruchomiona.
 | bazowy (zwolnienie, nieważny plan) | `relinquish_current` / `relinquish_current` | 0 A | wszystkie Disabled, SOC 10 %, 49,6 (496 V), moc `max_power_w` |
 
 Limit to `min(max_current, max_power_w / V)` przy ładowaniu i `min(max_current, max_power_w × eta / V)`
-przy rozładowaniu; przy SOC 100 % prąd ładowania spada do 0 A. Prądy z planu przeliczają kWh
+przy rozładowaniu. Limit ma histerezę: prąd już ustawiony w falowniku zostaje, dopóki mieści się
+w limicie mocy, a wyższy krok o 1 A wchodzi dopiero z 2 % zapasem napięcia (ok. 10 V przy 530 V), więc
+napięcie pakietu przechodzące przez granicę kroku nie przepisuje limitu przy każdym spadku i odbiciu.
+Limit mocy nigdy nie jest przekroczony. Przy SOC 100 % prąd ładowania spada do 0 A. Prądy z planu przeliczają kWh
 przedziału przez `eta` w pełnej długości przedziału. Cel SOC używa `capacity_kwh`; cel napięcia wynika
 ze stałej krzywej wysokonapięciowej baterii LFP (496–536 V dla 10–90 %, przy 100 % 584 V przy
 ładowaniu albo 544 V przy rozładowaniu). Osiągnięty cel w `CHARGE_GRID`/`DISCHARGE_GRID` jest

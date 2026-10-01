@@ -493,8 +493,20 @@ actions:
             {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
             {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
             {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
-            {% set charge_cap = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-            {% set discharge_cap = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+            {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
+               podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
+               (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
+               co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
+               wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
+               mocy nigdy nie jest przekroczony. #}
+            {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
+            {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+            {% set charge_held = states(charge_entity)|float(0) %}
+            {% set discharge_held = states(discharge_entity)|float(0) %}
+            {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
+            {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
+            {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
+            {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
             {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
             {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -749,8 +761,20 @@ actions:
           {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
           {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
           {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
-          {% set charge_cap = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-          {% set discharge_cap = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+          {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
+             podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
+             (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
+             co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
+             wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
+             mocy nigdy nie jest przekroczony. #}
+          {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
+          {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+          {% set charge_held = states(charge_entity)|float(0) %}
+          {% set discharge_held = states(discharge_entity)|float(0) %}
+          {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
+          {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
+          {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
+          {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
           {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
           {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
              jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -955,8 +979,20 @@ actions:
             {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
             {% if true %}{% set state='BASE' %}{% endif %}
             {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
-            {% set charge_cap = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-            {% set discharge_cap = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+            {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
+               podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
+               (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
+               co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
+               wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
+               mocy nigdy nie jest przekroczony. #}
+            {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
+            {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+            {% set charge_held = states(charge_entity)|float(0) %}
+            {% set discharge_held = states(discharge_entity)|float(0) %}
+            {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
+            {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
+            {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
+            {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
             {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
             {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -1221,8 +1257,20 @@ actions:
                     {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
                     {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
                     {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
-                    {% set charge_cap = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-                    {% set discharge_cap = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                    {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
+                       podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
+                       (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
+                       co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
+                       wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
+                       mocy nigdy nie jest przekroczony. #}
+                    {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
+                    {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                    {% set charge_held = states(charge_entity)|float(0) %}
+                    {% set discharge_held = states(discharge_entity)|float(0) %}
+                    {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
+                    {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
+                    {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
+                    {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
                     {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
                     {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                        jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -1413,8 +1461,20 @@ actions:
                     {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
                     {% if true %}{% set state='BASE' %}{% endif %}
                     {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
-                    {% set charge_cap = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-                    {% set discharge_cap = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                    {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
+                       podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
+                       (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
+                       co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
+                       wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
+                       mocy nigdy nie jest przekroczony. #}
+                    {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
+                    {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                    {% set charge_held = states(charge_entity)|float(0) %}
+                    {% set discharge_held = states(discharge_entity)|float(0) %}
+                    {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
+                    {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
+                    {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
+                    {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
                     {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
                     {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                        jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -1638,8 +1698,20 @@ actions:
                       {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
                       {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
                       {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
-                      {% set charge_cap = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-                      {% set discharge_cap = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                      {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
+                         podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
+                         (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
+                         co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
+                         wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
+                         mocy nigdy nie jest przekroczony. #}
+                      {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
+                      {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                      {% set charge_held = states(charge_entity)|float(0) %}
+                      {% set discharge_held = states(discharge_entity)|float(0) %}
+                      {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
+                      {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
+                      {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
+                      {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
                       {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
                       {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                          jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -1830,8 +1902,20 @@ actions:
                       {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
                       {% if true %}{% set state='BASE' %}{% endif %}
                       {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
-                      {% set charge_cap = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-                      {% set discharge_cap = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                      {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
+                         podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
+                         (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
+                         co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
+                         wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
+                         mocy nigdy nie jest przekroczony. #}
+                      {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
+                      {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                      {% set charge_held = states(charge_entity)|float(0) %}
+                      {% set discharge_held = states(discharge_entity)|float(0) %}
+                      {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
+                      {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
+                      {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
+                      {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
                       {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
                       {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                          jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -2140,8 +2224,20 @@ actions:
           {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
           {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
           {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
-          {% set charge_cap = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-          {% set discharge_cap = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+          {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
+             podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
+             (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
+             co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
+             wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
+             mocy nigdy nie jest przekroczony. #}
+          {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
+          {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+          {% set charge_held = states(charge_entity)|float(0) %}
+          {% set discharge_held = states(discharge_entity)|float(0) %}
+          {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
+          {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
+          {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
+          {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
           {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
           {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
              jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -2332,8 +2428,20 @@ actions:
           {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
           {% if true %}{% set state='BASE' %}{% endif %}
           {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
-          {% set charge_cap = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-          {% set discharge_cap = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+          {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
+             podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
+             (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
+             co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
+             wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
+             mocy nigdy nie jest przekroczony. #}
+          {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
+          {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+          {% set charge_held = states(charge_entity)|float(0) %}
+          {% set discharge_held = states(discharge_entity)|float(0) %}
+          {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
+          {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
+          {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
+          {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
           {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
           {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
              jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID

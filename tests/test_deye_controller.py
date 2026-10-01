@@ -1428,6 +1428,51 @@ def test_pv_buffer_hold_round_trip_and_ten_noops(h):
     assert len(r.writes) == count and len(r.reads) == reads
 
 
+def test_pv_charge_ceiling_does_not_flap_at_power_boundary(h):
+    # 8000 W / 533.33 V is the 15/14 A boundary. Charging lifts the pack above it;
+    # stopping the current lets it sag ~2 V below. Without hysteresis every
+    # crossing rewrote the ceiling and briefly stopped charging (PV exported).
+    voltage = h.ctx["voltage_entity"]
+    charge = h.ctx["charge_entity"]
+    h.data[voltage]["state"] = "531.3"
+    r = Runner(h)
+    r.run()
+    assert float(h.data[charge]["state"]) == 15
+    r.writes.clear()
+    h.data[voltage]["state"] = "533.4"
+    r.run()
+    assert r.writes == [(charge, 14.0)]
+    count = len(r.writes)
+    for _ in range(5):
+        for v in ["531.3", "533.4", "530.0", "536.0"]:
+            h.data[voltage]["state"] = v
+            r.run()
+    assert len(r.writes) == count
+    assert not any(e == charge and value == 0 for e, value in r.writes)
+    assert h.data[RT]["attributes"]["runtime"]["confirmed_mode"] == "CHARGE_PV"
+
+
+@pytest.mark.parametrize(
+    "held,voltage,expected",
+    [
+        (14, "525.0", 14),
+        (14, "522.0", 15),
+        (15, "533.3", 15),
+        (15, "533.4", 14),
+        (1, "531.3", 15),
+        (0, "531.3", 15),
+    ],
+)
+def test_current_ceiling_hysteresis_never_exceeds_power_cap(h, held, voltage, expected):
+    h.data[h.ctx["charge_entity"]]["state"] = str(held)
+    h.data[h.ctx["voltage_entity"]]["state"] = voltage
+    h.accept()
+    d = h.decision()
+    assert d["state"] == "CHARGE_PV"
+    assert d["desired"][h.ctx["charge_entity"]] == expected
+    assert expected * float(voltage) <= 8000
+
+
 def exporting_runner(h):
     row = h.data[P]["attributes"]["intervals"][0]
     row.update(state="DISCHARGE_GRID", discharge_kwh=0.5, pv_kwh=0, end_soc_kwh=5)

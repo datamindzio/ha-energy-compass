@@ -835,7 +835,10 @@ running.
 | base (release, invalid plan) | `relinquish_current` / `relinquish_current` | 0 A | all Disabled, SOC 10 %, 49.6 (496 V), power `max_power_w` |
 
 The cap is `min(max_current, max_power_w / V)` for charging and `min(max_current, max_power_w × eta / V)`
-for discharging; at 100 % SOC the charge current becomes 0 A. Planned currents convert interval kWh with
+for discharging. The cap has hysteresis: the current already on the inverter is kept while it still fits
+the power cap, and the next ampere step is taken only with 2 % voltage headroom (about 10 V at 530 V), so
+a pack voltage crossing a step boundary does not rewrite the ceiling on every sag and rebound. The
+power cap is never exceeded. At 100 % SOC the charge current becomes 0 A. Planned currents convert interval kWh with
 `eta` over the full interval. Target SOC uses `capacity_kwh`; target voltage follows a fixed
 high-voltage LFP curve (496–536 V for 10–90 %, 584 V charging or 544 V discharging at 100 %). A reached
 target in `CHARGE_GRID`/`DISCHARGE_GRID` is latched for that plan interval. In an LFP balance row
