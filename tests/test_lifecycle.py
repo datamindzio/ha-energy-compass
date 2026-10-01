@@ -53,6 +53,21 @@ async def test_migration_preserves_choices(hass):
     assert entry.data["settings"]["strategy"] == "cost_min"
 
 
+async def test_migration_does_not_add_setup_profiles(hass):
+    config = default_configuration("EUR", "UTC")
+    options_config = deepcopy(config)
+    entry = MockConfigEntry(
+        domain="energy_compass",
+        data=config,
+        options={"configuration": options_config},
+        version=2,
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert "setup_profiles" not in entry.data
+    assert "setup_profiles" not in entry.options["configuration"]
+
+
 @pytest.mark.parametrize(
     "path,policy",
     [

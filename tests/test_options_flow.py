@@ -1,18 +1,44 @@
 from copy import deepcopy
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 from homeassistant import config_entries
 from homeassistant.helpers import selector
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.energy_compass import config_flow, setup_profiles
 from custom_components.energy_compass.engine.models import InputError
 from custom_components.energy_compass.settings import (
     default_configuration,
     merged_configuration,
     validate_configuration,
 )
-from custom_components.energy_compass.sources.bindings import EntityBinding
+from custom_components.energy_compass.sources.bindings import (
+    EntityBinding,
+    IntervalBinding,
+)
+
+
+def _profile_spies():
+    return (
+        patch.object(
+            config_flow, "profile_assignments", wraps=config_flow.profile_assignments
+        ),
+        patch.object(
+            config_flow, "apply_assignments", wraps=config_flow.apply_assignments
+        ),
+        patch.object(
+            config_flow,
+            "reconcile_assignments",
+            wraps=config_flow.reconcile_assignments,
+        ),
+        patch.object(
+            setup_profiles,
+            "profile_assignments",
+            wraps=setup_profiles.profile_assignments,
+        ),
+    )
 
 
 async def test_options_preserve_invalid_edit(
@@ -524,3 +550,165 @@ async def test_soc_measurement_submission_keeps_exact_policy_when_field_omitted(
         }
     )
     assert flow._draft["soc_options"]["timestamp_policy"] == "exact_path"
+
+
+def _setup_profile_entry(hass):
+    config = default_configuration("PLN", "Europe/Warsaw")
+    config["setup_profiles"] = {
+        "revision": 1,
+        "settlement": "pl_net_billing",
+        "inverter": "deye_hybrid",
+    }
+    config["preset"] = "generic"
+    config["settings"].update(
+        terminal_value_per_kwh=0.5, refresh_minutes=30, sell_multiplier=1
+    )
+    entry = MockConfigEntry(
+        domain="energy_compass", data=config, title="Profiled", version=3
+    )
+    entry.add_to_hass(hass)
+    return entry, deepcopy(config)
+
+
+async def test_options_flow_never_reapplies_setup_profiles(
+    recorder_mock, hass, enable_custom_integrations
+):
+    entry, original = _setup_profile_entry(hass)
+    spy1, spy2, spy3, spy4 = _profile_spies()
+    with spy1 as spy_assignments, spy2 as spy_apply, spy3 as spy_reconcile, spy4:
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        fid = result["flow_id"]
+        await hass.config_entries.options.async_configure(
+            fid, {"next_step_id": "installation"}
+        )
+        await hass.config_entries.options.async_configure(
+            fid,
+            {
+                "name": original["name"],
+                "currency": original["currency"],
+                "timezone": original["timezone"],
+                "preset": "pse",
+                "pv_enabled": original["sources"]["pv"]["enabled"],
+                "battery_enabled": original["sources"]["battery_enabled"],
+            },
+        )
+        preview = await hass.config_entries.options.async_configure(
+            fid, {"next_step_id": "preview"}
+        )
+        text = preview["description_placeholders"]["preview"]
+        assert "Setup profiles at creation (revision 1, not re-applied)" in text
+        assert "Pre-filled by" not in text
+        assert "Edited after pre-fill" not in text
+
+        result = await hass.config_entries.options.async_configure(
+            fid, {"confirm": True}
+        )
+        assert result["type"] == "create_entry"
+
+        options = entry.options["configuration"]
+        assert options["settings"]["terminal_value_per_kwh"] == 0.5
+        assert options["settings"]["refresh_minutes"] == 30
+        assert options["settings"]["sell_multiplier"] == 1
+        assert options["preset"] == "pse"
+        assert options["setup_profiles"] == original["setup_profiles"]
+
+        spy_assignments.assert_not_called()
+        spy_apply.assert_not_called()
+        spy_reconcile.assert_not_called()
+
+
+async def test_reconfigure_preserves_setup_profile_record(
+    recorder_mock, hass, enable_custom_integrations
+):
+    entry, original = _setup_profile_entry(hass)
+    spy1, spy2, spy3, spy4 = _profile_spies()
+    with spy1 as spy_assignments, spy2 as spy_apply, spy3 as spy_reconcile, spy4:
+        result = await hass.config_entries.flow.async_init(
+            "energy_compass",
+            context={
+                "source": config_entries.SOURCE_RECONFIGURE,
+                "entry_id": entry.entry_id,
+            },
+        )
+        fid = result["flow_id"]
+        await hass.config_entries.flow.async_configure(
+            fid, {"next_step_id": "installation"}
+        )
+        await hass.config_entries.flow.async_configure(
+            fid,
+            {
+                "name": original["name"],
+                "currency": original["currency"],
+                "timezone": original["timezone"],
+                "preset": "pse",
+                "pv_enabled": original["sources"]["pv"]["enabled"],
+                "battery_enabled": original["sources"]["battery_enabled"],
+            },
+        )
+        await hass.config_entries.flow.async_configure(fid, {"next_step_id": "preview"})
+        result = await hass.config_entries.flow.async_configure(fid, {"confirm": True})
+        assert result["type"] == "abort"
+        assert result["reason"] == "reconfigure_successful"
+
+        assert entry.data["setup_profiles"] == original["setup_profiles"]
+        assert entry.data["settings"]["sell_multiplier"] == 1
+        assert entry.data["settings"]["terminal_value_per_kwh"] == 0.5
+        assert entry.data["settings"]["refresh_minutes"] == 30
+
+        spy_assignments.assert_not_called()
+        spy_apply.assert_not_called()
+        spy_reconcile.assert_not_called()
+
+
+async def test_legacy_entry_has_no_setup_profiles(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    from custom_components.energy_compass.config_models import PriceSource
+
+    freezer.move_to("2026-09-18T00:00:00+00:00")
+    config = default_configuration("PLN", "Europe/Warsaw")
+    config["settings"].update(
+        horizon_hours=1, display_horizon_hours=1, reference_horizon_hours=1
+    )
+    config["sources"]["sell"] = PriceSource(
+        "forecast",
+        (
+            IntervalBinding(
+                EntityBinding("sensor.sale", attribute="rows"),
+                start_path="start",
+                interval_minutes=60,
+                value_path="price",
+                unit="PLN/kWh",
+                value_kind="price",
+            ),
+        ),
+    ).to_dict()
+    config["settings"]["sell_multiplier"] = 1.23
+    entry = MockConfigEntry(
+        domain="energy_compass", data=config, title="Legacy", version=3
+    )
+    entry.add_to_hass(hass)
+    hass.states.async_set(
+        "sensor.sale",
+        "ready",
+        {
+            "rows": [{"start": "2026-09-18T00:00:00+00:00", "price": 0.5}],
+            "settlement": "RCE, floor 0, multiplier 1.23",
+        },
+    )
+    assert "setup_profiles" not in entry.data
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    fid = result["flow_id"]
+    preview = await hass.config_entries.options.async_configure(
+        fid, {"next_step_id": "preview"}
+    )
+    text = preview["description_placeholders"]["preview"]
+    assert not preview["errors"]
+    assert "Setup profiles" not in text
+    assert "Note: sell source" not in text
+
+    result = await hass.config_entries.options.async_configure(fid, {"confirm": True})
+    assert result["type"] == "create_entry"
+    assert "setup_profiles" not in entry.data
+    assert "setup_profiles" not in entry.options.get("configuration", {})

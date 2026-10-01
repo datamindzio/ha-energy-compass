@@ -38,6 +38,7 @@ async def async_get_config_entry_diagnostics(hass, entry):
             "report": coordinator.balance_report(),
         },
         "energy_atlas": _atlas_diagnostics(coordinator, entry),
+        "setup_profiles": coordinator.configuration.get("setup_profiles"),
     }
 
 

@@ -12,6 +12,7 @@ import asyncio
 import logging
 import threading
 import time
+from copy import deepcopy
 from typing import ClassVar
 
 import httpx
@@ -180,6 +181,37 @@ async def test_diagnostics_never_carry_secrets_or_site_id(
     # ADR-0019 §7: the ownership proof itself is never stored, so it must not leak
     # into diagnostics (or any other persisted state) either.
     assert "proof" not in str(diagnostics).lower()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_diagnostics_reports_setup_profiles_record(
+    recorder_mock, hass, enable_custom_integrations, fake_sink
+):
+    record = {"revision": 1, "settlement": "pl_net_billing", "inverter": "deye_hybrid"}
+    entry = _registered_entry(hass)
+    config = deepcopy(dict(entry.data))
+    config["setup_profiles"] = record
+    hass.config_entries.async_update_entry(entry, data=config)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await hass.async_block_till_done()
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    assert diagnostics["setup_profiles"] == record
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_diagnostics_setup_profiles_is_none_for_legacy_entry(
+    recorder_mock, hass, enable_custom_integrations, fake_sink
+):
+    entry = _registered_entry(hass)
+    assert "setup_profiles" not in entry.data
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await hass.async_block_till_done()
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    assert diagnostics["setup_profiles"] is None
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
