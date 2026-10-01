@@ -10,7 +10,7 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
@@ -574,6 +574,31 @@ def test_preview_creation_line():
     ]
 
 
+def test_preview_lines_resolves_record_revision_axes(monkeypatch):
+    """A record pinned to revision 1 must render revision 1's axis order and
+    labels even after a later revision changes the axis layout."""
+    rev1 = sp.REVISIONS[1]
+    fake_rev2 = sp.ProfileRevision(
+        axes=MappingProxyType(
+            {"inverter": rev1.axes["inverter"], "settlement": rev1.axes["settlement"]}
+        ),
+        raw_rce_presets=rev1.raw_rce_presets,
+    )
+    monkeypatch.setattr(sp, "REVISIONS", MappingProxyType({1: rev1, 2: fake_rev2}))
+    monkeypatch.setattr(sp, "SETUP_PROFILES_REVISION", 2)
+    monkeypatch.setattr(sp, "CURRENT", fake_rev2)
+    monkeypatch.setattr(sp, "AXES", fake_rev2.axes)
+
+    record = {"revision": 1, "settlement": "generic", "inverter": "generic"}
+    lines = sp.preview_lines(record, (), {}, {}, {}, new_entry=True)
+    assert lines == [
+        (
+            "Setup profiles: settlement Generic (no settlement assumptions), "
+            "inverter Generic (no inverter defaults); no values pre-filled."
+        )
+    ]
+
+
 def _slot(start, buy, sell):
     return SimpleNamespace(start=start, buy_per_kwh=buy, sell_per_kwh=sell)
 
@@ -755,6 +780,87 @@ def test_note_net_metering_mismatch_and_match():
         slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.8000000001),)
     )
     assert sp.settlement_notes(config, tolerance_problem, values, {}) == [
+        (
+            "Note: net-metering sell = 0.8 × buy in every previewed interval; "
+            "this is a copy, later buy edits do not update sell."
+        )
+    ]
+
+
+def test_note_net_metering_tolerance_scales_with_price(monkeypatch):
+    """N4's match tolerance is relative to the buy price, not an absolute
+    1e-6, so it does not false-warn at high (PLN/MWh-scale) prices."""
+    config = {
+        "currency": "PLN",
+        "sources": {"sell": {"mode": "fixed", "forecast": []}},
+        "setup_profiles": {
+            "revision": 1,
+            "settlement": "pl_net_metering_80",
+            "inverter": "generic",
+        },
+    }
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "self_consumption",
+        "sell_multiplier": 1,
+    }
+    # buy 1500 PLN/MWh-equivalent; a 0.0005 PLN/kWh rounding noise on the sell
+    # side exceeds an absolute 1e-6 tolerance but is negligible relative to
+    # the buy price, so it must not false-warn.
+    buy = 1500.0
+    sell = 0.8 * buy + 0.0005
+    high_price_problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), buy, sell),)
+    )
+    assert sp.settlement_notes(config, high_price_problem, values, {}) == [
+        (
+            "Note: net-metering sell = 0.8 × buy in every previewed interval; "
+            "this is a copy, later buy edits do not update sell."
+        )
+    ]
+
+
+def test_settlement_notes_resolves_record_revision_sell_ratio(monkeypatch):
+    """A record pinned to revision 1 must evaluate N4 against revision 1's
+    sell_ratio even after a later revision changes that profile's ratio."""
+    rev1 = sp.REVISIONS[1]
+    changed_profile = dataclasses.replace(
+        rev1.axes["settlement"]["pl_net_metering_80"], sell_ratio=0.5
+    )
+    fake_settlement_axis = MappingProxyType(
+        {**rev1.axes["settlement"], "pl_net_metering_80": changed_profile}
+    )
+    fake_rev2 = sp.ProfileRevision(
+        axes=MappingProxyType(
+            {"settlement": fake_settlement_axis, "inverter": rev1.axes["inverter"]}
+        ),
+        raw_rce_presets=rev1.raw_rce_presets,
+    )
+    monkeypatch.setattr(sp, "REVISIONS", MappingProxyType({1: rev1, 2: fake_rev2}))
+    monkeypatch.setattr(sp, "SETUP_PROFILES_REVISION", 2)
+    monkeypatch.setattr(sp, "CURRENT", fake_rev2)
+    monkeypatch.setattr(sp, "AXES", fake_rev2.axes)
+    monkeypatch.setattr(sp, "SETTLEMENT_PROFILES", fake_settlement_axis)
+
+    config = {
+        "currency": "PLN",
+        "sources": {"sell": {"mode": "fixed", "forecast": []}},
+        "setup_profiles": {
+            "revision": 1,
+            "settlement": "pl_net_metering_80",
+            "inverter": "generic",
+        },
+    }
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "self_consumption",
+        "sell_multiplier": 1,
+    }
+    problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.8),)
+    )
+    notes = sp.settlement_notes(config, problem, values, {})
+    assert notes == [
         (
             "Note: net-metering sell = 0.8 × buy in every previewed interval; "
             "this is a copy, later buy edits do not update sell."

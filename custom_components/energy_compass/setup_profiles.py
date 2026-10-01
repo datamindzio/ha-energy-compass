@@ -266,7 +266,8 @@ def preview_lines(
     if not record:
         return []
     revision = record["revision"]
-    axis_order = list(AXES)
+    rev = REVISIONS.get(revision, CURRENT)
+    axis_order = list(rev.axes)
     labels = {
         axis: profile_label(axis, record.get(axis, "generic"), "en", revision=revision)
         for axis in axis_order
@@ -370,13 +371,15 @@ def settlement_notes(
         text += "; examples/rce-sell-price.yaml publishes max(RCE, 0) × 1.23."
         notes.append(text)
 
-    profile = SETTLEMENT_PROFILES.get(settlement)
+    rev = REVISIONS.get(record["revision"], CURRENT)
+    profile = rev.axes["settlement"].get(settlement)
     ratio = profile.sell_ratio if profile is not None else None
     if ratio is not None and currency == "PLN":
         mismatch = None
         for slot in problem.slots:
             expected = ratio * slot.buy_per_kwh
-            if not isclose(slot.sell_per_kwh, expected, rel_tol=0, abs_tol=1e-6):
+            tolerance = 1e-6 * max(1.0, abs(slot.buy_per_kwh))
+            if not isclose(slot.sell_per_kwh, expected, rel_tol=0, abs_tol=tolerance):
                 mismatch = slot
                 break
         if mismatch is not None:
