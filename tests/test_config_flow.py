@@ -1283,3 +1283,36 @@ async def test_preview_reports_helper_bound_prefill(
         "Edited after pre-fill: idle_drain_kw 0.13 → helper "
         "input_number.standby_loss (0.2)." in text
     )
+
+
+async def test_preview_warns_net_metering_copy(
+    recorder_mock, hass, enable_custom_integrations
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    menu = await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            preset="generic",
+            settlement="pl_net_metering_80",
+            inverter="generic",
+        ),
+    )
+    assert menu["type"] == "menu"
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "tariffs"})
+    await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "tariff_values"}
+    )
+    await hass.config_entries.flow.async_configure(
+        fid, {"buy_rate": 1.0, "sell_rate": 0}
+    )
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "menu"})
+    preview = await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "preview"}
+    )
+    text = preview["description_placeholders"]["preview"]
+    assert "Note: net-metering sell is a copy, not linked to buy" in text

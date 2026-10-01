@@ -7,7 +7,9 @@ module under test, so the module cannot drift from the pinned contract.
 import dataclasses
 import inspect
 import json
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -567,6 +569,194 @@ def test_preview_creation_line():
         (
             "Setup profiles at creation (revision 99, not re-applied): "
             "settlement mystery, inverter mystery_inv."
+        )
+    ]
+
+
+def _slot(start, buy, sell):
+    return SimpleNamespace(start=start, buy_per_kwh=buy, sell_per_kwh=sell)
+
+
+def test_note_sell_only_pv_off_for_pl():
+    record = {"revision": 1, "settlement": "pl_net_billing", "inverter": "generic"}
+    config = {
+        "setup_profiles": record,
+        "currency": "PLN",
+        "sources": {"sell": {"mode": "fixed", "forecast": []}},
+    }
+    problem = SimpleNamespace(slots=())
+    values = {"limit_export_to_pv": False, "strategy": "self_consumption"}
+    assert sp.settlement_notes(config, problem, values, {}) == [
+        (
+            "Note: Sell only PV is off (setting or strategy "
+            "self_consumption); a Polish prosumer may only sell energy from "
+            "their own PV."
+        )
+    ]
+
+    generic_config = {
+        **config,
+        "setup_profiles": {
+            "revision": 1,
+            "settlement": "generic",
+            "inverter": "generic",
+        },
+    }
+    assert sp.settlement_notes(generic_config, problem, values, {}) == []
+
+    eur_config = {**config, "currency": "EUR"}
+    assert sp.settlement_notes(eur_config, problem, values, {}) == []
+
+    on_values = {**values, "limit_export_to_pv": True}
+    assert sp.settlement_notes(config, problem, on_values, {}) == []
+
+
+def test_note_double_application():
+    binding = {"entity": {"entity_id": "sensor.sale"}, "unit": "PLN/kWh"}
+    states = {
+        "sensor.sale": {"attributes": {"settlement": "RCE, floor 0, multiplier 1.23"}}
+    }
+    config = {
+        "currency": "PLN",
+        "sources": {"sell": {"mode": "forecast", "forecast": [binding]}},
+    }
+    problem = SimpleNamespace(slots=())
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "self_consumption",
+        "sell_multiplier": 1.23,
+    }
+
+    for settlement in ("generic", "pl_net_billing"):
+        record_config = {
+            **config,
+            "setup_profiles": {
+                "revision": 1,
+                "settlement": settlement,
+                "inverter": "generic",
+            },
+        }
+        notes = sp.settlement_notes(record_config, problem, values, states)
+        assert (
+            "Note: sell source sensor.sale already applies its settlement "
+            "(RCE, floor 0, multiplier 1.23); sell multiplier 1.23 applies a "
+            "multiplier again — set it to 1." in notes
+        )
+
+    assert sp.settlement_notes(config, problem, values, states) == []
+
+    record_config = {
+        **config,
+        "setup_profiles": {
+            "revision": 1,
+            "settlement": "generic",
+            "inverter": "generic",
+        },
+    }
+    one_values = {**values, "sell_multiplier": 1}
+    assert sp.settlement_notes(record_config, problem, one_values, states) == []
+
+
+def test_notes_empty_without_record():
+    binding = {"entity": {"entity_id": "sensor.sale"}, "unit": "PLN/MWh"}
+    states = {
+        "sensor.sale": {"attributes": {"settlement": "RCE, floor 0, multiplier 1.23"}}
+    }
+    config = {
+        "currency": "PLN",
+        "sources": {"sell": {"mode": "forecast", "forecast": [binding]}},
+    }
+    problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.5),)
+    )
+    values = {
+        "limit_export_to_pv": False,
+        "strategy": "self_consumption",
+        "sell_multiplier": 1.23,
+    }
+    assert sp.settlement_notes(config, problem, values, states) == []
+
+
+def test_note_raw_rce():
+    binding = {"entity": {"entity_id": "sensor.rce"}, "unit": "PLN/MWh"}
+    config = {
+        "currency": "PLN",
+        "sources": {"sell": {"mode": "forecast", "forecast": [binding]}},
+        "setup_profiles": {
+            "revision": 1,
+            "settlement": "pl_net_billing",
+            "inverter": "generic",
+        },
+    }
+    problem = SimpleNamespace(slots=())
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "self_consumption",
+        "sell_multiplier": 1,
+    }
+    notes = sp.settlement_notes(config, problem, values, {})
+    assert (
+        "Note: raw RCE sell prices are not floored at 0 (net-billing values "
+        "negative prices at 0) and the 1.23 deposit multiplier is not applied "
+        "(sell multiplier 1); examples/rce-sell-price.yaml publishes "
+        "max(RCE, 0) × 1.23." in notes
+    )
+
+    values["sell_multiplier"] = 1.23
+    notes = sp.settlement_notes(config, problem, values, {})
+    assert (
+        "Note: raw RCE sell prices are not floored at 0 (net-billing values "
+        "negative prices at 0); examples/rce-sell-price.yaml publishes "
+        "max(RCE, 0) × 1.23." in notes
+    )
+
+
+def test_note_net_metering_mismatch_and_match():
+    config = {
+        "currency": "PLN",
+        "sources": {"sell": {"mode": "fixed", "forecast": []}},
+        "setup_profiles": {
+            "revision": 1,
+            "settlement": "pl_net_metering_80",
+            "inverter": "generic",
+        },
+    }
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "self_consumption",
+        "sell_multiplier": 1,
+    }
+
+    match_problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.8),)
+    )
+    assert sp.settlement_notes(config, match_problem, values, {}) == [
+        (
+            "Note: net-metering sell = 0.8 × buy in every previewed interval; "
+            "this is a copy, later buy edits do not update sell."
+        )
+    ]
+
+    mismatch_problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.5),)
+    )
+    assert sp.settlement_notes(config, mismatch_problem, values, {}) == [
+        (
+            "Note: net-metering sell is a copy, not linked to buy: first "
+            "mismatch 2026-01-01T00:00:00+00:00 sell 0.5 ≠ 0.8 × buy 1 "
+            "PLN/kWh. Bind sell to the buy source and set sell multiplier = "
+            "0.8 × buy multiplier, sell addition = 0.8 × buy addition, same "
+            "VAT setting."
+        )
+    ]
+
+    tolerance_problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.8000000001),)
+    )
+    assert sp.settlement_notes(config, tolerance_problem, values, {}) == [
+        (
+            "Note: net-metering sell = 0.8 × buy in every previewed interval; "
+            "this is a copy, later buy edits do not update sell."
         )
     ]
 

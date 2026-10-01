@@ -5,6 +5,7 @@ a published revision.
 
 import dataclasses
 from collections.abc import Iterable, Mapping, Sequence
+from math import isclose
 from types import MappingProxyType
 
 from .engine.strategy import STRATEGY_OWNED_KEYS
@@ -308,3 +309,91 @@ def preview_lines(
     if edited:
         lines.append("Edited after pre-fill: " + ", ".join(edited) + ".")
     return lines
+
+
+def settlement_notes(
+    config: Mapping[str, object],
+    problem,
+    values: Mapping[str, object],
+    states: Mapping[str, Mapping[str, object]],
+) -> list[str]:
+    """Build Preview settlement notes N1-N4 (§1.8). DD-18: [] without a record."""
+    record = config.get("setup_profiles")
+    if not record:
+        return []
+    settlement = record.get("settlement", "generic")
+    currency = config["currency"]
+    sell = config["sources"]["sell"]
+    forecast_bindings = (
+        sell.get("forecast", []) if sell.get("mode") == "forecast" else []
+    )
+    notes: list[str] = []
+
+    if (
+        settlement.startswith("pl_")
+        and currency == "PLN"
+        and not values["limit_export_to_pv"]
+    ):
+        notes.append(
+            "Note: Sell only PV is off (setting or strategy "
+            f"{values['strategy']}); a Polish prosumer may only sell energy "
+            "from their own PV."
+        )
+
+    sell_multiplier = values.get("sell_multiplier")
+    if forecast_bindings and sell_multiplier is not None and sell_multiplier != 1:
+        for binding in forecast_bindings:
+            entity_id = binding["entity"]["entity_id"]
+            attr = states.get(entity_id, {}).get("attributes", {}).get("settlement")
+            if isinstance(attr, str) and "multiplier" in attr:
+                notes.append(
+                    f"Note: sell source {entity_id} already applies its "
+                    f"settlement ({attr}); sell multiplier {sell_multiplier:g} "
+                    "applies a multiplier again — set it to 1."
+                )
+                break
+
+    if (
+        settlement == "pl_net_billing"
+        and currency == "PLN"
+        and any(binding["unit"] == "PLN/MWh" for binding in forecast_bindings)
+    ):
+        text = (
+            "Note: raw RCE sell prices are not floored at 0 (net-billing "
+            "values negative prices at 0)"
+        )
+        if sell_multiplier != 1.23:
+            text += (
+                " and the 1.23 deposit multiplier is not applied (sell "
+                f"multiplier {sell_multiplier:g})"
+            )
+        text += "; examples/rce-sell-price.yaml publishes max(RCE, 0) × 1.23."
+        notes.append(text)
+
+    profile = SETTLEMENT_PROFILES.get(settlement)
+    ratio = profile.sell_ratio if profile is not None else None
+    if ratio is not None and currency == "PLN":
+        mismatch = None
+        for slot in problem.slots:
+            expected = ratio * slot.buy_per_kwh
+            if not isclose(slot.sell_per_kwh, expected, rel_tol=0, abs_tol=1e-6):
+                mismatch = slot
+                break
+        if mismatch is not None:
+            notes.append(
+                "Note: net-metering sell is a copy, not linked to buy: first "
+                f"mismatch {mismatch.start.isoformat()} sell "
+                f"{mismatch.sell_per_kwh:g} ≠ {ratio:g} × buy "
+                f"{mismatch.buy_per_kwh:g} {currency}/kWh. Bind sell to the "
+                f"buy source and set sell multiplier = {ratio:g} × buy "
+                f"multiplier, sell addition = {ratio:g} × buy addition, same "
+                "VAT setting."
+            )
+        else:
+            notes.append(
+                f"Note: net-metering sell = {ratio:g} × buy in every "
+                "previewed interval; this is a copy, later buy edits do not "
+                "update sell."
+            )
+
+    return notes

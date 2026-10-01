@@ -43,6 +43,7 @@ from .setup_profiles import (
     profile_options,
     reconcile_assignments,
     selection_record,
+    settlement_notes,
 )
 from .source_flow import SourceEditor
 from .source_management import (
@@ -749,7 +750,7 @@ class Editor(SourceEditor):
                 candidate.get("helpers", {}),
                 values,
                 new_entry=not self._existing_installation,
-            )
+            ) + settlement_notes(candidate, problem, values, states)
             if profile_lines:
                 preview += "\n" + "\n".join(profile_lines)
             if solver_error:
