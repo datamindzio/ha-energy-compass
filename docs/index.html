@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Energy Compass v0.1.30: every Home Assistant entity, state, calculation, planning assumption and forecast-quality signal explained.">
+  <meta name="description" content="Energy Compass v0.1.31: every Home Assistant entity, state, calculation, planning assumption and forecast-quality signal explained.">
   <title>Energy Compass — Entity and calculation guide</title>
   <style>
     :root {
@@ -118,7 +118,7 @@
       </picture>
       <span>Energy<br>Compass</span>
     </a>
-    <p class="version">User guide · v0.1.30</p>
+    <p class="version">User guide · v0.1.31</p>
     <nav aria-label="Sections">
       <ul>
         <li><a href="#overview">Reading the compass</a></li>
@@ -142,7 +142,7 @@
     <header>
       <h1>Understand every recommendation.</h1>
       <p class="lead">What Energy Compass entities mean, how their values are calculated, and which assumptions sit behind the plan.</p>
-      <p>This guide describes the Home Assistant integration in <strong>v0.1.30</strong>. Examples use PLN; your installation uses its configured currency. Names are shown in English and Polish.</p>
+      <p>This guide describes the Home Assistant integration in <strong>v0.1.31</strong>. Examples use PLN; your installation uses its configured currency. Names are shown in English and Polish.</p>
     </header>
 
     <section id="overview" aria-labelledby="overview-title">
@@ -422,7 +422,7 @@
               <tr><th scope="row"><code>timeout</code></th><td>The base solve or overall calculation exceeded its budget. Check timing, model size and hardware. A single failed probe can instead leave a ready baseline with incomplete guidance.</td></tr>
               <tr><th scope="row"><code>infeasible</code></th><td>No baseline plan satisfies all constraints. Check demand/generation, SOC, reserve, power/export limits, terminal requirements and allowed capabilities.</td></tr>
               <tr><th scope="row"><code>error</code></th><td>Another solver failure or unexpected exception occurred. Inspect reason and integration diagnostics/logs.</td></tr>
-              <tr><th scope="row"><code>insufficient_data</code></th><td>Reserved in translations, but not emitted by the 0.1.30 coordinator. Missing-data validation currently reports <code>invalid_input</code>.</td></tr>
+              <tr><th scope="row"><code>insufficient_data</code></th><td>Reserved in translations, but not emitted by the 0.1.31 coordinator. Missing-data validation currently reports <code>invalid_input</code>.</td></tr>
             </tbody>
           </table>
         </section>
@@ -610,7 +610,7 @@
       </ul>
     </section>
     <footer>
-      <p>Energy Compass v0.1.30 · This guide works online and offline from a repository checkout. Theme follows your system preference. Supporting documentation and source-code links open GitHub.</p>
+      <p>Energy Compass v0.1.31 · This guide works online and offline from a repository checkout. Theme follows your system preference. Supporting documentation and source-code links open GitHub.</p>
       <p><a href="#overview">Back to the guide</a> · <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/LICENSE">Apache License 2.0</a></p>
     </footer>
   </main>
