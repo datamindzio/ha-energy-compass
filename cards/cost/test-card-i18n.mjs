@@ -88,7 +88,8 @@ test('missing deposit_backfill never puts undefined/null into statistic_ids',asy
   const card=new Card();
   const config={...HOUSEHOLD_CONFIG}; delete config.deposit_backfill;
   card.config=config; card.zone='Europe/Warsaw';
-  const now=Date.now(), bounds=dayBounds(now,'Europe/Warsaw');
+  // Mid-month: on the 1st the month-to-date read is empty and makes no call.
+  const now=Date.parse('2026-09-15T10:00:00Z'), bounds=dayBounds(now,'Europe/Warsaw');
   card.report={now,bounds,actualCost:[{start:bounds.start,end:now,amount:1}],actualExport:[{start:bounds.start,end:now,amount:1}],importKwh:1,exportKwh:1,issues:[]};
   const calls=[];
   card._hass={states:{},callWS:async req=>{calls.push(req); return {};}};
