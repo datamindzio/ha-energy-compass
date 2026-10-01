@@ -38,6 +38,7 @@ from .setup_profiles import (
     AXES,
     apply_assignments,
     currency_error,
+    preview_lines,
     profile_assignments,
     profile_options,
     reconcile_assignments,
@@ -741,6 +742,16 @@ class Editor(SourceEditor):
                     f"\nDaily AC-side battery throughput: {origin}; measured {observed:g} kWh; "
                     f"cap {cap:g} kWh; remaining today {remaining:g} kWh."
                 )
+            profile_lines = preview_lines(
+                candidate.get("setup_profiles"),
+                self._profile_assignments,
+                candidate["settings"],
+                candidate.get("helpers", {}),
+                values,
+                new_entry=not self._existing_installation,
+            )
+            if profile_lines:
+                preview += "\n" + "\n".join(profile_lines)
             if solver_error:
                 preview += "\n" + _solver_failure_detail(problem, values, solver_error)
             elif user_input is not None and user_input.get("confirm") is True:

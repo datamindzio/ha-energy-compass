@@ -4,7 +4,7 @@ a published revision.
 """
 
 import dataclasses
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from types import MappingProxyType
 
 from .engine.strategy import STRATEGY_OWNED_KEYS
@@ -241,3 +241,70 @@ def selection_record(selections: Mapping[str, str]) -> dict:
         "settlement": selections.get("settlement", "generic"),
         "inverter": selections.get("inverter", "generic"),
     }
+
+
+def _format_value(value: object) -> str:
+    """Render a value the way Preview text does: on/off, :g numbers, strings verbatim."""
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, (int, float)):
+        return f"{value:g}"
+    return str(value)
+
+
+def preview_lines(
+    record: Mapping[str, object] | None,
+    assignments: Sequence[Assignment],
+    settings: Mapping[str, object],
+    helpers: Mapping[str, Mapping[str, object]],
+    values: Mapping[str, object],
+    *,
+    new_entry: bool,
+) -> list[str]:
+    """Build the Preview's setup-profile provenance block (§1.8). Pure."""
+    if not record:
+        return []
+    revision = record["revision"]
+    axis_order = list(AXES)
+    labels = {
+        axis: profile_label(axis, record.get(axis, "generic"), "en", revision=revision)
+        for axis in axis_order
+    }
+    summary = ", ".join(f"{axis} {labels[axis]}" for axis in axis_order)
+    if not new_entry:
+        return [
+            (
+                f"Setup profiles at creation (revision {revision}, not "
+                f"re-applied): {summary}."
+            )
+        ]
+    if not assignments:
+        return [f"Setup profiles: {summary}; no values pre-filled."]
+    lines = [f"Setup profiles (applied once at creation; editable): {summary}."]
+    by_axis: dict[str, list[Assignment]] = {}
+    for assignment in assignments:
+        by_axis.setdefault(assignment.axis, []).append(assignment)
+    for axis in axis_order:
+        axis_assignments = by_axis.get(axis)
+        if not axis_assignments:
+            continue
+        pairs = ", ".join(f"{a.key} {_format_value(a.value)}" for a in axis_assignments)
+        lines.append(f"Pre-filled by {axis} {labels[axis]}: {pairs}.")
+    edited = []
+    for assignment in assignments:
+        key = assignment.key
+        if key in helpers:
+            entity_id = helpers[key]["entity"]["entity_id"]
+            effective = _format_value(values[key])
+            edited.append(
+                f"{key} {_format_value(assignment.value)} → helper {entity_id} "
+                f"({effective})"
+            )
+        elif settings.get(key) != assignment.value:
+            edited.append(
+                f"{key} {_format_value(assignment.value)} → "
+                f"{_format_value(settings[key])}"
+            )
+    if edited:
+        lines.append("Edited after pre-fill: " + ", ".join(edited) + ".")
+    return lines

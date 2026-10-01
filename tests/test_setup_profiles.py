@@ -470,6 +470,107 @@ def test_selection_record():
     }
 
 
+def test_preview_lines_generic_new_entry():
+    record = {"revision": 1, "settlement": "generic", "inverter": "generic"}
+    assert sp.preview_lines(record, (), {}, {}, {}, new_entry=True) == [
+        (
+            "Setup profiles: settlement Generic (no settlement assumptions), "
+            "inverter Generic (no inverter defaults); no values pre-filled."
+        )
+    ]
+
+
+def test_preview_lines_prefilled_and_edited():
+    selections = {"settlement": "pl_net_billing", "inverter": "deye_hybrid"}
+    record = sp.selection_record(selections)
+    assignments = sp.profile_assignments(selections, "pse")
+    settings = {a.key: a.value for a in assignments}
+    settings["terminal_value_per_kwh"] = 0.5
+    values = dict(settings)
+    lines = sp.preview_lines(record, assignments, settings, {}, values, new_entry=True)
+    assert lines == [
+        (
+            "Setup profiles (applied once at creation; editable): settlement "
+            "Poland: net-billing (RCE deposit), inverter Deye hybrid (Solarman)."
+        ),
+        (
+            "Pre-filled by settlement Poland: net-billing (RCE deposit): "
+            "import_penalty_per_kwh 0.2, terminal_mode value, "
+            "terminal_value_per_kwh 0.6, sell_multiplier 1.23."
+        ),
+        (
+            "Pre-filled by inverter Deye hybrid (Solarman): idle_drain_kw 0.13, "
+            "refresh_minutes 60."
+        ),
+        "Edited after pre-fill: terminal_value_per_kwh 0.6 → 0.5.",
+    ]
+
+
+def test_preview_lines_reports_helper_bound_prefill():
+    selections = {"settlement": "pl_net_billing", "inverter": "deye_hybrid"}
+    record = sp.selection_record(selections)
+    assignments = sp.profile_assignments(selections, "pse")
+    settings = {a.key: a.value for a in assignments}
+    helpers = {
+        "idle_drain_kw": {
+            "entity": {"entity_id": "input_number.standby_loss", "attribute": None},
+            "unit": "kW",
+        }
+    }
+
+    values = dict(settings)
+    values["idle_drain_kw"] = 0.2
+    lines = sp.preview_lines(
+        record, assignments, settings, helpers, values, new_entry=True
+    )
+    assert lines[-1] == (
+        "Edited after pre-fill: idle_drain_kw 0.13 → helper "
+        "input_number.standby_loss (0.2)."
+    )
+
+    values["idle_drain_kw"] = 0.13
+    lines = sp.preview_lines(
+        record, assignments, settings, helpers, values, new_entry=True
+    )
+    assert lines[-1] == (
+        "Edited after pre-fill: idle_drain_kw 0.13 → helper "
+        "input_number.standby_loss (0.13)."
+    )
+
+    settings = dict(settings, terminal_value_per_kwh=0.5)
+    values = dict(values, terminal_value_per_kwh=0.5)
+    lines = sp.preview_lines(
+        record, assignments, settings, helpers, values, new_entry=True
+    )
+    assert lines[-1] == (
+        "Edited after pre-fill: terminal_value_per_kwh 0.6 → 0.5, "
+        "idle_drain_kw 0.13 → helper input_number.standby_loss (0.13)."
+    )
+
+
+def test_preview_creation_line():
+    record = {
+        "revision": 1,
+        "settlement": "pl_net_billing",
+        "inverter": "deye_hybrid",
+    }
+    assert sp.preview_lines(record, (), {}, {}, {}, new_entry=False) == [
+        (
+            "Setup profiles at creation (revision 1, not re-applied): "
+            "settlement Poland: net-billing (RCE deposit), inverter Deye "
+            "hybrid (Solarman)."
+        )
+    ]
+    assert sp.preview_lines(None, (), {}, {}, {}, new_entry=False) == []
+    unknown = {"revision": 99, "settlement": "mystery", "inverter": "mystery_inv"}
+    assert sp.preview_lines(unknown, (), {}, {}, {}, new_entry=False) == [
+        (
+            "Setup profiles at creation (revision 99, not re-applied): "
+            "settlement mystery, inverter mystery_inv."
+        )
+    ]
+
+
 EN_STRINGS = {
     ("config", "step", "user", "data", "settlement"): "Prosumer settlement",
     ("config", "step", "user", "data", "inverter"): "Inverter",
