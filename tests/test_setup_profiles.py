@@ -955,23 +955,23 @@ def _format_value(value):
     return str(value)
 
 
-def _current_profile_keys() -> set[str]:
-    keys: set[str] = set()
-    for profiles in sp.CURRENT.axes.values():
-        keys.update(profiles.keys())
-    return keys
-
-
-def _current_pinned_assignments() -> list[tuple[str, object]]:
-    assignments: list[tuple[str, object]] = []
-    for profiles in sp.CURRENT.axes.values():
-        for profile in profiles.values():
-            assignments.extend(profile.settings.items())
-            if profile.sell_ratio is not None:
-                assignments.append(("sell_multiplier", profile.sell_ratio))
-            if profile.raw_rce_sell_multiplier is not None:
-                assignments.append(("sell_multiplier", profile.raw_rce_sell_multiplier))
+def _profile_assignments(profile) -> list[tuple[str, object]]:
+    assignments = list(profile.settings.items())
+    if profile.sell_ratio is not None:
+        assignments.append(("sell_multiplier", profile.sell_ratio))
+    if profile.raw_rce_sell_multiplier is not None:
+        assignments.append(("sell_multiplier", profile.raw_rce_sell_multiplier))
     return assignments
+
+
+def _profile_row(section: str, profile: str) -> str:
+    """Return the Markdown table row documenting one profile (its first cell
+    is the backticked profile key), so key/value pairs are checked against
+    their own profile's row, not anywhere in the section."""
+    for line in section.splitlines():
+        if line.startswith(f"| `{profile}` |"):
+            return line
+    raise AssertionError(f"row for profile {profile!r} not found in section")
 
 
 def _section(text: str, heading: str) -> str:
@@ -994,20 +994,18 @@ def test_setup_profile_docs():
     section_en = _section(guide_en, "### Setup profiles (new installations)")
     section_pl = _section(guide_pl, "### Profile startowe (nowe instalacje)")
 
-    profile_keys = _current_profile_keys()
-    assignments = _current_pinned_assignments()
-
     # Polish prose uses a comma decimal separator throughout the existing
     # guide (e.g. "0,20"); the Markdown section mirrors that convention.
     for section, decimal_separator in ((section_en, "."), (section_pl, ",")):
-        for key in profile_keys:
-            assert f"`{key}`" in section, f"profile key {key!r} missing from section"
-        for key, value in assignments:
-            assert f"`{key}`" in section, f"setting key {key!r} missing from section"
-            formatted = _format_value(value).replace(".", decimal_separator)
-            assert formatted in section, (
-                f"value {formatted!r} for {key!r} missing from section"
-            )
+        for profiles in sp.CURRENT.axes.values():
+            for name, profile in profiles.items():
+                row = _profile_row(section, name)
+                for key, value in _profile_assignments(profile):
+                    formatted = _format_value(value).replace(".", decimal_separator)
+                    pattern = rf"`{re.escape(key)}`\s+`?{re.escape(formatted)}`?"
+                    assert re.search(pattern, row), (
+                        f"{key}={formatted!r} not documented in {name!r} row: {row!r}"
+                    )
 
     installation = (REPO_ROOT / "docs" / "installation.md").read_text(encoding="utf-8")
     assert "guide.en.md#setup-profiles-new-installations" in installation
