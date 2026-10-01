@@ -136,8 +136,9 @@ profiles never set a tariff price (`buy_rate`, `sell_rate`, `buy_addition`, `sel
 `monthly_charge`) and never touch a strategy-owned setting.
 
 **Sell only PV** (`limit_export_to_pv`) stays on with every settlement profile — a Polish prosumer may
-only sell energy produced by their own PV — and is only turned off by switching to the `max_export`
-strategy.
+only sell energy produced by their own PV — and is turned off either by switching to the `max_export`
+strategy or by setting `limit_export_to_pv` to off directly; the explicit setting persists across
+strategy changes.
 
 The 1.23 deposit multiplier applies only together with a raw-RCE preset (`pse`, `pse_solcast`); with
 [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml), which already applies the floor and

@@ -289,7 +289,8 @@ Profile startowe nigdy nie ustawiają ceny taryfy (<code>buy_rate</code>, <code>
 <code>sell_addition</code>, <code>monthly_charge</code>) i nigdy nie dotykają ustawienia należącego do strategii.</p>
 <p><strong>Sell only PV</strong> (<code>limit_export_to_pv</code>, „sprzedawaj tylko PV”) pozostaje włączone przy każdym
 profilu rozliczenia — polski prosument może sprzedawać tylko energię z własnej instalacji PV — i
-jest wyłączane wyłącznie przez przełączenie na strategię <code>max_export</code>.</p>
+jest wyłączane przez przełączenie na strategię <code>max_export</code> albo przez bezpośrednie ustawienie
+<code>limit_export_to_pv</code> na wył.; jawne ustawienie pozostaje w mocy mimo zmiany strategii.</p>
 <p>Mnożnik depozytu 1,23 obowiązuje tylko razem z presetem surowego RCE (<code>pse</code>, <code>pse_solcast</code>); z
 <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/examples/rce-sell-price.yaml"><code>examples/rce-sell-price.yaml</code></a>, który sam już stosuje próg i
 mnożnik 1,23, zostaw mnożnik sprzedaży na 1 (zob. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/tariff-helper.md">pomocnik taryfy</a>).</p>

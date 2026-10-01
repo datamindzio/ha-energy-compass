@@ -284,8 +284,9 @@ effective value.</p>
 profiles never set a tariff price (<code>buy_rate</code>, <code>sell_rate</code>, <code>buy_addition</code>, <code>sell_addition</code>,
 <code>monthly_charge</code>) and never touch a strategy-owned setting.</p>
 <p><strong>Sell only PV</strong> (<code>limit_export_to_pv</code>) stays on with every settlement profile — a Polish prosumer may
-only sell energy produced by their own PV — and is only turned off by switching to the <code>max_export</code>
-strategy.</p>
+only sell energy produced by their own PV — and is turned off either by switching to the <code>max_export</code>
+strategy or by setting <code>limit_export_to_pv</code> to off directly; the explicit setting persists across
+strategy changes.</p>
 <p>The 1.23 deposit multiplier applies only together with a raw-RCE preset (<code>pse</code>, <code>pse_solcast</code>); with
 <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/examples/rce-sell-price.yaml"><code>examples/rce-sell-price.yaml</code></a>, which already applies the floor and
 the 1.23 factor itself, keep the sell multiplier at 1 (see <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/tariff-helper.md">tariff helper</a>).</p>

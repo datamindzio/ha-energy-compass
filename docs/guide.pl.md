@@ -141,7 +141,8 @@ Profile startowe nigdy nie ustawiają ceny taryfy (`buy_rate`, `sell_rate`, `buy
 
 **Sell only PV** (`limit_export_to_pv`, „sprzedawaj tylko PV”) pozostaje włączone przy każdym
 profilu rozliczenia — polski prosument może sprzedawać tylko energię z własnej instalacji PV — i
-jest wyłączane wyłącznie przez przełączenie na strategię `max_export`.
+jest wyłączane przez przełączenie na strategię `max_export` albo przez bezpośrednie ustawienie
+`limit_export_to_pv` na wył.; jawne ustawienie pozostaje w mocy mimo zmiany strategii.
 
 Mnożnik depozytu 1,23 obowiązuje tylko razem z presetem surowego RCE (`pse`, `pse_solcast`); z
 [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml), który sam już stosuje próg i
