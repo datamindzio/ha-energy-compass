@@ -575,7 +575,12 @@ async def test_options_flow_never_reapplies_setup_profiles(
 ):
     entry, original = _setup_profile_entry(hass)
     spy1, spy2, spy3, spy4 = _profile_spies()
-    with spy1 as spy_assignments, spy2 as spy_apply, spy3 as spy_reconcile, spy4:
+    with (
+        spy1 as spy_assignments,
+        spy2 as spy_apply,
+        spy3 as spy_reconcile,
+        spy4 as spy_sp_assignments,
+    ):
         result = await hass.config_entries.options.async_init(entry.entry_id)
         fid = result["flow_id"]
         await hass.config_entries.options.async_configure(
@@ -615,6 +620,7 @@ async def test_options_flow_never_reapplies_setup_profiles(
         spy_assignments.assert_not_called()
         spy_apply.assert_not_called()
         spy_reconcile.assert_not_called()
+        spy_sp_assignments.assert_not_called()
 
 
 async def test_reconfigure_preserves_setup_profile_record(
@@ -622,7 +628,12 @@ async def test_reconfigure_preserves_setup_profile_record(
 ):
     entry, original = _setup_profile_entry(hass)
     spy1, spy2, spy3, spy4 = _profile_spies()
-    with spy1 as spy_assignments, spy2 as spy_apply, spy3 as spy_reconcile, spy4:
+    with (
+        spy1 as spy_assignments,
+        spy2 as spy_apply,
+        spy3 as spy_reconcile,
+        spy4 as spy_sp_assignments,
+    ):
         result = await hass.config_entries.flow.async_init(
             "energy_compass",
             context={
@@ -658,6 +669,7 @@ async def test_reconfigure_preserves_setup_profile_record(
         spy_assignments.assert_not_called()
         spy_apply.assert_not_called()
         spy_reconcile.assert_not_called()
+        spy_sp_assignments.assert_not_called()
 
 
 async def test_legacy_entry_has_no_setup_profiles(
