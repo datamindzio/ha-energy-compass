@@ -897,6 +897,55 @@ async def test_pl_settlement_rejects_non_pln_currency(
     assert tariff_defaults["sell_multiplier"] == 1
 
 
+async def test_user_step_error_preserves_all_submitted_fields(
+    recorder_mock, hass, enable_custom_integrations
+):
+    """A settlement_currency error on the user step must redisplay every
+    submitted field, not just settlement/inverter (name/timezone/preset/PV/
+    battery were reverting to defaults)."""
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    submitted = _user_payload(
+        name="Chata",
+        currency="EUR",
+        timezone="Europe/Warsaw",
+        preset="pse",
+        settlement="pl_net_billing",
+        pv_enabled=True,
+        battery_enabled=True,
+    )
+    result = await hass.config_entries.flow.async_configure(fid, submitted)
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"settlement": "settlement_currency"}
+    defaults = {str(key): key.default() for key in result["data_schema"].schema}
+    assert defaults["name"] == "Chata"
+    assert defaults["currency"] == "EUR"
+    assert defaults["timezone"] == "Europe/Warsaw"
+    assert defaults["preset"] == "pse"
+    assert defaults["pv_enabled"] is True
+    assert defaults["battery_enabled"] is True
+
+    result = await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(
+            name="Chata",
+            currency="PLN",
+            timezone="Europe/Warsaw",
+            preset="pse",
+            settlement="pl_net_billing",
+            pv_enabled=True,
+            battery_enabled=True,
+        ),
+    )
+    assert result["type"] == "menu"
+    flow = hass.config_entries.flow._progress[fid]
+    assert flow._draft["preset"] == "pse"
+    assert flow._draft["settings"]["sell_multiplier"] == 1.23
+
+
 async def test_new_entry_installation_keeps_pln_for_pl_settlement(
     recorder_mock, hass, enable_custom_integrations
 ):

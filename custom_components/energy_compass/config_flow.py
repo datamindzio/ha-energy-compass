@@ -837,6 +837,12 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
             self.hass.config.time_zone,
         )
         if user_input is not None:
+            self._draft["name"] = user_input["name"]
+            self._draft["currency"] = user_input["currency"]
+            self._draft["timezone"] = user_input["timezone"]
+            self._draft["preset"] = user_input["preset"]
+            self._draft["sources"]["pv"]["enabled"] = user_input["pv_enabled"]
+            self._draft["sources"]["battery_enabled"] = user_input["battery_enabled"]
             selections = {axis: user_input.get(axis, "generic") for axis in AXES}
             err = currency_error(selections, user_input["currency"])
             if err:
