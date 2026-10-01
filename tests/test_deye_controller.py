@@ -618,7 +618,9 @@ def test_reached_sell_row_keeps_small_discharge_for_house():
     from PV) was reached at once; 0 A sent ~420 W of house load to the grid at a
     full battery. The reached row keeps reached_discharge_current without Sell."""
     h = voltage_sell()
-    h.data[P]["attributes"]["intervals"][0].update(discharge_kwh=0.025, end_soc_kwh=24.9)
+    h.data[P]["attributes"]["intervals"][0].update(
+        discharge_kwh=0.025, end_soc_kwh=24.9
+    )
     r = Runner(h)
     r.run()
     d = h.decision()
@@ -647,7 +649,10 @@ def test_voltage_sell_without_numeric_counter_keeps_voltage_target():
         d = h.decision()
         assert not d["energy_mode"] and d["target_reached"]
         assert d["target_voltage"] == 53.1
-        assert d["desired"][h.ctx["discharge_entity"]] == h.ctx["reached_discharge_current"]
+        assert (
+            d["desired"][h.ctx["discharge_entity"]]
+            == h.ctx["reached_discharge_current"]
+        )
 
 
 def test_voltage_sell_counter_reported_only_on_change():
