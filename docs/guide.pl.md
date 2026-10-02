@@ -1008,6 +1008,7 @@ Włącz w **Ustawienia → Urządzenia i usługi → Energy Compass → Konfigur
 | Wysyłaj do Energy Atlas | Domyślnie wyłączone. |
 | Środowisko | **staging** (`atlas-api-staging.datamindz.io`, do walidacji przepływu danych) lub **produkcja** (`atlas-api.datamindz.io`, kolektor produkcyjny). Staging waliduje przepływ danych; produkcja nie jest jeszcze dostępna w tym wydaniu (brak wbudowanego poświadczenia). |
 | Moc instalacji PV (kWp) | Zainstalowana moc PV, wprowadzana raz; nie jest wyliczana z innych ustawień Compass. Bez wartości domyślnej: wymagana, gdy wysyłanie jest włączone. |
+| Moc przyłączeniowa (kW) | Opcjonalna, 0,1–1000 kW: limit przyłącza witryny do sieci, jedna wartość dla poboru i oddawania. Puste, dopóki nie zapiszesz wartości — nigdy nie jest podpowiadana z limitów importu/eksportu sieci. Przy pustym polu nic nie jest wysyłane, a mapa liczy witrynę **bez max**. Działa na żywo jak reszta formularza. |
 
 **Nie trzeba wpisywać sekretu.** To wydanie rejestruje się współdzielonym **publicznym**
 poświadczeniem wbudowanym w samą integrację — tym samym dla każdej instalacji tej wersji — więc
@@ -1027,7 +1028,8 @@ danych: moc PV, import/eksport z sieci i moc baterii, moc obciążenia domowego 
 rejestratora), SOC baterii oraz liczniki energii PV/importu/eksportu (tylko liczniki, których
 atrybut Home Assistant `state_class` to `total`/`total_increasing`);
 plan każdego rozwiązania Compass wraz z wejściami cen/PV/zużycia; kilka atrybutów instalacji (moc PV
-w kWp, pojemność baterii nominalna i użyteczna, próg SOC, wersja Compass) oraz przybliżona
+w kWp, moc przyłączeniowa w kW, jeśli ją podasz, pojemność baterii nominalna i użyteczna, próg SOC,
+wersja Compass) oraz przybliżona
 lokalizacja strefy domowej Home Assistant jako komórka H3 o rozdzielczości 6 (sześciokąt o
 powierzchni ok. 36 km², dzięki czemu Atlas zalicza Twoją instalację do właściwego województwa).
 Komórka jest liczona raz, przy starcie wysyłki, a dokładne współrzędne nigdy nie są zapisywane ani

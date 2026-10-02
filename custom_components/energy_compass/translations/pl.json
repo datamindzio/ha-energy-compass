@@ -831,11 +831,13 @@
           "enabled": "Wysyłaj do Energy Atlas",
           "environment": "Środowisko",
           "pv_kwp": "Moc instalacji PV (kWp)",
+          "grid_connection_kw": "Moc przyłączeniowa (kW)",
           "forget_site": "Zapomnij witrynę w tym środowisku"
         },
         "data_description": {
           "environment": "Staging waliduje przepływ danych; produkcja to kolektor produkcyjny. Przełączenie zachowuje osobną witrynę i kolejkę danych każdego środowiska.",
           "pv_kwp": "Zainstalowana moc PV w kWp, 0-1000. Nie jest wyliczana z innych ustawień Compass.",
+          "grid_connection_kw": "Moc przyłączeniowa w kW, 0,1-1000; jeden limit dla poboru i oddawania. Opcjonalnie: zostaw puste, jeśli nieznana — mapa liczy wtedy witrynę jako „bez max”. Nie jest wyliczana z limitów importu/eksportu sieci.",
           "forget_site": "Usuwa klucz witryny i zakolejkowane dane wybranego środowiska na tym urządzeniu. Odzyskiwanie po unieważnieniu klucza lub konflikcie; sama witryna nie jest usuwana po stronie kolektora. Kolejny zapis z włączoną wysyłką automatycznie zarejestruje nowy klucz."
         }
       },

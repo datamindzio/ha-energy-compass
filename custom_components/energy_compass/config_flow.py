@@ -279,6 +279,7 @@ class Editor(SourceEditor):
             enabled = user_input["enabled"]
             environment = user_input["environment"]
             pv_kwp = user_input.get("pv_kwp")
+            grid_connection_kw = user_input.get("grid_connection_kw")
             if user_input.get("forget_site"):
                 runtime_data = getattr(self.config_entry, "runtime_data", None)
                 bridge = getattr(runtime_data, "atlas", None)
@@ -325,6 +326,8 @@ class Editor(SourceEditor):
                 new_atlas = {"enabled": enabled, "environment": environment}
                 if pv_kwp is not None:
                     new_atlas["pv_kwp"] = pv_kwp
+                if grid_connection_kw is not None:
+                    new_atlas["grid_connection_kw"] = grid_connection_kw
                 # ADR-0019 §B3: only a *loaded* entry applies the change live; a
                 # not-loaded entry (setup failed, or unloaded) keeps the default
                 # `automatic_reload = True` so the save retries setup instead.
@@ -374,6 +377,14 @@ class Editor(SourceEditor):
                         "pv_kwp",
                         description={"suggested_value": current.get("pv_kwp")},
                     ): number(0.01, 1000, "kWp"),
+                    # S-215: optional, never prefilled from the grid import/export limits;
+                    # empty = not known, the attributes then omit `grid_connection_kw`.
+                    vol.Optional(
+                        "grid_connection_kw",
+                        description={
+                            "suggested_value": current.get("grid_connection_kw")
+                        },
+                    ): number(0.1, 1000, "kW"),
                     vol.Optional(
                         "forget_site", default=False
                     ): selector.BooleanSelector(),

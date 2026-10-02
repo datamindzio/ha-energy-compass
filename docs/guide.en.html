@@ -1664,6 +1664,10 @@ background thread, no new files.</p>
 <td>PV capacity (kWp)</td>
 <td>Installed PV capacity, entered once; not derived from other Compass settings. No default: required when sending is on.</td>
 </tr>
+<tr>
+<td>Grid connection power (kW)</td>
+<td>Optional, 0.1–1000 kW: the site's grid connection limit, one value for import and export. Empty unless you saved one before — never prefilled from the grid import/export limits. Left empty, nothing is sent and the map counts the site as <strong>without max</strong>. Applies live like the rest of the form.</td>
+</tr>
 </tbody>
 </table></section>
 <p><strong>No secret to enter.</strong> This release registers with a shared <strong>public</strong> enrollment credential baked
@@ -1681,8 +1685,8 @@ never&gt; · waiting &lt;n&gt;</code> (plus <code>halted: &lt;kinds&gt;</code> i
 import/export and battery power, household load power (recorder mode only), battery SOC, and
 PV/import/export energy counters (only counters
 whose Home Assistant <code>state_class</code> is <code>total</code>/<code>total_increasing</code>); each Compass solve's plan and
-its price/PV/load inputs; a handful of installation attributes (PV kWp, battery capacity and usable
-capacity, SOC floor, the Compass version) and the coarse location of your Home Assistant home zone
+its price/PV/load inputs; a handful of installation attributes (PV kWp, grid connection power in kW
+if you entered it, battery capacity and usable capacity, SOC floor, the Compass version) and the coarse location of your Home Assistant home zone
 as an H3 resolution-6 cell (a hexagon of roughly 36 km², so Atlas can count your site in its
 voivodeship). The cell is computed once, when delivery starts, and your exact coordinates are never
 stored or sent. Nothing else — no tariff text or inverter model, and the enrollment credential
