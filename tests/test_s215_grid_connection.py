@@ -34,6 +34,12 @@ CONTRACT = ROOT / "tests" / "atlas_contract" / "openapi.yaml"
 COMPONENT = ROOT / "custom_components" / "energy_compass"
 OPENAPI_URI = "urn:atlas-openapi"
 
+# Red until the dev ticket T-796 lands. Strict: once the behaviour exists the test XPASSes and
+# fails CI, so T-796 must delete this marker (and every use of it) when it implements the story.
+RED_UNTIL_T796 = pytest.mark.xfail(
+    strict=True, reason="S-215 not implemented yet (T-796 removes this marker)"
+)
+
 FIELD = "grid_connection_kw"
 LABEL_EN = "Grid connection power (kW)"
 LABEL_PL = "Moc przyłączeniowa (kW)"
@@ -80,6 +86,7 @@ def test_S215_vendored_contract_is_1_3_0_hexmap2():
     assert FIELD in doc["components"]["schemas"]["AttrsV1"]["properties"]
 
 
+@RED_UNTIL_T796
 @pytest.mark.parametrize("value", VALID_VALUES)
 def test_S215_snapshot_carries_the_saved_value_and_is_valid_attrs_v1(value):
     attrs = build_attrs(_config(), {"pv_kwp": 6.5, FIELD: value})
@@ -87,6 +94,7 @@ def test_S215_snapshot_carries_the_saved_value_and_is_valid_attrs_v1(value):
     assert attrs_errors(attrs) == []
 
 
+@RED_UNTIL_T796
 def test_S215_snapshot_with_location_and_grid_connection_is_valid_attrs_v1():
     attrs = build_attrs(_config(), {"pv_kwp": 6.5, FIELD: 11.0}, "861f8d947ffffff")
     assert attrs[FIELD] == 11.0
@@ -127,6 +135,7 @@ def _tracker(tmp_path, settings: dict):
     return tracker, outbox
 
 
+@RED_UNTIL_T796
 def test_S215_unchanged_value_queues_no_new_attribute_version(tmp_path):
     settings = {"pv_kwp": 6.5, FIELD: 11.0}
     tracker, outbox = _tracker(tmp_path, settings)
@@ -137,6 +146,7 @@ def test_S215_unchanged_value_queues_no_new_attribute_version(tmp_path):
     assert item.payload["attrs"][FIELD] == 11.0
 
 
+@RED_UNTIL_T796
 def test_S215_changed_value_queues_a_new_attribute_version(tmp_path):
     settings = {"pv_kwp": 6.5, FIELD: 11.0}
     tracker, outbox = _tracker(tmp_path, settings)
@@ -147,6 +157,7 @@ def test_S215_changed_value_queues_a_new_attribute_version(tmp_path):
     assert values == [11.0, 14.0]
 
 
+@RED_UNTIL_T796
 def test_S215_adding_then_clearing_the_value_each_queue_one_version(tmp_path):
     settings = {"pv_kwp": 6.5}
     tracker, outbox = _tracker(tmp_path, settings)
@@ -234,6 +245,7 @@ def _schema_key(result, name):
     return key
 
 
+@RED_UNTIL_T796
 async def test_S215_field_follows_pv_capacity_and_is_not_prefilled_from_grid_limits(
     recorder_mock, hass, enable_custom_integrations
 ):
@@ -250,6 +262,7 @@ async def test_S215_field_follows_pv_capacity_and_is_not_prefilled_from_grid_lim
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@RED_UNTIL_T796
 async def test_S215_field_is_optional_in_the_schema(
     recorder_mock, hass, enable_custom_integrations
 ):
@@ -259,6 +272,7 @@ async def test_S215_field_is_optional_in_the_schema(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@RED_UNTIL_T796
 async def test_S215_field_shows_the_value_saved_before(
     recorder_mock, hass, enable_custom_integrations
 ):
@@ -269,6 +283,7 @@ async def test_S215_field_shows_the_value_saved_before(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@RED_UNTIL_T796
 @pytest.mark.parametrize("value", VALID_VALUES)
 async def test_S215_valid_value_is_stored_and_applied_live_without_reload(
     recorder_mock, hass, enable_custom_integrations, fake_sink, monkeypatch, value
@@ -322,6 +337,7 @@ async def test_S215_empty_field_saves_and_attributes_carry_no_key(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@RED_UNTIL_T796
 async def test_S215_clearing_a_saved_value_removes_it_from_options_and_attributes(
     recorder_mock, hass, enable_custom_integrations, fake_sink
 ):
@@ -339,6 +355,7 @@ async def test_S215_clearing_a_saved_value_removes_it_from_options_and_attribute
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@RED_UNTIL_T796
 @pytest.mark.parametrize("value", INVALID_VALUES)
 async def test_S215_out_of_range_value_shows_a_field_error_and_saves_nothing(
     recorder_mock, hass, enable_custom_integrations, fake_sink, value
@@ -372,6 +389,7 @@ def _step(path: Path) -> dict:
     return json.loads(path.read_text())["options"]["step"]["energy_atlas"]
 
 
+@RED_UNTIL_T796
 @pytest.mark.parametrize(
     ("file", "label"),
     [
@@ -386,6 +404,7 @@ def test_S215_field_has_label_and_description_in_every_translation_file(file, la
     assert step["data_description"][FIELD].strip()
 
 
+@RED_UNTIL_T796
 def test_S215_label_comes_right_after_pv_capacity_in_every_translation_file():
     for file in ("strings.json", "translations/en.json", "translations/pl.json"):
         keys = list(_step(COMPONENT / file)["data"])
@@ -404,6 +423,7 @@ def _atlas_section(path: str, heading: str) -> str:
     return rest[: nxt.start()] if nxt else rest
 
 
+@RED_UNTIL_T796
 def test_S215_guide_en_lists_the_field_in_the_atlas_settings_table_and_explains_without_max():
     section = _atlas_section("docs/guide.en.md", "Energy Atlas (optional)")
     rows = [line for line in section.splitlines() if line.startswith("|")]
@@ -416,6 +436,7 @@ def test_S215_guide_en_lists_the_field_in_the_atlas_settings_table_and_explains_
     assert "without max" in section
 
 
+@RED_UNTIL_T796
 def test_S215_guide_pl_lists_the_field_in_the_atlas_settings_table_and_explains_bez_max():
     section = _atlas_section("docs/guide.pl.md", "Energy Atlas (opcjonalnie)")
     rows = [line for line in section.splitlines() if line.startswith("|")]
