@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Energy Atlas Collector API
-  version: 1.1.0-w1
-  summary: Ingest and read API for Energy Atlas sites (E0) and the web app's public and signed-in reads (W1).
+  version: 1.3.0-hexmap2
+  summary: Ingest and read API for Energy Atlas sites (E0) and the web app's public and signed-in reads (W1, hex map epic).
   description: |
     Single source of truth for the collector (Go) and the edge agent `atlas_sink` (Python).
     Architecture: docs/ARCHITECTURE.md. Decisions: docs/adr/.
@@ -43,14 +43,31 @@ info:
     Web app (W1, docs/PRD-web.md; ADR-0020…0025)
     - Paths under `/v1/public/`, `/v1/web/` and `/auth/` exist only on the web hosts
       (`ATLAS_WEB_HOSTS`: `atlas.datamindz.io`, `atlas-staging.datamindz.io`); on other hosts they
-      answer 404 `not-found`. The SPA itself (`/`, `/assets/…`, `/geo/…`) is not part of this contract.
+      answer 404 `not-found`. The SPA itself (`/`, `/assets/…`) is not part of this contract.
     - Public operations (tag `public`) need no authentication and are rate limited per client IP
       (60 requests/min, token bucket; ADR-0021 §7). Status order: 429 → 422 → 404 → 503.
       They answer from the fleet snapshot (ADR-0021 §4, `generated_at`); no snapshot or one older
       than 5 min → 503 `unavailable`.
-    - Real sites appear in public responses only as `SourceAggregate.real` of the country and of
-      voivodeships and as `PublicRegionView.unlocated.real`; never in cells, cards, curves or ids
-      (ADR-0021 §5, PRD W2). Definitions of stale, current output, capacity: ADR-0021 §3.
+    - Real sites appear in public responses only as zone values without any identifier (see the hex map
+      rules below); never in cards, curves or ids (ADR-0021 §5, PRD W2). Definitions of stale, current output, capacity: ADR-0021 §3.
+
+    Hex map (docs/PRD-hexmap.md; ADR-0029…0033, iteration 2: ADR-0039…0042)
+    - H3 zones res 0–6; a site belongs to the res-6 zone of its `location.h3_res6` when that is a valid
+      res-6 cell, and to its res 5…0 ancestors computed from the index bits (ADR-0039 §2). Zone reads
+      list only zones with sites and carry no geometry; the client draws every zone of the view, empty
+      ones greyed, with `h3-js` (ADR-0039 §1). 1.3.0-hexmap2 is breaking for zone readers (the embedded
+      SPA only): `lat`/`lng`/`boundary` and empty zones removed, res 0–1 added.
+    - Zone maxima (ADR-0040): PV/wind `max_kw` = installed capacity over the reporting sites; grid
+      `max_kw` = Σ `grid_connection_kw` (optional attribute, AttrsV1/V2) over the reporting sites that
+      send it, `capped_*` the current of the same sites; sites without it are counted, never guessed.
+    - Zone values per source are additive counts and sums (`ZoneAggregate`, ADR-0033 §2); the client
+      adds `real` and `simulated` for the toggles, the server never sends a merged total.
+    - Real sites appear in zones at every resolution and as zone-table rows **without any identifier**
+      (owner decision D1, ADR-0030; supersedes W2 for zone reads). Only simulated rows carry `asset_id`;
+      only `getWebZone` carries `site_id`, and only on rows the principal may open.
+    - The W1 region operations (`/v1/public/regions/…`, `getPublicRegion`, `listPublicRegionAssets`),
+      `PublicAsset.region_path` and the `/geo/…` TopoJSON files were removed with S-202: a request to
+      `/v1/public/regions/…` or `/geo/…` answers 404 `not-found`.
   contact:
     name: Datamindz
 servers:
@@ -852,57 +869,6 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Unprocessable' }
 
-  /v1/public/regions/{region_id}:
-    parameters:
-      - $ref: '#/components/parameters/RegionId'
-    get:
-      tags: [public]
-      operationId: getPublicRegion
-      summary: A region with its ancestors and children, each with totals split by source (S-101, S-102)
-      description: |
-        `PL` → children = 16 voivodeships; a voivodeship → its counties; a county → its municipalities;
-        a municipality → no children (its assets: `listPublicRegionAssets`). Children ordered by name
-        (Polish collation). Numbers: ADR-0021 §3. Unknown region id → 404.
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/SourceView'
-      responses:
-        '200':
-          description: Region view.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/PublicRegionView' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '422': { $ref: '#/components/responses/Unprocessable' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-
-  /v1/public/regions/{region_id}/assets:
-    parameters:
-      - $ref: '#/components/parameters/RegionId'
-    get:
-      tags: [public]
-      operationId: listPublicRegionAssets
-      summary: Simulated assets of a municipality grouped by H3 res-6 cell (S-101 markers)
-      description: |
-        Only municipality ids (7 digits); a country/voivodeship/county id → 422 `invalid-field`
-        `{field: "path.region_id", reason: "wrong_level"}`. Only simulated assets, never real ones.
-        `source=real` → `cells: []` and `real_withheld: true`. Cells ordered by `h3_res6`, assets in a
-        cell by `asset_id`.
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/SourceView'
-      responses:
-        '200':
-          description: Cells with assets.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/PublicMunicipalityAssets' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '422': { $ref: '#/components/responses/Unprocessable' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-
   /v1/public/assets/{asset_id}:
     parameters:
       - $ref: '#/components/parameters/AssetId'
@@ -947,6 +913,105 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/public/zones:
+    get:
+      tags: [public]
+      operationId: listPublicZones
+      summary: H3 zones with sites of one resolution 0–6 (optionally one res-3 block), values split by source (S-201, S-212, S-213)
+      description: |
+        Every zone of resolution `res` (inside `within` when given) that holds **at least one
+        non-revoked site of either source**, ordered by `h3`, each with both source splits (ADR-0039 §3,
+        ADR-0033 §2, ADR-0040 §3). Zones without sites are not listed and carry no geometry: the client
+        draws every zone, empty ones greyed, from H3 (`h3-js`, ADR-0039 §1). A site belongs to the res-6
+        zone of its `location.h3_res6` when that is a valid res-6 cell, and to its res 5…0 ancestors
+        (index bits, ADR-0039 §2). `within` (a res-3 zone, "block") is required for `res` 5 and 6
+        (missing → 422 `{field: "query.within", reason: "required"}`) and optional for 0–4 (omitted =
+        every zone with sites of that resolution). A valid res-3 index without sites → 200 with
+        `zones: []`. Changed in 1.3.0-hexmap2 (breaking for zone readers): `res` 0 and 1 added; empty zones
+        and `lat`/`lng`/`boundary` removed. `fleet` = totals of every site incl. unzoned ones. Answers from the
+        fleet snapshot; the same snapshot answers with the same `ETag`; `Cache-Control: public, max-age=30`;
+        `If-None-Match` with the current ETag → 304 (still counts in the rate limit). Bodies ≥ 1 kB are
+        gzip-encoded when the request accepts it.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ZoneResolutionQuery'
+        - $ref: '#/components/parameters/ZoneWithin'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Zones.
+          headers:
+            ETag: { $ref: '#/components/headers/SnapshotETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicZoneList' }
+        '304':
+          description: Unchanged since the given ETag (same snapshot).
+          headers:
+            ETag: { $ref: '#/components/headers/SnapshotETag' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/public/zones/{h3}:
+    parameters:
+      - $ref: '#/components/parameters/ZoneH3'
+    get:
+      tags: [public]
+      operationId: getPublicZone
+      summary: One zone (res 0–6) with its values and one row per site, no identifier on real rows (S-204, D1)
+      description: |
+        The zone plus its site rows (ADR-0029 §4 op 2, ADR-0030 §2): real rows first, ordered by
+        `pv_kw + wind_kw` desc, then `grid_kw` desc, then `battery.full_kwh` desc (nulls last; values
+        only, never an id), then simulated rows by `asset_id`. Real rows carry no `asset_id` and no other
+        identifier. At most 2 000 rows; beyond that `truncated: true` (zone totals always cover every
+        site). Not a valid res 0–6 H3 index → 422 `{field: "path.h3", reason: "invalid_h3"}`; valid but
+        without sites → 404. Rows carry `capacity_kw` and `grid_connection_kw` (ADR-0040 §4, §6).
+        Caching as `listPublicZones`.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Zone with site rows.
+          headers:
+            ETag: { $ref: '#/components/headers/SnapshotETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicZoneDetail' }
+        '304':
+          description: Unchanged since the given ETag (same snapshot).
+          headers:
+            ETag: { $ref: '#/components/headers/SnapshotETag' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/web/zones/{h3}:
+    parameters:
+      - $ref: '#/components/parameters/ZoneH3'
+    get:
+      tags: [web]
+      operationId: getWebZone
+      summary: One zone with site rows for a signed-in user; rows the user may open carry `site_id` (S-206)
+      description: |
+        Same zone, rows and order as `getPublicZone` (ADR-0030 §4). `site_id` is set on every row for the
+        operator, on rows of the sites linked to a home owner (re-read per request), and null on every
+        other row. Not counted in the public rate limit; `Cache-Control: private, no-store`. Status order
+        401 → 422 → 404 → 503. No or expired session → 401 (the SPA then uses `getPublicZone`).
+      security: [{ webSession: [] }]
+      responses:
+        '200':
+          description: Zone with site rows.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebZoneDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
   /auth/operator:
@@ -1046,6 +1111,12 @@ paths:
         Operator: all sites (the UI opens with `source=real`, W9); home owner: linked sites only.
         Order: `alert.active` desc, `registered_at` asc, `site_id` asc; `next_cursor` continues after the
         last row (null = last page). `gaps_7d` = `getSiteGaps` over [now − 7 d, now).
+        Paging is keyset over live alert state, not a snapshot (ADR-0028): each page is ordered by the
+        state at its own request. A site whose alert resolves during a walk may be served again (earlier
+        row `alert.active=true`, later `false`); a site whose alert opens during a walk may be skipped
+        (it is first on the next first page). With no alert change during the walk every site is served
+        exactly once. Clients accumulating pages merge rows by `site_id` (the later row replaces the
+        earlier one in place).
       security: [{ webSession: [] }]
       parameters:
         - $ref: '#/components/parameters/SourceFilter'
@@ -1153,24 +1224,36 @@ components:
       description: '`gzip` or absent. Anything else → 415.'
       schema: { type: string, enum: [gzip, identity] }
 
-    RegionId:
-      name: region_id
-      in: path
-      required: true
-      description: '`PL`, TERYT voivodeship (2 digits), county (4) or municipality (7) code (ADR-0021 §1).'
-      schema: { type: string, pattern: '^(PL|[0-9]{2}|[0-9]{4}|[0-9]{7})$', examples: [PL, '14', '1465', '1465011'] }
     AssetId:
       name: asset_id
       in: path
       required: true
       description: Public asset id (ADR-0021 §5); never a site id.
       schema: { $ref: '#/components/schemas/AssetId' }
-    SourceView:
-      name: source
+    ZoneResolutionQuery:
+      name: res
+      in: query
+      required: true
+      description: H3 resolution of the zones, 0–6 (ADR-0039 §4); anything else → 422 `query.res`.
+      schema: { $ref: '#/components/schemas/ZoneResolution' }
+    ZoneWithin:
+      name: within
       in: query
       required: false
-      description: Which source splits to return. `all` (default) = both.
-      schema: { type: string, enum: [all, real, simulated], default: all }
+      description: A res-3 zone ("block"); required when `res` is 5 or 6 (ADR-0039 §3). Invalid index → 422 `query.within` `invalid_h3`.
+      schema: { type: string, pattern: '^83[0-9a-f]{13}$', examples: ['831f53fffffffff'] }
+    ZoneH3:
+      name: h3
+      in: path
+      required: true
+      description: H3 index of a res 0–6 zone.
+      schema: { $ref: '#/components/schemas/ZoneH3' }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: ETag of a previous response (quoted).
+      schema: { type: string, maxLength: 64 }
     Day:
       name: day
       in: query
@@ -1202,6 +1285,9 @@ components:
     ETag:
       description: Quoted sha256 hex of the canonical (RFC 8785) JSON of the effective config.
       schema: { type: string }
+    SnapshotETag:
+      description: Quoted `generated_at` of the fleet snapshot in Unix milliseconds; equal for every response from the same snapshot.
+      schema: { type: string, examples: ['"1790697600000"'] }
     RetryAfter:
       description: Seconds until retry is allowed.
       schema: { type: integer, minimum: 1 }
@@ -1343,7 +1429,7 @@ components:
             not_aligned_5min, not_aligned_hour, not_utc, in_future, duplicate_key_in_batch,
             too_many_items, not_multiple_of_300, invalid_h3, forbidden_identifying_data,
             invalid_enum, from_not_before_to, range_too_large, unknown_metric, invalid_tz,
-            invalid_public_key, invalid_combination (W1 `bulk`), wrong_level (W1 region level),
+            invalid_public_key, invalid_combination (W1 `bulk`),
             invalid_cursor (W1 paging), invalid_day (W1 `day`, not YYYY-MM-DD).
         detail: { type: string }
 
@@ -1802,6 +1888,17 @@ components:
         tariff: { $ref: '#/components/schemas/AttrsTariff' }
         location: { $ref: '#/components/schemas/AttrsLocation' }
         compass_version: { type: string, maxLength: 32 }
+        grid_connection_kw: { $ref: '#/components/schemas/AttrsGridConnectionKw' }
+
+    AttrsGridConnectionKw:
+      type: number
+      exclusiveMinimum: 0
+      maximum: 100000
+      description: |
+        Grid connection power of the site in kW: one limit for import and export (D10, ADR-0040 §1).
+        Optional in AttrsV1 and AttrsV2, no null (absent = not known; the zone counts the site as
+        "without max"). Added in 1.3.0-hexmap2 without a schema version change; 0 → 422
+        `out_of_range`, null or a string → 422 `wrong_type`.
 
     AttrsLp:
       type: object
@@ -1891,6 +1988,7 @@ components:
         lp: { $ref: '#/components/schemas/AttrsLp' }
         tariff: { $ref: '#/components/schemas/AttrsTariff' }
         compass_version: { type: string, maxLength: 32 }
+        grid_connection_kw: { $ref: '#/components/schemas/AttrsGridConnectionKw' }
 
     PurgeRequest:
       type: object
@@ -1925,135 +2023,22 @@ components:
       enum: [pv, wind, unknown]
       description: From the attribute version in force (ADR-0022 §2). `unknown` never appears in public cells or cards.
 
-    RegionLevel:
-      type: string
-      enum: [country, voivodeship, county, municipality]
-
-    RegionRef:
-      type: object
-      additionalProperties: false
-      required: [region_id, level, name]
-      properties:
-        region_id: { type: string, pattern: '^(PL|[0-9]{2}|[0-9]{4}|[0-9]{7})$' }
-        level: { $ref: '#/components/schemas/RegionLevel' }
-        name: { type: string, description: PRG name (Polish). }
-
-    SourceAggregate:
-      type: object
-      additionalProperties: false
-      required: [asset_count, capacity_kw, current_output_kw, without_current_data]
-      description: ADR-0021 §3. `without_current_data` = assets without a current output (stale, kind unknown or metric null).
-      properties:
-        asset_count: { type: integer, minimum: 0 }
-        capacity_kw: { type: number, minimum: 0 }
-        current_output_kw: { type: number, minimum: 0 }
-        without_current_data: { type: integer, minimum: 0 }
-
-    RegionTotals:
-      type: object
-      additionalProperties: false
-      required: [real_withheld]
-      description: |
-        `simulated` present iff source ∈ {all, simulated}. `real` present iff source ∈ {all, real} and the
-        level is country or voivodeship. `real_withheld` true iff source ∈ {all, real} and the level is
-        county or municipality (the UI then says "real sites: shown at voivodeship level"; no number, not
-        even 0, PRD W2).
-      properties:
-        simulated: { $ref: '#/components/schemas/SourceAggregate' }
-        real: { $ref: '#/components/schemas/SourceAggregate' }
-        real_withheld: { type: boolean }
-
-    RegionAggregate:
-      type: object
-      additionalProperties: false
-      required: [region_id, level, name, totals]
-      properties:
-        region_id: { type: string, pattern: '^(PL|[0-9]{2}|[0-9]{4}|[0-9]{7})$' }
-        level: { $ref: '#/components/schemas/RegionLevel' }
-        name: { type: string }
-        totals: { $ref: '#/components/schemas/RegionTotals' }
-
-    PublicRegionView:
-      type: object
-      additionalProperties: false
-      required: [generated_at, source, region, ancestors, children]
-      properties:
-        generated_at: { $ref: '#/components/schemas/Timestamp' }
-        source: { type: string, enum: [all, real, simulated] }
-        region: { $ref: '#/components/schemas/RegionAggregate' }
-        ancestors:
-          type: array
-          description: From the country down to the parent; empty for `PL`.
-          items: { $ref: '#/components/schemas/RegionRef' }
-        children:
-          type: array
-          items: { $ref: '#/components/schemas/RegionAggregate' }
-        unlocated:
-          type: object
-          additionalProperties: false
-          description: Only for `PL`. Assets without a location or outside every municipality, counted only in the country totals; keys follow `source`.
-          properties:
-            real: { type: integer, minimum: 0 }
-            simulated: { type: integer, minimum: 0 }
-
-    PublicAssetSummary:
-      type: object
-      additionalProperties: false
-      required: [asset_id, kind, capacity_kw, current_output_kw, last_seen, stale]
-      properties:
-        asset_id: { $ref: '#/components/schemas/AssetId' }
-        kind: { $ref: '#/components/schemas/AssetKind' }
-        capacity_kw: { type: [number, 'null'] }
-        current_output_kw: { type: [number, 'null'], description: 'null = no current data (ADR-0021 §3).' }
-        last_seen:
-          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
-        stale: { type: boolean }
-
-    PublicCell:
-      type: object
-      additionalProperties: false
-      required: [h3_res6, lat, lng, asset_count, assets]
-      properties:
-        h3_res6: { type: string, pattern: '^86[0-9a-f]{13}$' }
-        lat: { type: number, description: 'Cell centre latitude, 4 decimals.' }
-        lng: { type: number, description: 'Cell centre longitude, 4 decimals.' }
-        asset_count: { type: integer, minimum: 1 }
-        assets:
-          type: array
-          items: { $ref: '#/components/schemas/PublicAssetSummary' }
-
-    PublicMunicipalityAssets:
-      type: object
-      additionalProperties: false
-      required: [generated_at, source, region, real_withheld, cells]
-      properties:
-        generated_at: { $ref: '#/components/schemas/Timestamp' }
-        source: { type: string, enum: [all, real, simulated] }
-        region: { $ref: '#/components/schemas/RegionRef' }
-        real_withheld: { type: boolean, description: 'true iff source ∈ {all, real}.' }
-        cells:
-          type: array
-          items: { $ref: '#/components/schemas/PublicCell' }
-
     PublicAsset:
       type: object
       additionalProperties: false
-      required: [generated_at, asset_id, source, kind, capacity_kw, h3_res6, lat, lng, region_path, current_output_kw, output_window_start, last_seen, stale]
+      required: [generated_at, asset_id, source, kind, capacity_kw, h3_res6, zone_path, current_output_kw, output_window_start, last_seen, stale]
       properties:
         generated_at: { $ref: '#/components/schemas/Timestamp' }
         asset_id: { $ref: '#/components/schemas/AssetId' }
         source: { type: string, enum: [simulated] }
         kind: { type: string, enum: [pv, wind] }
         capacity_kw: { type: number }
-        h3_res6: { type: string, pattern: '^86[0-9a-f]{13}$' }
-        lat: { type: number }
-        lng: { type: number }
-        region_path:
+        h3_res6: { type: string, pattern: '^86[0-9a-f]{13}$', description: 'The cell; its centre is computed by the client (`h3-js` `cellToLatLng`; `lat`/`lng` removed in 1.3.0-hexmap2, ADR-0039 §1).' }
+        zone_path:
           type: array
-          description: Country, voivodeship, county, municipality.
-          minItems: 4
+          description: The asset's zones from res 3 to res 6 by index bits (ADR-0039 §2); `[]` when its cell is not a valid res-6 cell.
           maxItems: 4
-          items: { $ref: '#/components/schemas/RegionRef' }
+          items: { $ref: '#/components/schemas/ZoneH3' }
         current_output_kw: { type: [number, 'null'] }
         output_window_start:
           description: window_start of the window the current output comes from; null when there is none.
@@ -2080,6 +2065,194 @@ components:
             properties:
               window_start: { $ref: '#/components/schemas/Timestamp' }
               output_kw: { type: [number, 'null'] }
+
+    ZoneH3:
+      type: string
+      pattern: '^8[0-6][0-9a-f]{13}$'
+      description: H3 cell index (lower-case hex) of resolution 0–6; the second character is the resolution. Valid digits are checked server-side (ADR-0039 §2).
+
+    ZoneResolution:
+      type: integer
+      enum: [0, 1, 2, 3, 4, 5, 6]
+      description: H3 resolution of a zone; 6 (≈ 36 km²) is the finest, 0 (≈ 4.36 M km²) the coarsest (ADR-0039 §4; res 0 and 1 added in 1.3.0-hexmap2).
+
+    ZoneKindValue:
+      type: object
+      additionalProperties: false
+      required: [sites, reporting, kw, max_kw]
+      description: 'PV or wind of one source in one zone (ADR-0033 §2, ADR-0040 §3): `sites` of that kind, `reporting` = with a current value, `kw` = Σ current kW, `max_kw` = Σ installed capacity (kWp / kW) over the same `reporting` sites, so the fill `kw / max_kw` never drops because a site went stale.'
+      properties:
+        sites: { type: integer, minimum: 0 }
+        reporting: { type: integer, minimum: 0 }
+        kw: { type: number, minimum: 0 }
+        max_kw: { type: number, minimum: 0 }
+
+    ZoneGrid:
+      type: object
+      additionalProperties: false
+      required: [reporting, kw, capped_reporting, capped_kw, max_kw]
+      description: |
+        `kw` = Σ net grid kW (+ import, − export) over the `reporting` sites with a current grid value
+        (ADR-0033 §1). `capped_reporting` = those of them whose attributes carry `grid_connection_kw`;
+        `capped_kw` = Σ net grid kW over them; `max_kw` = Σ their `grid_connection_kw` (one limit for
+        import and export, D10). Fill = |capped_kw| / max_kw; `reporting − capped_reporting` = sites
+        "without max", shown, never guessed (ADR-0040 §3–§4).
+      properties:
+        reporting: { type: integer, minimum: 0 }
+        kw: { type: number }
+        capped_reporting: { type: integer, minimum: 0 }
+        capped_kw: { type: number }
+        max_kw: { type: number, minimum: 0 }
+
+    ZoneBattery:
+      type: object
+      additionalProperties: false
+      required: [sites, reporting, available_kwh, full_kwh]
+      description: '`sites` with a battery; `available_kwh` and `full_kwh` summed over the same `reporting` sites (current SOC), so available ≤ full (ADR-0033 §1a, §2).'
+      properties:
+        sites: { type: integer, minimum: 0 }
+        reporting: { type: integer, minimum: 0 }
+        available_kwh: { type: number, minimum: 0 }
+        full_kwh: { type: number, minimum: 0 }
+
+    ZoneAggregate:
+      type: object
+      additionalProperties: false
+      required: [sites, stale, pv, wind, grid, battery]
+      description: Values of one source in one zone; every field is additive over sources and child zones (ADR-0033 §2).
+      properties:
+        sites: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        pv: { $ref: '#/components/schemas/ZoneKindValue' }
+        wind: { $ref: '#/components/schemas/ZoneKindValue' }
+        grid: { $ref: '#/components/schemas/ZoneGrid' }
+        battery: { $ref: '#/components/schemas/ZoneBattery' }
+
+    Zone:
+      type: object
+      additionalProperties: false
+      required: [h3, res, real, simulated]
+      description: |
+        A zone with at least one site and its values per source. No geometry: centre and boundary are
+        functions of `h3` that the client computes (`h3-js`, ADR-0039 §1; `lat`, `lng` and `boundary`
+        were removed in 1.3.0-hexmap2).
+      properties:
+        h3: { $ref: '#/components/schemas/ZoneH3' }
+        res: { $ref: '#/components/schemas/ZoneResolution' }
+        real: { $ref: '#/components/schemas/ZoneAggregate' }
+        simulated: { $ref: '#/components/schemas/ZoneAggregate' }
+
+    FleetTotals:
+      type: object
+      additionalProperties: false
+      required: [real, simulated, unzoned]
+      description: Every non-revoked site of the snapshot, zoned or not.
+      properties:
+        real: { $ref: '#/components/schemas/ZoneAggregate' }
+        simulated: { $ref: '#/components/schemas/ZoneAggregate' }
+        unzoned:
+          type: object
+          additionalProperties: false
+          required: [real, simulated]
+          description: Sites without a location or whose `h3_res6` is not a valid res-6 cell (in no zone, ADR-0039 §2).
+          properties:
+            real: { type: integer, minimum: 0 }
+            simulated: { type: integer, minimum: 0 }
+
+    PublicZoneList:
+      type: object
+      additionalProperties: false
+      required: [generated_at, res, within, zones, fleet]
+      properties:
+        generated_at: { $ref: '#/components/schemas/Timestamp' }
+        res: { $ref: '#/components/schemas/ZoneResolution' }
+        within:
+          description: The requested block, or null when none was given.
+          oneOf: [{ $ref: '#/components/schemas/ZoneH3' }, { type: 'null' }]
+        zones:
+          type: array
+          items: { $ref: '#/components/schemas/Zone' }
+        fleet: { $ref: '#/components/schemas/FleetTotals' }
+
+    ZoneSiteBattery:
+      type: object
+      additionalProperties: false
+      required: [available_kwh, full_kwh]
+      properties:
+        available_kwh: { type: [number, 'null'], minimum: 0, description: 'null = no current SOC (stale or null soc).' }
+        full_kwh: { type: number, minimum: 0 }
+
+    ZoneSiteFields:
+      type: object
+      required: [source, kind, pv_kw, wind_kw, grid_kw, capacity_kw, grid_connection_kw, battery, soc_pct, last_seen, stale]
+      description: |
+        One site's current values in a zone table (ADR-0033 §1; null = no current data or not of that
+        kind). `asset_id` only when `source` is `simulated` — a real row has no identifier (ADR-0030 §2).
+        No other field may appear (the concrete row schemas close the object).
+      properties:
+        source: { $ref: '#/components/schemas/Source' }
+        asset_id: { $ref: '#/components/schemas/AssetId' }
+        kind: { $ref: '#/components/schemas/AssetKind' }
+        pv_kw: { type: [number, 'null'], minimum: 0 }
+        wind_kw: { type: [number, 'null'], minimum: 0 }
+        grid_kw: { type: [number, 'null'], description: '+ import, − export.' }
+        capacity_kw:
+          type: [number, 'null']
+          minimum: 0
+          description: 'Installed capacity from the attributes in force: kWp for PV (V1 `pv_kwp`, V2 `capacity_kw`), kW for wind; null for kind `unknown` (ADR-0040 §2). Public also on real rows (ADR-0040 §6).'
+        grid_connection_kw:
+          type: [number, 'null']
+          minimum: 0
+          description: 'Grid connection power from the attributes in force; null when the site does not send it ("without max", ADR-0040 §2).'
+        battery:
+          description: null when the site has no battery (nominal or usable 0 / absent).
+          oneOf: [{ $ref: '#/components/schemas/ZoneSiteBattery' }, { type: 'null' }]
+        soc_pct: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        last_seen:
+          oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }]
+        stale: { type: boolean }
+
+    PublicZoneSite:
+      allOf:
+        - { $ref: '#/components/schemas/ZoneSiteFields' }
+      unevaluatedProperties: false
+
+    WebZoneSite:
+      allOf:
+        - { $ref: '#/components/schemas/ZoneSiteFields' }
+        - type: object
+          required: [site_id]
+          properties:
+            site_id:
+              description: Set when the principal may open the site (`/my/<site_id>`), else null (ADR-0030 §4).
+              oneOf: [{ $ref: '#/components/schemas/SiteId' }, { type: 'null' }]
+      unevaluatedProperties: false
+
+    PublicZoneDetail:
+      type: object
+      additionalProperties: false
+      required: [generated_at, zone, sites, truncated]
+      properties:
+        generated_at: { $ref: '#/components/schemas/Timestamp' }
+        zone: { $ref: '#/components/schemas/Zone' }
+        sites:
+          type: array
+          maxItems: 2000
+          items: { $ref: '#/components/schemas/PublicZoneSite' }
+        truncated: { type: boolean, description: 'true when the zone has more than 2 000 sites (only the first 2 000 rows are sent).' }
+
+    WebZoneDetail:
+      type: object
+      additionalProperties: false
+      required: [generated_at, zone, sites, truncated]
+      properties:
+        generated_at: { $ref: '#/components/schemas/Timestamp' }
+        zone: { $ref: '#/components/schemas/Zone' }
+        sites:
+          type: array
+          maxItems: 2000
+          items: { $ref: '#/components/schemas/WebZoneSite' }
+        truncated: { type: boolean }
 
     WebSignIn:
       type: object
