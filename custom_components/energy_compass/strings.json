@@ -831,11 +831,13 @@
           "enabled": "Send to Energy Atlas",
           "environment": "Environment",
           "pv_kwp": "PV capacity (kWp)",
+          "grid_connection_kw": "Grid connection power (kW)",
           "forget_site": "Forget site on this environment"
         },
         "data_description": {
           "environment": "Staging validates the data flow; production is the live collector. Switching keeps each environment's own site and queued data.",
           "pv_kwp": "Installed PV capacity in kWp, 0-1000. Not derived from other Compass settings.",
+          "grid_connection_kw": "Grid connection power in kW, 0.1-1000; one limit for import and export. Optional: leave empty if unknown, the map then counts the site as \"without max\". Not derived from the grid import/export limits.",
           "forget_site": "Deletes the selected environment's site key and queued data on this device. Recovery from a revoked key or a conflict; the site itself is not deleted at the collector. The next enabled save registers a new key automatically."
         }
       },

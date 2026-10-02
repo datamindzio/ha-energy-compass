@@ -996,6 +996,7 @@ Turn it on in **Settings → Devices & services → Energy Compass → Configure
 | Send to Energy Atlas | Off by default. |
 | Environment | **staging** (`atlas-api-staging.datamindz.io`, for validating the data flow) or **production** (`atlas-api.datamindz.io`, the live collector). Staging validates the data flow; production is not available in this release yet (no credential baked in for it). |
 | PV capacity (kWp) | Installed PV capacity, entered once; not derived from other Compass settings. No default: required when sending is on. |
+| Grid connection power (kW) | Optional, 0.1–1000 kW: the site's grid connection limit, one value for import and export. Empty unless you saved one before — never prefilled from the grid import/export limits. Left empty, nothing is sent and the map counts the site as **without max**. Applies live like the rest of the form. |
 
 **No secret to enter.** This release registers with a shared **public** enrollment credential baked
 into the integration itself — the same one for every install of this version — so anyone running

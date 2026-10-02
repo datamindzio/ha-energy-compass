@@ -15,6 +15,9 @@ def build_attrs(
 ) -> dict:
     """`pv_kwp` comes from the Atlas settings step; battery figures from the installation.
 
+    `grid_connection_kw` is optional there: the key is omitted when unset (the contract has
+    no null).
+
     `location_h3_res6` is the home zone's res-6 cell (`atlas.location`); without it the
     `location` key is omitted, exactly as before.
     """
@@ -38,6 +41,9 @@ def build_attrs(
         "soc_floor_pct": soc_floor_pct,
         "compass_version": _compass_version(),
     }
+    grid_connection_kw = atlas_settings.get("grid_connection_kw")
+    if grid_connection_kw is not None:
+        attrs["grid_connection_kw"] = grid_connection_kw
     if location_h3_res6:
         attrs["location"] = {"h3_res6": location_h3_res6}
     return attrs

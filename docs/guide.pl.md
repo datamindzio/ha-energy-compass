@@ -1008,6 +1008,7 @@ Włącz w **Ustawienia → Urządzenia i usługi → Energy Compass → Konfigur
 | Wysyłaj do Energy Atlas | Domyślnie wyłączone. |
 | Środowisko | **staging** (`atlas-api-staging.datamindz.io`, do walidacji przepływu danych) lub **produkcja** (`atlas-api.datamindz.io`, kolektor produkcyjny). Staging waliduje przepływ danych; produkcja nie jest jeszcze dostępna w tym wydaniu (brak wbudowanego poświadczenia). |
 | Moc instalacji PV (kWp) | Zainstalowana moc PV, wprowadzana raz; nie jest wyliczana z innych ustawień Compass. Bez wartości domyślnej: wymagana, gdy wysyłanie jest włączone. |
+| Moc przyłączeniowa (kW) | Opcjonalna, 0,1–1000 kW: limit przyłącza witryny do sieci, jedna wartość dla poboru i oddawania. Puste, dopóki nie zapiszesz wartości — nigdy nie jest podpowiadana z limitów importu/eksportu sieci. Przy pustym polu nic nie jest wysyłane, a mapa liczy witrynę **bez max**. Działa na żywo jak reszta formularza. |
 
 **Nie trzeba wpisywać sekretu.** To wydanie rejestruje się współdzielonym **publicznym**
 poświadczeniem wbudowanym w samą integrację — tym samym dla każdej instalacji tej wersji — więc
