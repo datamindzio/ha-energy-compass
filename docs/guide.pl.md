@@ -1028,7 +1028,8 @@ danych: moc PV, import/eksport z sieci i moc baterii, moc obciążenia domowego 
 rejestratora), SOC baterii oraz liczniki energii PV/importu/eksportu (tylko liczniki, których
 atrybut Home Assistant `state_class` to `total`/`total_increasing`);
 plan każdego rozwiązania Compass wraz z wejściami cen/PV/zużycia; kilka atrybutów instalacji (moc PV
-w kWp, pojemność baterii nominalna i użyteczna, próg SOC, wersja Compass) oraz przybliżona
+w kWp, moc przyłączeniowa w kW, jeśli ją podasz, pojemność baterii nominalna i użyteczna, próg SOC,
+wersja Compass) oraz przybliżona
 lokalizacja strefy domowej Home Assistant jako komórka H3 o rozdzielczości 6 (sześciokąt o
 powierzchni ok. 36 km², dzięki czemu Atlas zalicza Twoją instalację do właściwego województwa).
 Komórka jest liczona raz, przy starcie wysyłki, a dokładne współrzędne nigdy nie są zapisywane ani

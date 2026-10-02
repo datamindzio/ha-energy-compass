@@ -1015,8 +1015,8 @@ never> · waiting <n>` (plus `halted: <kinds>` if delivery is stuck).
 import/export and battery power, household load power (recorder mode only), battery SOC, and
 PV/import/export energy counters (only counters
 whose Home Assistant `state_class` is `total`/`total_increasing`); each Compass solve's plan and
-its price/PV/load inputs; a handful of installation attributes (PV kWp, battery capacity and usable
-capacity, SOC floor, the Compass version) and the coarse location of your Home Assistant home zone
+its price/PV/load inputs; a handful of installation attributes (PV kWp, grid connection power in kW
+if you entered it, battery capacity and usable capacity, SOC floor, the Compass version) and the coarse location of your Home Assistant home zone
 as an H3 resolution-6 cell (a hexagon of roughly 36 km², so Atlas can count your site in its
 voivodeship). The cell is computed once, when delivery starts, and your exact coordinates are never
 stored or sent. Nothing else — no tariff text or inverter model, and the enrollment credential
