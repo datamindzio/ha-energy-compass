@@ -892,7 +892,7 @@ running.
 | Plan state | Charge / discharge current | Grid charge current | TOU direction, target |
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | cap / cap | 0 A | all Disabled, SOC 10 % |
-| `CHARGE_GRID` | cap / 0 A | planned grid share, ≤ `max_grid_current` | Grid on the active program, target SOC from the plan |
+| `CHARGE_GRID` | cap / 0 A | planned grid share, ≤ `max_grid_current` | Grid on the active program, target SOC from the plan; in Voltage mode TOU voltage `voltage_grid_charge_ceiling` |
 | `DISCHARGE_GRID` | 0 A / planned, ≤ cap; after the target is reached `reached_discharge_current`, ≤ cap | 0 A | Sell on the active program, target SOC from the plan, power = planned, ≤ `max_power_w`; Disabled after the target is reached |
 | `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, target SOC = planned end SOC rounded down |
 | base (release, invalid plan) | `relinquish_current` / `relinquish_current` | 0 A | all Disabled, SOC 10 %, 49.6 (496 V), power `max_power_w` |
@@ -924,7 +924,16 @@ starting. With a numeric `discharge_energy_entity`, a `DISCHARGE_GRID` interval 
 tolerance) since the controller's first run in that interval (`runtime.slot_energy`); the TOU program
 voltage is then 49.6 (496 V), so the inverter only stops on its own at that floor. Solarman reports the counter only when
 it changes, so its freshness comes from the `telemetry_entities` heartbeat of the same inverter. Without a
-numeric counter the voltage target applies as before. Capacity mode and `CHARGE_GRID` are unchanged.
+numeric counter the voltage target applies as before. Capacity mode is unchanged.
+
+Charging lifts the pack voltage the other way: about 2 V at 4 A within seconds, and the inverter stops
+grid charging as soon as the pack reaches the TOU voltage. A `CHARGE_GRID` target from the curve (51.4 V
+for 27 % at a 512 V rest voltage) therefore ended the charge after a few seconds, and a rest voltage
+above the curve point latched the interval as reached at once. In Voltage mode `CHARGE_GRID` (outside a
+balance row) writes `voltage_grid_charge_ceiling` (55.2 V, 552 V) as the TOU voltage instead; the planned
+grid current sets how much each interval charges, and the interval is reached only when the pack reaches
+the ceiling. The Solarman charge counter refreshes about every 10 minutes, too slowly to end a 15-minute
+interval, so it is not used. Keep the ceiling at or below the BMS charge voltage limit.
 
 ### Writes and confirmation
 
@@ -966,6 +975,7 @@ then sets thresholds, then enables the direction.
 | `eta` | 0.9747 | one-way battery efficiency |
 | `commissioned_battery_modes` | Capacity | battery modes allowed for physical control |
 | `discharge_energy_entity` | none | cumulative battery discharge energy (kWh); in Voltage mode ends `DISCHARGE_GRID` intervals on planned energy |
+| `voltage_grid_charge_ceiling` | 55.2 V | TOU voltage for `CHARGE_GRID` in Voltage mode (49.5–56.0 V); the planned grid current carries the energy |
 | `old_writers` | none | automations that must be off before any write |
 
 ### Dashboard examples

@@ -1427,7 +1427,7 @@ wyłączona i nieuruchomiona.</p>
 <td><code>CHARGE_GRID</code></td>
 <td>limit / 0 A</td>
 <td>planowana część sieciowa, ≤ <code>max_grid_current</code></td>
-<td>Grid w aktywnym programie, cel SOC z planu</td>
+<td>Grid w aktywnym programie, cel SOC z planu; w trybie Voltage napięcie TOU <code>voltage_grid_charge_ceiling</code></td>
 </tr>
 <tr>
 <td><code>DISCHARGE_GRID</code></td>
@@ -1473,7 +1473,16 @@ po starcie. Gdy <code>discharge_energy_entity</code> ma wartość liczbową, prz
 (tolerancja 0,05 kWh) od pierwszego przebiegu sterownika w tym przedziale (<code>runtime.slot_energy</code>);
 napięcie programu TOU wynosi wtedy 49,6 (496 V), więc falownik sam zatrzyma się dopiero na tym progu. Solarman
 zgłasza licznik tylko przy zmianie, więc jego świeżość zapewnia heartbeat <code>telemetry_entities</code> tego samego
-falownika. Bez liczbowej wartości licznika obowiązuje cel napięciowy jak dotąd. Tryb Capacity i <code>CHARGE_GRID</code> bez zmian.</p>
+falownika. Bez liczbowej wartości licznika obowiązuje cel napięciowy jak dotąd. Tryb Capacity bez zmian.</p>
+<p>Ładowanie podnosi napięcie pakietu w drugą stronę: ok. 2 V przy 4 A w kilka sekund, a falownik kończy
+ładowanie z sieci, gdy tylko pakiet dojdzie do napięcia TOU. Cel <code>CHARGE_GRID</code> z krzywej (51,4 V dla
+27 % przy 512 V w spoczynku) kończył więc ładowanie po kilku sekundach, a napięcie spoczynkowe powyżej
+punktu krzywej od razu zatrzaskiwało przedział jako osiągnięty. W trybie Voltage <code>CHARGE_GRID</code> (poza
+wierszem balansowania) zapisuje zamiast tego jako napięcie TOU <code>voltage_grid_charge_ceiling</code> (55,2 V,
+552 V); ilość energii w przedziale wyznacza planowany prąd z sieci, a przedział jest osiągnięty dopiero,
+gdy pakiet dojdzie do sufitu. Licznik ładowania Solarman odświeża się co ok. 10 minut, za wolno, by
+kończyć 15-minutowy przedział, więc nie jest używany. Sufit trzymaj na poziomie limitu napięcia ładowania
+BMS albo niżej.</p>
 <h3 id="zapis-i-potwierdzenie">Zapis i potwierdzenie</h3>
 <p>Każda zmiana zapisuje jedną encję przez <code>number.set_value</code> lub <code>select.select_option</code>, a potem
 odczytuje rejestry 108–177 z <code>solarman_device</code> i porównuje surową wartość. Rejestr bez potwierdzenia
@@ -1612,6 +1621,11 @@ ustawia progi, na końcu włącza kierunek.</p>
 <td><code>discharge_energy_entity</code></td>
 <td>brak</td>
 <td>licznik energii rozładowania baterii (kWh); w trybie Voltage kończy przedziały <code>DISCHARGE_GRID</code> po zaplanowanej energii</td>
+</tr>
+<tr>
+<td><code>voltage_grid_charge_ceiling</code></td>
+<td>55,2 V</td>
+<td>napięcie TOU dla <code>CHARGE_GRID</code> w trybie Voltage (49,5–56,0 V); energię niesie planowany prąd z sieci</td>
 </tr>
 <tr>
 <td><code>old_writers</code></td>
