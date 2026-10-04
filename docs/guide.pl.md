@@ -905,7 +905,7 @@ wyłączona i nieuruchomiona.
 | Stan planu | Prąd ładowania / rozładowania | Prąd ładowania z sieci | Kierunek TOU, cel |
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | limit / limit | 0 A | wszystkie Disabled, SOC 10 % |
-| `CHARGE_GRID` | limit / 0 A | planowana część sieciowa, ≤ `max_grid_current` | Grid w aktywnym programie, cel SOC z planu |
+| `CHARGE_GRID` | limit / 0 A | planowana część sieciowa, ≤ `max_grid_current` | Grid w aktywnym programie, cel SOC z planu; w trybie Voltage napięcie TOU `voltage_grid_charge_ceiling` |
 | `DISCHARGE_GRID` | 0 A / z planu, ≤ limit; po osiągnięciu celu `reached_discharge_current`, ≤ limit | 0 A | Sell w aktywnym programie, cel SOC z planu, moc z planu, ≤ `max_power_w`; po osiągnięciu celu Disabled |
 | `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, cel SOC = końcowy SOC planu zaokrąglony w dół |
 | bazowy (zwolnienie, nieważny plan) | `relinquish_current` / `relinquish_current` | 0 A | wszystkie Disabled, SOC 10 %, 49,6 (496 V), moc `max_power_w` |
@@ -936,7 +936,17 @@ po starcie. Gdy `discharge_energy_entity` ma wartość liczbową, przedział `DI
 (tolerancja 0,05 kWh) od pierwszego przebiegu sterownika w tym przedziale (`runtime.slot_energy`);
 napięcie programu TOU wynosi wtedy 49,6 (496 V), więc falownik sam zatrzyma się dopiero na tym progu. Solarman
 zgłasza licznik tylko przy zmianie, więc jego świeżość zapewnia heartbeat `telemetry_entities` tego samego
-falownika. Bez liczbowej wartości licznika obowiązuje cel napięciowy jak dotąd. Tryb Capacity i `CHARGE_GRID` bez zmian.
+falownika. Bez liczbowej wartości licznika obowiązuje cel napięciowy jak dotąd. Tryb Capacity bez zmian.
+
+Ładowanie podnosi napięcie pakietu w drugą stronę: ok. 2 V przy 4 A w kilka sekund, a falownik kończy
+ładowanie z sieci, gdy tylko pakiet dojdzie do napięcia TOU. Cel `CHARGE_GRID` z krzywej (51,4 V dla
+27 % przy 512 V w spoczynku) kończył więc ładowanie po kilku sekundach, a napięcie spoczynkowe powyżej
+punktu krzywej od razu zatrzaskiwało przedział jako osiągnięty. W trybie Voltage `CHARGE_GRID` (poza
+wierszem balansowania) zapisuje zamiast tego jako napięcie TOU `voltage_grid_charge_ceiling` (55,2 V,
+552 V); ilość energii w przedziale wyznacza planowany prąd z sieci, a przedział jest osiągnięty dopiero,
+gdy pakiet dojdzie do sufitu. Licznik ładowania Solarman odświeża się co ok. 10 minut, za wolno, by
+kończyć 15-minutowy przedział, więc nie jest używany. Sufit trzymaj na poziomie limitu napięcia ładowania
+BMS albo niżej.
 
 ### Zapis i potwierdzenie
 
@@ -978,6 +988,7 @@ Teksty `runtime.reason` są w tej wersji po polsku.
 | `eta` | 0,9747 | sprawność baterii w jedną stronę |
 | `commissioned_battery_modes` | Capacity | tryby baterii dopuszczone do sterowania fizycznego |
 | `discharge_energy_entity` | brak | licznik energii rozładowania baterii (kWh); w trybie Voltage kończy przedziały `DISCHARGE_GRID` po zaplanowanej energii |
+| `voltage_grid_charge_ceiling` | 55,2 V | napięcie TOU dla `CHARGE_GRID` w trybie Voltage (49,5–56,0 V); energię niesie planowany prąd z sieci |
 | `old_writers` | brak | automatyzacje, które muszą być wyłączone przed każdym zapisem |
 
 ### Przykładowe dashboardy

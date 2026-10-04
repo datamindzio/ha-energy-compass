@@ -1414,7 +1414,7 @@ running.</p>
 <td><code>CHARGE_GRID</code></td>
 <td>cap / 0 A</td>
 <td>planned grid share, ≤ <code>max_grid_current</code></td>
-<td>Grid on the active program, target SOC from the plan</td>
+<td>Grid on the active program, target SOC from the plan; in Voltage mode TOU voltage <code>voltage_grid_charge_ceiling</code></td>
 </tr>
 <tr>
 <td><code>DISCHARGE_GRID</code></td>
@@ -1461,7 +1461,15 @@ starting. With a numeric <code>discharge_energy_entity</code>, a <code>DISCHARGE
 tolerance) since the controller's first run in that interval (<code>runtime.slot_energy</code>); the TOU program
 voltage is then 49.6 (496 V), so the inverter only stops on its own at that floor. Solarman reports the counter only when
 it changes, so its freshness comes from the <code>telemetry_entities</code> heartbeat of the same inverter. Without a
-numeric counter the voltage target applies as before. Capacity mode and <code>CHARGE_GRID</code> are unchanged.</p>
+numeric counter the voltage target applies as before. Capacity mode is unchanged.</p>
+<p>Charging lifts the pack voltage the other way: about 2 V at 4 A within seconds, and the inverter stops
+grid charging as soon as the pack reaches the TOU voltage. A <code>CHARGE_GRID</code> target from the curve (51.4 V
+for 27 % at a 512 V rest voltage) therefore ended the charge after a few seconds, and a rest voltage
+above the curve point latched the interval as reached at once. In Voltage mode <code>CHARGE_GRID</code> (outside a
+balance row) writes <code>voltage_grid_charge_ceiling</code> (55.2 V, 552 V) as the TOU voltage instead; the planned
+grid current sets how much each interval charges, and the interval is reached only when the pack reaches
+the ceiling. The Solarman charge counter refreshes about every 10 minutes, too slowly to end a 15-minute
+interval, so it is not used. Keep the ceiling at or below the BMS charge voltage limit.</p>
 <h3 id="writes-and-confirmation">Writes and confirmation</h3>
 <p>Each change writes one entity through <code>number.set_value</code> or <code>select.select_option</code>, then reads holding
 registers 108–177 from <code>solarman_device</code> and compares the raw value. A register that does not confirm
@@ -1600,6 +1608,11 @@ then sets thresholds, then enables the direction.</p>
 <td><code>discharge_energy_entity</code></td>
 <td>none</td>
 <td>cumulative battery discharge energy (kWh); in Voltage mode ends <code>DISCHARGE_GRID</code> intervals on planned energy</td>
+</tr>
+<tr>
+<td><code>voltage_grid_charge_ceiling</code></td>
+<td>55.2 V</td>
+<td>TOU voltage for <code>CHARGE_GRID</code> in Voltage mode (49.5–56.0 V); the planned grid current carries the energy</td>
 </tr>
 <tr>
 <td><code>old_writers</code></td>

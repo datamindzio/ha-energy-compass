@@ -154,6 +154,15 @@ INPUTS = {
                 "default": "",
                 "selector": {"entity": {"filter": {"domain": "sensor"}}},
             },
+            "voltage_grid_charge_ceiling": number(
+                "Voltage-mode grid charge ceiling",
+                "TOU voltage written for CHARGE_GRID in Voltage mode. The inverter stops grid charging when the pack reaches the TOU voltage, and charging current lifts the pack 2-3 V within seconds, so a target taken from the SOC curve ends the charge at once. The planned grid current sets how much energy each interval takes; this ceiling only stops a full pack. Keep it at or below the BMS charge limit.",
+                55.2,
+                49.5,
+                56.0,
+                0.1,
+                "V",
+            ),
             "hold_grid_current": number(
                 "HOLD grid current",
                 "Grid charging current written in HOLD.",
@@ -444,7 +453,18 @@ DECISION = r"""
        pozwala BMS pobierac prad absorpcji; faktyczny prad ogranicza BMS.
        Wiekszy planowany udzial sieci (dojscie do progu) zostaje. #}
     {% if balance %}{% set grid = [balance_grid_current, grid]|max %}{% set direction = 'Grid' %}{% endif %}
-    {% if not balance and ((states(operation_entity)=='Capacity' and soc >= target_soc) or (states(operation_entity)=='Voltage' and v >= target_voltage*10)) %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+    {# Tryb Voltage: falownik konczy ladowanie z sieci, gdy pakiet dojdzie do napiecia
+       TOU, a prad ladowania podnosi pakiet o 2-3 V w kilka sekund. Cel z krzywej SOC
+       (51,4 V przy 512 V w spoczynku) zatrzymywal ladowanie po ~20 s; tez sterownik
+       uznawal cel za osiagniety na napieciu spoczynkowym (03/04.10: noc CHARGE_GRID
+       bez ladowania, rano import po 1,25 zl). Energie wiersza wyznacza planowany
+       prad sieci; TOU dostaje sufit, a koniec wiersza nastepuje dopiero na suficie.
+       Licznik energii ladowania Solarman odswieza sie co ~10 min, wiec nie konczy
+       15-minutowego wiersza. #}
+    {% if not balance and states(operation_entity)=='Voltage' %}
+      {% set target_voltage = voltage_grid_charge_ceiling|float %}
+      {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+    {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
   {% else %}
     {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
     {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
@@ -658,6 +678,7 @@ INITIAL = {
     "operation_entity": Input("operation_entity"),
     "commissioned_battery_modes": Input("commissioned_battery_modes"),
     "discharge_energy_entity": Input("discharge_energy_entity"),
+    "voltage_grid_charge_ceiling": Input("voltage_grid_charge_ceiling"),
     "hold_grid_current": Input("hold_grid_current"),
     "reached_discharge_current": Input("reached_discharge_current"),
     "balance_grid_current": Input("balance_grid_current"),

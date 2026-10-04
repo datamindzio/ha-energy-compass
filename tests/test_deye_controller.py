@@ -564,12 +564,79 @@ def test_voltage_safety_and_pv_uncapped(h):
     row.update(state="CHARGE_GRID", end_soc_kwh=25)
     h.data[h.ctx["operation_entity"]]["state"] = "Voltage"
     h.accept()
+    # Voltage-mode CHARGE_GRID writes the ceiling, not the 58.4 V curve point.
+    d = h.decision()
+    assert d["valid"] and d["target_voltage"] == 55.2
+    # A ceiling outside the approved 49.5-56.0 V range still blocks control.
+    h.ctx["voltage_grid_charge_ceiling"] = 57
     assert not h.decision()["valid"]
+    h.ctx["voltage_grid_charge_ceiling"] = 55.2
     h.data[CACHE]["attributes"]["snapshot"]["intervals"][0].update(
         state="CHARGE_PV", charge_kwh=0, end_soc_kwh=2.5
     )
     d = h.decision()
     assert d["valid"] and d["desired"][h.ctx["charge_entity"]] == 14
+
+
+def voltage_grid_charge(voltage):
+    """CHARGE_GRID of 2 kWh in Voltage mode at a nearly empty pack (03/04.10 night)."""
+    h = Harness(INPUTS | {"commissioned_battery_modes": ["Capacity", "Voltage"]})
+    h.data[h.ctx["operation_entity"]]["state"] = "Voltage"
+    h.data[P]["attributes"]["intervals"][0].update(
+        state="CHARGE_GRID",
+        pv_kwh=0,
+        curtail_kwh=0,
+        load_kwh=0.13,
+        charge_kwh=2.0,
+        discharge_kwh=0,
+        end_soc_kwh=6.75,
+    )
+    h.data[h.ctx["voltage_entity"]]["state"] = voltage
+    return h
+
+
+@pytest.mark.parametrize("voltage", ["512.2", "514.1", "540.0"])
+def test_voltage_grid_charge_keeps_charging_above_curve_target(voltage):
+    """04.10 04:30: TOU Grid at the 51.4 V curve target; 4 A of charge lifted the
+    pack from 512.2 V to 514.1 V in 10 s and the inverter stopped. The rest voltage
+    was also above the 27 % curve point, so the row latched as reached. The planned
+    grid current carries the energy; TOU gets the ceiling."""
+    h = voltage_grid_charge(voltage)
+    r = Runner(h)
+    r.run()
+    d = h.decision()
+    tou = f"select.{PREFIX}{d['active_tou']}_charging"
+    volts = f"number.{PREFIX}{d['active_tou']}_voltage"
+    assert not d["target_reached"] and d["target_voltage"] == 55.2
+    assert d["desired"][tou] == "Grid" and d["desired"][volts] == 55.2
+    assert d["desired"][h.ctx["grid_entity"]] >= 1
+    assert h.data[RT]["attributes"]["runtime"].get("reached_key") != d["reached_key"]
+
+
+def test_voltage_grid_charge_stops_at_ceiling():
+    h = voltage_grid_charge("552.0")
+    r = Runner(h)
+    r.run()
+    d = h.decision()
+    tou = f"select.{PREFIX}{d['active_tou']}_charging"
+    assert d["target_reached"] and d["desired"][tou] == "Disabled"
+    assert d["desired"][h.ctx["grid_entity"]] == 0
+    # The latch holds the row after the pack relaxes below the ceiling.
+    h.data[h.ctx["voltage_entity"]]["state"] = "545.0"
+    d = h.decision()
+    assert d["target_reached"] and d["desired"][h.ctx["grid_entity"]] == 0
+
+
+def test_capacity_grid_charge_still_ends_on_soc():
+    h = voltage_grid_charge("512.2")
+    h.data[h.ctx["operation_entity"]]["state"] = "Capacity"
+    h.data["sensor.inverter_deye_battery"]["state"] = "20"
+    h.accept()
+    d = h.decision()
+    assert d["target_soc"] == 27 and d["target_voltage"] == 51.4
+    assert not d["target_reached"]
+    h.data["sensor.inverter_deye_battery"]["state"] = "27"
+    assert h.decision()["target_reached"]
 
 
 COUNTER = "sensor.inverter_deye_total_battery_discharge"
@@ -1085,7 +1152,7 @@ def test_voltage_calculations_remain_simulation_only(h):
     simulation = h.decision()
     assert simulation["valid"] and simulation["state"] == "CHARGE_GRID"
     assert simulation["desired"][h.ctx["charge_entity"]] > 0
-    assert simulation["target_voltage"] == 53.1
+    assert simulation["target_voltage"] == 55.2
     h.data[MODE]["state"] = "Auto"
     automatic = h.decision()
     assert not automatic["valid"] and automatic["state"] == "BASE"
