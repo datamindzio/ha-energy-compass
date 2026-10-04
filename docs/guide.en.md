@@ -377,6 +377,7 @@ Rules (defaults: 60 min, 0.1 kW):
 | Policy | Default | Effect |
 | --- | --- | --- |
 | **Sell only PV** (`limit_export_to_pv`) | on | Per local day: exported energy ≤ PV generated (observed since midnight + forecast). Requires `pv_energy_today` and `grid_export_energy_today` counters. |
+| **Export limit scope** (`export_limit_scope`) | `local_day` | `local_day` checks the budget once for the whole day; `produced` checks it as a running total so export can never run ahead of PV generated so far that day. See [Sell only PV](model.md#operating-mode-duration-and-pv-export-budget). |
 | **Limit grid-charging price** (`limit_grid_charge_price`, `maximum_grid_charge_price`) | off | CHARGE_GRID only at buy price ≤ ceiling for its whole minimum duration. |
 | **Minimum export benefit** (`minimum_export_episode_benefit`) | 1 currency unit | Each additional battery-export period must improve full-horizon cost by at least this amount. `0` disables. |
 | **Minimum grid-charge episode benefit** (`minimum_grid_charge_episode_benefit`) | 0 (off) | Same hurdle for new grid-charge periods; consolidates charging into fewer episodes. |

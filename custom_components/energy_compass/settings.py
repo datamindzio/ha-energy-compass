@@ -145,6 +145,7 @@ CHOICES = {
     "calibration": ("tariffs", ["unvalidated", "verified"]),
     "capacity_calibration": ("battery", ["unvalidated", "verified"]),
     "terminal_mode": ("planning", ["preserve_initial", "value"]),
+    "export_limit_scope": ("planning", ["local_day", "produced"]),
     "short_coverage": ("compass", ["absolute_fallback", "unavailable"]),
     "forecast_method": ("forecast", ["bucketed_history"]),
     "strategy": ("planning", list(STRATEGIES)),
@@ -298,7 +299,8 @@ def validate_configuration(
             raise InputError(f"{key} must be boolean")
         values.setdefault(key, default)
     for key, (_, choices) in CHOICES.items():
-        if values.get(key) not in choices:
+        values.setdefault(key, choices[0])
+        if values[key] not in choices:
             raise InputError(f"invalid {key}")
     if (
         not values["hardware_floor"]

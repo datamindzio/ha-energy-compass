@@ -645,6 +645,11 @@ directly by any other available mode.</p>
 <td>Per local day: exported energy ≤ PV generated (observed since midnight + forecast). Requires <code>pv_energy_today</code> and <code>grid_export_energy_today</code> counters.</td>
 </tr>
 <tr>
+<td><strong>Export limit scope</strong> (<code>export_limit_scope</code>)</td>
+<td><code>local_day</code></td>
+<td><code>local_day</code> checks the budget once for the whole day; <code>produced</code> checks it as a running total so export can never run ahead of PV generated so far that day. See <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">Sell only PV</a>.</td>
+</tr>
+<tr>
 <td><strong>Limit grid-charging price</strong> (<code>limit_grid_charge_price</code>, <code>maximum_grid_charge_price</code>)</td>
 <td>off</td>
 <td>CHARGE_GRID only at buy price ≤ ceiling for its whole minimum duration.</td>

@@ -11,7 +11,7 @@ from scipy.sparse import coo_matrix
 
 from .charge_benefit import constrain_charge_benefit, validate_charge_benefit
 from .charge_price import price_allows_grid_charge
-from .daily_energy import daily_export_rows, day_fractions
+from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fractions
 from .dispatch_policy import MODES, constrain_modes, validate_modes
 from .export_benefit import constrain_export_benefit, validate_export_benefit
 from .idle_drain import cumulative, drain_schedule
@@ -418,7 +418,23 @@ def _validate_solution(
             for day, fraction in fractions.items():
                 if day in spent:
                     spent[day] += fraction * (charge + discharge)
-    if problem.limit_export_to_pv:
+    if problem.limit_export_to_pv and problem.export_limit_scope == "produced":
+        cumulative_export: dict[str, float] = {}
+        for entry in cumulative_export_bounds(problem):
+            fraction = entry["fraction"]
+            if not fraction:
+                continue
+            v = vectors[entry["slot_index"]]
+            day = entry["date"]
+            cumulative_export[day] = cumulative_export.get(day, 0.0) + fraction * (
+                float(values[v["gout"]]) + float(values[v["curt"]])
+            )
+            _check(
+                cumulative_export[day] <= entry["export_ceiling_kwh"] + _TOL,
+                "export exceeds PV generated so far: "
+                f"{day} {problem.slots[entry['slot_index']].start.isoformat()}",
+            )
+    elif problem.limit_export_to_pv:
         for row in daily_export_rows(problem):
             planned = sum(
                 fraction.get(row["date"], 0)
@@ -806,7 +822,28 @@ def _solve(
             0,
         )
 
-    if problem.limit_export_to_pv:
+    if problem.limit_export_to_pv and problem.export_limit_scope == "produced":
+        # One running total per local day: each slot's export (gout + curt)
+        # feeds a cumulative variable bounded by the PV accrued since that
+        # day's midnight, so export can never get ahead of production. A
+        # running variable keeps this O(slots) instead of O(slots^2) dense
+        # prefix rows.
+        day_cumulative: dict[str, int] = {}
+        for entry in cumulative_export_bounds(problem):
+            fraction = entry["fraction"]
+            if not fraction:
+                continue
+            v = vectors[entry["slot_index"]]
+            running = model.variable()
+            v[f"export_cum_{entry['date']}"] = running
+            terms = {running: 1, v["gout"]: -fraction, v["curt"]: -fraction}
+            previous = day_cumulative.get(entry["date"])
+            if previous is not None:
+                terms[previous] = -1
+            model.constrain(terms, 0, 0)
+            model.constrain({running: 1}, -np.inf, entry["export_ceiling_kwh"])
+            day_cumulative[entry["date"]] = running
+    elif problem.limit_export_to_pv:
         for row in daily_export_rows(problem):
             model.constrain(
                 {

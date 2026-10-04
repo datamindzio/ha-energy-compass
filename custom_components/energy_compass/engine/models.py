@@ -89,6 +89,7 @@ class Problem:
     timezone: str
     minimum_mode_minutes: float = 60
     limit_export_to_pv: bool = True
+    export_limit_scope: Literal["local_day", "produced"] = "local_day"
     initial_battery_mode: Literal["charge", "discharge"] | None = None
     initial_battery_mode_since: datetime | None = None
     pv_generated_today_kwh: float = 0.0

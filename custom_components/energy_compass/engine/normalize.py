@@ -226,6 +226,8 @@ def validate_problem(problem: Problem) -> None:
         raise InputError("strategy_changed must be boolean")
     if type(problem.limit_export_to_pv) is not bool:
         raise InputError("PV export limit must be boolean")
+    if problem.export_limit_scope not in ("local_day", "produced"):
+        raise InputError("export_limit_scope must be 'local_day' or 'produced'")
     for name in ("pv_generated_today_kwh", "grid_exported_today_kwh"):
         if finite(getattr(problem, name), name) < 0:
             raise InputError(f"{name} must be nonnegative")
