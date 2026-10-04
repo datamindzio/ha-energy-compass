@@ -654,6 +654,11 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <td>W każdej dobie lokalnej: eksport ≤ produkcja PV (zaobserwowana od północy + prognoza). Wymaga liczników <code>pv_energy_today</code> i <code>grid_export_energy_today</code>.</td>
 </tr>
 <tr>
+<td><strong>Zakres limitu sprzedaży PV</strong> (<code>export_limit_scope</code>)</td>
+<td><code>local_day</code> (cała doba)</td>
+<td><code>local_day</code> sprawdza budżet raz, dla całej doby; <code>produced</code> (wyprodukowane do tej chwili) sprawdza go jako sumę bieżącą, więc eksport nigdy nie wyprzedzi produkcji PV z tej doby. Zob. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">Sell only PV</a> (EN).</td>
+</tr>
+<tr>
 <td><strong>Limit ceny ładowania z sieci</strong> (<code>limit_grid_charge_price</code>, <code>maximum_grid_charge_price</code>)</td>
 <td>wyłączony</td>
 <td>CHARGE_GRID tylko przy cenie zakupu ≤ sufit przez cały minimalny czas trybu.</td>

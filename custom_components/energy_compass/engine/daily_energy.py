@@ -64,3 +64,37 @@ def daily_export_rows(problem: Problem, flows=None) -> list[dict]:
             - row["forecast_export_kwh"]
         )
     return list(rows.values())
+
+
+def cumulative_export_bounds(problem: Problem) -> list[dict]:
+    """Per-slot, per-overlapping-day prefix PV ceilings for `export_limit_scope="produced"`.
+
+    One entry per (slot, local day) pair, in chronological slot order. Each
+    entry's `export_ceiling_kwh` is the maximum cumulative export (grid export
+    plus curtailment) allowed from that day's local midnight through the end
+    of the slot: PV observed so far today plus the forecast accrued up to and
+    including this slot, minus export already observed today, floored at zero
+    so export already above PV is never retroactively forbidden -- only
+    further export is constrained. The entries for one day sum, at its final
+    slot, to the same bound as `daily_export_rows`' whole-day rule.
+    """
+    zone = ZoneInfo(problem.timezone)
+    today = problem.slots[0].start.astimezone(zone).date().isoformat()
+    cumulative_pv: dict[str, float] = {}
+    entries = []
+    for index, slot in enumerate(problem.slots):
+        for day, fraction in day_fractions(slot.start, slot.end, zone).items():
+            cumulative_pv[day] = cumulative_pv.get(day, 0.0) + fraction * slot.pv_kwh
+            observed_pv = problem.pv_generated_today_kwh if day == today else 0.0
+            observed_export = problem.grid_exported_today_kwh if day == today else 0.0
+            entries.append(
+                {
+                    "slot_index": index,
+                    "date": day,
+                    "fraction": fraction,
+                    "export_ceiling_kwh": max(
+                        0.0, observed_pv + cumulative_pv[day] - observed_export
+                    ),
+                }
+            )
+    return entries

@@ -386,6 +386,7 @@ Zasady (domyślnie 60 min, 0,1 kW):
 | Polityka | Domyślnie | Efekt |
 | --- | --- | --- |
 | **Sell only PV** (`limit_export_to_pv`, „sprzedawaj tylko PV”) | włączona | W każdej dobie lokalnej: eksport ≤ produkcja PV (zaobserwowana od północy + prognoza). Wymaga liczników `pv_energy_today` i `grid_export_energy_today`. |
+| **Zakres limitu sprzedaży PV** (`export_limit_scope`) | `local_day` (cała doba) | `local_day` sprawdza budżet raz, dla całej doby; `produced` (wyprodukowane do tej chwili) sprawdza go jako sumę bieżącą, więc eksport nigdy nie wyprzedzi produkcji PV z tej doby. Zob. [Sell only PV](model.md#operating-mode-duration-and-pv-export-budget) (EN). |
 | **Limit ceny ładowania z sieci** (`limit_grid_charge_price`, `maximum_grid_charge_price`) | wyłączony | CHARGE_GRID tylko przy cenie zakupu ≤ sufit przez cały minimalny czas trybu. |
 | **Minimalna korzyść eksportu** (`minimum_export_episode_benefit`) | 1 jednostka waluty | Każdy dodatkowy okres eksportu z baterii musi poprawić koszt całego horyzontu co najmniej o tę kwotę. `0` wyłącza. |
 | **Minimalna korzyść epizodu ładowania z sieci** (`minimum_grid_charge_episode_benefit`) | 0 (wył.) | Ten sam próg dla nowych okresów ładowania z sieci; skupia ładowanie w mniej epizodów. |
