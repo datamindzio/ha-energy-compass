@@ -4,7 +4,7 @@
 
 This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
-**0.1.32**. The mathematical contract behind each rule lives in [model and limitations](model.md);
+**0.1.33**. The mathematical contract behind each rule lives in [model and limitations](model.md);
 installation and dashboards are in the [installation guide](installation.md).
 
 Energy Compass is **advisory**. It computes a plan and publishes it as Home Assistant entities. It
@@ -1081,7 +1081,7 @@ corrections as live delivery. It fails with an error if no entry currently quali
 | --- | --- |
 | `complete` | Full reference coverage, all probes succeeded. |
 | `available_reference_horizon` | Source coverage shorter than the requested reference horizon; percentiles use what exists. |
-| `reference_horizon_uncovered` | Reserved in translations; not emitted by 0.1.32. |
+| `reference_horizon_uncovered` | Reserved in translations; not emitted by 0.1.33. |
 | `reference_probe_failed` | At least one reference probe failed or timed out. |
 | `short_source_coverage` | Price/forecast coverage ends before the requested planning horizon. |
 | `current_guidance_unavailable` | Current interval probe unknown; later windows may still be valid. |
