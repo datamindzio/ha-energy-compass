@@ -37,6 +37,7 @@ from .settings import (
 from .setup_profiles import (
     AXES,
     apply_assignments,
+    buy_tariff_schedule,
     currency_error,
     preview_lines,
     profile_assignments,
@@ -233,6 +234,24 @@ class Editor(SourceEditor):
     _currency_review_pending = False
     _setup_selections: MappingProxyType = MappingProxyType({})
     _profile_assignments: tuple = ()
+
+    async def _after_source_save(self):
+        if not self._existing_installation and self._setup_selections:
+            current = profile_assignments(
+                self._setup_selections,
+                self._draft["preset"],
+                raw_rce_sell=is_raw_rce_sell(self._draft["sources"]["sell"]),
+            )
+            reconcile_assignments(
+                self._draft["settings"],
+                self._profile_assignments,
+                current,
+                baseline=default_configuration(
+                    self._draft["currency"], self._draft["timezone"]
+                )["settings"],
+            )
+            self._profile_assignments = current
+        return await super()._after_source_save()
 
     async def async_step_menu(self, user_input=None):
         menu_options = ["installation", "sources", *GROUPS, "helpers"]
@@ -448,7 +467,9 @@ class Editor(SourceEditor):
                         errors=errors,
                     )
                 current_assignments = profile_assignments(
-                    self._setup_selections, candidate["preset"]
+                    self._setup_selections,
+                    candidate["preset"],
+                    raw_rce_sell=is_raw_rce_sell(candidate["sources"]["sell"]),
                 )
                 reconcile_assignments(
                     candidate["settings"],
@@ -872,7 +893,7 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_show_form(
                     step_id="user",
                     data_schema=self._user_schema(selections),
-                    errors={"settlement": err},
+                    errors={err.removesuffix("_currency"): err},
                 )
             if user_input["currency"] == "PLN" and user_input["preset"] in (
                 "pse_solcast",
@@ -882,8 +903,16 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
             preset = PRESETS.get(user_input["preset"])
             if preset and preset.soc_unit:
                 self._draft["soc_options"]["unit"] = preset.soc_unit
-            assignments = profile_assignments(selections, user_input["preset"])
+            assignments = profile_assignments(
+                selections,
+                user_input["preset"],
+                raw_rce_sell=is_raw_rce_sell(self._draft["sources"]["sell"]),
+            )
             apply_assignments(self._draft["settings"], assignments)
+            if (schedule := buy_tariff_schedule(selections)) is not None:
+                self._draft["sources"]["buy"].update(
+                    mode="schedule", forecast=[], fixed=None, schedule=schedule
+                )
             self._draft["setup_profiles"] = selection_record(selections)
             self._setup_selections = selections
             self._profile_assignments = assignments

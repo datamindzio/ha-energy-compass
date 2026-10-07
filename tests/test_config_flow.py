@@ -826,8 +826,9 @@ async def test_pl_net_billing_deye_prefills_new_entry(
             "limit_floor": 0.8,
         }
         assert result["data"]["setup_profiles"] == {
-            "revision": 1,
+            "revision": 2,
             "settlement": "pl_net_billing",
+            "buy_tariff": "generic",
             "inverter": "deye_hybrid",
         }
         assert result["data"]["explicit_strategy_fields"] == []
@@ -858,8 +859,9 @@ async def test_generic_profiles_are_a_no_op(
     assert result["type"] == "create_entry"
     assert result["data"]["settings"] == default_configuration("EUR", "UTC")["settings"]
     assert result["data"]["setup_profiles"] == {
-        "revision": 1,
+        "revision": 2,
         "settlement": "generic",
+        "buy_tariff": "generic",
         "inverter": "generic",
     }
 
@@ -1365,3 +1367,212 @@ async def test_preview_warns_net_metering_copy(
     )
     text = preview["description_placeholders"]["preview"]
     assert "Note: net-metering sell is a copy, not linked to buy" in text
+
+
+_RCE_RECORDS = [
+    {"dtime": "2026-09-18 11:00:00", "rce_pln": 400.0},
+    {"dtime": "2026-09-18 11:15:00", "rce_pln": 420.0},
+]
+_PROFILE_NAMES = (
+    "profile_assignments",
+    "reconcile_assignments",
+    "apply_assignments",
+    "buy_tariff_schedule",
+)
+
+
+def _spies():
+    return {
+        name: patch.object(config_flow, name, wraps=getattr(config_flow, name))
+        for name in _PROFILE_NAMES
+    }
+
+
+async def _new_pl_entry(hass, **overrides):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    fid = result["flow_id"]
+    menu = await hass.config_entries.flow.async_configure(
+        fid,
+        _user_payload(currency="PLN", timezone="Europe/Warsaw", **overrides),
+    )
+    assert menu["type"] == "menu"
+    return fid, hass.config_entries.flow._progress[fid]
+
+
+async def _flow_rce_save(hass, fid, *, enter_tariffs=True):
+    flow = hass.config_entries.flow
+    if enter_tariffs:
+        await flow.async_configure(fid, {"next_step_id": "tariffs"})
+    await flow.async_configure(fid, {"next_step_id": "tariff_sell"})
+    await flow.async_configure(fid, {"mode": "rce"})
+    return await flow.async_configure(fid, {"entity": "sensor.rce"})
+
+
+async def test_user_step_offers_the_buy_tariff_axis(
+    recorder_mock, hass, enable_custom_integrations
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    defaults = {str(key): key.default() for key in result["data_schema"].schema}
+    assert defaults["buy_tariff"] == "generic"
+    fields = {str(key): value for key, value in result["data_schema"].schema.items()}
+    options = [o["value"] for o in fields["buy_tariff"].config["options"]]
+    assert options[0] == "generic" and "pge_g12w" in options and len(options) == 12
+    assert list(fields).index("buy_tariff") == list(fields).index("settlement") + 1
+
+
+async def test_buy_tariff_selection_preselects_the_schedule(
+    recorder_mock, hass, enable_custom_integrations
+):
+    _, flow = await _new_pl_entry(hass, buy_tariff="pge_g12")
+    buy = flow._draft["sources"]["buy"]
+    assert buy["mode"] == "schedule" and buy["forecast"] == [] and buy["fixed"] is None
+    assert buy["schedule"] == {
+        "tariff": "pge_g12",
+        "meter_winter_clock": False,
+        "params": {},
+    }
+    assert flow._draft["settings"]["buy_rate"] == 0
+    assert flow._draft["setup_profiles"]["buy_tariff"] == "pge_g12"
+
+
+async def test_buy_tariff_with_eur_errors_on_the_buy_tariff_field(
+    recorder_mock, hass, enable_custom_integrations
+):
+    result = await hass.config_entries.flow.async_init(
+        "energy_compass", context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], _user_payload(currency="EUR", buy_tariff="pge_g12")
+    )
+    assert result["type"] == "form"
+    assert result["errors"] == {"buy_tariff": "buy_tariff_currency"}
+
+
+async def test_rce_save_applies_the_net_billing_multiplier_to_a_generic_preset(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-09-18T10:00:00+00:00")
+    hass.states.async_set("sensor.rce", "400", {"prices": _RCE_RECORDS})
+    fid, flow = await _new_pl_entry(hass, settlement="pl_net_billing", preset="generic")
+    assert flow._draft["settings"]["sell_multiplier"] == 1
+    result = await _flow_rce_save(hass, fid)
+    assert result["step_id"] == "tariffs"
+    assert flow._draft["settings"]["sell_multiplier"] == 1.23
+    assert flow._draft["sources"]["sell"]["floor_per_kwh"] == 0.0
+
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "menu"})
+    await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "installation"}
+    )
+    await hass.config_entries.flow.async_configure(
+        fid,
+        {
+            "name": "Fresh",
+            "currency": "PLN",
+            "timezone": "Europe/Warsaw",
+            "preset": "generic",
+            "pv_enabled": False,
+            "battery_enabled": False,
+        },
+    )
+    assert flow._draft["settings"]["sell_multiplier"] == 1.23
+
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "tariffs"})
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "tariff_sell"})
+    await hass.config_entries.flow.async_configure(fid, {"mode": "fixed"})
+    assert flow._draft["settings"]["sell_multiplier"] == 1
+    assert "floor_per_kwh" not in flow._draft["sources"]["sell"]
+
+
+async def test_rce_save_keeps_an_edited_sell_multiplier(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-09-18T10:00:00+00:00")
+    hass.states.async_set("sensor.rce", "400", {"prices": _RCE_RECORDS})
+    fid, flow = await _new_pl_entry(hass, settlement="pl_net_billing", preset="generic")
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "tariffs"})
+    await hass.config_entries.flow.async_configure(
+        fid, {"next_step_id": "tariff_values"}
+    )
+    await hass.config_entries.flow.async_configure(fid, {"sell_multiplier": 1.1})
+    await _flow_rce_save(hass, fid, enter_tariffs=False)
+    assert flow._draft["settings"]["sell_multiplier"] == 1.1
+
+
+async def test_new_entry_saves_call_the_profile_helpers(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-09-18T10:00:00+00:00")
+    hass.states.async_set("sensor.rce", "400", {"prices": _RCE_RECORDS})
+    spies = _spies()
+    with (
+        spies["profile_assignments"] as assignments,
+        spies["reconcile_assignments"] as reconcile,
+        spies["buy_tariff_schedule"] as schedule,
+    ):
+        fid, _ = await _new_pl_entry(
+            hass, settlement="pl_net_billing", buy_tariff="g11"
+        )
+        calls = assignments.call_count
+        reconciles = reconcile.call_count
+        await _flow_rce_save(hass, fid)
+        assert schedule.called
+        assert assignments.call_count == calls + 1
+        assert reconcile.call_count == reconciles + 1
+
+
+@pytest.mark.parametrize("flow_kind", ["options", "reconfigure"])
+async def test_existing_installation_saves_never_touch_profiles(
+    recorder_mock, hass, enable_custom_integrations, freezer, flow_kind
+):
+    freezer.move_to("2026-09-18T10:00:00+00:00")
+    hass.states.async_set("sensor.rce", "400", {"prices": _RCE_RECORDS})
+    config = default_configuration("PLN", "Europe/Warsaw")
+    config["settings"]["sell_multiplier"] = 1.1
+    config["setup_profiles"] = {
+        "revision": 2,
+        "settlement": "pl_net_billing",
+        "buy_tariff": "generic",
+        "inverter": "generic",
+    }
+    entry = MockConfigEntry(domain="energy_compass", data=config, version=3)
+    entry.add_to_hass(hass)
+    if flow_kind == "options":
+        manager = hass.config_entries.options
+        result = await manager.async_init(entry.entry_id)
+    else:
+        manager = hass.config_entries.flow
+        result = await manager.async_init(
+            "energy_compass",
+            context={
+                "source": config_entries.SOURCE_RECONFIGURE,
+                "entry_id": entry.entry_id,
+            },
+        )
+    fid = result["flow_id"]
+    spies = _spies()
+    with (
+        spies["profile_assignments"] as assignments,
+        spies["reconcile_assignments"] as reconcile,
+        spies["apply_assignments"] as apply,
+        spies["buy_tariff_schedule"] as schedule,
+    ):
+        await manager.async_configure(fid, {"next_step_id": "tariffs"})
+        await manager.async_configure(fid, {"next_step_id": "tariff_sell"})
+        await manager.async_configure(fid, {"mode": "rce"})
+        await manager.async_configure(fid, {"entity": "sensor.rce"})
+        await manager.async_configure(fid, {"next_step_id": "tariff_buy"})
+        await manager.async_configure(fid, {"mode": "schedule"})
+        await manager.async_configure(
+            fid, {"tariff": "pge_g12", "meter_winter_clock": False}
+        )
+        for spy in (assignments, reconcile, apply, schedule):
+            assert not spy.called
+    draft = manager._progress[fid]._draft
+    assert draft["settings"]["sell_multiplier"] == 1.1
+    assert draft["sources"]["buy"]["mode"] == "schedule"
+    assert draft["sources"]["sell"]["floor_per_kwh"] == 0.0
