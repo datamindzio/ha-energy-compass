@@ -518,7 +518,7 @@ pyta o obie, więc sprawdź licznik lub fakturę.</p>
 integracji <code>rce_pse</code> (atrybut <code>prices</code>, wartość <code>rce_pln</code>, koniec <code>dtime</code>, PLN/MWh, 15 minut) jako
 źródło prognozy z progiem ceny 0: surowa wartość jest ograniczona od dołu do 0 za kWh <strong>przed</strong>
 mnożnikiem, VAT i dodatkiem (<code>max(RCE, 0) × 1,23</code> z mnożnikiem net-billingu). Próg widać w Podglądzie
-i znika przy przełączeniu źródła z prognozy. W nowej instalacji profil PL net-billing przypisuje
+i znika przy przełączeniu źródła z prognozy lub gdy po edycji nie jest już surowym źródłem RCE w PLN/MWh. W nowej instalacji profil PL net-billing przypisuje
 potem mnożnik 1,23; w Konfiguruj i Rekonfiguruj ustaw mnożnik sprzedaży samodzielnie. Bez integracji
 <code>rce_pse</code> użyj <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/examples/rce-sell-price.yaml"><code>examples/rce-sell-price.yaml</code></a>.</p>
 <h2 id="przegląd-encji">Przegląd encji</h2>

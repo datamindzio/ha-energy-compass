@@ -236,7 +236,7 @@ pyta o obie, więc sprawdź licznik lub fakturę.
 integracji `rce_pse` (atrybut `prices`, wartość `rce_pln`, koniec `dtime`, PLN/MWh, 15 minut) jako
 źródło prognozy z progiem ceny 0: surowa wartość jest ograniczona od dołu do 0 za kWh **przed**
 mnożnikiem, VAT i dodatkiem (`max(RCE, 0) × 1,23` z mnożnikiem net-billingu). Próg widać w Podglądzie
-i znika przy przełączeniu źródła z prognozy. W nowej instalacji profil PL net-billing przypisuje
+i znika przy przełączeniu źródła z prognozy lub gdy po edycji nie jest już surowym źródłem RCE w PLN/MWh. W nowej instalacji profil PL net-billing przypisuje
 potem mnożnik 1,23; w Konfiguruj i Rekonfiguruj ustaw mnożnik sprzedaży samodzielnie. Bez integracji
 `rce_pse` użyj [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml).
 

@@ -444,7 +444,8 @@
       "plan_timeout": "The base solve timed out; feasibility is unknown.",
       "optimizer_error": "The optimizer could not validate the base plan.",
       "settlement_currency": "Polish settlement profiles require currency PLN.",
-      "buy_tariff_currency": "The selected Polish tariff requires currency PLN."
+      "buy_tariff_currency": "The selected Polish tariff requires currency PLN.",
+      "schedule_currency": "The Polish tariff schedule requires currency PLN; change the buy source first."
     },
     "abort": {
       "reconfigure_successful": "Configuration saved."
@@ -914,7 +915,8 @@
       "site_conflict": "This key is already registered under a different source.",
       "rate_limited": "Too many attempts; try again later.",
       "cannot_connect": "Could not reach the Energy Atlas collector.",
-      "unknown": "Registration failed for an unknown reason."
+      "unknown": "Registration failed for an unknown reason.",
+      "schedule_currency": "The Polish tariff schedule requires currency PLN; change the buy source first."
     },
     "abort": {
       "site_not_registered": "This site was forgotten in another window; re-enable Energy Atlas to register a new one."

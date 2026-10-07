@@ -231,7 +231,7 @@ your meter or bill.
 integration (attribute `prices`, value `rce_pln`, end `dtime`, PLN/MWh, 15 minutes) as a forecast source
 with a price floor of 0: the raw value is floored at 0 per kWh **before** the multiplier, VAT and
 addition (`max(RCE, 0) × 1.23` with the net-billing multiplier). The floor is visible in Preview and
-is dropped when the source is switched away from forecast. For a new installation, the PL
+is dropped when the source is switched away from forecast or edited so that it is no longer a raw PLN/MWh RCE source. For a new installation, the PL
 net-billing profile then assigns the 1.23 multiplier; in Configure and Reconfigure set the sell
 multiplier yourself. Without the `rce_pse` integration use
 [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml).

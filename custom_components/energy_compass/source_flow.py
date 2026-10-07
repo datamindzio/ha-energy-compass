@@ -994,6 +994,8 @@ class SourceEditor:
             price["mode"] = "forecast"
             price["fixed"] = None
             price.pop("schedule", None)
+            if not is_raw_rce_sell(price):
+                price.pop("floor_per_kwh", None)
             candidate["helpers"].pop(f"{target}_rate", None)
         elif target == "load":
             old = candidate["sources"]["load"]

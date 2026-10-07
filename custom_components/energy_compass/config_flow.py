@@ -503,6 +503,16 @@ class Editor(SourceEditor):
             if not user_input["battery_enabled"]:
                 candidate["sources"].update(soc=None, bms_soc=None)
             currency_changed = candidate["currency"] != self._draft["currency"]
+            if (
+                currency_changed
+                and candidate["currency"] != "PLN"
+                and candidate["sources"]["buy"]["mode"] == "schedule"
+            ):
+                return self.async_show_form(
+                    step_id="installation",
+                    data_schema=self._installation_schema(),
+                    errors={"currency": "schedule_currency"},
+                )
             if currency_changed:
                 candidate["settings"]["calibration"] = "unvalidated"
             current_assignments = None

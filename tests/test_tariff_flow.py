@@ -607,3 +607,74 @@ async def test_flow_preview_renders_the_schedule_line(
     text = result["description_placeholders"]["preview"]
     assert "Buy source: tariff schedule PGE Dystrybucja G12; clock local time" in text
     assert not result["errors"]
+
+
+async def test_replacing_the_rce_source_drops_the_floor(
+    recorder_mock, hass, enable_custom_integrations, freezer, rce_state
+):
+    freezer.move_to(NOW)
+    hass.states.async_set(
+        "sensor.other", "1", {"rows": [{"start": NOW, "end": NOW, "price": 1}]}
+    )
+    _, fid = await start(hass, pln_config())
+    await save_rce(hass, fid)
+    assert draft(hass, fid)["sources"]["sell"]["floor_per_kwh"] == 0.0
+    flow = hass.config_entries.options._progress[fid]
+    flow._source = {"target": "sell", "mode": "forecast", "operation": "replace"}
+    flow._source_ref = None
+    binding = flow._rce_binding("sensor.rce")
+    from dataclasses import replace
+
+    other = replace(binding, unit="PLN/kWh")
+    flow._source["operation"] = "append"
+    flow._save_interval(other)
+    sell = draft(hass, fid)["sources"]["sell"]
+    assert "floor_per_kwh" not in sell
+    assert len(sell["forecast"]) == 2
+
+
+async def test_appending_another_raw_rce_binding_keeps_the_floor(
+    recorder_mock, hass, enable_custom_integrations, freezer, rce_state
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    await save_rce(hass, fid)
+    flow = hass.config_entries.options._progress[fid]
+    flow._source = {"target": "sell", "mode": "forecast", "operation": "append"}
+    flow._source_ref = None
+    flow._save_interval(flow._rce_binding("sensor.rce"))
+    assert draft(hass, fid)["sources"]["sell"]["floor_per_kwh"] == 0.0
+
+
+async def test_currency_change_is_rejected_while_a_schedule_exists(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["sources"]["buy"].update(mode="schedule", fixed=None, schedule=SCHEDULE_PGE)
+    _, fid = await start(hass, config)
+    await configure(hass, fid, {"next_step_id": "installation"})
+    result = await configure(
+        hass,
+        fid,
+        {
+            "name": "Energy Compass",
+            "currency": "EUR",
+            "timezone": "Europe/Warsaw",
+            "preset": "generic",
+            "pv_enabled": False,
+            "battery_enabled": False,
+        },
+    )
+    assert result["step_id"] == "installation"
+    assert result["errors"] == {"currency": "schedule_currency"}
+    assert draft(hass, fid)["currency"] == "PLN"
+
+
+@pytest.mark.parametrize(
+    "file", ["strings.json", "translations/en.json", "translations/pl.json"]
+)
+def test_schedule_currency_error_exists_in_every_file(file):
+    doc = json.loads((COMPONENT_DIR / file).read_text())
+    for section in ("config", "options"):
+        assert doc[section]["error"]["schedule_currency"]
