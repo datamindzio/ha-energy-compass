@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from .engine.models import InputError
+from .sources.tariffs import CATALOG
 
 _LABELS = {
     "en": {
@@ -29,6 +30,8 @@ _LABELS = {
         "fixed": "Fixed rate",
         "entity": "Numeric entity",
         "forecast": "Interval forecast",
+        "schedule": "Polish tariff schedule (G11/G12/G12w)",
+        "rce": "RCE market price (PSE)",
         "measurement": "Measurement",
         "statistic": "Recorder statistic",
         "power_history": "Power history",
@@ -67,6 +70,8 @@ _LABELS = {
         "fixed": "Stała stawka",
         "entity": "Encja liczbowa",
         "forecast": "Prognoza przedziałowa",
+        "schedule": "Taryfa OSD (G11/G12/G12w)",
+        "rce": "Cena rynkowa RCE (PSE)",
         "measurement": "Pomiar",
         "statistic": "Statystyka rejestratora",
         "power_history": "Historia mocy",
@@ -185,6 +190,20 @@ def source_inventory(config, registry=None, language="en"):
                         f"{labels[role]} · {labels['continuation']} {index + 1} · {describe(binding)}",
                     )
                 )
+        elif price["mode"] == "schedule":
+            tariff = CATALOG.get(price.get("schedule", {}).get("tariff"))
+            language_key = "pl" if language and language.startswith("pl") else "en"
+            name = (
+                tariff.labels[language_key]
+                if tariff
+                else price.get("schedule", {}).get("tariff", labels["missing"])
+            )
+            result.append(
+                (
+                    SourceRef(role, "scalar"),
+                    f"{labels[role]} · {labels['schedule']} · {name}",
+                )
+            )
         else:
             helper = config.get("helpers", {}).get(f"{role}_rate")
             origin = describe(helper) if helper else labels["fixed"]

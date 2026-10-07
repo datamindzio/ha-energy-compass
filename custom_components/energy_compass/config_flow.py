@@ -53,6 +53,7 @@ from .source_management import (
     source_mode_options,
 )
 from .sources.bindings import IntervalBinding
+from .sources.tariffs import is_raw_rce_sell
 from .sources.throughput import resolve_daily_throughput
 
 _LOGGER = logging.getLogger(__name__)
@@ -623,7 +624,7 @@ class Editor(SourceEditor):
             mode = user_input["mode"]
             if mode == "back":
                 return await self.async_step_tariffs()
-            if mode not in ("fixed", "entity", "forecast"):
+            if mode not in self._source_modes(role):
                 errors["base"] = "invalid_input"
             else:
                 current = self._draft["sources"][role]
@@ -643,6 +644,10 @@ class Editor(SourceEditor):
                     "return_to": "tariffs",
                 }
                 self._binding = None
+                if mode == "schedule":
+                    return await self.async_step_tariff_schedule()
+                if mode == "rce":
+                    return await self.async_step_tariff_rce()
                 selected = (
                     self._draft.get("helpers", {}).get(f"{role}_rate", {}).get("entity")
                     if mode == "entity"
@@ -656,20 +661,27 @@ class Editor(SourceEditor):
                     return await self._save_fixed_source()
                 return await self.async_step_source_entity()
         current = self._draft["sources"][role]
+        modes = self._source_modes(role)
         default = (
-            "forecast"
+            "schedule"
+            if current["mode"] == "schedule"
+            else "rce"
+            if role == "sell" and is_raw_rce_sell(current)
+            else "forecast"
             if current["mode"] == "forecast"
             else "entity"
             if self._draft.get("helpers", {}).get(f"{role}_rate")
             else "fixed"
         )
+        if default not in modes:
+            default = modes[0]
         return self.async_show_form(
             step_id=f"tariff_{role}",
             data_schema=vol.Schema(
                 {
                     vol.Required("mode", default=default): select(
                         source_mode_options(
-                            ["fixed", "entity", "forecast", "back"],
+                            [*modes, "back"],
                             self.hass.config.language,
                         )
                     )

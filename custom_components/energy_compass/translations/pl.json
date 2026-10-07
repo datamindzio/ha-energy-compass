@@ -327,7 +327,8 @@
           "balance_hold_minutes": "Czas trzymania na górze (min)",
           "balance_soc_threshold": "Próg SOC balansowania",
           "balance_value": "Wartość balansowania po terminie",
-          "buy_rate": "Stała cena zakupu",
+          "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
+          "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
           "sell_rate": "Stała cena sprzedaży",
           "buy_addition": "Dodatek do ceny zakupu",
           "sell_addition": "Dodatek do ceny sprzedaży",
@@ -391,10 +392,32 @@
           "mode": "Tryb ceny sprzedaży"
         }
       },
+      "tariff_schedule": {
+        "title": "Taryfa OSD",
+        "data": {
+          "tariff": "Taryfa (operator i grupa)",
+          "meter_winter_clock": "Stary licznik bez odczytu zdalnego na czasie zimowym (stałe UTC+1)"
+        }
+      },
+      "tariff_schedule_hours": {
+        "title": "Godziny ustalone przez Enea Operator",
+        "data": {
+          "night_start": "Początek strefy nocnej (8 h w przedziale 22-7)",
+          "afternoon_start": "Początek strefy popołudniowej (2 h w przedziale 13-17)"
+        }
+      },
+      "tariff_rce": {
+        "title": "Cena rynkowa RCE (PSE)",
+        "data": {
+          "entity": "Sensor RCE (atrybut prices)"
+        },
+        "description": "{detail}"
+      },
       "tariff_values": {
         "title": "Stałe stawki i przeliczenia",
         "data": {
-          "buy_rate": "Stała cena zakupu",
+          "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
+          "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
           "sell_rate": "Stała cena sprzedaży",
           "buy_multiplier": "Mnożnik ceny zakupu",
           "sell_multiplier": "Mnożnik ceny sprzedaży",
@@ -747,7 +770,8 @@
           "balance_hold_minutes": "Czas trzymania na górze (min)",
           "balance_soc_threshold": "Próg SOC balansowania",
           "balance_value": "Wartość balansowania po terminie",
-          "buy_rate": "Stała cena zakupu",
+          "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
+          "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
           "sell_rate": "Stała cena sprzedaży",
           "buy_addition": "Dodatek do ceny zakupu",
           "sell_addition": "Dodatek do ceny sprzedaży",
@@ -811,10 +835,32 @@
           "mode": "Tryb ceny sprzedaży"
         }
       },
+      "tariff_schedule": {
+        "title": "Taryfa OSD",
+        "data": {
+          "tariff": "Taryfa (operator i grupa)",
+          "meter_winter_clock": "Stary licznik bez odczytu zdalnego na czasie zimowym (stałe UTC+1)"
+        }
+      },
+      "tariff_schedule_hours": {
+        "title": "Godziny ustalone przez Enea Operator",
+        "data": {
+          "night_start": "Początek strefy nocnej (8 h w przedziale 22-7)",
+          "afternoon_start": "Początek strefy popołudniowej (2 h w przedziale 13-17)"
+        }
+      },
+      "tariff_rce": {
+        "title": "Cena rynkowa RCE (PSE)",
+        "data": {
+          "entity": "Sensor RCE (atrybut prices)"
+        },
+        "description": "{detail}"
+      },
       "tariff_values": {
         "title": "Stałe stawki i przeliczenia",
         "data": {
-          "buy_rate": "Stała cena zakupu",
+          "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
+          "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
           "sell_rate": "Stała cena sprzedaży",
           "buy_multiplier": "Mnożnik ceny zakupu",
           "sell_multiplier": "Mnożnik ceny sprzedaży",

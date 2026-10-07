@@ -327,7 +327,8 @@
           "balance_hold_minutes": "Balance hold at the top (minutes)",
           "balance_soc_threshold": "Balance SOC threshold",
           "balance_value": "Balance value once due",
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_addition": "Buy addition",
           "sell_addition": "Sell addition",
@@ -391,10 +392,32 @@
           "mode": "Sell source mode"
         }
       },
+      "tariff_schedule": {
+        "title": "Polish tariff schedule",
+        "data": {
+          "tariff": "Tariff (operator and group)",
+          "meter_winter_clock": "Old non-remote meter on winter time (fixed UTC+1)"
+        }
+      },
+      "tariff_schedule_hours": {
+        "title": "Hours set by Enea Operator",
+        "data": {
+          "night_start": "Night zone start hour (8 h within 22-7)",
+          "afternoon_start": "Afternoon zone start hour (2 h within 13-17)"
+        }
+      },
+      "tariff_rce": {
+        "title": "RCE market price (PSE)",
+        "data": {
+          "entity": "RCE sensor (attribute prices)"
+        },
+        "description": "{detail}"
+      },
       "tariff_values": {
         "title": "Fixed rates and transformations",
         "data": {
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_multiplier": "Buy multiplier",
           "sell_multiplier": "Sell multiplier",
@@ -747,7 +770,8 @@
           "balance_hold_minutes": "Balance hold at the top (minutes)",
           "balance_soc_threshold": "Balance SOC threshold",
           "balance_value": "Balance value once due",
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_addition": "Buy addition",
           "sell_addition": "Sell addition",
@@ -811,10 +835,32 @@
           "mode": "Sell source mode"
         }
       },
+      "tariff_schedule": {
+        "title": "Polish tariff schedule",
+        "data": {
+          "tariff": "Tariff (operator and group)",
+          "meter_winter_clock": "Old non-remote meter on winter time (fixed UTC+1)"
+        }
+      },
+      "tariff_schedule_hours": {
+        "title": "Hours set by Enea Operator",
+        "data": {
+          "night_start": "Night zone start hour (8 h within 22-7)",
+          "afternoon_start": "Afternoon zone start hour (2 h within 13-17)"
+        }
+      },
+      "tariff_rce": {
+        "title": "RCE market price (PSE)",
+        "data": {
+          "entity": "RCE sensor (attribute prices)"
+        },
+        "description": "{detail}"
+      },
       "tariff_values": {
         "title": "Fixed rates and transformations",
         "data": {
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_multiplier": "Buy multiplier",
           "sell_multiplier": "Sell multiplier",

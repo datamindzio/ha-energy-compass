@@ -320,7 +320,8 @@
         "description": "The currency has changed to {currency}. Amounts have not been converted. Review and, where needed, edit every amount below, then confirm that these values are intentional in {currency}. Fixed values are retained even when a helper is selected. Helper and price-source currencies must match the new currency before saving. {detail}",
         "data": {
           "wear_per_kwh": "Wear per kwh",
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_addition": "Buy addition",
           "sell_addition": "Sell addition",
@@ -384,10 +385,32 @@
           "mode": "Sell source mode"
         }
       },
+      "tariff_schedule": {
+        "title": "Polish tariff schedule",
+        "data": {
+          "tariff": "Tariff (operator and group)",
+          "meter_winter_clock": "Old non-remote meter on winter time (fixed UTC+1)"
+        }
+      },
+      "tariff_schedule_hours": {
+        "title": "Hours set by Enea Operator",
+        "data": {
+          "night_start": "Night zone start hour (8 h within 22-7)",
+          "afternoon_start": "Afternoon zone start hour (2 h within 13-17)"
+        }
+      },
+      "tariff_rce": {
+        "title": "RCE market price (PSE)",
+        "data": {
+          "entity": "RCE sensor (attribute prices)"
+        },
+        "description": "{detail}"
+      },
       "tariff_values": {
         "title": "Fixed rates and transformations",
         "data": {
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_multiplier": "Buy multiplier",
           "sell_multiplier": "Sell multiplier",
@@ -733,7 +756,8 @@
         "description": "The currency has changed to {currency}. Amounts have not been converted. Review and, where needed, edit every amount below, then confirm that these values are intentional in {currency}. Fixed values are retained even when a helper is selected. Helper and price-source currencies must match the new currency before saving. {detail}",
         "data": {
           "wear_per_kwh": "Wear per kwh",
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_addition": "Buy addition",
           "sell_addition": "Sell addition",
@@ -797,10 +821,32 @@
           "mode": "Sell source mode"
         }
       },
+      "tariff_schedule": {
+        "title": "Polish tariff schedule",
+        "data": {
+          "tariff": "Tariff (operator and group)",
+          "meter_winter_clock": "Old non-remote meter on winter time (fixed UTC+1)"
+        }
+      },
+      "tariff_schedule_hours": {
+        "title": "Hours set by Enea Operator",
+        "data": {
+          "night_start": "Night zone start hour (8 h within 22-7)",
+          "afternoon_start": "Afternoon zone start hour (2 h within 13-17)"
+        }
+      },
+      "tariff_rce": {
+        "title": "RCE market price (PSE)",
+        "data": {
+          "entity": "RCE sensor (attribute prices)"
+        },
+        "description": "{detail}"
+      },
       "tariff_values": {
         "title": "Fixed rates and transformations",
         "data": {
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_multiplier": "Buy multiplier",
           "sell_multiplier": "Sell multiplier",

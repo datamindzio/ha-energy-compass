@@ -26,10 +26,18 @@ from .source_management import (
     source_role_options,
 )
 from .sources.bindings import (
+    EntityBinding,
     IntervalBinding,
     field_paths,
     parse_intervals,
     resolve_binding,
+)
+from .sources.tariffs import (
+    CATALOG,
+    TariffSchedule,
+    is_raw_rce_sell,
+    tariff_options,
+    validate_schedule,
 )
 
 MEASUREMENTS = (
@@ -54,6 +62,7 @@ class SourceEditor:
 
     _source_ref = None
     _source_original = None
+    _schedule_choice = None
 
     async def async_step_sources(self, user_input=None):
         self._source = None
@@ -154,7 +163,10 @@ class SourceEditor:
 
     def _source_modes(self, target):
         if target in ("buy", "sell"):
-            return ["fixed", "entity", "forecast"]
+            modes = ["fixed", "entity", "forecast"]
+            if self._draft["currency"] == "PLN":
+                modes.append("schedule" if target == "buy" else "rce")
+            return modes
         if target == "pv":
             return ["forecast"]
         if target == "load":
@@ -204,6 +216,12 @@ class SourceEditor:
                     return await self._save_fixed_source()
                 if mode == "statistic":
                     return await self.async_step_source_statistic()
+                if mode == "schedule":
+                    self._source["operation"] = "replace"
+                    return await self.async_step_tariff_schedule()
+                if mode == "rce":
+                    self._source["operation"] = "replace"
+                    return await self.async_step_tariff_rce()
                 return await self.async_step_source_entity()
         fields = {
             vol.Required("mode", default=choices[0]): select(
@@ -227,6 +245,10 @@ class SourceEditor:
             mode = (
                 "forecast"
                 if ref.kind in ("interval", "forecast")
+                else "schedule"
+                if ref.role == "buy"
+                and ref.kind == "scalar"
+                and self._draft["sources"]["buy"]["mode"] == "schedule"
                 else "entity"
                 if ref.role in ("buy", "sell")
                 and self._draft["helpers"].get(f"{ref.role}_rate")
@@ -250,6 +272,8 @@ class SourceEditor:
                 "operation": "edit",
                 "group": (ref.group_index or 0) + 1,
             }
+            if mode == "schedule":
+                return await self.async_step_tariff_schedule()
             selected = selected_source(self._draft, ref)
             if ref.role in ("buy", "sell") and mode == "entity":
                 selected = self._draft["helpers"][f"{ref.role}_rate"]
@@ -356,6 +380,8 @@ class SourceEditor:
                 fixed=candidate["settings"][f"{target}_rate"],
                 unit=f"{candidate['currency']}/kWh",
             ).to_dict()
+            price.pop("schedule", None)
+            price.pop("floor_per_kwh", None)
             candidate["helpers"].pop(f"{target}_rate", None)
         elif target == "load":
             candidate["sources"]["load"] = LoadSource(
@@ -366,6 +392,200 @@ class SourceEditor:
             ).to_dict()
         else:
             return await self.async_step_source_mode()
+        if self._source_ref:
+            assert_selected(self._draft, self._source_ref, self._source_original)
+        self._draft = candidate
+        return await self._after_source_save()
+
+    def _stored_schedule(self):
+        buy = self._draft["sources"]["buy"]
+        if buy["mode"] == "schedule" and buy.get("schedule"):
+            return TariffSchedule.from_dict(buy["schedule"])
+        return None
+
+    def _tariff_step_unavailable(self, step_id, role):
+        if self._source["target"] != role or self._draft["currency"] != "PLN":
+            return self.async_show_form(
+                step_id=step_id,
+                data_schema=vol.Schema({}),
+                errors={"base": "invalid_input"},
+            )
+        return None
+
+    async def async_step_tariff_schedule(self, user_input=None):
+        if blocked := self._tariff_step_unavailable("tariff_schedule", "buy"):
+            return blocked
+        stored = self._stored_schedule()
+        errors = {}
+        if user_input is not None:
+            tariff = user_input["tariff"]
+            winter = user_input["meter_winter_clock"]
+            if tariff not in CATALOG or not isinstance(winter, bool):
+                errors["base"] = "invalid_input"
+            else:
+                self._schedule_choice = (tariff, winter)
+                if CATALOG[tariff].choices:
+                    return await self.async_step_tariff_schedule_hours()
+                return await self._save_schedule_source(
+                    TariffSchedule(tariff, winter, {})
+                )
+        default_tariff = stored.tariff if stored else "g11"
+        default_winter = stored.meter_winter_clock if stored else False
+        if user_input is not None:
+            default_tariff = user_input.get("tariff", default_tariff)
+            default_winter = user_input.get("meter_winter_clock", default_winter)
+        return self.async_show_form(
+            step_id="tariff_schedule",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("tariff", default=default_tariff): select(
+                        tariff_options(self.hass.config.language)
+                    ),
+                    vol.Required(
+                        "meter_winter_clock", default=default_winter
+                    ): selector.BooleanSelector(),
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_tariff_schedule_hours(self, user_input=None):
+        if blocked := self._tariff_step_unavailable("tariff_schedule_hours", "buy"):
+            return blocked
+        if self._schedule_choice is None:
+            return await self.async_step_tariff_schedule()
+        tariff, winter = self._schedule_choice
+        spec = CATALOG[tariff]
+        stored = self._stored_schedule()
+        defaults = (
+            dict(stored.params)
+            if stored and stored.tariff == tariff
+            else dict(TariffSchedule.default(tariff).params)
+        )
+        errors = {}
+        if user_input is not None:
+            try:
+                schedule = TariffSchedule(
+                    tariff,
+                    winter,
+                    {name: int(user_input[name]) for name in spec.choices},
+                )
+                validate_schedule(schedule)
+            except InputError, KeyError, TypeError, ValueError:
+                errors["base"] = "invalid_input"
+            else:
+                return await self._save_schedule_source(schedule)
+            defaults.update(
+                {
+                    name: user_input[name]
+                    for name in spec.choices
+                    if str(user_input.get(name, "")).isdigit()
+                }
+            )
+        return self.async_show_form(
+            step_id="tariff_schedule_hours",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(name, default=str(defaults[name])): select(
+                        [str(hour) for hour in hours]
+                    )
+                    for name, hours in spec.choices.items()
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_tariff_rce(self, user_input=None):
+        if blocked := self._tariff_step_unavailable("tariff_rce", "sell"):
+            return blocked
+        errors = {}
+        detail = ""
+        current = self._draft["sources"]["sell"]
+        default = None
+        if is_raw_rce_sell(current):
+            default = current["forecast"][0]["entity"]["entity_id"]
+        if user_input is not None:
+            default = user_input.get("entity", default)
+            try:
+                binding = self._rce_binding(user_input["entity"])
+                state = self.hass.states.get(binding.entity.entity_id)
+                if state is None:
+                    raise InputError("missing entity")
+                states = {
+                    state.entity_id: {
+                        "state": state.state,
+                        "attributes": dict(state.attributes),
+                        "last_updated": state.last_updated.isoformat(),
+                    }
+                }
+                if not parse_intervals(states, binding, dt_util.utcnow()):
+                    raise InputError("empty forecast")
+                return await self._save_rce_source(binding)
+            except (InputError, ValueError, TypeError, KeyError) as err:
+                errors["base"] = "invalid_source"
+                detail = source_error_detail(err, self.hass.config.language)
+        marker = (
+            vol.Required("entity", default=default)
+            if default
+            else vol.Required("entity")
+        )
+        return self.async_show_form(
+            step_id="tariff_rce",
+            data_schema=vol.Schema(
+                {
+                    marker: selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="sensor")
+                    )
+                }
+            ),
+            errors=errors,
+            description_placeholders={"detail": detail},
+        )
+
+    def _rce_binding(self, entity_id):
+        preset = PRESETS["pse"]
+        selected = entity_binding(self.hass, entity_id, preset.price_attribute)
+        return IntervalBinding(
+            EntityBinding(
+                selected.entity_id, selected.registry_id, preset.price_attribute
+            ),
+            value_path=preset.price_value_field,
+            start_path=preset.price_start_field,
+            end_path=preset.price_end_field,
+            interval_minutes=preset.price_interval_minutes,
+            unit=preset.price_unit,
+            value_kind="price",
+            value_sign=1.0,
+            source_timezone=self._draft["timezone"],
+            max_age_seconds=24 * 3600,
+        )
+
+    async def _save_schedule_source(self, schedule):
+        candidate = deepcopy(self._draft)
+        price = candidate["sources"]["buy"]
+        previous_mode = price["mode"]
+        price.update(
+            mode="schedule", forecast=[], fixed=None, schedule=schedule.to_dict()
+        )
+        price.pop("floor_per_kwh", None)
+        if previous_mode != "schedule":
+            candidate["helpers"].pop("buy_rate", None)
+        if self._source_ref:
+            assert_selected(self._draft, self._source_ref, self._source_original)
+        self._draft = candidate
+        return await self._after_source_save()
+
+    async def _save_rce_source(self, binding):
+        candidate = deepcopy(self._draft)
+        price = candidate["sources"]["sell"]
+        price.update(
+            mode="forecast",
+            forecast=[binding.to_dict()],
+            fixed=None,
+            floor_per_kwh=0.0,
+        )
+        price.pop("schedule", None)
+        candidate["helpers"].pop("sell_rate", None)
         if self._source_ref:
             assert_selected(self._draft, self._source_ref, self._source_original)
         self._draft = candidate
@@ -773,6 +993,7 @@ class SourceEditor:
                 price["forecast"] = [data]
             price["mode"] = "forecast"
             price["fixed"] = None
+            price.pop("schedule", None)
             candidate["helpers"].pop(f"{target}_rate", None)
         elif target == "load":
             old = candidate["sources"]["load"]
@@ -1022,6 +1243,8 @@ class SourceEditor:
                     fixed=candidate["settings"][f"{target}_rate"],
                     unit=f"{currency}/kWh",
                 ).to_dict()
+                price.pop("schedule", None)
+                price.pop("floor_per_kwh", None)
                 from .flow_schema import snapshot
 
                 resolve_numeric(
