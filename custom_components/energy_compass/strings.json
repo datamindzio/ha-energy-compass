@@ -10,12 +10,14 @@
           "timezone": "Timezone",
           "preset": "Preset",
           "settlement": "Prosumer settlement",
+          "buy_tariff": "Polish distribution tariff",
           "inverter": "Inverter",
           "pv_enabled": "Pv enabled",
           "battery_enabled": "Battery enabled"
         },
         "data_description": {
           "settlement": "Pre-fills editable planning and sell-price values once, when this installation is created. Polish profiles require currency PLN. No tariff prices are set.",
+          "buy_tariff": "Pre-selects the buy source as a tariff schedule when this installation is created. Rates are entered by you in Tariffs → Values. Requires currency PLN.",
           "inverter": "Pre-fills editable inverter tuning (standby loss, refresh interval) once, when this installation is created."
         }
       },
@@ -327,7 +329,8 @@
           "balance_hold_minutes": "Balance hold at the top (minutes)",
           "balance_soc_threshold": "Balance SOC threshold",
           "balance_value": "Balance value once due",
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_addition": "Buy addition",
           "sell_addition": "Sell addition",
@@ -391,10 +394,32 @@
           "mode": "Sell source mode"
         }
       },
+      "tariff_schedule": {
+        "title": "Polish tariff schedule",
+        "data": {
+          "tariff": "Tariff (operator and group)",
+          "meter_winter_clock": "Old non-remote meter on winter time (fixed UTC+1)"
+        }
+      },
+      "tariff_schedule_hours": {
+        "title": "Hours set by Enea Operator",
+        "data": {
+          "night_start": "Night zone start hour (8 h within 22-7)",
+          "afternoon_start": "Afternoon zone start hour (2 h within 13-17)"
+        }
+      },
+      "tariff_rce": {
+        "title": "RCE market price (PSE)",
+        "data": {
+          "entity": "RCE sensor (attribute prices)"
+        },
+        "description": "{detail}"
+      },
       "tariff_values": {
         "title": "Fixed rates and transformations",
         "data": {
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_multiplier": "Buy multiplier",
           "sell_multiplier": "Sell multiplier",
@@ -418,7 +443,9 @@
       "plan_infeasible": "The base plan is infeasible; review the limits shown below.",
       "plan_timeout": "The base solve timed out; feasibility is unknown.",
       "optimizer_error": "The optimizer could not validate the base plan.",
-      "settlement_currency": "Polish settlement profiles require currency PLN."
+      "settlement_currency": "Polish settlement profiles require currency PLN.",
+      "buy_tariff_currency": "The selected Polish tariff requires currency PLN.",
+      "schedule_currency": "The Polish tariff schedule requires currency PLN; change the buy source first."
     },
     "abort": {
       "reconfigure_successful": "Configuration saved."
@@ -747,7 +774,8 @@
           "balance_hold_minutes": "Balance hold at the top (minutes)",
           "balance_soc_threshold": "Balance SOC threshold",
           "balance_value": "Balance value once due",
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_addition": "Buy addition",
           "sell_addition": "Sell addition",
@@ -811,10 +839,32 @@
           "mode": "Sell source mode"
         }
       },
+      "tariff_schedule": {
+        "title": "Polish tariff schedule",
+        "data": {
+          "tariff": "Tariff (operator and group)",
+          "meter_winter_clock": "Old non-remote meter on winter time (fixed UTC+1)"
+        }
+      },
+      "tariff_schedule_hours": {
+        "title": "Hours set by Enea Operator",
+        "data": {
+          "night_start": "Night zone start hour (8 h within 22-7)",
+          "afternoon_start": "Afternoon zone start hour (2 h within 13-17)"
+        }
+      },
+      "tariff_rce": {
+        "title": "RCE market price (PSE)",
+        "data": {
+          "entity": "RCE sensor (attribute prices)"
+        },
+        "description": "{detail}"
+      },
       "tariff_values": {
         "title": "Fixed rates and transformations",
         "data": {
-          "buy_rate": "Buy rate",
+          "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
+          "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
           "sell_rate": "Sell rate",
           "buy_multiplier": "Buy multiplier",
           "sell_multiplier": "Sell multiplier",
@@ -865,7 +915,8 @@
       "site_conflict": "This key is already registered under a different source.",
       "rate_limited": "Too many attempts; try again later.",
       "cannot_connect": "Could not reach the Energy Atlas collector.",
-      "unknown": "Registration failed for an unknown reason."
+      "unknown": "Registration failed for an unknown reason.",
+      "schedule_currency": "The Polish tariff schedule requires currency PLN; change the buy source first."
     },
     "abort": {
       "site_not_registered": "This site was forgotten in another window; re-enable Energy Atlas to register a new one."

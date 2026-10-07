@@ -9,9 +9,17 @@ from math import isclose
 from types import MappingProxyType
 
 from .engine.strategy import STRATEGY_OWNED_KEYS
+from .sources.tariffs import TariffSchedule
 
 TARIFF_PRICE_KEYS: frozenset[str] = frozenset(
-    {"buy_rate", "sell_rate", "buy_addition", "sell_addition", "monthly_charge"}
+    {
+        "buy_rate",
+        "buy_off_peak_rate",
+        "sell_rate",
+        "buy_addition",
+        "sell_addition",
+        "monthly_charge",
+    }
 )
 PRESET_OWNED_KEYS: frozenset[str] = frozenset({"boost_ceiling", "limit_floor"})
 FORBIDDEN_KEYS: frozenset[str] = (
@@ -26,12 +34,14 @@ class SetupProfile:
     currency: str | None = None
     sell_ratio: float | None = None
     raw_rce_sell_multiplier: float | None = None
+    buy_tariff: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
 class ProfileRevision:
     axes: Mapping[str, Mapping[str, SetupProfile]]
     raw_rce_presets: frozenset[str]
+    raw_rce_sources: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -127,7 +137,78 @@ _REVISION_1 = ProfileRevision(
     raw_rce_presets=frozenset({"pse", "pse_solcast"}),
 )
 
-REVISIONS: Mapping[int, ProfileRevision] = MappingProxyType({1: _REVISION_1})
+
+def _tariff_profile(key: str, label_en: str, label_pl: str) -> SetupProfile:
+    return SetupProfile(
+        labels=MappingProxyType({"en": label_en, "pl": label_pl}),
+        currency="PLN",
+        buy_tariff=key,
+    )
+
+
+_GENERIC_BUY_TARIFF = SetupProfile(
+    labels=MappingProxyType(
+        {
+            "en": "None (keep a fixed buy rate)",
+            "pl": "Brak (stała cena zakupu)",
+        }
+    ),
+)
+
+_REVISION_2 = ProfileRevision(
+    axes=MappingProxyType(
+        {
+            "settlement": _REVISION_1.axes["settlement"],
+            "buy_tariff": MappingProxyType(
+                {
+                    "generic": _GENERIC_BUY_TARIFF,
+                    "g11": _tariff_profile(
+                        "g11", "G11 (any operator)", "G11 (dowolny operator)"
+                    ),
+                    "pge_g12": _tariff_profile(
+                        "pge_g12", "PGE Dystrybucja G12", "PGE Dystrybucja G12"
+                    ),
+                    "pge_g12w": _tariff_profile(
+                        "pge_g12w", "PGE Dystrybucja G12w", "PGE Dystrybucja G12w"
+                    ),
+                    "tauron_g12": _tariff_profile(
+                        "tauron_g12", "Tauron Dystrybucja G12", "Tauron Dystrybucja G12"
+                    ),
+                    "tauron_g12w": _tariff_profile(
+                        "tauron_g12w",
+                        "Tauron Dystrybucja G12w",
+                        "Tauron Dystrybucja G12w",
+                    ),
+                    "enea_g12": _tariff_profile(
+                        "enea_g12", "Enea Operator G12", "Enea Operator G12"
+                    ),
+                    "enea_g12w": _tariff_profile(
+                        "enea_g12w", "Enea Operator G12w", "Enea Operator G12w"
+                    ),
+                    "energa_g12": _tariff_profile(
+                        "energa_g12", "Energa-Operator G12", "Energa-Operator G12"
+                    ),
+                    "energa_g12w": _tariff_profile(
+                        "energa_g12w", "Energa-Operator G12w", "Energa-Operator G12w"
+                    ),
+                    "stoen_g12": _tariff_profile(
+                        "stoen_g12", "Stoen Operator G12", "Stoen Operator G12"
+                    ),
+                    "stoen_g12w": _tariff_profile(
+                        "stoen_g12w", "Stoen Operator G12w", "Stoen Operator G12w"
+                    ),
+                }
+            ),
+            "inverter": _REVISION_1.axes["inverter"],
+        }
+    ),
+    raw_rce_presets=frozenset({"pse", "pse_solcast"}),
+    raw_rce_sources=True,
+)
+
+REVISIONS: Mapping[int, ProfileRevision] = MappingProxyType(
+    {1: _REVISION_1, 2: _REVISION_2}
+)
 SETUP_PROFILES_REVISION: int = max(REVISIONS)
 CURRENT: ProfileRevision = REVISIONS[SETUP_PROFILES_REVISION]
 AXES = CURRENT.axes
@@ -141,8 +222,13 @@ def profile_assignments(
     preset: str,
     *,
     revision: int = SETUP_PROFILES_REVISION,
+    raw_rce_sell: bool = False,
 ) -> tuple[Assignment, ...]:
-    """Resolve the ordered assignments for one selection under one revision."""
+    """Resolve the ordered assignments for one selection under one revision.
+
+    raw_rce_sell says the draft's sell source is a floored raw RCE forecast;
+    only revisions with raw_rce_sources honour it, alongside the preset gate.
+    """
     rev = REVISIONS[revision]
     assignments: list[Assignment] = []
     for axis, profiles in rev.axes.items():
@@ -154,9 +240,8 @@ def profile_assignments(
             assignments.append(
                 Assignment(axis, profile_key, "sell_multiplier", profile.sell_ratio)
             )
-        if (
-            profile.raw_rce_sell_multiplier is not None
-            and preset in rev.raw_rce_presets
+        if profile.raw_rce_sell_multiplier is not None and (
+            preset in rev.raw_rce_presets or (rev.raw_rce_sources and raw_rce_sell)
         ):
             assignments.append(
                 Assignment(
@@ -199,15 +284,29 @@ def reconcile_assignments(
             settings[key] = new
 
 
+def buy_tariff_schedule(
+    selections: Mapping[str, str], *, revision: int = SETUP_PROFILES_REVISION
+) -> dict | None:
+    """Default tariff schedule dict for a buy_tariff selection; None for generic."""
+    profiles = REVISIONS[revision].axes.get("buy_tariff")
+    if profiles is None:
+        return None
+    profile = profiles[selections.get("buy_tariff", "generic")]
+    if profile.buy_tariff is None:
+        return None
+    return TariffSchedule.default(profile.buy_tariff).to_dict()
+
+
 def currency_error(selections: Mapping[str, str], currency: str) -> str | None:
-    """Reject a non-PLN currency for any Polish settlement profile."""
-    profile = SETTLEMENT_PROFILES.get(selections.get("settlement", "generic"))
-    if (
-        profile is not None
-        and profile.currency is not None
-        and profile.currency != currency
-    ):
-        return "settlement_currency"
+    """Reject a non-PLN currency for any Polish profile, naming the axis."""
+    for axis, profiles in AXES.items():
+        profile = profiles.get(selections.get(axis, "generic"))
+        if (
+            profile is not None
+            and profile.currency is not None
+            and profile.currency != currency
+        ):
+            return f"{axis}_currency"
     return None
 
 
@@ -236,11 +335,10 @@ def profile_label(
 
 
 def selection_record(selections: Mapping[str, str]) -> dict:
-    """Build the persisted {revision, settlement, inverter} record."""
+    """Build the persisted record: the revision and one profile key per axis."""
     return {
         "revision": SETUP_PROFILES_REVISION,
-        "settlement": selections.get("settlement", "generic"),
-        "inverter": selections.get("inverter", "generic"),
+        **{axis: selections.get(axis, "generic") for axis in AXES},
     }
 
 
@@ -280,8 +378,14 @@ def preview_lines(
                 f"re-applied): {summary}."
             )
         ]
+    tariff_lines = []
+    if "buy_tariff" in labels and record.get("buy_tariff", "generic") != "generic":
+        tariff_lines.append(
+            f"Buy source pre-selected by buy_tariff {labels['buy_tariff']}: "
+            "tariff schedule; rates are entered by you (Tariffs → Values)."
+        )
     if not assignments:
-        return [f"Setup profiles: {summary}; no values pre-filled."]
+        return [f"Setup profiles: {summary}; no values pre-filled.", *tariff_lines]
     lines = [f"Setup profiles (applied once at creation; editable): {summary}."]
     by_axis: dict[str, list[Assignment]] = {}
     for assignment in assignments:
@@ -309,7 +413,7 @@ def preview_lines(
             )
     if edited:
         lines.append("Edited after pre-fill: " + ", ".join(edited) + ".")
-    return lines
+    return [*lines, *tariff_lines]
 
 
 def settlement_notes(
@@ -359,17 +463,27 @@ def settlement_notes(
         and currency == "PLN"
         and any(binding["unit"] == "PLN/MWh" for binding in forecast_bindings)
     ):
-        text = (
-            "Note: raw RCE sell prices are not floored at 0 (net-billing "
-            "values negative prices at 0)"
-        )
-        if sell_multiplier != 1.23:
-            text += (
-                " and the 1.23 deposit multiplier is not applied (sell "
-                f"multiplier {sell_multiplier:g})"
+        if sell.get("floor_per_kwh") is None:
+            text = (
+                "Note: raw RCE sell prices are not floored at 0 (net-billing "
+                "values negative prices at 0)"
             )
-        text += "; examples/rce-sell-price.yaml publishes max(RCE, 0) × 1.23."
-        notes.append(text)
+            if sell_multiplier != 1.23:
+                text += (
+                    " and the 1.23 deposit multiplier is not applied (sell "
+                    f"multiplier {sell_multiplier:g})"
+                )
+            text += (
+                "; Sell source → RCE market price (PSE) or "
+                "examples/rce-sell-price.yaml gives max(RCE, 0) × 1.23."
+            )
+            notes.append(text)
+        elif sell_multiplier != 1.23:
+            notes.append(
+                "Note: the 1.23 deposit multiplier is not applied to the RCE "
+                f"sell price (sell multiplier {sell_multiplier:g}); net-billing "
+                "values exported energy at max(RCE, 0) × 1.23."
+            )
 
     rev = REVISIONS.get(record["revision"], CURRENT)
     profile = rev.axes["settlement"].get(settlement)

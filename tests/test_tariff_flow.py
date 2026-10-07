@@ -1,0 +1,680 @@
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from homeassistant.data_entry_flow import InvalidData
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.energy_compass import config_flow
+from custom_components.energy_compass.presets import PRESETS
+from custom_components.energy_compass.runtime import build_problem
+from custom_components.energy_compass.settings import (
+    default_configuration,
+    merged_configuration,
+)
+from custom_components.energy_compass.source_management import source_inventory
+from custom_components.energy_compass.sources.tariffs import CATALOG, TariffSchedule
+
+NOW = "2026-09-18T10:00:00+00:00"
+COMPONENT_DIR = (
+    Path(__file__).resolve().parent.parent / "custom_components" / "energy_compass"
+)
+RCE_RECORDS = [
+    {"dtime": "2026-09-18 11:00:00", "rce_pln": 400.0, "period": "10:45 - 11:00"},
+    {"dtime": "2026-09-18 11:15:00", "rce_pln": 420.0, "period": "11:00 - 11:15"},
+]
+SCHEDULE_PGE = {"tariff": "pge_g12", "meter_winter_clock": False, "params": {}}
+
+
+def pln_config():
+    config = default_configuration("PLN", "Europe/Warsaw")
+    config["settings"].update(
+        horizon_hours=2, display_horizon_hours=2, reference_horizon_hours=2
+    )
+    return config
+
+
+async def start(hass, config):
+    entry = MockConfigEntry(domain="energy_compass", data=config, version=3)
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    return entry, result["flow_id"]
+
+
+async def configure(hass, fid, data):
+    return await hass.config_entries.options.async_configure(fid, data)
+
+
+def draft(hass, fid):
+    return hass.config_entries.options._progress[fid]._draft
+
+
+async def to_tariff(hass, fid, role):
+    await configure(hass, fid, {"next_step_id": "tariffs"})
+    return await configure(hass, fid, {"next_step_id": f"tariff_{role}"})
+
+
+def mode_values(result):
+    for marker, field in result["data_schema"].schema.items():
+        if str(marker) == "mode":
+            return [option["value"] for option in field.config["options"]]
+    raise AssertionError("no mode field")
+
+
+def default_of(result, name):
+    return result["data_schema"]({})[name]
+
+
+async def save_schedule(hass, fid, tariff="pge_g12", winter=False):
+    await to_tariff(hass, fid, "buy")
+    result = await configure(hass, fid, {"mode": "schedule"})
+    assert result["step_id"] == "tariff_schedule"
+    return await configure(hass, fid, {"tariff": tariff, "meter_winter_clock": winter})
+
+
+async def save_rce(hass, fid, entity="sensor.rce"):
+    await to_tariff(hass, fid, "sell")
+    result = await configure(hass, fid, {"mode": "rce"})
+    assert result["step_id"] == "tariff_rce"
+    return await configure(hass, fid, {"entity": entity})
+
+
+@pytest.fixture
+def rce_state(hass):
+    hass.states.async_set("sensor.rce", "400", {"prices": RCE_RECORDS})
+
+
+async def test_pln_offers_schedule_and_rce_everywhere(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    buy = await to_tariff(hass, fid, "buy")
+    assert mode_values(buy) == ["fixed", "entity", "forecast", "schedule", "back"]
+    await configure(hass, fid, {"mode": "back"})
+    sell = await configure(hass, fid, {"next_step_id": "tariff_sell"})
+    assert mode_values(sell) == ["fixed", "entity", "forecast", "rce", "back"]
+    await configure(hass, fid, {"mode": "back"})
+    await configure(hass, fid, {"next_step_id": "menu"})
+    await configure(hass, fid, {"next_step_id": "sources"})
+    await configure(hass, fid, {"next_step_id": "source_add"})
+    result = await configure(hass, fid, {"target": "buy"})
+    assert result["step_id"] == "source_mode"
+    assert "schedule" in mode_values(result)
+    assert "rce" not in mode_values(result)
+
+
+async def test_eur_offers_neither(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, default_configuration("EUR", "UTC"))
+    buy = await to_tariff(hass, fid, "buy")
+    assert mode_values(buy) == ["fixed", "entity", "forecast", "back"]
+    await configure(hass, fid, {"mode": "back"})
+    sell = await configure(hass, fid, {"next_step_id": "tariff_sell"})
+    assert mode_values(sell) == ["fixed", "entity", "forecast", "back"]
+    with pytest.raises(InvalidData):
+        await configure(hass, fid, {"mode": "rce"})
+
+
+async def test_schedule_save_follows_the_key_hygiene_row(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    entry, fid = await start(hass, config)
+    result = await save_schedule(hass, fid)
+    assert result["step_id"] == "tariffs"
+    buy = draft(hass, fid)["sources"]["buy"]
+    assert buy["mode"] == "schedule"
+    assert buy["forecast"] == []
+    assert buy["fixed"] is None
+    assert buy["schedule"] == SCHEDULE_PGE
+    assert "floor_per_kwh" not in buy
+    assert buy["multiplier"] == config["sources"]["buy"]["multiplier"]
+    assert dict(entry.data) == config
+
+
+async def test_enea_schedule_routes_through_hours_and_stores_ints(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    result = await save_schedule(hass, fid, "enea_g12", winter=True)
+    assert result["step_id"] == "tariff_schedule_hours"
+    assert default_of(result, "night_start") == "22"
+    assert default_of(result, "afternoon_start") == "13"
+    result = await configure(hass, fid, {"night_start": "23", "afternoon_start": "15"})
+    assert result["step_id"] == "tariffs"
+    assert draft(hass, fid)["sources"]["buy"]["schedule"] == {
+        "tariff": "enea_g12",
+        "meter_winter_clock": True,
+        "params": {"night_start": 23, "afternoon_start": 15},
+    }
+    buy = await configure(hass, fid, {"next_step_id": "tariff_buy"})
+    assert default_of(buy, "mode") == "schedule"
+    form = await configure(hass, fid, {"mode": "schedule"})
+    assert default_of(form, "tariff") == "enea_g12"
+    assert default_of(form, "meter_winter_clock") is True
+    hours = await configure(
+        hass, fid, {"tariff": "enea_g12", "meter_winter_clock": True}
+    )
+    assert default_of(hours, "night_start") == "23"
+    assert default_of(hours, "afternoon_start") == "15"
+
+
+async def test_changing_tariff_resets_enea_hours_to_the_catalog_default(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["sources"]["buy"].update(
+        mode="schedule",
+        schedule={
+            "tariff": "pge_g12",
+            "meter_winter_clock": False,
+            "params": {},
+        },
+    )
+    _, fid = await start(hass, config)
+    result = await save_schedule(hass, fid, "enea_g12")
+    assert default_of(result, "night_start") == "22"
+
+
+async def test_rce_save_builds_the_pse_binding_with_a_zero_floor(
+    recorder_mock, hass, enable_custom_integrations, freezer, rce_state
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    result = await save_rce(hass, fid)
+    assert result["step_id"] == "tariffs"
+    sell = draft(hass, fid)["sources"]["sell"]
+    preset = PRESETS["pse"]
+    assert sell["mode"] == "forecast"
+    assert sell["floor_per_kwh"] == 0.0
+    assert sell["fixed"] is None
+    assert "schedule" not in sell
+    binding = sell["forecast"][0]
+    assert binding["entity"]["entity_id"] == "sensor.rce"
+    assert binding["entity"]["attribute"] == preset.price_attribute == "prices"
+    assert binding["value_path"] == preset.price_value_field
+    assert binding["end_path"] == preset.price_end_field
+    assert binding["start_path"] is None
+    assert binding["unit"] == "PLN/MWh"
+    assert binding["interval_minutes"] == 15
+    assert binding["value_kind"] == "price"
+    assert binding["value_sign"] == 1
+    assert binding["source_timezone"] == "Europe/Warsaw"
+    assert binding["max_age_seconds"] == 24 * 3600
+
+
+async def test_rce_entity_without_prices_re_shows_the_form(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    hass.states.async_set("sensor.plain", "1", {})
+    _, fid = await start(hass, pln_config())
+    result = await save_rce(hass, fid, "sensor.plain")
+    assert result["step_id"] == "tariff_rce"
+    assert result["errors"] == {"base": "invalid_source"}
+    assert draft(hass, fid)["sources"]["sell"]["mode"] == "fixed"
+
+
+async def test_schedule_to_fixed_drops_the_schedule(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    await save_schedule(hass, fid)
+    await configure(hass, fid, {"next_step_id": "tariff_buy"})
+    result = await configure(hass, fid, {"mode": "fixed"})
+    assert result["step_id"] == "tariffs"
+    buy = draft(hass, fid)["sources"]["buy"]
+    assert buy["mode"] == "fixed"
+    assert "schedule" not in buy
+
+
+async def test_rce_to_fixed_drops_the_floor(
+    recorder_mock, hass, enable_custom_integrations, freezer, rce_state
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    await save_rce(hass, fid)
+    await configure(hass, fid, {"next_step_id": "tariff_sell"})
+    result = await configure(hass, fid, {"mode": "fixed"})
+    assert result["step_id"] == "tariffs"
+    sell = draft(hass, fid)["sources"]["sell"]
+    assert sell["mode"] == "fixed"
+    assert "floor_per_kwh" not in sell
+    assert sell["forecast"] == []
+
+
+async def test_rce_to_generic_forecast_edit_keeps_the_floor(
+    recorder_mock, hass, enable_custom_integrations, freezer, rce_state
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    await save_rce(hass, fid)
+    await configure(hass, fid, {"next_step_id": "tariff_sell"})
+    result = await configure(hass, fid, {"mode": "forecast"})
+    assert result["step_id"] == "source_entity"
+    result = await configure(hass, fid, {"entity_id": "sensor.rce"})
+    assert result["step_id"] == "source_attribute"
+    result = await configure(hass, fid, {"attribute": "prices"})
+    assert result["step_id"] == "source_mapping"
+    result = await configure(hass, fid, result["data_schema"]({}))
+    assert result["step_id"] == "tariffs", result.get("errors")
+    sell = draft(hass, fid)["sources"]["sell"]
+    assert sell["mode"] == "forecast"
+    assert sell["floor_per_kwh"] == 0.0
+
+
+async def test_helper_bound_fixed_to_schedule_drops_only_the_rate_helper(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    helper = {
+        "entity": {"entity_id": "sensor.rate"},
+        "unit": "PLN/kWh",
+        "source_unit": "PLN/kWh",
+        "multiplier": 1,
+        "max_age_seconds": None,
+    }
+    config["helpers"] = {"buy_rate": helper, "buy_off_peak_rate": helper}
+    _, fid = await start(hass, config)
+    await save_schedule(hass, fid)
+    helpers = draft(hass, fid)["helpers"]
+    assert "buy_rate" not in helpers
+    assert helpers["buy_off_peak_rate"] == helper
+
+
+async def test_schedule_to_schedule_keeps_both_rate_helpers(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    helper = {
+        "entity": {"entity_id": "sensor.rate"},
+        "unit": "PLN/kWh",
+        "source_unit": "PLN/kWh",
+        "multiplier": 1,
+        "max_age_seconds": None,
+    }
+    config["sources"]["buy"].update(mode="schedule", fixed=None, schedule=SCHEDULE_PGE)
+    config["helpers"] = {"buy_rate": helper, "buy_off_peak_rate": helper}
+    _, fid = await start(hass, config)
+    await save_schedule(hass, fid, "tauron_g12")
+    helpers = draft(hass, fid)["helpers"]
+    assert helpers == {"buy_rate": helper, "buy_off_peak_rate": helper}
+    assert draft(hass, fid)["sources"]["buy"]["schedule"]["tariff"] == "tauron_g12"
+
+
+async def test_reverse_mapping_defaults_and_inventory_label(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["sources"]["buy"].update(mode="schedule", fixed=None, schedule=SCHEDULE_PGE)
+    config["sources"]["sell"].update(
+        mode="forecast",
+        fixed=None,
+        floor_per_kwh=0.0,
+        forecast=[
+            {
+                "entity": {"entity_id": "sensor.rce", "attribute": "prices"},
+                "value_path": "rce_pln",
+                "end_path": "dtime",
+                "interval_minutes": 15,
+                "unit": "PLN/MWh",
+                "value_kind": "price",
+            }
+        ],
+    )
+    _, fid = await start(hass, config)
+    buy = await to_tariff(hass, fid, "buy")
+    assert default_of(buy, "mode") == "schedule"
+    await configure(hass, fid, {"mode": "back"})
+    sell = await configure(hass, fid, {"next_step_id": "tariff_sell"})
+    assert default_of(sell, "mode") == "rce"
+    en = dict(source_inventory(config, None, "en"))
+    labels = {ref.role: label for ref, label in en.items()}
+    assert labels["buy"] == (
+        "Buy · Polish tariff schedule (G11/G12/G12w) · PGE Dystrybucja G12"
+    )
+    pl = {ref.role: label for ref, label in source_inventory(config, None, "pl")}
+    assert pl["buy"] == "Zakup · Taryfa OSD (G11/G12/G12w) · PGE Dystrybucja G12"
+
+
+async def test_source_edit_on_schedule_buy_opens_the_schedule_step(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["sources"]["buy"].update(mode="schedule", fixed=None, schedule=SCHEDULE_PGE)
+    _, fid = await start(hass, config)
+    await configure(hass, fid, {"next_step_id": "sources"})
+    inventory = await configure(hass, fid, {"next_step_id": "source_inventory"})
+    options = inventory["data_schema"].schema
+    selector_field = next(v for k, v in options.items() if str(k) == "source")
+    index = next(
+        o["value"]
+        for o in selector_field.config["options"]
+        if o["label"].startswith("Buy")
+    )
+    await configure(hass, fid, {"source": index})
+    result = await configure(hass, fid, {"next_step_id": "source_edit"})
+    assert result["step_id"] == "tariff_schedule"
+    assert default_of(result, "tariff") == "pge_g12"
+
+
+async def test_untouched_legacy_entry_round_trips_sources_byte_identically(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    entry = MockConfigEntry(domain="energy_compass", data=config, version=3)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    fid = result["flow_id"]
+    await configure(hass, fid, {"next_step_id": "preview"})
+    result = await configure(hass, fid, {"confirm": True})
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done(wait_background_tasks=True)
+    saved = result["data"]["configuration"]["sources"]
+    assert json.dumps(saved, sort_keys=True) == json.dumps(
+        config["sources"], sort_keys=True
+    )
+    assert merged_configuration(entry)["sources"] == config["sources"]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def _walk(doc, path):
+    node = doc
+    for part in path:
+        node = node[part]
+    return node
+
+
+STEP_KEYS = {
+    "tariff_schedule": ("title", ("data", "tariff"), ("data", "meter_winter_clock")),
+    "tariff_schedule_hours": (
+        "title",
+        ("data", "night_start"),
+        ("data", "afternoon_start"),
+    ),
+    "tariff_rce": ("title", ("data", "entity"), "description"),
+}
+
+
+@pytest.mark.parametrize(
+    "file", ["strings.json", "translations/en.json", "translations/pl.json"]
+)
+def test_new_steps_and_rate_labels_exist_in_every_translation_file(file):
+    doc = json.loads((COMPONENT_DIR / file).read_text())
+    for section in ("config", "options"):
+        for step, keys in STEP_KEYS.items():
+            for key in keys:
+                path = (
+                    section,
+                    "step",
+                    step,
+                    *(key if isinstance(key, tuple) else (key,)),
+                )
+                assert _walk(doc, path)
+        data = doc[section]["step"]["tariff_values"]["data"]
+        english = file != "translations/pl.json"
+        assert data["buy_rate"] == (
+            "Buy rate (fixed, or G11/peak rate of a tariff schedule)"
+            if english
+            else "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)"
+        )
+        assert data["buy_off_peak_rate"] == (
+            "Off-peak buy rate (G12/G12w tariff schedule)"
+            if english
+            else "Cena zakupu poza szczytem (taryfa OSD G12/G12w)"
+        )
+
+
+def test_catalog_has_a_label_in_both_languages():
+    assert all(spec.labels["en"] and spec.labels["pl"] for spec in CATALOG.values())
+
+
+def _preview(config, now, role="buy"):
+    problem, values, _ = build_problem(config, {}, now)
+    return config_flow._price_preview(config, problem, values, role)
+
+
+def _schedule_preview_config(tariff, *, winter=False, params=None, hours=12):
+    config = pln_config()
+    config["settings"].update(
+        buy_rate=0.8,
+        buy_off_peak_rate=0.4,
+        horizon_hours=hours,
+        display_horizon_hours=hours,
+        reference_horizon_hours=hours,
+    )
+    schedule = TariffSchedule.default(tariff)
+    config["sources"]["buy"].update(
+        mode="schedule",
+        fixed=None,
+        schedule=TariffSchedule(
+            tariff, winter, params if params is not None else schedule.params
+        ).to_dict(),
+    )
+    return config
+
+
+HINT = (
+    "to verify, compare your invoice's monthly day/night kWh with your hourly "
+    "import data split by these windows; if summer months are off by about one "
+    "hour, enable the old-meter winter clock"
+)
+SUFFIX = (
+    "; effective first interval {first:g} PLN/kWh; multiplier 1, addition 0 "
+    "PLN/kWh, VAT not applied at 0%."
+)
+
+
+def test_preview_pge_g12_local_clock():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    text = _preview(_schedule_preview_config("pge_g12"), now)
+    assert text == (
+        "Buy source: tariff schedule PGE Dystrybucja G12; clock local time "
+        "(Europe/Warsaw); off-peak today 2026-07-01 (Europe/Warsaw): "
+        f"00:00–06:00, 15:00–17:00, 22:00–24:00; {HINT}; peak 0.8, off-peak "
+        "0.4 PLN/kWh before multiplier" + SUFFIX.format(first=0.8)
+    )
+
+
+def test_preview_pge_g12_winter_clock_names_the_reference():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    text = _preview(_schedule_preview_config("pge_g12", winter=True), now)
+    assert (
+        "clock winter time all year (CET, UTC+1), old meter, per PGE "
+        "Dystrybucja tariff 2026 §2.2.6/2.2.8/2.2.11; off-peak today "
+        "2026-07-01 (Europe/Warsaw): 00:00–07:00, 16:00–18:00, 23:00–24:00;"
+    ) in text
+
+
+def test_preview_energa_winter_clock_has_no_reference():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    text = _preview(_schedule_preview_config("energa_g12", winter=True), now)
+    assert "clock winter time all year (CET, UTC+1), old meter; off-peak" in text
+    assert " per " not in text.split("off-peak today")[0]
+
+
+def test_preview_enea_g12_shows_the_operator_hours():
+    now = datetime(2026, 1, 14, 10, tzinfo=UTC)
+    config = _schedule_preview_config(
+        "enea_g12", params={"night_start": 23, "afternoon_start": 15}
+    )
+    text = _preview(config, now)
+    assert (
+        "clock local time (Europe/Warsaw); hours set by Enea Operator per meter: "
+        "23:00–07:00 and 15:00–17:00 tariff time (allowed 8 h within 22–7, 2 h "
+        "within 13–17), check your meter or bill; off-peak today 2026-01-14"
+    ) in text
+
+
+def test_preview_tauron_g12w_lists_holidays_and_all_day_windows():
+    now = datetime(2026, 11, 10, 10, tzinfo=UTC)
+    config = _schedule_preview_config("tauron_g12w", hours=48)
+    text = _preview(config, now)
+    assert "; statutory holidays in horizon: 2026-11-11; peak 0.8" in text
+    holiday = _preview(config, datetime(2026, 11, 11, 10, tzinfo=UTC))
+    assert "off-peak today 2026-11-11 (Europe/Warsaw): all day;" in holiday
+    assert "statutory holidays in horizon: 2026-11-11;" in holiday
+    quiet = _preview(config, datetime(2026, 11, 3, 10, tzinfo=UTC))
+    assert "statutory holidays in horizon: none;" in quiet
+    plain = _preview(_schedule_preview_config("pge_g12"), now)
+    assert "statutory holidays" not in plain
+
+
+def test_preview_g11_is_a_single_rate_line():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    text = _preview(_schedule_preview_config("g11"), now)
+    assert text == (
+        "Buy source: tariff schedule G11 (any operator); single rate 0.8 "
+        "PLN/kWh before multiplier" + SUFFIX.format(first=0.8)
+    )
+
+
+def test_preview_rce_line_carries_the_floor_segment():
+    now = datetime(2026, 9, 18, 10, 0, tzinfo=UTC)
+    config = pln_config()
+    config["sources"]["sell"].update(
+        mode="forecast",
+        fixed=None,
+        floor_per_kwh=0.0,
+        forecast=[
+            {
+                "entity": {"entity_id": "sensor.rce", "attribute": "prices"},
+                "value_path": "rce_pln",
+                "end_path": "dtime",
+                "interval_minutes": 15,
+                "unit": "PLN/MWh",
+                "value_kind": "price",
+                "source_timezone": "Europe/Warsaw",
+            }
+        ],
+    )
+    states = {
+        "sensor.rce": {
+            "state": "1",
+            "last_updated": now.isoformat(),
+            "attributes": {
+                "prices": [
+                    {"dtime": "2026-09-18 12:15:00", "rce_pln": -50.0},
+                    {"dtime": "2026-09-18 14:15:00", "rce_pln": 100.0},
+                ]
+            },
+        }
+    }
+    config["settings"].update(horizon_hours=1, display_horizon_hours=1)
+    config["settings"]["reference_horizon_hours"] = 1
+    problem, values, _ = build_problem(config, states, now)
+    text = config_flow._price_preview(config, problem, values, "sell")
+    assert text.startswith(
+        "Sell source: forecast sensor.rce attribute prices (value rce_pln, "
+        "end path dtime; PLN/MWh); raw values floored at 0 PLN/kWh before "
+        "multiplier, VAT and addition; effective first interval 0 PLN/kWh;"
+    )
+
+
+def test_preview_legacy_fixed_line_is_unchanged():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    config = pln_config()
+    config["settings"]["buy_rate"] = 0.5
+    text = _preview(config, now)
+    assert text == (
+        "Buy source: fixed setting; normalized 0.5 PLN/kWh; scalar rate held "
+        "constant across the planning horizon; effective first interval 0.5 "
+        "PLN/kWh; multiplier 1, addition 0 PLN/kWh, VAT not applied at 0%."
+    )
+
+
+async def test_flow_preview_renders_the_schedule_line(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-07-01T10:00:00+00:00")
+    _, fid = await start(hass, _schedule_preview_config("pge_g12"))
+    result = await configure(hass, fid, {"next_step_id": "preview"})
+    text = result["description_placeholders"]["preview"]
+    assert "Buy source: tariff schedule PGE Dystrybucja G12; clock local time" in text
+    assert not result["errors"]
+
+
+async def test_replacing_the_rce_source_drops_the_floor(
+    recorder_mock, hass, enable_custom_integrations, freezer, rce_state
+):
+    freezer.move_to(NOW)
+    hass.states.async_set(
+        "sensor.other", "1", {"rows": [{"start": NOW, "end": NOW, "price": 1}]}
+    )
+    _, fid = await start(hass, pln_config())
+    await save_rce(hass, fid)
+    assert draft(hass, fid)["sources"]["sell"]["floor_per_kwh"] == 0.0
+    flow = hass.config_entries.options._progress[fid]
+    flow._source = {"target": "sell", "mode": "forecast", "operation": "replace"}
+    flow._source_ref = None
+    binding = flow._rce_binding("sensor.rce")
+    from dataclasses import replace
+
+    other = replace(binding, unit="PLN/kWh")
+    flow._source["operation"] = "append"
+    flow._save_interval(other)
+    sell = draft(hass, fid)["sources"]["sell"]
+    assert "floor_per_kwh" not in sell
+    assert len(sell["forecast"]) == 2
+
+
+async def test_appending_another_raw_rce_binding_keeps_the_floor(
+    recorder_mock, hass, enable_custom_integrations, freezer, rce_state
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    await save_rce(hass, fid)
+    flow = hass.config_entries.options._progress[fid]
+    flow._source = {"target": "sell", "mode": "forecast", "operation": "append"}
+    flow._source_ref = None
+    flow._save_interval(flow._rce_binding("sensor.rce"))
+    assert draft(hass, fid)["sources"]["sell"]["floor_per_kwh"] == 0.0
+
+
+async def test_currency_change_is_rejected_while_a_schedule_exists(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["sources"]["buy"].update(mode="schedule", fixed=None, schedule=SCHEDULE_PGE)
+    _, fid = await start(hass, config)
+    await configure(hass, fid, {"next_step_id": "installation"})
+    result = await configure(
+        hass,
+        fid,
+        {
+            "name": "Energy Compass",
+            "currency": "EUR",
+            "timezone": "Europe/Warsaw",
+            "preset": "generic",
+            "pv_enabled": False,
+            "battery_enabled": False,
+        },
+    )
+    assert result["step_id"] == "installation"
+    assert result["errors"] == {"currency": "schedule_currency"}
+    assert draft(hass, fid)["currency"] == "PLN"
+
+
+@pytest.mark.parametrize(
+    "file", ["strings.json", "translations/en.json", "translations/pl.json"]
+)
+def test_schedule_currency_error_exists_in_every_file(file):
+    doc = json.loads((COMPONENT_DIR / file).read_text())
+    for section in ("config", "options"):
+        assert doc[section]["error"]["schedule_currency"]

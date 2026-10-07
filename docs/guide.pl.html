@@ -213,10 +213,12 @@ Solarman: zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika 
   pokrycie prognozy.</li>
 </ul>
 <h3 id="profile-startowe-nowe-instalacje">Profile startowe (nowe instalacje)</h3>
-<p>Dwie osie na pierwszym formularzu (<strong>Użytkownik</strong>), <strong>Rozliczenie prosumenckie</strong> i <strong>Falownik</strong>,
-jednorazowo wypełniają edytowalne strojenie nowej instalacji. Każda oś jest wybierana raz; obie
-domyślnie mają wartość <strong>Ogólne</strong> (brak przypisań), a wybór profilu od razu stosuje jego przypisania
-do wersji roboczej. Wartości przypięte poniżej (0,20, 0,60, 0,13) zostały zmierzone lub wyznaczone
+<p>Trzy osie na pierwszym formularzu (<strong>Użytkownik</strong>), <strong>Rozliczenie prosumenckie</strong>, <strong>Polska taryfa
+dystrybucyjna</strong> (<code>buy_tariff</code>) i <strong>Falownik</strong>, jednorazowo wypełniają edytowalne strojenie nowej
+instalacji. Każda oś jest wybierana raz; wszystkie domyślnie mają wartość <strong>Ogólne</strong> lub <strong>Brak</strong>
+(brak przypisań), a wybór profilu od razu stosuje jego przypisania do wersji roboczej. To wersja 2
+profili startowych; wpis utworzony w wersji 1 zachowuje swój dwuosiowy zapis i nigdy nie jest
+ponownie wyliczany. Wartości przypięte poniżej (0,20, 0,60, 0,13) zostały zmierzone lub wyznaczone
 na jednej instalacji — taryfa zakupu G12, sprzedaż RCE w net-billingu i bateria LFP Deye — i są
 punktem startowym, nie uniwersalnym domyślnym ustawieniem.</p>
 <p><strong>Oś rozliczenia:</strong></p>
@@ -239,7 +241,7 @@ punktem startowym, nie uniwersalnym domyślnym ustawieniem.</p>
 <tr>
 <td><code>pl_net_billing</code></td>
 <td>PLN</td>
-<td><code>import_penalty_per_kwh</code> 0,20 · <code>terminal_mode</code> <code>value</code> · <code>terminal_value_per_kwh</code> 0,60 · <code>sell_multiplier</code> 1,23 <em>(tylko z presetem <code>pse</code> lub <code>pse_solcast</code>)</em></td>
+<td><code>import_penalty_per_kwh</code> 0,20 · <code>terminal_mode</code> <code>value</code> · <code>terminal_value_per_kwh</code> 0,60 · <code>sell_multiplier</code> 1,23 <em>(tylko z presetem <code>pse</code>/<code>pse_solcast</code> albo ze źródłem sprzedaży „Cena rynkowa RCE (PSE)”)</em></td>
 <td>wyznaczone na jednej instalacji</td>
 </tr>
 <tr>
@@ -253,6 +255,93 @@ punktem startowym, nie uniwersalnym domyślnym ustawieniem.</p>
 <td>PLN</td>
 <td><code>sell_multiplier</code> 0,7</td>
 <td>współczynnik opustu, instalacje &gt; 10 kWp</td>
+</tr>
+</tbody>
+</table></section>
+<p><strong>Oś polskiej taryfy dystrybucyjnej (<code>buy_tariff</code>):</strong> profil tylko wstępnie wybiera <strong>Taryfy → Źródło
+ceny zakupu → Taryfa OSD</strong> dla danej taryfy; nie przypisuje żadnego ustawienia ani ceny, a stawki
+zostają na 0, dopóki ich nie wpiszesz. Każdy profil katalogowy wymaga waluty PLN.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Profil</th>
+<th>Waluta</th>
+<th>Skutek</th>
+<th>Podstawa</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>generic</code></td>
+<td>dowolna</td>
+<td>brak; stała cena zakupu</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>g11</code></td>
+<td>PLN</td>
+<td>harmonogram G11, jedna stawka</td>
+<td>dowolny operator</td>
+</tr>
+<tr>
+<td><code>pge_g12</code></td>
+<td>PLN</td>
+<td>harmonogram G12</td>
+<td>PGE Dystrybucja</td>
+</tr>
+<tr>
+<td><code>pge_g12w</code></td>
+<td>PLN</td>
+<td>harmonogram G12w</td>
+<td>PGE Dystrybucja</td>
+</tr>
+<tr>
+<td><code>tauron_g12</code></td>
+<td>PLN</td>
+<td>harmonogram G12</td>
+<td>Tauron Dystrybucja</td>
+</tr>
+<tr>
+<td><code>tauron_g12w</code></td>
+<td>PLN</td>
+<td>harmonogram G12w</td>
+<td>Tauron Dystrybucja</td>
+</tr>
+<tr>
+<td><code>enea_g12</code></td>
+<td>PLN</td>
+<td>harmonogram G12 z domyślnymi godzinami Enea</td>
+<td>Enea Operator</td>
+</tr>
+<tr>
+<td><code>enea_g12w</code></td>
+<td>PLN</td>
+<td>harmonogram G12w</td>
+<td>Enea Operator</td>
+</tr>
+<tr>
+<td><code>energa_g12</code></td>
+<td>PLN</td>
+<td>harmonogram G12</td>
+<td>Energa-Operator</td>
+</tr>
+<tr>
+<td><code>energa_g12w</code></td>
+<td>PLN</td>
+<td>harmonogram G12w</td>
+<td>Energa-Operator</td>
+</tr>
+<tr>
+<td><code>stoen_g12</code></td>
+<td>PLN</td>
+<td>harmonogram G12</td>
+<td>Stoen Operator</td>
+</tr>
+<tr>
+<td><code>stoen_g12w</code></td>
+<td>PLN</td>
+<td>harmonogram G12w</td>
+<td>Stoen Operator</td>
 </tr>
 </tbody>
 </table></section>
@@ -281,30 +370,157 @@ punktem startowym, nie uniwersalnym domyślnym ustawieniem.</p>
 <p>Każda wstępnie wypełniona wartość pozostaje w pełni edytowalna i nigdy nie jest ponownie
 zastosowana po utworzeniu instalacji — ani przez Konfiguruj, ani przez Rekonfiguruj. Dopóki nowa
 instalacja jest jeszcze konfigurowana, zmiana presetu w kroku Instalacja ponownie wylicza profil
-rozliczenia: mnożnik sprzedaży 1,23 jest dodawany lub usuwany zgodnie z presetem, chyba że został
-już ręcznie zmieniony. Powiązanie wstępnie wypełnionego klucza z pomocnikiem nadpisuje wartość przy
+rozliczenia: mnożnik sprzedaży 1,23 jest dodawany lub usuwany zgodnie z presetem (albo ze źródłem „Cena
+rynkowa RCE (PSE)” zapisanym w międzyczasie), chyba że został już ręcznie zmieniony. Powiązanie wstępnie wypełnionego klucza z pomocnikiem nadpisuje wartość przy
 zapisie; Podgląd oznacza ten klucz jako zmieniony, podając pomocnika i jego efektywną wartość.</p>
-<p>Polskie profile rozliczenia wymagają waluty PLN; wybór takiego profilu z inną walutą jest odrzucany.
-Profile startowe nigdy nie ustawiają ceny taryfy (<code>buy_rate</code>, <code>sell_rate</code>, <code>buy_addition</code>,
-<code>sell_addition</code>, <code>monthly_charge</code>) i nigdy nie dotykają ustawienia należącego do strategii.</p>
+<p>Polskie profile rozliczenia i taryf wymagają waluty PLN; wybór takiego profilu z inną walutą jest
+odrzucany, przy polu, które go wywołało. Profile startowe nigdy nie ustawiają ceny taryfy
+(<code>buy_rate</code>, <code>buy_off_peak_rate</code>, <code>sell_rate</code>, <code>buy_addition</code>, <code>sell_addition</code>, <code>monthly_charge</code>) i
+nigdy nie dotykają ustawienia należącego do strategii.</p>
 <p><strong>Sell only PV</strong> (<code>limit_export_to_pv</code>, „sprzedawaj tylko PV”) pozostaje włączone przy każdym
 profilu rozliczenia — polski prosument może sprzedawać tylko energię z własnej instalacji PV — i
 jest wyłączane przez przełączenie na strategię <code>max_export</code> albo przez bezpośrednie ustawienie
 <code>limit_export_to_pv</code> na wył.; jawne ustawienie pozostaje w mocy mimo zmiany strategii.</p>
-<p>Mnożnik depozytu 1,23 obowiązuje tylko razem z presetem surowego RCE (<code>pse</code>, <code>pse_solcast</code>); z
+<p>Mnożnik depozytu 1,23 obowiązuje razem z presetem surowego RCE (<code>pse</code>, <code>pse_solcast</code>) <strong>albo</strong> ze
+źródłem sprzedaży surowego RCE (<strong>Taryfy → Źródło ceny sprzedaży → Cena rynkowa RCE (PSE)</strong>:
+prognoza z progiem ceny, w której każde powiązanie ma PLN/MWh). Zapisy nowej instalacji wyliczają to
+ponownie do jej utworzenia; Konfiguruj i Rekonfiguruj nigdy tego nie robią. Z
 <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/examples/rce-sell-price.yaml"><code>examples/rce-sell-price.yaml</code></a>, który sam już stosuje próg i
 mnożnik 1,23, zostaw mnożnik sprzedaży na 1 (zob. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/tariff-helper.md">pomocnik taryfy</a>).</p>
 <p><code>sell_multiplier</code> w systemie opustów to jednorazowa kopia współczynnika, a nie odnośnik do ceny
 zakupu: to przybliżenie (roczny bilans kWh i niedopasowanie stref G12 nie są modelowane), a
 późniejsza zmiana ceny zakupu go nie aktualizuje.</p>
 <p>Podgląd pokazuje pochodzenie profili startowych dla profilowanej nowej instalacji: które klucze
-wypełniła każda oś, każdą wartość zmienioną po wypełnieniu (także klucz powiązany z pomocnikiem,
-wraz z jego efektywną wartością) oraz uwagi dotyczące rozliczenia — Sell only PV wyłączone, źródło
-sprzedaży stosujące już własny mnożnik rozliczeniowy, surowe ceny RCE bez progu 0 lub sprzedaż w
-systemie opustów, która przestała śledzić zakup — widoczne tylko dla instalacji, które użyły
-profilu startowego.</p>
+wypełniła każda oś, źródło zakupu wstępnie wybrane przez profil <code>buy_tariff</code>, każdą wartość
+zmienioną po wypełnieniu (także klucz powiązany z pomocnikiem, wraz z jego efektywną wartością) oraz
+uwagi dotyczące rozliczenia — Sell only PV wyłączone, źródło sprzedaży stosujące już własny
+mnożnik rozliczeniowy, surowe ceny RCE bez progu 0 (z poprawką w postaci skrótu „Cena rynkowa RCE”)
+albo z progiem, ale bez mnożnika 1,23, lub sprzedaż w systemie opustów, która przestała śledzić
+zakup — widoczne tylko dla instalacji, które użyły profilu startowego.</p>
 <p>Wybór, razem z wersją profili startowych, która go wyliczyła, jest zapisywany we wpisie
 konfiguracji (<code>setup_profiles</code>) i trafia do diagnostyki.</p>
+<h3 id="wbudowane-taryfy-osd">Wbudowane taryfy OSD</h3>
+<p>Dla polskiego gospodarstwa <strong>Taryfy → Źródło ceny zakupu → Taryfa OSD (G11/G12/G12w)</strong> zastępuje YAML
+pomocnika taryfy (jego <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/tariff-helper.md">przykład YAML</a> zostaje rozwiązaniem zapasowym). Wybierz
+jedną z jedenastu pozycji katalogu; strefy pochodzą z taryfy dystrybutora na 2026 rok, a <strong>stawki
+wpisujesz sam</strong>: <strong>Taryfy → Stałe stawki i przeliczenia</strong> zawiera <em>Cena zakupu</em> (G11 albo stawka
+szczytowa) i <em>Cena zakupu poza szczytem</em> (G12/G12w). Obie stawki muszą być większe od zera, inaczej
+obliczenie kończy się błędem z komunikatem wskazującym te pola. Cena slotu to <code>stawka × mnożnik ×
+współczynnik VAT + dodatek</code>, tak jak dla stałej stawki. Harmonogram nie wymaga encji i nie ogranicza
+horyzontu planowania. Wymaga waluty PLN.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Klucz</th>
+<th>Operator i grupa</th>
+<th>Dni robocze, strefa tania (zegar taryfy)</th>
+<th>Dni wolne</th>
+<th>Źródło</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>g11</code></td>
+<td>dowolny, G11</td>
+<td>brak, jedna stawka</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>pge_g12</code></td>
+<td>PGE Dystrybucja, G12</td>
+<td>IV–IX 15–17 i 22–6; X–III 13–15 i 22–6</td>
+<td>jak dni robocze</td>
+<td>taryfa 2026 §2.2.6/2.2.8/2.2.11</td>
+</tr>
+<tr>
+<td><code>pge_g12w</code></td>
+<td>PGE Dystrybucja, G12w</td>
+<td>jak <code>pge_g12</code></td>
+<td>cała doba</td>
+<td>to samo</td>
+</tr>
+<tr>
+<td><code>tauron_g12</code></td>
+<td>Tauron Dystrybucja, G12</td>
+<td>13–15 i 22–6</td>
+<td>jak dni robocze</td>
+<td>taryfa 2026 §2.2.6/2.2.7/2.2.9</td>
+</tr>
+<tr>
+<td><code>tauron_g12w</code></td>
+<td>Tauron Dystrybucja, G12w</td>
+<td>13–15 i 22–6</td>
+<td>cała doba</td>
+<td>to samo</td>
+</tr>
+<tr>
+<td><code>enea_g12</code></td>
+<td>Enea Operator, G12</td>
+<td>domyślnie 13–15 i 22–6; ustala Enea dla licznika</td>
+<td>jak dni robocze</td>
+<td>wyciąg z taryfy 2026 §2.2.5/2.2.7/2.2.12</td>
+</tr>
+<tr>
+<td><code>enea_g12w</code></td>
+<td>Enea Operator, G12w</td>
+<td>21–6</td>
+<td>cała doba</td>
+<td>to samo</td>
+</tr>
+<tr>
+<td><code>energa_g12</code></td>
+<td>Energa-Operator, G12</td>
+<td>13–15 i 22–6</td>
+<td>jak dni robocze</td>
+<td>wyciąg z taryfy 2026 §3.2.5/3.2.6</td>
+</tr>
+<tr>
+<td><code>energa_g12w</code></td>
+<td>Energa-Operator, G12w</td>
+<td>13–15 i 22–6</td>
+<td>cała doba</td>
+<td>to samo</td>
+</tr>
+<tr>
+<td><code>stoen_g12</code></td>
+<td>Stoen Operator, G12</td>
+<td>13–15 i 22–6</td>
+<td>jak dni robocze</td>
+<td>taryfa 2026 §2.2.5/2.2.6/2.2.11</td>
+</tr>
+<tr>
+<td><code>stoen_g12w</code></td>
+<td>Stoen Operator, G12w</td>
+<td>tylko 22–6</td>
+<td>cała doba</td>
+<td>to samo</td>
+</tr>
+</tbody>
+</table></section>
+<p>Dniami wolnymi G12w są soboty, niedziele i święta ustawowe (1 i 6 stycznia, niedziela i poniedziałek
+wielkanocny, 1 i 3 maja, Zielone Świątki, Boże Ciało, 15 sierpnia, 1 i 11 listopada, 24 grudnia od
+1 lutego 2025, 25 i 26 grudnia); dni zastępczych nie ma. Licznik, który nie został przeprogramowany,
+może pomijać nowo dodane święto, np. 24 grudnia; pokrywa to <code>off_peak_dates</code> w rozwiązaniu YAML.</p>
+<p><strong>Zegar.</strong> Domyślnie strefy podążają za <strong>czasem lokalnym</strong> (strefa czasowa Home Assistant): licznik
+z odczytem zdalnym rozliczany po godzinowym bilansowaniu stosuje strefy w czasie ściennym, więc doba
+może mieć 23 lub 25 godzin lokalnych. Stary licznik bez odczytu zdalnego ma stały zegar wewnętrzny
+na czasie zimowym (klauzula taryfy w powyższych źródłach); włącz dla niego <strong>Stary licznik bez
+odczytu zdalnego na czasie zimowym (stałe UTC+1)</strong>. Aby wybrać, porównaj miesięczne kWh dzień/noc
+z faktury z godzinowymi danymi o imporcie podzielonymi według okien, które wypisuje Podgląd; jeśli
+miesiące letnie różnią się o około godzinę, włącz zegar zimowy. Sezon i dzień tygodnia są
+klasyfikowane według daty wybranego zegara. Podgląd wypisuje zegar, dzisiejsze okna taniej strefy i,
+dla G12w, święta ustawowe w horyzoncie.</p>
+<p><strong>Enea G12.</strong> Enea ustala godziny dla licznika: 8 godzin w przedziale 22–7 (start 22 lub 23) i 2
+godziny w przedziale 13–17 (start 13, 14 lub 15). Domyślnie 22 i 13 (FAQ Enea); dodatkowy formularz
+pyta o obie, więc sprawdź licznik lub fakturę.</p>
+<p><strong>Cena sprzedaży RCE.</strong> <strong>Taryfy → Źródło ceny sprzedaży → Cena rynkowa RCE (PSE)</strong> zapisuje sensor
+integracji <code>rce_pse</code> (atrybut <code>prices</code>, wartość <code>rce_pln</code>, koniec <code>dtime</code>, PLN/MWh, 15 minut) jako
+źródło prognozy z progiem ceny 0: surowa wartość jest ograniczona od dołu do 0 za kWh <strong>przed</strong>
+mnożnikiem, VAT i dodatkiem (<code>max(RCE, 0) × 1,23</code> z mnożnikiem net-billingu). Próg widać w Podglądzie
+i znika przy przełączeniu źródła z prognozy lub gdy po edycji nie jest już surowym źródłem RCE w PLN/MWh. W nowej instalacji profil PL net-billing przypisuje
+potem mnożnik 1,23; w Konfiguruj i Rekonfiguruj ustaw mnożnik sprzedaży samodzielnie. Bez integracji
+<code>rce_pse</code> użyj <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/examples/rce-sell-price.yaml"><code>examples/rce-sell-price.yaml</code></a>.</p>
 <h2 id="przegląd-encji">Przegląd encji</h2>
 <p><code>&lt;name&gt;</code> to tytuł wpisu integracji.</p>
 <section class="table-scroll"><table>

@@ -15,6 +15,9 @@ template:
       # G12/G12w afternoon off-peak window: fixed = 13:00-15:00 all year;
       # seasonal = 15:00-17:00 April-September, 13:00-15:00 October-March.
       afternoon_window: fixed
+      # local = zones follow the wall clock (remote-read meters, hourly balancing);
+      # winter = old meter clock fixed on winter time (tariff §2.2.x)
+      meter_clock: local
       # Only dates explicitly listed here receive the G12w off-peak rate.
       off_peak_dates: []
       forecast_rows: >-
@@ -22,6 +25,7 @@ template:
               and base_rate is defined and is_number(base_rate)
               and off_peak_rate is defined and is_number(off_peak_rate)
               and afternoon_window is defined and afternoon_window in ['fixed', 'seasonal']
+              and meter_clock is defined and meter_clock in ['winter', 'local']
               and off_peak_dates is defined
               and off_peak_dates is sequence and off_peak_dates is not string %}
           {% set rows = namespace(value=[]) %}
@@ -29,7 +33,7 @@ template:
           {% for hour in range(49) %}
             {% set start = as_datetime((first_hour + hour * 3600) | timestamp_utc) %}
             {% set end = as_datetime((first_hour + (hour + 1) * 3600) | timestamp_utc) %}
-            {% set local = as_local(start) %}
+            {% set local = as_local(start) if meter_clock == 'local' else start + timedelta(hours=1) %}
             {% set afternoon = 15 if afternoon_window == 'seasonal' and 4 <= local.month <= 9 else 13 %}
             {% set off_peak = tariff_group != 'G11' and
                 (local.hour >= 22 or local.hour < 6 or afternoon <= local.hour < afternoon + 2 or
@@ -55,6 +59,7 @@ template:
              and base_rate is defined and is_number(base_rate)
              and off_peak_rate is defined and is_number(off_peak_rate)
              and afternoon_window is defined and afternoon_window in ['fixed', 'seasonal']
+             and meter_clock is defined and meter_clock in ['winter', 'local']
              and off_peak_dates is defined
              and off_peak_dates is sequence and off_peak_dates is not string }}
         state: "{{ forecast_rows[0].price if forecast_rows | count == 49 else none }}"

@@ -135,6 +135,41 @@ def test_unknown_afternoon_window_cannot_publish_a_price(hass, freezer, example)
     assert state is None and rows == []
 
 
+@pytest.mark.parametrize(
+    ("instant", "clock", "expected"),
+    [
+        # 20:30 UTC in July is 22:30 CEST but 21:30 on a fixed winter-time meter.
+        ("2026-07-01T20:30:00+00:00", "local", 0.55),
+        ("2026-07-01T20:30:00+00:00", "winter", 0.9),
+        ("2026-01-15T21:30:00+00:00", "local", 0.55),
+        ("2026-01-15T21:30:00+00:00", "winter", 0.55),
+    ],
+)
+def test_meter_clock_local_or_fixed_winter_time(
+    hass, freezer, example, instant, clock, expected
+):
+    state, rows = _render(
+        hass, freezer, example, instant, tariff_group="G12", meter_clock=clock
+    )
+    assert state == pytest.approx(expected)
+    assert len(rows) == 49
+
+
+def test_meter_clock_defaults_to_local(example):
+    assert example["template"][0]["variables"]["meter_clock"] == "local"
+
+
+def test_unknown_meter_clock_cannot_publish_a_price(hass, freezer, example):
+    state, rows = _render(
+        hass,
+        freezer,
+        example,
+        "2026-09-18T11:22:34+00:00",
+        meter_clock="summer",
+    )
+    assert state is None and rows == []
+
+
 def test_explicit_date_is_off_peak_without_holiday_lookups(hass, freezer, example):
     instant = "2026-12-24T10:32:00+00:00"
     state, rows = _render(

@@ -27,6 +27,19 @@ from custom_components.energy_compass.settings import (
 
 PRESETS = ("generic", "pse", "pse_solcast", "pstryk_bankilo")
 INVERTERS = ("generic", "deye_hybrid")
+TARIFF_KEYS = (
+    "g11",
+    "pge_g12",
+    "pge_g12w",
+    "tauron_g12",
+    "tauron_g12w",
+    "enea_g12",
+    "enea_g12w",
+    "energa_g12",
+    "energa_g12w",
+    "stoen_g12",
+    "stoen_g12w",
+)
 SETTLEMENTS = ("generic", "pl_net_billing", "pl_net_metering_80", "pl_net_metering_70")
 
 EXPECTED_REVISION_1 = {
@@ -143,7 +156,7 @@ def test_revision_1_is_frozen():
 
 def test_revisions_are_append_only_and_immutable():
     assert sorted(sp.REVISIONS) == list(range(1, sp.SETUP_PROFILES_REVISION + 1))
-    assert sp.SETUP_PROFILES_REVISION == max(sp.REVISIONS) == 1
+    assert sp.SETUP_PROFILES_REVISION == max(sp.REVISIONS) == 2
     assert sp.CURRENT is sp.REVISIONS[sp.SETUP_PROFILES_REVISION]
 
     with pytest.raises(TypeError):
@@ -168,7 +181,9 @@ def test_registry_order_and_revision():
         "pl_net_metering_70",
     )
     assert tuple(sp.INVERTER_PROFILES) == ("generic", "deye_hybrid")
-    assert tuple(sp.AXES) == ("settlement", "inverter")
+    assert tuple(sp.AXES) == ("settlement", "buy_tariff", "inverter")
+    assert tuple(sp.AXES["buy_tariff"]) == ("generic", *TARIFF_KEYS)
+    assert tuple(sp.REVISIONS[1].axes) == ("settlement", "inverter")
 
 
 @pytest.mark.parametrize("settlement", SETTLEMENTS)
@@ -276,6 +291,13 @@ def test_axes_are_disjoint():
         for profile in revision.axes["inverter"].values():
             inverter_keys |= set(profile.settings)
         assert settlement_keys & inverter_keys == set()
+        if "buy_tariff" in revision.axes:
+            tariff_keys: set[str] = set()
+            for profile in revision.axes["buy_tariff"].values():
+                tariff_keys |= set(profile.settings)
+                assert profile.sell_ratio is None
+                assert profile.raw_rce_sell_multiplier is None
+            assert tariff_keys == set()
 
 
 def test_terminal_value_requires_value_mode():
@@ -460,15 +482,21 @@ def test_profile_label_fallbacks():
 
 def test_selection_record():
     assert sp.selection_record(
-        {"settlement": "pl_net_billing", "inverter": "deye_hybrid"}
+        {
+            "settlement": "pl_net_billing",
+            "buy_tariff": "pge_g12",
+            "inverter": "deye_hybrid",
+        }
     ) == {
-        "revision": sp.SETUP_PROFILES_REVISION,
+        "revision": 2,
         "settlement": "pl_net_billing",
+        "buy_tariff": "pge_g12",
         "inverter": "deye_hybrid",
     }
     assert sp.selection_record({}) == {
-        "revision": sp.SETUP_PROFILES_REVISION,
+        "revision": 2,
         "settlement": "generic",
+        "buy_tariff": "generic",
         "inverter": "generic",
     }
 
@@ -494,7 +522,8 @@ def test_preview_lines_prefilled_and_edited():
     assert lines == [
         (
             "Setup profiles (applied once at creation; editable): settlement "
-            "Poland: net-billing (RCE deposit), inverter Deye hybrid (Solarman)."
+            "Poland: net-billing (RCE deposit), buy_tariff None (keep a fixed "
+            "buy rate), inverter Deye hybrid (Solarman)."
         ),
         (
             "Pre-filled by settlement Poland: net-billing (RCE deposit): "
@@ -569,7 +598,7 @@ def test_preview_creation_line():
     assert sp.preview_lines(unknown, (), {}, {}, {}, new_entry=False) == [
         (
             "Setup profiles at creation (revision 99, not re-applied): "
-            "settlement mystery, inverter mystery_inv."
+            "settlement mystery, buy_tariff generic, inverter mystery_inv."
         )
     ]
 
@@ -724,16 +753,16 @@ def test_note_raw_rce():
     assert (
         "Note: raw RCE sell prices are not floored at 0 (net-billing values "
         "negative prices at 0) and the 1.23 deposit multiplier is not applied "
-        "(sell multiplier 1); examples/rce-sell-price.yaml publishes "
-        "max(RCE, 0) × 1.23." in notes
+        "(sell multiplier 1); Sell source → RCE market price (PSE) or "
+        "examples/rce-sell-price.yaml gives max(RCE, 0) × 1.23." in notes
     )
 
     values["sell_multiplier"] = 1.23
     notes = sp.settlement_notes(config, problem, values, {})
     assert (
         "Note: raw RCE sell prices are not floored at 0 (net-billing values "
-        "negative prices at 0); examples/rce-sell-price.yaml publishes "
-        "max(RCE, 0) × 1.23." in notes
+        "negative prices at 0); Sell source → RCE market price (PSE) or "
+        "examples/rce-sell-price.yaml gives max(RCE, 0) × 1.23." in notes
     )
 
 
@@ -871,6 +900,12 @@ def test_settlement_notes_resolves_record_revision_sell_ratio(monkeypatch):
 EN_STRINGS = {
     ("config", "step", "user", "data", "settlement"): "Prosumer settlement",
     ("config", "step", "user", "data", "inverter"): "Inverter",
+    ("config", "step", "user", "data", "buy_tariff"): "Polish distribution tariff",
+    ("config", "step", "user", "data_description", "buy_tariff"): (
+        "Pre-selects the buy source as a tariff schedule when this installation "
+        "is created. Rates are entered by you in Tariffs → Values. Requires "
+        "currency PLN."
+    ),
     ("config", "step", "user", "data_description", "settlement"): (
         "Pre-fills editable planning and sell-price values once, when this "
         "installation is created. Polish profiles require currency PLN. No "
@@ -885,11 +920,22 @@ EN_STRINGS = {
         "error",
         "settlement_currency",
     ): "Polish settlement profiles require currency PLN.",
+    (
+        "config",
+        "error",
+        "buy_tariff_currency",
+    ): "The selected Polish tariff requires currency PLN.",
 }
 
 PL_STRINGS = {
     ("config", "step", "user", "data", "settlement"): "Rozliczenie prosumenckie",
     ("config", "step", "user", "data", "inverter"): "Falownik",
+    ("config", "step", "user", "data", "buy_tariff"): "Polska taryfa dystrybucyjna",
+    ("config", "step", "user", "data_description", "buy_tariff"): (
+        "Jednorazowo, przy tworzeniu instalacji, wstępnie wybiera źródło ceny "
+        "zakupu jako taryfę OSD. Stawki wpisujesz sam w Taryfy → Wartości. "
+        "Wymaga waluty PLN."
+    ),
     ("config", "step", "user", "data_description", "settlement"): (
         "Jednorazowo, przy tworzeniu instalacji, wstępnie wypełnia edytowalne "
         "ustawienia planowania i ceny sprzedaży. Profile polskie wymagają "
@@ -904,6 +950,11 @@ PL_STRINGS = {
         "error",
         "settlement_currency",
     ): "Polskie profile rozliczenia wymagają waluty PLN.",
+    (
+        "config",
+        "error",
+        "buy_tariff_currency",
+    ): "Wybrana polska taryfa wymaga waluty PLN.",
 }
 
 COMPONENT_DIR = (
@@ -931,7 +982,7 @@ def test_profile_strings_exact():
 
     for doc in (strings_json, en_json, pl_json):
         data_description = doc["config"]["step"]["user"]["data_description"]
-        assert set(data_description.keys()) == {"settlement", "inverter"}
+        assert set(data_description.keys()) == {"settlement", "buy_tariff", "inverter"}
         if (
             "options" in doc
             and "step" in doc["options"]
@@ -939,9 +990,11 @@ def test_profile_strings_exact():
         ):
             options_data = doc["options"]["step"]["user"].get("data", {})
             assert "settlement" not in options_data
+            assert "buy_tariff" not in options_data
             assert "inverter" not in options_data
         if "options" in doc:
             assert "settlement_currency" not in doc["options"].get("error", {})
+            assert "buy_tariff_currency" not in doc["options"].get("error", {})
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -1014,3 +1067,205 @@ def test_setup_profile_docs():
     readme_pl = (REPO_ROOT / "README.pl.md").read_text(encoding="utf-8")
     assert "setup profiles" in readme.lower()
     assert "profile startowe" in readme_pl.lower()
+
+
+EXPECTED_REVISION_2_BUY_TARIFF = {
+    "generic": (None, None, "None (keep a fixed buy rate)", "Brak (stała cena zakupu)"),
+    "g11": ("g11", "PLN", "G11 (any operator)", "G11 (dowolny operator)"),
+    "pge_g12": ("pge_g12", "PLN", "PGE Dystrybucja G12", "PGE Dystrybucja G12"),
+    "pge_g12w": ("pge_g12w", "PLN", "PGE Dystrybucja G12w", "PGE Dystrybucja G12w"),
+    "tauron_g12": (
+        "tauron_g12",
+        "PLN",
+        "Tauron Dystrybucja G12",
+        "Tauron Dystrybucja G12",
+    ),
+    "tauron_g12w": (
+        "tauron_g12w",
+        "PLN",
+        "Tauron Dystrybucja G12w",
+        "Tauron Dystrybucja G12w",
+    ),
+    "enea_g12": ("enea_g12", "PLN", "Enea Operator G12", "Enea Operator G12"),
+    "enea_g12w": ("enea_g12w", "PLN", "Enea Operator G12w", "Enea Operator G12w"),
+    "energa_g12": (
+        "energa_g12",
+        "PLN",
+        "Energa-Operator G12",
+        "Energa-Operator G12",
+    ),
+    "energa_g12w": (
+        "energa_g12w",
+        "PLN",
+        "Energa-Operator G12w",
+        "Energa-Operator G12w",
+    ),
+    "stoen_g12": ("stoen_g12", "PLN", "Stoen Operator G12", "Stoen Operator G12"),
+    "stoen_g12w": ("stoen_g12w", "PLN", "Stoen Operator G12w", "Stoen Operator G12w"),
+}
+
+
+def _project_revision_2(revision):
+    projected = _project_revision(revision)
+    projected["raw_rce_sources"] = revision.raw_rce_sources
+    for axis, profiles in revision.axes.items():
+        for profile, prof in profiles.items():
+            projected[axis][profile]["buy_tariff"] = prof.buy_tariff
+    projected["buy_tariff_labels"] = {
+        profile: (prof.buy_tariff, prof.currency, prof.labels["en"], prof.labels["pl"])
+        for profile, prof in revision.axes["buy_tariff"].items()
+    }
+    return projected
+
+
+def test_revision_2_is_frozen():
+    """Frozen once published: revision 2 is persisted in new entries."""
+    projected = _project_revision_2(sp.REVISIONS[2])
+    expected_without_tariff = {
+        key: value
+        for key, value in EXPECTED_REVISION_1.items()
+        if key in ("raw_rce_presets",)
+    }
+    assert projected["raw_rce_presets"] == expected_without_tariff["raw_rce_presets"]
+    assert projected["raw_rce_sources"] is True
+    assert projected["buy_tariff_labels"] == EXPECTED_REVISION_2_BUY_TARIFF
+    for axis in ("settlement", "inverter"):
+        for profile, spec in EXPECTED_REVISION_1[axis].items():
+            assert {
+                key: value
+                for key, value in projected[axis][profile].items()
+                if key != "buy_tariff"
+            } == spec
+            assert projected[axis][profile]["buy_tariff"] is None
+    assert sp.REVISIONS[2].axes["settlement"] is sp.REVISIONS[1].axes["settlement"]
+    assert sp.REVISIONS[2].axes["inverter"] is sp.REVISIONS[1].axes["inverter"]
+
+
+def test_revision_1_has_no_tariff_semantics():
+    rev1 = sp.REVISIONS[1]
+    assert rev1.raw_rce_sources is False
+    for profiles in rev1.axes.values():
+        assert all(profile.buy_tariff is None for profile in profiles.values())
+    selections = {"settlement": "pl_net_billing", "inverter": "generic"}
+    assert sp.profile_assignments(
+        selections, "generic", revision=1, raw_rce_sell=True
+    ) == sp.profile_assignments(selections, "generic", revision=1)
+    assert sp.buy_tariff_schedule({"buy_tariff": "pge_g12"}, revision=1) is None
+
+
+@pytest.mark.parametrize(
+    "preset,raw,expected",
+    [
+        ("generic", True, True),
+        ("generic", False, False),
+        ("pstryk_bankilo", False, False),
+        ("pse", False, True),
+        ("pse_solcast", False, True),
+    ],
+)
+def test_raw_rce_gate_is_preset_or_source(preset, raw, expected):
+    assignments = sp.profile_assignments(
+        {"settlement": "pl_net_billing"}, preset, raw_rce_sell=raw
+    )
+    has = (
+        sp.Assignment("settlement", "pl_net_billing", "sell_multiplier", 1.23)
+        in assignments
+    )
+    assert has is expected
+
+
+def test_buy_tariff_profiles_assign_nothing_and_name_a_catalog_key():
+    from custom_components.energy_compass.sources.tariffs import CATALOG
+
+    for key, profile in sp.REVISIONS[2].axes["buy_tariff"].items():
+        if key == "generic":
+            assert profile.buy_tariff is None
+            continue
+        assert profile.settings == {}
+        assert profile.sell_ratio is None and profile.raw_rce_sell_multiplier is None
+        assert profile.currency == "PLN"
+        assert profile.buy_tariff == key and key in CATALOG
+        assert sp.profile_assignments({"buy_tariff": key}, "generic") == ()
+
+
+def test_buy_tariff_schedule_and_currency_error():
+    assert sp.buy_tariff_schedule({}) is None
+    assert sp.buy_tariff_schedule({"buy_tariff": "generic"}) is None
+    assert sp.buy_tariff_schedule({"buy_tariff": "enea_g12"}) == {
+        "tariff": "enea_g12",
+        "meter_winter_clock": False,
+        "params": {"night_start": 22, "afternoon_start": 13},
+    }
+    assert sp.currency_error({"buy_tariff": "pge_g12"}, "EUR") == "buy_tariff_currency"
+    assert sp.currency_error({"buy_tariff": "pge_g12"}, "PLN") is None
+    assert (
+        sp.currency_error({"settlement": "pl_net_billing", "buy_tariff": "g11"}, "EUR")
+        == "settlement_currency"
+    )
+    assert sp.currency_error({"settlement": "pl_net_billing"}, "EUR") == (
+        "settlement_currency"
+    )
+    assert sp.currency_error({}, "EUR") is None
+
+
+def test_tariff_preview_line_and_creation_summary():
+    selections = {"settlement": "generic", "buy_tariff": "pge_g12"}
+    record = sp.selection_record(selections)
+    assert sp.preview_lines(record, (), {}, {}, {}, new_entry=True) == [
+        (
+            "Setup profiles: settlement Generic (no settlement assumptions), "
+            "buy_tariff PGE Dystrybucja G12, inverter Generic (no inverter "
+            "defaults); no values pre-filled."
+        ),
+        (
+            "Buy source pre-selected by buy_tariff PGE Dystrybucja G12: tariff "
+            "schedule; rates are entered by you (Tariffs → Values)."
+        ),
+    ]
+    selections = {"settlement": "pl_net_billing", "buy_tariff": "g11"}
+    record = sp.selection_record(selections)
+    assignments = sp.profile_assignments(selections, "pse")
+    settings = {a.key: a.value for a in assignments}
+    lines = sp.preview_lines(
+        record, assignments, settings, {}, dict(settings), new_entry=True
+    )
+    assert lines[-1] == (
+        "Buy source pre-selected by buy_tariff G11 (any operator): tariff "
+        "schedule; rates are entered by you (Tariffs → Values)."
+    )
+    assert not any("Edited after" in line for line in lines)
+    not_new = sp.preview_lines(record, (), {}, {}, {}, new_entry=False)
+    assert len(not_new) == 1 and "pre-selected" not in not_new[0]
+
+
+def test_note_rce_floor_variants():
+    binding = {"entity": {"entity_id": "sensor.rce"}, "unit": "PLN/MWh"}
+    config = {
+        "currency": "PLN",
+        "sources": {
+            "sell": {"mode": "forecast", "forecast": [binding], "floor_per_kwh": 0.0}
+        },
+        "setup_profiles": {
+            "revision": 2,
+            "settlement": "pl_net_billing",
+            "buy_tariff": "generic",
+            "inverter": "generic",
+        },
+    }
+    problem = SimpleNamespace(slots=())
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "self_consumption",
+        "sell_multiplier": 1.1,
+    }
+    assert sp.settlement_notes(config, problem, values, {}) == [
+        (
+            "Note: the 1.23 deposit multiplier is not applied to the RCE sell "
+            "price (sell multiplier 1.1); net-billing values exported energy at "
+            "max(RCE, 0) × 1.23."
+        )
+    ]
+    assert (
+        sp.settlement_notes(config, problem, {**values, "sell_multiplier": 1.23}, {})
+        == []
+    )

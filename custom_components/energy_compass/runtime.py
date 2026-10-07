@@ -57,6 +57,7 @@ from .sources.bindings import (
 from .sources.history import load_for_slots_with_quality
 from .sources.prices import price_for_slots
 from .sources.pv import sum_pv_arrays
+from .sources.tariffs import band_rows
 from .sources.throughput import resolve_daily_throughput
 
 _AUTONOMY_HORIZON_HOURS = 48
@@ -442,6 +443,12 @@ def build_problem(
         for edge in (row.start, row.end)
         if now < edge < end
     )
+    if source.buy.mode == "schedule":
+        boundaries.update(
+            row.start
+            for row in band_rows(source.buy.schedule, now, end, config["timezone"])
+            if now < row.start < end
+        )
     edges = sorted(boundaries)
     intervals = tuple(pairwise(edges))
     if len(intervals) > 384:
@@ -454,6 +461,7 @@ def build_problem(
             1 + values["vat_percent"] / 100 if values[f"{name}_apply_vat"] else 1
         )
         addition = values[f"{name}_addition"]
+        schedule_rates = None
         if price.mode == "fixed":
             price = replace(
                 price,
@@ -462,14 +470,35 @@ def build_problem(
                     unit=f"{config['currency']}/kWh",
                 ),
             )
-        else:
+        elif price.mode == "schedule":
+            single = price.schedule.tariff == "g11"
+            peak = values["buy_rate"]
+            off_peak = peak if single else values["buy_off_peak_rate"]
+            if peak <= 0 or off_peak <= 0:
+                raise InputError(
+                    "tariff schedule needs positive buy rates: "
+                    "set Buy rate and Off-peak buy rate in Tariffs → Values"
+                )
+            schedule_rates = {
+                "peak": peak * factor + addition,
+                "off_peak": off_peak * factor + addition,
+            }
+        elif price.mode == "forecast":
             price = replace(
                 price,
                 multiplier=NumericSetting(fixed=factor),
                 addition_per_kwh=NumericSetting(fixed=addition),
             )
         tariffs.append(
-            price_for_slots(price, states, now, intervals, config["currency"])
+            price_for_slots(
+                price,
+                states,
+                now,
+                intervals,
+                config["currency"],
+                timezone=config["timezone"],
+                schedule_rates=schedule_rates,
+            )
         )
     if any(row.value < 0 for rows in pv_groups for row in rows):
         raise InputError("PV energy must be nonnegative")

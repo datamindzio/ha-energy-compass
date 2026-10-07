@@ -420,3 +420,166 @@ def test_soc_guard_needs_new_plausible_reading_to_recover():
         guard.accept(50, "%", jump_time, jump_time)
     recovery = NOW.replace(minute=2)
     assert guard.accept(50, "%", recovery, recovery) == 5.0
+
+
+def _price_dicts(**overrides):
+    from custom_components.energy_compass.settings import default_configuration
+
+    config = default_configuration("PLN", "Europe/Warsaw")
+    config["sources"]["buy"].update(overrides.get("buy", {}))
+    config["sources"]["sell"].update(overrides.get("sell", {}))
+    return config
+
+
+def _validate(config):
+    from custom_components.energy_compass.config_models import (
+        SourceConfig,
+        validate_sources,
+    )
+
+    validate_sources(SourceConfig.from_dict(config["sources"]), set())
+
+
+SCHEDULE = {
+    "tariff": "pge_g12",
+    "meter_winter_clock": False,
+    "params": {},
+}
+RCE_BINDING = {
+    "entity": {"entity_id": "sensor.rce"},
+    "unit": "PLN/MWh",
+    "value_kind": "price",
+}
+
+
+def test_legacy_price_dicts_round_trip_byte_identically():
+    from custom_components.energy_compass.settings import default_configuration
+
+    sources = default_configuration("PLN", "Europe/Warsaw")["sources"]
+    for role in ("buy", "sell"):
+        assert PriceSource.from_dict(sources[role]).to_dict() == sources[role]
+        assert "schedule" not in sources[role]
+        assert "floor_per_kwh" not in sources[role]
+    forecast = PriceSource(
+        "forecast",
+        (IntervalBinding(EntityBinding("sensor.rce"), unit="PLN/MWh"),),
+    ).to_dict()
+    assert PriceSource.from_dict(forecast).to_dict() == forecast
+    assert "floor_per_kwh" not in forecast
+
+
+def test_schedule_and_floor_round_trip():
+    schedule = {
+        "mode": "schedule",
+        "forecast": [],
+        "fixed": None,
+        "multiplier": {"fixed": 1.0},
+        "addition_per_kwh": {"fixed": 0.0},
+        "schedule": SCHEDULE,
+    }
+    source = PriceSource.from_dict(_normalized(schedule))
+    assert source.schedule.tariff == "pge_g12"
+    assert source.to_dict()["schedule"] == SCHEDULE
+    floored = PriceSource(
+        "forecast",
+        (IntervalBinding(EntityBinding("sensor.rce"), unit="PLN/MWh"),),
+        floor_per_kwh=0.0,
+    )
+    assert floored.to_dict()["floor_per_kwh"] == 0.0
+    assert PriceSource.from_dict(floored.to_dict()) == floored
+
+
+def _normalized(data):
+    from custom_components.energy_compass.config_models import NumericSetting
+
+    return {
+        **data,
+        "multiplier": NumericSetting(fixed=1.0).to_dict(),
+        "addition_per_kwh": NumericSetting(fixed=0.0).to_dict(),
+    }
+
+
+def _schedule_dict(**extra):
+    return _normalized(
+        {
+            "mode": "schedule",
+            "forecast": [],
+            "fixed": None,
+            "schedule": SCHEDULE,
+            **extra,
+        }
+    )
+
+
+def test_schedule_buy_validates_and_adds_no_dependencies():
+    _validate(_price_dicts(buy=_schedule_dict()))
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"sell": _schedule_dict()}, "tariff schedule is a buy source only"),
+        (
+            {"buy": _schedule_dict(schedule=None)},
+            "schedule price needs a tariff only",
+        ),
+        (
+            {"buy": _schedule_dict(forecast=[RCE_BINDING])},
+            "schedule price needs a tariff only",
+        ),
+        (
+            {"buy": _schedule_dict(fixed={"fixed": 1, "unit": "PLN/kWh"})},
+            "schedule price needs a tariff only",
+        ),
+        (
+            {"buy": {"schedule": SCHEDULE}},
+            "tariff schedule key under a non-schedule mode",
+        ),
+        ({"buy": {"floor_per_kwh": 0.0}}, "price floor needs a forecast source"),
+        (
+            {"buy": _schedule_dict(floor_per_kwh=0.0)},
+            "price floor needs a forecast source",
+        ),
+        (
+            {"buy": _schedule_dict(schedule={**SCHEDULE, "tariff": "gone"})},
+            "unknown tariff; reconfigure the buy source",
+        ),
+        (
+            {
+                "sell": {
+                    "mode": "forecast",
+                    "forecast": [RCE_BINDING],
+                    "fixed": None,
+                    "floor_per_kwh": float("nan"),
+                }
+            },
+            "price floor",
+        ),
+    ],
+)
+def test_price_validation_errors(overrides, message):
+    with pytest.raises(InputError, match=message):
+        _validate(_price_dicts(**overrides))
+
+
+def test_schedule_requires_pln():
+    from custom_components.energy_compass.settings import default_configuration
+
+    config = default_configuration("EUR", "Europe/Warsaw")
+    config["sources"]["buy"] = _schedule_dict()
+    with pytest.raises(InputError, match="tariff schedule requires PLN"):
+        _validate(config)
+
+
+def test_off_peak_rate_setting():
+    from custom_components.energy_compass import setup_profiles as sp
+    from custom_components.energy_compass.settings import (
+        default_configuration,
+        validate_configuration,
+    )
+
+    config = default_configuration("PLN", "Europe/Warsaw")
+    assert config["settings"]["buy_off_peak_rate"] == 0
+    assert "buy_off_peak_rate" in sp.TARIFF_PRICE_KEYS
+    del config["settings"]["buy_off_peak_rate"]
+    assert validate_configuration(config, {}, NOW)["buy_off_peak_rate"] == 0

@@ -3,6 +3,7 @@
 import json
 import logging
 from copy import deepcopy
+from datetime import timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo
 
@@ -37,6 +38,7 @@ from .settings import (
 from .setup_profiles import (
     AXES,
     apply_assignments,
+    buy_tariff_schedule,
     currency_error,
     preview_lines,
     profile_assignments,
@@ -53,6 +55,15 @@ from .source_management import (
     source_mode_options,
 )
 from .sources.bindings import IntervalBinding
+from .sources.tariffs import (
+    CATALOG,
+    TariffSchedule,
+    clock_text,
+    enea_text,
+    holidays_between,
+    is_raw_rce_sell,
+    local_off_peak,
+)
 from .sources.throughput import resolve_daily_throughput
 
 _LOGGER = logging.getLogger(__name__)
@@ -136,13 +147,48 @@ def _preview_assumptions(config, problem, values, quality):
     return source + "\n" + load_text + "."
 
 
+def _schedule_preview(config, problem, values):
+    schedule = TariffSchedule.from_dict(config["sources"]["buy"]["schedule"])
+    spec = CATALOG[schedule.tariff]
+    currency = config["currency"]
+    text = f"Buy source: tariff schedule {spec.labels['en']}; "
+    if spec.group == "G11":
+        return (
+            f"{text}single rate {values['buy_rate']:g} {currency}/kWh before multiplier"
+        )
+    zone = config["timezone"]
+    local = ZoneInfo(zone)
+    today = problem.slots[0].start.astimezone(local).date()
+    last = (problem.slots[-1].end - timedelta(microseconds=1)).astimezone(local).date()
+    text += f"clock {clock_text(schedule, zone)}"
+    if (enea := enea_text(schedule)) is not None:
+        text += f"; {enea}"
+    text += (
+        f"; off-peak today {today.isoformat()} ({zone}): "
+        f"{local_off_peak(schedule, today, zone)}; to verify, compare your "
+        "invoice's monthly day/night kWh with your hourly import data split by "
+        "these windows; if summer months are off by about one hour, enable the "
+        "old-meter winter clock"
+    )
+    if spec.group == "G12w":
+        holidays = holidays_between(today, last)
+        listed = ", ".join(day.isoformat() for day in holidays) or "none"
+        text += f"; statutory holidays in horizon: {listed}"
+    return (
+        f"{text}; peak {values['buy_rate']:g}, off-peak "
+        f"{values['buy_off_peak_rate']:g} {currency}/kWh before multiplier"
+    )
+
+
 def _price_preview(config, problem, values, role):
     price = config["sources"][role]
     currency = config["currency"]
     effective = (
         problem.slots[0].buy_per_kwh if role == "buy" else problem.slots[0].sell_per_kwh
     )
-    if price["mode"] == "fixed":
+    if price["mode"] == "schedule":
+        source = _schedule_preview(config, problem, values)
+    elif price["mode"] == "fixed":
         helper = config.get("helpers", {}).get(f"{role}_rate")
         if helper:
             entity = helper["entity"]
@@ -182,6 +228,11 @@ def _price_preview(config, problem, values, role):
                     mapping += f", {key.replace('_', ' ')} {row[key]}"
             entries.append(f"{origin} ({mapping}; {row['unit']})")
         source = f"{role.title()} source: forecast {'; '.join(entries)}"
+        if price.get("floor_per_kwh") is not None:
+            source += (
+                f"; raw values floored at {price['floor_per_kwh']:g} "
+                f"{currency}/kWh before multiplier, VAT and addition"
+            )
     source += (
         f"; effective first interval {effective:g} {currency}/kWh; "
         f"multiplier {values[f'{role}_multiplier']:g}, addition "
@@ -232,6 +283,24 @@ class Editor(SourceEditor):
     _currency_review_pending = False
     _setup_selections: MappingProxyType = MappingProxyType({})
     _profile_assignments: tuple = ()
+
+    async def _after_source_save(self):
+        if not self._existing_installation and self._setup_selections:
+            current = profile_assignments(
+                self._setup_selections,
+                self._draft["preset"],
+                raw_rce_sell=is_raw_rce_sell(self._draft["sources"]["sell"]),
+            )
+            reconcile_assignments(
+                self._draft["settings"],
+                self._profile_assignments,
+                current,
+                baseline=default_configuration(
+                    self._draft["currency"], self._draft["timezone"]
+                )["settings"],
+            )
+            self._profile_assignments = current
+        return await super()._after_source_save()
 
     async def async_step_menu(self, user_input=None):
         menu_options = ["installation", "sources", *GROUPS, "helpers"]
@@ -434,6 +503,16 @@ class Editor(SourceEditor):
             if not user_input["battery_enabled"]:
                 candidate["sources"].update(soc=None, bms_soc=None)
             currency_changed = candidate["currency"] != self._draft["currency"]
+            if (
+                currency_changed
+                and candidate["currency"] != "PLN"
+                and candidate["sources"]["buy"]["mode"] == "schedule"
+            ):
+                return self.async_show_form(
+                    step_id="installation",
+                    data_schema=self._installation_schema(),
+                    errors={"currency": "schedule_currency"},
+                )
             if currency_changed:
                 candidate["settings"]["calibration"] = "unvalidated"
             current_assignments = None
@@ -447,7 +526,9 @@ class Editor(SourceEditor):
                         errors=errors,
                     )
                 current_assignments = profile_assignments(
-                    self._setup_selections, candidate["preset"]
+                    self._setup_selections,
+                    candidate["preset"],
+                    raw_rce_sell=is_raw_rce_sell(candidate["sources"]["sell"]),
                 )
                 reconcile_assignments(
                     candidate["settings"],
@@ -623,7 +704,7 @@ class Editor(SourceEditor):
             mode = user_input["mode"]
             if mode == "back":
                 return await self.async_step_tariffs()
-            if mode not in ("fixed", "entity", "forecast"):
+            if mode not in self._source_modes(role):
                 errors["base"] = "invalid_input"
             else:
                 current = self._draft["sources"][role]
@@ -643,6 +724,10 @@ class Editor(SourceEditor):
                     "return_to": "tariffs",
                 }
                 self._binding = None
+                if mode == "schedule":
+                    return await self.async_step_tariff_schedule()
+                if mode == "rce":
+                    return await self.async_step_tariff_rce()
                 selected = (
                     self._draft.get("helpers", {}).get(f"{role}_rate", {}).get("entity")
                     if mode == "entity"
@@ -656,20 +741,27 @@ class Editor(SourceEditor):
                     return await self._save_fixed_source()
                 return await self.async_step_source_entity()
         current = self._draft["sources"][role]
+        modes = self._source_modes(role)
         default = (
-            "forecast"
+            "schedule"
+            if current["mode"] == "schedule"
+            else "rce"
+            if role == "sell" and is_raw_rce_sell(current)
+            else "forecast"
             if current["mode"] == "forecast"
             else "entity"
             if self._draft.get("helpers", {}).get(f"{role}_rate")
             else "fixed"
         )
+        if default not in modes:
+            default = modes[0]
         return self.async_show_form(
             step_id=f"tariff_{role}",
             data_schema=vol.Schema(
                 {
                     vol.Required("mode", default=default): select(
                         source_mode_options(
-                            ["fixed", "entity", "forecast", "back"],
+                            [*modes, "back"],
                             self.hass.config.language,
                         )
                     )
@@ -860,7 +952,7 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_show_form(
                     step_id="user",
                     data_schema=self._user_schema(selections),
-                    errors={"settlement": err},
+                    errors={err.removesuffix("_currency"): err},
                 )
             if user_input["currency"] == "PLN" and user_input["preset"] in (
                 "pse_solcast",
@@ -870,8 +962,16 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
             preset = PRESETS.get(user_input["preset"])
             if preset and preset.soc_unit:
                 self._draft["soc_options"]["unit"] = preset.soc_unit
-            assignments = profile_assignments(selections, user_input["preset"])
+            assignments = profile_assignments(
+                selections,
+                user_input["preset"],
+                raw_rce_sell=is_raw_rce_sell(self._draft["sources"]["sell"]),
+            )
             apply_assignments(self._draft["settings"], assignments)
+            if (schedule := buy_tariff_schedule(selections)) is not None:
+                self._draft["sources"]["buy"].update(
+                    mode="schedule", forecast=[], fixed=None, schedule=schedule
+                )
             self._draft["setup_profiles"] = selection_record(selections)
             self._setup_selections = selections
             self._profile_assignments = assignments

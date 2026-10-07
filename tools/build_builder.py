@@ -42,11 +42,13 @@ PATTERNS = {
     "signed": r"^-?[0-9]+(\.[0-9]+)?$",
     "tariff_group": r"^(G11|G12|G12w)$",
     "afternoon_window": r"^(fixed|seasonal)$",
+    "meter_clock": r"^(winter|local)$",
 }
 # Choice kinds are shown as a select; values must match their pattern.
 OPTIONS = {
     "tariff_group": ["G11", "G12", "G12w"],
     "afternoon_window": ["fixed", "seasonal"],
+    "meter_clock": ["local", "winter"],
 }
 # Hand-written examples whose settings the builder fills: role -> exact line.
 EXAMPLES = {
@@ -57,6 +59,7 @@ EXAMPLES = {
             "base_rate": "      base_rate: {}",
             "off_peak_rate": "      off_peak_rate: {}",
             "afternoon_window": "      afternoon_window: {}",
+            "meter_clock": "      meter_clock: {}",
         },
     ),
     "rce": (
@@ -170,6 +173,12 @@ FIELDS = {
         "fixed",
         "Afternoon off-peak window: fixed 13-15 or seasonal (15-17 Apr-Sep)",
         "Popołudniowe okno taniej strefy: stałe 13-15 lub sezonowe (15-17 IV-IX)",
+    ),
+    "meter_clock": (
+        "meter_clock",
+        "local",
+        "Meter clock: local (wall clock) or winter (old meter fixed on winter time)",
+        "Zegar licznika: lokalny (czas ścienny) lub zimowy (stary licznik na czasie zimowym)",
     ),
     "multiplier": (
         "number",
