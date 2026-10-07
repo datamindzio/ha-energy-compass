@@ -7,6 +7,7 @@ from ..config_models import PriceSource, resolve_numeric
 from ..engine.models import InputError
 from ..engine.normalize import Interval, finite, resample_prices
 from .bindings import IntervalBinding, merge_continuations, parse_intervals
+from .tariffs import band_rows, validate_schedule
 
 
 def price_series(
@@ -71,9 +72,28 @@ def price_for_slots(
     now: datetime,
     slots: tuple[tuple[datetime, datetime], ...],
     currency: str,
+    *,
+    timezone: str | None = None,
+    schedule_rates: Mapping[str, float] | None = None,
 ) -> tuple[float, ...]:
-    """Resolve the selected fixed or forecast tariff with explicit currency matching."""
-    if source.mode == "fixed":
+    """Resolve the selected fixed, forecast or schedule tariff with explicit currency matching."""
+    if source.mode == "schedule":
+        if (
+            source.schedule is None
+            or source.forecast
+            or source.fixed is not None
+            or currency != "PLN"
+            or timezone is None
+            or schedule_rates is None
+            or not slots
+        ):
+            raise InputError("schedule price selection is incomplete")
+        validate_schedule(source.schedule)
+        prices = tuple(
+            Interval(row.start, row.end, finite(schedule_rates[row.band], "price"))
+            for row in band_rows(source.schedule, slots[0][0], slots[-1][1], timezone)
+        )
+    elif source.mode == "fixed":
         if source.fixed is None or source.forecast:
             raise InputError("fixed price selection is incomplete")
         if source.fixed.unit != f"{currency}/kWh":
@@ -94,8 +114,15 @@ def price_for_slots(
                 for binding in source.forecast
             )
         )
+        floor = source.floor_per_kwh
         prices = tuple(
-            Interval(row.start, row.end, row.value * factor + addition) for row in rows
+            Interval(
+                row.start,
+                row.end,
+                (row.value if floor is None else max(row.value, floor)) * factor
+                + addition,
+            )
+            for row in rows
         )
     else:
         raise InputError("invalid price selection mode")
