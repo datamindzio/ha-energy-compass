@@ -1,17 +1,20 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from homeassistant.data_entry_flow import InvalidData
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.energy_compass import config_flow
 from custom_components.energy_compass.presets import PRESETS
+from custom_components.energy_compass.runtime import build_problem
 from custom_components.energy_compass.settings import (
     default_configuration,
     merged_configuration,
 )
 from custom_components.energy_compass.source_management import source_inventory
-from custom_components.energy_compass.sources.tariffs import CATALOG
+from custom_components.energy_compass.sources.tariffs import CATALOG, TariffSchedule
 
 NOW = "2026-09-18T10:00:00+00:00"
 COMPONENT_DIR = (
@@ -439,3 +442,168 @@ def test_new_steps_and_rate_labels_exist_in_every_translation_file(file):
 
 def test_catalog_has_a_label_in_both_languages():
     assert all(spec.labels["en"] and spec.labels["pl"] for spec in CATALOG.values())
+
+
+def _preview(config, now, role="buy"):
+    problem, values, _ = build_problem(config, {}, now)
+    return config_flow._price_preview(config, problem, values, role)
+
+
+def _schedule_preview_config(tariff, *, winter=False, params=None, hours=12):
+    config = pln_config()
+    config["settings"].update(
+        buy_rate=0.8,
+        buy_off_peak_rate=0.4,
+        horizon_hours=hours,
+        display_horizon_hours=hours,
+        reference_horizon_hours=hours,
+    )
+    schedule = TariffSchedule.default(tariff)
+    config["sources"]["buy"].update(
+        mode="schedule",
+        fixed=None,
+        schedule=TariffSchedule(
+            tariff, winter, params if params is not None else schedule.params
+        ).to_dict(),
+    )
+    return config
+
+
+HINT = (
+    "to verify, compare your invoice's monthly day/night kWh with your hourly "
+    "import data split by these windows; if summer months are off by about one "
+    "hour, enable the old-meter winter clock"
+)
+SUFFIX = (
+    "; effective first interval {first:g} PLN/kWh; multiplier 1, addition 0 "
+    "PLN/kWh, VAT not applied at 0%."
+)
+
+
+def test_preview_pge_g12_local_clock():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    text = _preview(_schedule_preview_config("pge_g12"), now)
+    assert text == (
+        "Buy source: tariff schedule PGE Dystrybucja G12; clock local time "
+        "(Europe/Warsaw); off-peak today 2026-07-01 (Europe/Warsaw): "
+        f"00:00–06:00, 15:00–17:00, 22:00–24:00; {HINT}; peak 0.8, off-peak "
+        "0.4 PLN/kWh before multiplier" + SUFFIX.format(first=0.8)
+    )
+
+
+def test_preview_pge_g12_winter_clock_names_the_reference():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    text = _preview(_schedule_preview_config("pge_g12", winter=True), now)
+    assert (
+        "clock winter time all year (CET, UTC+1), old meter, per PGE "
+        "Dystrybucja tariff 2026 §2.2.6/2.2.8/2.2.11; off-peak today "
+        "2026-07-01 (Europe/Warsaw): 00:00–07:00, 16:00–18:00, 23:00–24:00;"
+    ) in text
+
+
+def test_preview_energa_winter_clock_has_no_reference():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    text = _preview(_schedule_preview_config("energa_g12", winter=True), now)
+    assert "clock winter time all year (CET, UTC+1), old meter; off-peak" in text
+    assert " per " not in text.split("off-peak today")[0]
+
+
+def test_preview_enea_g12_shows_the_operator_hours():
+    now = datetime(2026, 1, 14, 10, tzinfo=UTC)
+    config = _schedule_preview_config(
+        "enea_g12", params={"night_start": 23, "afternoon_start": 15}
+    )
+    text = _preview(config, now)
+    assert (
+        "clock local time (Europe/Warsaw); hours set by Enea Operator per meter: "
+        "23:00–07:00 and 15:00–17:00 tariff time (allowed 8 h within 22–7, 2 h "
+        "within 13–17), check your meter or bill; off-peak today 2026-01-14"
+    ) in text
+
+
+def test_preview_tauron_g12w_lists_holidays_and_all_day_windows():
+    now = datetime(2026, 11, 10, 10, tzinfo=UTC)
+    config = _schedule_preview_config("tauron_g12w", hours=48)
+    text = _preview(config, now)
+    assert "; statutory holidays in horizon: 2026-11-11; peak 0.8" in text
+    holiday = _preview(config, datetime(2026, 11, 11, 10, tzinfo=UTC))
+    assert "off-peak today 2026-11-11 (Europe/Warsaw): all day;" in holiday
+    assert "statutory holidays in horizon: 2026-11-11;" in holiday
+    quiet = _preview(config, datetime(2026, 11, 3, 10, tzinfo=UTC))
+    assert "statutory holidays in horizon: none;" in quiet
+    plain = _preview(_schedule_preview_config("pge_g12"), now)
+    assert "statutory holidays" not in plain
+
+
+def test_preview_g11_is_a_single_rate_line():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    text = _preview(_schedule_preview_config("g11"), now)
+    assert text == (
+        "Buy source: tariff schedule G11 (any operator); single rate 0.8 "
+        "PLN/kWh before multiplier" + SUFFIX.format(first=0.8)
+    )
+
+
+def test_preview_rce_line_carries_the_floor_segment():
+    now = datetime(2026, 9, 18, 10, 0, tzinfo=UTC)
+    config = pln_config()
+    config["sources"]["sell"].update(
+        mode="forecast",
+        fixed=None,
+        floor_per_kwh=0.0,
+        forecast=[
+            {
+                "entity": {"entity_id": "sensor.rce", "attribute": "prices"},
+                "value_path": "rce_pln",
+                "end_path": "dtime",
+                "interval_minutes": 15,
+                "unit": "PLN/MWh",
+                "value_kind": "price",
+                "source_timezone": "Europe/Warsaw",
+            }
+        ],
+    )
+    states = {
+        "sensor.rce": {
+            "state": "1",
+            "last_updated": now.isoformat(),
+            "attributes": {
+                "prices": [
+                    {"dtime": "2026-09-18 12:15:00", "rce_pln": -50.0},
+                    {"dtime": "2026-09-18 14:15:00", "rce_pln": 100.0},
+                ]
+            },
+        }
+    }
+    config["settings"].update(horizon_hours=1, display_horizon_hours=1)
+    config["settings"]["reference_horizon_hours"] = 1
+    problem, values, _ = build_problem(config, states, now)
+    text = config_flow._price_preview(config, problem, values, "sell")
+    assert text.startswith(
+        "Sell source: forecast sensor.rce attribute prices (value rce_pln, "
+        "end path dtime; PLN/MWh); raw values floored at 0 PLN/kWh before "
+        "multiplier, VAT and addition; effective first interval 0 PLN/kWh;"
+    )
+
+
+def test_preview_legacy_fixed_line_is_unchanged():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    config = pln_config()
+    config["settings"]["buy_rate"] = 0.5
+    text = _preview(config, now)
+    assert text == (
+        "Buy source: fixed setting; normalized 0.5 PLN/kWh; scalar rate held "
+        "constant across the planning horizon; effective first interval 0.5 "
+        "PLN/kWh; multiplier 1, addition 0 PLN/kWh, VAT not applied at 0%."
+    )
+
+
+async def test_flow_preview_renders_the_schedule_line(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-07-01T10:00:00+00:00")
+    _, fid = await start(hass, _schedule_preview_config("pge_g12"))
+    result = await configure(hass, fid, {"next_step_id": "preview"})
+    text = result["description_placeholders"]["preview"]
+    assert "Buy source: tariff schedule PGE Dystrybucja G12; clock local time" in text
+    assert not result["errors"]

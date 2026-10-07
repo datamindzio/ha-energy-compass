@@ -3,6 +3,7 @@
 import json
 import logging
 from copy import deepcopy
+from datetime import timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo
 
@@ -54,7 +55,15 @@ from .source_management import (
     source_mode_options,
 )
 from .sources.bindings import IntervalBinding
-from .sources.tariffs import is_raw_rce_sell
+from .sources.tariffs import (
+    CATALOG,
+    TariffSchedule,
+    clock_text,
+    enea_text,
+    holidays_between,
+    is_raw_rce_sell,
+    local_off_peak,
+)
 from .sources.throughput import resolve_daily_throughput
 
 _LOGGER = logging.getLogger(__name__)
@@ -138,13 +147,48 @@ def _preview_assumptions(config, problem, values, quality):
     return source + "\n" + load_text + "."
 
 
+def _schedule_preview(config, problem, values):
+    schedule = TariffSchedule.from_dict(config["sources"]["buy"]["schedule"])
+    spec = CATALOG[schedule.tariff]
+    currency = config["currency"]
+    text = f"Buy source: tariff schedule {spec.labels['en']}; "
+    if spec.group == "G11":
+        return (
+            f"{text}single rate {values['buy_rate']:g} {currency}/kWh before multiplier"
+        )
+    zone = config["timezone"]
+    local = ZoneInfo(zone)
+    today = problem.slots[0].start.astimezone(local).date()
+    last = (problem.slots[-1].end - timedelta(microseconds=1)).astimezone(local).date()
+    text += f"clock {clock_text(schedule, zone)}"
+    if (enea := enea_text(schedule)) is not None:
+        text += f"; {enea}"
+    text += (
+        f"; off-peak today {today.isoformat()} ({zone}): "
+        f"{local_off_peak(schedule, today, zone)}; to verify, compare your "
+        "invoice's monthly day/night kWh with your hourly import data split by "
+        "these windows; if summer months are off by about one hour, enable the "
+        "old-meter winter clock"
+    )
+    if spec.group == "G12w":
+        holidays = holidays_between(today, last)
+        listed = ", ".join(day.isoformat() for day in holidays) or "none"
+        text += f"; statutory holidays in horizon: {listed}"
+    return (
+        f"{text}; peak {values['buy_rate']:g}, off-peak "
+        f"{values['buy_off_peak_rate']:g} {currency}/kWh before multiplier"
+    )
+
+
 def _price_preview(config, problem, values, role):
     price = config["sources"][role]
     currency = config["currency"]
     effective = (
         problem.slots[0].buy_per_kwh if role == "buy" else problem.slots[0].sell_per_kwh
     )
-    if price["mode"] == "fixed":
+    if price["mode"] == "schedule":
+        source = _schedule_preview(config, problem, values)
+    elif price["mode"] == "fixed":
         helper = config.get("helpers", {}).get(f"{role}_rate")
         if helper:
             entity = helper["entity"]
@@ -184,6 +228,11 @@ def _price_preview(config, problem, values, role):
                     mapping += f", {key.replace('_', ' ')} {row[key]}"
             entries.append(f"{origin} ({mapping}; {row['unit']})")
         source = f"{role.title()} source: forecast {'; '.join(entries)}"
+        if price.get("floor_per_kwh") is not None:
+            source += (
+                f"; raw values floored at {price['floor_per_kwh']:g} "
+                f"{currency}/kWh before multiplier, VAT and addition"
+            )
     source += (
         f"; effective first interval {effective:g} {currency}/kWh; "
         f"multiplier {values[f'{role}_multiplier']:g}, addition "
