@@ -12,6 +12,7 @@ from .sources.bindings import (
     resolve_binding,
     validate_dependencies,
 )
+from .sources.tariffs import TariffSchedule, validate_schedule
 
 
 @dataclass(frozen=True)
@@ -93,7 +94,7 @@ def resolve_numeric(
 
 @dataclass(frozen=True)
 class PriceSource:
-    mode: Literal["forecast", "fixed"]
+    mode: Literal["forecast", "fixed", "schedule"]
     forecast: tuple[IntervalBinding, ...] = ()
     fixed: NumericSetting | None = None
     multiplier: NumericSetting = field(
@@ -102,16 +103,23 @@ class PriceSource:
     addition_per_kwh: NumericSetting = field(
         default_factory=lambda: NumericSetting(fixed=0.0)
     )
+    schedule: TariffSchedule | None = None
+    floor_per_kwh: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize selected forecast or fixed settlement inputs."""
-        return {
+        """Serialize selected forecast, fixed or schedule settlement inputs."""
+        data: dict[str, Any] = {
             "mode": self.mode,
             "forecast": [item.to_dict() for item in self.forecast],
             "fixed": self.fixed.to_dict() if self.fixed else None,
             "multiplier": self.multiplier.to_dict(),
             "addition_per_kwh": self.addition_per_kwh.to_dict(),
         }
+        if self.schedule is not None:
+            data["schedule"] = self.schedule.to_dict()
+        if self.floor_per_kwh is not None:
+            data["floor_per_kwh"] = self.floor_per_kwh
+        return data
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> PriceSource:
@@ -122,6 +130,10 @@ class PriceSource:
             NumericSetting.from_dict(value["fixed"]) if value.get("fixed") else None,
             NumericSetting.from_dict(value["multiplier"]),
             NumericSetting.from_dict(value["addition_per_kwh"]),
+            TariffSchedule.from_dict(value["schedule"])
+            if value.get("schedule")
+            else None,
+            value.get("floor_per_kwh"),
         )
 
 
@@ -244,8 +256,22 @@ class SourceConfig:
 def validate_sources(config: SourceConfig, own_entity_ids: set[str]) -> None:
     """Check component enablement, selected modes, and direct feedback cycles."""
     dependencies: list[EntityBinding] = []
-    for price in (config.buy, config.sell):
-        if price.mode == "forecast":
+    for role, price in (("buy", config.buy), ("sell", config.sell)):
+        if price.schedule is not None and price.mode != "schedule":
+            raise InputError("tariff schedule key under a non-schedule mode")
+        if price.floor_per_kwh is not None:
+            if price.mode != "forecast":
+                raise InputError("price floor needs a forecast source")
+            finite(price.floor_per_kwh, "price floor")
+        if price.mode == "schedule":
+            if role != "buy":
+                raise InputError("tariff schedule is a buy source only")
+            if price.schedule is None or price.forecast or price.fixed is not None:
+                raise InputError("schedule price needs a tariff only")
+            if config.currency != "PLN":
+                raise InputError("tariff schedule requires PLN")
+            validate_schedule(price.schedule)
+        elif price.mode == "forecast":
             if not price.forecast or price.fixed is not None:
                 raise InputError("forecast price needs interval bindings only")
             dependencies.extend(item.entity for item in price.forecast)

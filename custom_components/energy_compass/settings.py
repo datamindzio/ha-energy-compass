@@ -49,6 +49,7 @@ NUMBERS = {
     "grid_import_kw": ("hardware", 10, 0, 1000, "kW"),
     "grid_export_kw": ("hardware", 0, 0, 1000, "kW"),
     "buy_rate": ("tariffs", 0, -1000, 1000, "currency/kWh"),
+    "buy_off_peak_rate": ("tariffs", 0, -1000, 1000, "currency/kWh"),
     "sell_rate": ("tariffs", 0, -1000, 1000, "currency/kWh"),
     "buy_multiplier": ("tariffs", 1, 0, 1000, ""),
     "sell_multiplier": ("tariffs", 1, 0, 1000, ""),

@@ -11,7 +11,14 @@ from types import MappingProxyType
 from .engine.strategy import STRATEGY_OWNED_KEYS
 
 TARIFF_PRICE_KEYS: frozenset[str] = frozenset(
-    {"buy_rate", "sell_rate", "buy_addition", "sell_addition", "monthly_charge"}
+    {
+        "buy_rate",
+        "buy_off_peak_rate",
+        "sell_rate",
+        "buy_addition",
+        "sell_addition",
+        "monthly_charge",
+    }
 )
 PRESET_OWNED_KEYS: frozenset[str] = frozenset({"boost_ceiling", "limit_floor"})
 FORBIDDEN_KEYS: frozenset[str] = (
