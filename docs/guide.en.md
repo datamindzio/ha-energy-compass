@@ -102,9 +102,11 @@ flowchart TD
 
 ### Setup profiles (new installations)
 
-Two axes on the first (**User**) setup form, **Prosumer settlement** and **Inverter**, pre-fill
-editable tuning for a brand-new installation. Each axis is chosen once; both default to **Generic**
-(no assignments), and picking a profile applies its assignments to the draft immediately. The
+Three axes on the first (**User**) setup form, **Prosumer settlement**, **Polish distribution
+tariff** (`buy_tariff`) and **Inverter**, pre-fill editable tuning for a brand-new installation.
+Each axis is chosen once; all default to **Generic** or **None** (no assignments), and picking a
+profile applies its assignments to the draft immediately. This is revision 2 of the setup profiles;
+an entry created under revision 1 keeps its two-axis record and is never re-resolved. The
 pinned values below (0.20, 0.60, 0.13) were measured or backtested on one site — a G12 buy tariff,
 net-billing RCE sell and a Deye LFP battery — and are a starting point, not a universal default.
 
@@ -113,9 +115,28 @@ net-billing RCE sell and a Deye LFP battery — and are a starting point, not a 
 | Profile | Currency | Pre-fills | Basis |
 | --- | --- | --- | --- |
 | `generic` | any | none | — |
-| `pl_net_billing` | PLN | `import_penalty_per_kwh` 0.20 · `terminal_mode` `value` · `terminal_value_per_kwh` 0.60 · `sell_multiplier` 1.23 *(only with preset `pse` or `pse_solcast`)* | backtested on one site |
+| `pl_net_billing` | PLN | `import_penalty_per_kwh` 0.20 · `terminal_mode` `value` · `terminal_value_per_kwh` 0.60 · `sell_multiplier` 1.23 *(only with preset `pse`/`pse_solcast` or an RCE market price sell source)* | backtested on one site |
 | `pl_net_metering_80` | PLN | `sell_multiplier` 0.8 | net-metering ratio, installations ≤ 10 kWp |
 | `pl_net_metering_70` | PLN | `sell_multiplier` 0.7 | net-metering ratio, installations > 10 kWp |
+
+**Polish distribution tariff axis (`buy_tariff`):** the profile only pre-selects **Tariffs → Buy
+source → Polish tariff schedule** for the chosen tariff; it assigns no setting and no price, and the
+rates stay at 0 until you type them. Every catalog profile requires PLN.
+
+| Profile | Currency | Effect | Basis |
+| --- | --- | --- | --- |
+| `generic` | any | none; keep a fixed buy rate | — |
+| `g11` | PLN | schedule G11, one rate | any operator |
+| `pge_g12` | PLN | schedule G12 | PGE Dystrybucja |
+| `pge_g12w` | PLN | schedule G12w | PGE Dystrybucja |
+| `tauron_g12` | PLN | schedule G12 | Tauron Dystrybucja |
+| `tauron_g12w` | PLN | schedule G12w | Tauron Dystrybucja |
+| `enea_g12` | PLN | schedule G12 with the Enea default hours | Enea Operator |
+| `enea_g12w` | PLN | schedule G12w | Enea Operator |
+| `energa_g12` | PLN | schedule G12 | Energa-Operator |
+| `energa_g12w` | PLN | schedule G12w | Energa-Operator |
+| `stoen_g12` | PLN | schedule G12 | Stoen Operator |
+| `stoen_g12w` | PLN | schedule G12w | Stoen Operator |
 
 **Inverter axis:**
 
@@ -127,20 +148,25 @@ net-billing RCE sell and a Deye LFP battery — and are a starting point, not a 
 Every pre-filled value stays fully editable and is never re-applied once the entry exists — not by
 Configure, not by Reconfigure. While a new installation is still being set up, changing the preset on
 the Installation step re-resolves the settlement profile: the 1.23 sell multiplier is added or
-dropped to track the preset unless you have already edited it. Binding a pre-filled key to a helper
+dropped to track the preset (or an RCE market price sell source saved in the meantime) unless you
+have already edited it. Binding a pre-filled key to a helper
 overrides the pre-fill at save time; the Preview lists that key as edited, naming the helper and its
 effective value.
 
-Polish settlement profiles require currency PLN; choosing one with another currency is rejected. Setup
-profiles never set a tariff price (`buy_rate`, `sell_rate`, `buy_addition`, `sell_addition`,
-`monthly_charge`) and never touch a strategy-owned setting.
+Polish settlement and tariff profiles require currency PLN; choosing one with another currency is
+rejected, on the field that caused it. Setup profiles never set a tariff price (`buy_rate`,
+`buy_off_peak_rate`, `sell_rate`, `buy_addition`, `sell_addition`, `monthly_charge`) and never touch a
+strategy-owned setting.
 
 **Sell only PV** (`limit_export_to_pv`) stays on with every settlement profile — a Polish prosumer may
 only sell energy produced by their own PV — and is turned off either by switching to the `max_export`
 strategy or by setting `limit_export_to_pv` to off directly; the explicit setting persists across
 strategy changes.
 
-The 1.23 deposit multiplier applies only together with a raw-RCE preset (`pse`, `pse_solcast`); with
+The 1.23 deposit multiplier applies together with a raw-RCE preset (`pse`, `pse_solcast`) **or** a
+raw-RCE sell source (**Tariffs → Sell source → RCE market price (PSE)**: a forecast with a price
+floor and every binding in PLN/MWh). New-entry saves re-evaluate it until the installation is created;
+Configure and Reconfigure never do. With
 [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml), which already applies the floor and
 the 1.23 factor itself, keep the sell multiplier at 1 (see [tariff helper](tariff-helper.md)).
 
@@ -148,14 +174,67 @@ Net-metering's `sell_multiplier` is a one-time copy of the ratio, not a link to 
 an approximation (the yearly kWh bank and G12 band mismatch are not modelled), and a later edit to
 the buy price does not update it.
 
-Preview shows setup-profile provenance for a profiled new entry: which keys each axis pre-filled, any
-value edited after pre-fill (including a helper-bound key, with the helper's effective value), and
-settlement notes — Sell only PV off, a sell source that already applies its own settlement multiplier,
-raw RCE prices not floored at 0, or a net-metering sell that no longer tracks buy — shown only for
-installations that used a setup profile.
+Preview shows setup-profile provenance for a profiled new entry: which keys each axis pre-filled, the
+buy source pre-selected by a `buy_tariff` profile, any value edited after pre-fill (including a
+helper-bound key, with the helper's effective value), and settlement notes — Sell only PV off, a sell
+source that already applies its own settlement multiplier, raw RCE prices not floored at 0 (with the
+RCE market price shortcut as the fix) or floored while the 1.23 multiplier is missing, or a
+net-metering sell that no longer tracks buy — shown only for installations that used a setup profile.
 
 The selection, together with the setup-profiles revision that resolved it, is stored on the config
 entry (`setup_profiles`) and included in diagnostics.
+
+### Built-in Polish tariffs
+
+For a Polish household, **Tariffs → Buy source → Polish tariff schedule (G11/G12/G12w)** replaces the
+tariff helper YAML (the [YAML example](tariff-helper.md) stays the fallback). Pick one of eleven
+catalog entries; the zones come from the distributor's 2026 tariff, and **you type the rates**: **Tariffs →
+Fixed rates and transformations** holds *Buy rate* (G11, or the peak rate) and *Off-peak buy rate*
+(G12/G12w). Both rates must be above zero or the calculation fails closed with a message naming
+those fields. The price of a slot is `rate × multiplier × VAT factor + addition`, as for a fixed
+rate. The schedule needs no entity and does not limit the planning horizon. It requires currency PLN.
+
+| Key | Operator and group | Weekday off-peak (tariff clock) | Free days | Source |
+| --- | --- | --- | --- | --- |
+| `g11` | any, G11 | none, one rate | — | — |
+| `pge_g12` | PGE Dystrybucja, G12 | Apr–Sep 15–17 and 22–6; Oct–Mar 13–15 and 22–6 | as weekdays | tariff 2026 §2.2.6/2.2.8/2.2.11 |
+| `pge_g12w` | PGE Dystrybucja, G12w | as `pge_g12` | all day | same |
+| `tauron_g12` | Tauron Dystrybucja, G12 | 13–15 and 22–6 | as weekdays | tariff 2026 §2.2.6/2.2.7/2.2.9 |
+| `tauron_g12w` | Tauron Dystrybucja, G12w | 13–15 and 22–6 | all day | same |
+| `enea_g12` | Enea Operator, G12 | default 13–15 and 22–6; set per meter by Enea | as weekdays | tariff extract 2026 §2.2.5/2.2.7/2.2.12 |
+| `enea_g12w` | Enea Operator, G12w | 21–6 | all day | same |
+| `energa_g12` | Energa-Operator, G12 | 13–15 and 22–6 | as weekdays | tariff extract 2026 §3.2.5/3.2.6 |
+| `energa_g12w` | Energa-Operator, G12w | 13–15 and 22–6 | all day | same |
+| `stoen_g12` | Stoen Operator, G12 | 13–15 and 22–6 | as weekdays | tariff 2026 §2.2.5/2.2.6/2.2.11 |
+| `stoen_g12w` | Stoen Operator, G12w | 22–6 only | all day | same |
+
+Free days of G12w are Saturdays, Sundays and statutory holidays (1 and 6 January, Easter Sunday and
+Monday, 1 and 3 May, Pentecost, Corpus Christi, 15 August, 1 and 11 November, 24 December from
+1 February 2025, 25 and 26 December); there are no substitute days. A meter that was not
+reprogrammed can ignore a newly added holiday such as 24 December; the YAML fallback's
+`off_peak_dates` covers that.
+
+**Clock.** By default the zones follow **local time** (the Home Assistant time zone): a remote-read
+meter billed after hourly balancing uses wall-clock zones, so a day can have 23 or 25 local hours.
+An old non-remote meter keeps a fixed internal clock on winter time (the tariff clause in the sources
+above); turn on **Old non-remote meter on winter time (fixed UTC+1)** for it. To choose, compare your
+invoice's monthly day/night kWh with your hourly import data split by the windows Preview prints; if
+the summer months are off by about one hour, enable the winter clock. Season and weekday are
+classified on the date of the chosen clock. Preview prints the clock, today's off-peak windows and,
+for G12w, the statutory holidays in the horizon.
+
+**Enea G12.** Enea sets the hours per meter: 8 hours within 22–7 (start 22 or 23) and 2 hours within
+13–17 (start 13, 14 or 15). The default is 22 and 13 (Enea FAQ); the extra form asks for both, so check
+your meter or bill.
+
+**RCE sell price.** **Tariffs → Sell source → RCE market price (PSE)** saves the sensor of the `rce_pse`
+integration (attribute `prices`, value `rce_pln`, end `dtime`, PLN/MWh, 15 minutes) as a forecast source
+with a price floor of 0: the raw value is floored at 0 per kWh **before** the multiplier, VAT and
+addition (`max(RCE, 0) × 1.23` with the net-billing multiplier). The floor is visible in Preview and
+is dropped when the source is switched away from forecast. For a new installation, the PL
+net-billing profile then assigns the 1.23 multiplier; in Configure and Reconfigure set the sell
+multiplier yourself. Without the `rce_pse` integration use
+[`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml).
 
 ## Entity overview
 

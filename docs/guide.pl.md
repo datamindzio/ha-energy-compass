@@ -105,10 +105,12 @@ flowchart TD
 
 ### Profile startowe (nowe instalacje)
 
-Dwie osie na pierwszym formularzu (**Użytkownik**), **Rozliczenie prosumenckie** i **Falownik**,
-jednorazowo wypełniają edytowalne strojenie nowej instalacji. Każda oś jest wybierana raz; obie
-domyślnie mają wartość **Ogólne** (brak przypisań), a wybór profilu od razu stosuje jego przypisania
-do wersji roboczej. Wartości przypięte poniżej (0,20, 0,60, 0,13) zostały zmierzone lub wyznaczone
+Trzy osie na pierwszym formularzu (**Użytkownik**), **Rozliczenie prosumenckie**, **Polska taryfa
+dystrybucyjna** (`buy_tariff`) i **Falownik**, jednorazowo wypełniają edytowalne strojenie nowej
+instalacji. Każda oś jest wybierana raz; wszystkie domyślnie mają wartość **Ogólne** lub **Brak**
+(brak przypisań), a wybór profilu od razu stosuje jego przypisania do wersji roboczej. To wersja 2
+profili startowych; wpis utworzony w wersji 1 zachowuje swój dwuosiowy zapis i nigdy nie jest
+ponownie wyliczany. Wartości przypięte poniżej (0,20, 0,60, 0,13) zostały zmierzone lub wyznaczone
 na jednej instalacji — taryfa zakupu G12, sprzedaż RCE w net-billingu i bateria LFP Deye — i są
 punktem startowym, nie uniwersalnym domyślnym ustawieniem.
 
@@ -117,9 +119,28 @@ punktem startowym, nie uniwersalnym domyślnym ustawieniem.
 | Profil | Waluta | Wypełnia | Podstawa |
 | --- | --- | --- | --- |
 | `generic` | dowolna | brak | — |
-| `pl_net_billing` | PLN | `import_penalty_per_kwh` 0,20 · `terminal_mode` `value` · `terminal_value_per_kwh` 0,60 · `sell_multiplier` 1,23 *(tylko z presetem `pse` lub `pse_solcast`)* | wyznaczone na jednej instalacji |
+| `pl_net_billing` | PLN | `import_penalty_per_kwh` 0,20 · `terminal_mode` `value` · `terminal_value_per_kwh` 0,60 · `sell_multiplier` 1,23 *(tylko z presetem `pse`/`pse_solcast` albo ze źródłem sprzedaży „Cena rynkowa RCE (PSE)”)* | wyznaczone na jednej instalacji |
 | `pl_net_metering_80` | PLN | `sell_multiplier` 0,8 | współczynnik opustu, instalacje ≤ 10 kWp |
 | `pl_net_metering_70` | PLN | `sell_multiplier` 0,7 | współczynnik opustu, instalacje > 10 kWp |
+
+**Oś polskiej taryfy dystrybucyjnej (`buy_tariff`):** profil tylko wstępnie wybiera **Taryfy → Źródło
+ceny zakupu → Taryfa OSD** dla danej taryfy; nie przypisuje żadnego ustawienia ani ceny, a stawki
+zostają na 0, dopóki ich nie wpiszesz. Każdy profil katalogowy wymaga waluty PLN.
+
+| Profil | Waluta | Skutek | Podstawa |
+| --- | --- | --- | --- |
+| `generic` | dowolna | brak; stała cena zakupu | — |
+| `g11` | PLN | harmonogram G11, jedna stawka | dowolny operator |
+| `pge_g12` | PLN | harmonogram G12 | PGE Dystrybucja |
+| `pge_g12w` | PLN | harmonogram G12w | PGE Dystrybucja |
+| `tauron_g12` | PLN | harmonogram G12 | Tauron Dystrybucja |
+| `tauron_g12w` | PLN | harmonogram G12w | Tauron Dystrybucja |
+| `enea_g12` | PLN | harmonogram G12 z domyślnymi godzinami Enea | Enea Operator |
+| `enea_g12w` | PLN | harmonogram G12w | Enea Operator |
+| `energa_g12` | PLN | harmonogram G12 | Energa-Operator |
+| `energa_g12w` | PLN | harmonogram G12w | Energa-Operator |
+| `stoen_g12` | PLN | harmonogram G12 | Stoen Operator |
+| `stoen_g12w` | PLN | harmonogram G12w | Stoen Operator |
 
 **Oś falownika:**
 
@@ -131,20 +152,24 @@ punktem startowym, nie uniwersalnym domyślnym ustawieniem.
 Każda wstępnie wypełniona wartość pozostaje w pełni edytowalna i nigdy nie jest ponownie
 zastosowana po utworzeniu instalacji — ani przez Konfiguruj, ani przez Rekonfiguruj. Dopóki nowa
 instalacja jest jeszcze konfigurowana, zmiana presetu w kroku Instalacja ponownie wylicza profil
-rozliczenia: mnożnik sprzedaży 1,23 jest dodawany lub usuwany zgodnie z presetem, chyba że został
-już ręcznie zmieniony. Powiązanie wstępnie wypełnionego klucza z pomocnikiem nadpisuje wartość przy
+rozliczenia: mnożnik sprzedaży 1,23 jest dodawany lub usuwany zgodnie z presetem (albo ze źródłem „Cena
+rynkowa RCE (PSE)” zapisanym w międzyczasie), chyba że został już ręcznie zmieniony. Powiązanie wstępnie wypełnionego klucza z pomocnikiem nadpisuje wartość przy
 zapisie; Podgląd oznacza ten klucz jako zmieniony, podając pomocnika i jego efektywną wartość.
 
-Polskie profile rozliczenia wymagają waluty PLN; wybór takiego profilu z inną walutą jest odrzucany.
-Profile startowe nigdy nie ustawiają ceny taryfy (`buy_rate`, `sell_rate`, `buy_addition`,
-`sell_addition`, `monthly_charge`) i nigdy nie dotykają ustawienia należącego do strategii.
+Polskie profile rozliczenia i taryf wymagają waluty PLN; wybór takiego profilu z inną walutą jest
+odrzucany, przy polu, które go wywołało. Profile startowe nigdy nie ustawiają ceny taryfy
+(`buy_rate`, `buy_off_peak_rate`, `sell_rate`, `buy_addition`, `sell_addition`, `monthly_charge`) i
+nigdy nie dotykają ustawienia należącego do strategii.
 
 **Sell only PV** (`limit_export_to_pv`, „sprzedawaj tylko PV”) pozostaje włączone przy każdym
 profilu rozliczenia — polski prosument może sprzedawać tylko energię z własnej instalacji PV — i
 jest wyłączane przez przełączenie na strategię `max_export` albo przez bezpośrednie ustawienie
 `limit_export_to_pv` na wył.; jawne ustawienie pozostaje w mocy mimo zmiany strategii.
 
-Mnożnik depozytu 1,23 obowiązuje tylko razem z presetem surowego RCE (`pse`, `pse_solcast`); z
+Mnożnik depozytu 1,23 obowiązuje razem z presetem surowego RCE (`pse`, `pse_solcast`) **albo** ze
+źródłem sprzedaży surowego RCE (**Taryfy → Źródło ceny sprzedaży → Cena rynkowa RCE (PSE)**:
+prognoza z progiem ceny, w której każde powiązanie ma PLN/MWh). Zapisy nowej instalacji wyliczają to
+ponownie do jej utworzenia; Konfiguruj i Rekonfiguruj nigdy tego nie robią. Z
 [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml), który sam już stosuje próg i
 mnożnik 1,23, zostaw mnożnik sprzedaży na 1 (zob. [pomocnik taryfy](tariff-helper.md)).
 
@@ -153,14 +178,67 @@ zakupu: to przybliżenie (roczny bilans kWh i niedopasowanie stref G12 nie są m
 późniejsza zmiana ceny zakupu go nie aktualizuje.
 
 Podgląd pokazuje pochodzenie profili startowych dla profilowanej nowej instalacji: które klucze
-wypełniła każda oś, każdą wartość zmienioną po wypełnieniu (także klucz powiązany z pomocnikiem,
-wraz z jego efektywną wartością) oraz uwagi dotyczące rozliczenia — Sell only PV wyłączone, źródło
-sprzedaży stosujące już własny mnożnik rozliczeniowy, surowe ceny RCE bez progu 0 lub sprzedaż w
-systemie opustów, która przestała śledzić zakup — widoczne tylko dla instalacji, które użyły
-profilu startowego.
+wypełniła każda oś, źródło zakupu wstępnie wybrane przez profil `buy_tariff`, każdą wartość
+zmienioną po wypełnieniu (także klucz powiązany z pomocnikiem, wraz z jego efektywną wartością) oraz
+uwagi dotyczące rozliczenia — Sell only PV wyłączone, źródło sprzedaży stosujące już własny
+mnożnik rozliczeniowy, surowe ceny RCE bez progu 0 (z poprawką w postaci skrótu „Cena rynkowa RCE”)
+albo z progiem, ale bez mnożnika 1,23, lub sprzedaż w systemie opustów, która przestała śledzić
+zakup — widoczne tylko dla instalacji, które użyły profilu startowego.
 
 Wybór, razem z wersją profili startowych, która go wyliczyła, jest zapisywany we wpisie
 konfiguracji (`setup_profiles`) i trafia do diagnostyki.
+
+### Wbudowane taryfy OSD
+
+Dla polskiego gospodarstwa **Taryfy → Źródło ceny zakupu → Taryfa OSD (G11/G12/G12w)** zastępuje YAML
+pomocnika taryfy (jego [przykład YAML](tariff-helper.md) zostaje rozwiązaniem zapasowym). Wybierz
+jedną z jedenastu pozycji katalogu; strefy pochodzą z taryfy dystrybutora na 2026 rok, a **stawki
+wpisujesz sam**: **Taryfy → Stałe stawki i przeliczenia** zawiera *Cena zakupu* (G11 albo stawka
+szczytowa) i *Cena zakupu poza szczytem* (G12/G12w). Obie stawki muszą być większe od zera, inaczej
+obliczenie kończy się błędem z komunikatem wskazującym te pola. Cena slotu to `stawka × mnożnik ×
+współczynnik VAT + dodatek`, tak jak dla stałej stawki. Harmonogram nie wymaga encji i nie ogranicza
+horyzontu planowania. Wymaga waluty PLN.
+
+| Klucz | Operator i grupa | Dni robocze, strefa tania (zegar taryfy) | Dni wolne | Źródło |
+| --- | --- | --- | --- | --- |
+| `g11` | dowolny, G11 | brak, jedna stawka | — | — |
+| `pge_g12` | PGE Dystrybucja, G12 | IV–IX 15–17 i 22–6; X–III 13–15 i 22–6 | jak dni robocze | taryfa 2026 §2.2.6/2.2.8/2.2.11 |
+| `pge_g12w` | PGE Dystrybucja, G12w | jak `pge_g12` | cała doba | to samo |
+| `tauron_g12` | Tauron Dystrybucja, G12 | 13–15 i 22–6 | jak dni robocze | taryfa 2026 §2.2.6/2.2.7/2.2.9 |
+| `tauron_g12w` | Tauron Dystrybucja, G12w | 13–15 i 22–6 | cała doba | to samo |
+| `enea_g12` | Enea Operator, G12 | domyślnie 13–15 i 22–6; ustala Enea dla licznika | jak dni robocze | wyciąg z taryfy 2026 §2.2.5/2.2.7/2.2.12 |
+| `enea_g12w` | Enea Operator, G12w | 21–6 | cała doba | to samo |
+| `energa_g12` | Energa-Operator, G12 | 13–15 i 22–6 | jak dni robocze | wyciąg z taryfy 2026 §3.2.5/3.2.6 |
+| `energa_g12w` | Energa-Operator, G12w | 13–15 i 22–6 | cała doba | to samo |
+| `stoen_g12` | Stoen Operator, G12 | 13–15 i 22–6 | jak dni robocze | taryfa 2026 §2.2.5/2.2.6/2.2.11 |
+| `stoen_g12w` | Stoen Operator, G12w | tylko 22–6 | cała doba | to samo |
+
+Dniami wolnymi G12w są soboty, niedziele i święta ustawowe (1 i 6 stycznia, niedziela i poniedziałek
+wielkanocny, 1 i 3 maja, Zielone Świątki, Boże Ciało, 15 sierpnia, 1 i 11 listopada, 24 grudnia od
+1 lutego 2025, 25 i 26 grudnia); dni zastępczych nie ma. Licznik, który nie został przeprogramowany,
+może pomijać nowo dodane święto, np. 24 grudnia; pokrywa to `off_peak_dates` w rozwiązaniu YAML.
+
+**Zegar.** Domyślnie strefy podążają za **czasem lokalnym** (strefa czasowa Home Assistant): licznik
+z odczytem zdalnym rozliczany po godzinowym bilansowaniu stosuje strefy w czasie ściennym, więc doba
+może mieć 23 lub 25 godzin lokalnych. Stary licznik bez odczytu zdalnego ma stały zegar wewnętrzny
+na czasie zimowym (klauzula taryfy w powyższych źródłach); włącz dla niego **Stary licznik bez
+odczytu zdalnego na czasie zimowym (stałe UTC+1)**. Aby wybrać, porównaj miesięczne kWh dzień/noc
+z faktury z godzinowymi danymi o imporcie podzielonymi według okien, które wypisuje Podgląd; jeśli
+miesiące letnie różnią się o około godzinę, włącz zegar zimowy. Sezon i dzień tygodnia są
+klasyfikowane według daty wybranego zegara. Podgląd wypisuje zegar, dzisiejsze okna taniej strefy i,
+dla G12w, święta ustawowe w horyzoncie.
+
+**Enea G12.** Enea ustala godziny dla licznika: 8 godzin w przedziale 22–7 (start 22 lub 23) i 2
+godziny w przedziale 13–17 (start 13, 14 lub 15). Domyślnie 22 i 13 (FAQ Enea); dodatkowy formularz
+pyta o obie, więc sprawdź licznik lub fakturę.
+
+**Cena sprzedaży RCE.** **Taryfy → Źródło ceny sprzedaży → Cena rynkowa RCE (PSE)** zapisuje sensor
+integracji `rce_pse` (atrybut `prices`, wartość `rce_pln`, koniec `dtime`, PLN/MWh, 15 minut) jako
+źródło prognozy z progiem ceny 0: surowa wartość jest ograniczona od dołu do 0 za kWh **przed**
+mnożnikiem, VAT i dodatkiem (`max(RCE, 0) × 1,23` z mnożnikiem net-billingu). Próg widać w Podglądzie
+i znika przy przełączeniu źródła z prognozy. W nowej instalacji profil PL net-billing przypisuje
+potem mnożnik 1,23; w Konfiguruj i Rekonfiguruj ustaw mnożnik sprzedaży samodzielnie. Bez integracji
+`rce_pse` użyj [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml).
 
 ## Przegląd encji
 
