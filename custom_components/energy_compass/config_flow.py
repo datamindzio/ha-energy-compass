@@ -43,6 +43,7 @@ from .settings import (
     default_configuration,
     explicit_strategy_fields,
     merged_configuration,
+    options_require_reload,
     stamp_strategy_change,
     validate_configuration,
 )
@@ -922,7 +923,7 @@ class Editor(SourceEditor):
                     errors["base"] = "input_acknowledgement_required"
                 else:
                     self._draft = candidate
-                    return self._finish()
+                    return await self._finish()
         except (InputError, ValueError, KeyError) as err:
             errors["base"] = "invalid_source"
             preview += "\n" + str(err)
@@ -1148,8 +1149,7 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
         self._existing_installation = True
         return await self.async_step_menu()
 
-    @callback
-    def _finish(self):
+    async def _finish(self):
         previous = (
             merged_configuration(self._entry) if hasattr(self, "_entry") else None
         )
@@ -1182,16 +1182,33 @@ class EnergyCompassOptionsFlow(Editor, config_entries.OptionsFlowWithReload):
         self._existing_installation = True
         return await self.async_step_menu()
 
-    @callback
-    def _finish(self):
+    def _applies_live(self, previous):
+        """Only a loaded, Atlas-free entry whose entity set is unchanged skips the reload."""
+        entry = self.config_entry
+        return (
+            entry.state is config_entries.ConfigEntryState.LOADED
+            and entry.runtime_data.atlas is None
+            and not options_require_reload(previous, self._draft)
+        )
+
+    async def _finish(self):
         previous = merged_configuration(self.config_entry)
         self._draft["explicit_strategy_fields"] = explicit_strategy_fields(
             self._draft["settings"]
         )
         stamp_strategy_change(self._draft, previous, dt_util.utcnow())
-        self.hass.config_entries.async_update_entry(
-            self.config_entry, title=self._draft["name"]
-        )
+        if self._applies_live(previous):
+            # The running coordinator adopts the document, so the published plan
+            # stays retained while the replacement is calculated instead of the
+            # entities going unavailable across a reload.
+            self.automatic_reload = False
+            await self.config_entry.runtime_data.async_apply_configuration(
+                self._draft, wait=False
+            )
+        else:
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, title=self._draft["name"]
+            )
         # ADR-0019 §2: a preview save keeps whatever atlas settings are stored.
         return self.async_create_entry(
             title="",

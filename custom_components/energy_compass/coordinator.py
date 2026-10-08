@@ -195,21 +195,31 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                 raise
             self.atlas = bridge
 
-    async def async_apply_configuration(self, config: dict) -> None:
+    async def async_apply_configuration(
+        self, config: dict, *, wait: bool = True
+    ) -> None:
         """Adopt a configuration written outside the flows and supersede any run.
 
-        Order is load-bearing: persist, then replace the cached snapshot, then bump
-        the generation, then ask for a recalculation.
+        Order is load-bearing: persist, then replace the cached snapshot and move
+        the source listeners, then bump the generation, then ask for a
+        recalculation. `wait=False` leaves that recalculation running in the
+        background so a caller on the UI path returns at once; the published plan
+        stays retained until its replacement arrives.
         """
         self.hass.config_entries.async_update_entry(
             self.entry, options={**self.entry.options, "configuration": config}
         )
-        self.configuration = rebind_configuration(self.hass, deepcopy(config))
+        self._subscribe()
         self._generation += 1
         self._epoch += 1
         self._fingerprint = None
         self._pending = True
-        await self.async_recalculate()
+        if wait:
+            await self.async_recalculate()
+        else:
+            self.entry.async_create_background_task(
+                self.hass, self.async_recalculate(), "energy_compass options apply"
+            )
 
     async def _seed_balance(self):
         """First start: replay recorder SOC; no qualifying hold means due now."""

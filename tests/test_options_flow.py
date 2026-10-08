@@ -206,7 +206,7 @@ def test_economic_helpers_cannot_silently_convert_currency(unit, source_unit):
         validate_configuration(config, states, now)
 
 
-async def test_options_commit_reloads_and_preserves_sources(
+async def test_options_commit_applies_live_and_preserves_sources(
     recorder_mock, hass, enable_custom_integrations, freezer
 ):
     freezer.move_to("2026-09-17T10:00:00+00:00")
@@ -236,7 +236,7 @@ async def test_options_commit_reloads_and_preserves_sources(
     result = await hass.config_entries.options.async_configure(fid, {"confirm": True})
     assert result["type"] == "create_entry"
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert entry.runtime_data is not before
+    assert entry.runtime_data is before
     assert entry.runtime_data.configuration["sources"] == config["sources"]
     assert float(
         hass.states.get("sensor.options_consumption_cost").state

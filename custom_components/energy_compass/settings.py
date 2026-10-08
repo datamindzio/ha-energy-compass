@@ -218,6 +218,30 @@ def merged_configuration(entry) -> dict:
     return deepcopy(dict(entry.options.get("configuration", entry.data)))
 
 
+# Settings whose value decides which entities exist (sensor.py setup and entity
+# defaults). A change needs the platforms set up again, so it reloads the entry.
+ENTITY_SET_SETTINGS = frozenset(
+    {"lfp_balance", "flexible_load_enabled", "expose_costs", "expose_windows"}
+)
+# Entry-level values baked into entities at construction: title/device name and the
+# cost sensors' unit of measurement.
+ENTITY_SET_TOP_LEVEL = frozenset({"name", "currency"})
+# Settings the entity platforms read on every publication; a live apply reaches them.
+RUNTIME_READ_SETTINGS = frozenset({"cost_precision", "strategy"})
+
+
+def options_require_reload(previous: Mapping, new: Mapping) -> bool:
+    """True when saving `new` over `previous` changes the entity set, not just planning."""
+    if any(previous.get(key) != new.get(key) for key in ENTITY_SET_TOP_LEVEL):
+        return True
+    old_settings, new_settings = previous["settings"], new["settings"]
+    return any(
+        old_settings.get(key, _default_of(key))
+        != new_settings.get(key, _default_of(key))
+        for key in ENTITY_SET_SETTINGS
+    )
+
+
 def _default_of(key: str) -> object:
     if key in NUMBERS:
         return NUMBERS[key][1]
