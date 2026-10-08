@@ -28,6 +28,7 @@ from .presets import PRESETS
 from .runtime import async_history, build_problem
 from .settings import (
     DOMAIN,
+    EXPERT_GROUPS,
     GROUPS,
     default_configuration,
     explicit_strategy_fields,
@@ -294,6 +295,7 @@ class Editor(SourceEditor):
     _currency_review_pending = False
     _setup_selections: MappingProxyType = MappingProxyType({})
     _profile_assignments: tuple = ()
+    _show_expert: bool = False
 
     def _reresolve_profiles(self):
         if not self._existing_installation and self._setup_selections:
@@ -320,7 +322,12 @@ class Editor(SourceEditor):
         return await super()._after_source_save()
 
     async def async_step_menu(self, user_input=None):
-        menu_options = ["installation", "sources", *GROUPS, "helpers"]
+        groups = [
+            group for group in GROUPS if self._show_expert or group not in EXPERT_GROUPS
+        ]
+        menu_options = ["installation", "sources", *groups]
+        if self._show_expert:
+            menu_options.append("helpers")
         if isinstance(self, config_entries.OptionsFlow):
             # ADR-0019 §2: Atlas settings live in the options flow only, never in
             # setup or reconfigure.
@@ -333,8 +340,17 @@ class Editor(SourceEditor):
             ):
                 # ADR-0019 §7: proof only offered when there is a site to prove.
                 menu_options.append("energy_atlas_proof")
+        menu_options.append("hide_expert" if self._show_expert else "show_expert")
         menu_options.append("preview")
         return self.async_show_menu(step_id="menu", menu_options=menu_options)
+
+    async def async_step_show_expert(self, user_input=None):
+        self._show_expert = True
+        return await self.async_step_menu()
+
+    async def async_step_hide_expert(self, user_input=None):
+        self._show_expert = False
+        return await self.async_step_menu()
 
     async def async_step_energy_atlas(self, user_input=None):
         """Opt-in Atlas delivery settings (ADR-0019 §2/§4, amendment T-411 §B).

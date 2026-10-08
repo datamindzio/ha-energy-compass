@@ -302,6 +302,7 @@ async def test_preset_thresholds_are_currency_specific(
             "battery_enabled": False,
         },
     )
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "show_expert"})
     result = await hass.config_entries.flow.async_configure(
         fid, {"next_step_id": "compass"}
     )
@@ -1173,6 +1174,7 @@ async def test_installation_preset_change_reconciles_helper_bound_shadow(
     )
 
     # Bind sell_multiplier to a helper through the menu (source_flow.py:1064-1138).
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "show_expert"})
     await hass.config_entries.flow.async_configure(fid, {"next_step_id": "helpers"})
     await hass.config_entries.flow.async_configure(
         fid, {"setting": "sell_multiplier", "mode": "entity"}
@@ -1278,6 +1280,7 @@ async def test_preview_lists_setup_profile_provenance(
         ),
     )
     assert menu["type"] == "menu"
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "show_expert"})
     await hass.config_entries.flow.async_configure(fid, {"next_step_id": "planning"})
     await hass.config_entries.flow.async_configure(fid, {"terminal_value_per_kwh": 0.5})
     preview = await hass.config_entries.flow.async_configure(

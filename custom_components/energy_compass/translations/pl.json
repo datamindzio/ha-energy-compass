@@ -315,7 +315,9 @@
           "presentation": "Prezentacja",
           "notifications": "Ustawienia powiadomień",
           "helpers": "Pomocniki liczbowe",
-          "preview": "Podgląd i zapis"
+          "preview": "Podgląd i zapis",
+          "show_expert": "Pokaż ustawienia eksperckie",
+          "hide_expert": "Ukryj ustawienia eksperckie"
         }
       },
       "currency_review": {
@@ -767,7 +769,9 @@
           "helpers": "Pomocniki liczbowe",
           "energy_atlas": "Energy Atlas (opcjonalnie)",
           "energy_atlas_proof": "Energy Atlas: pokaż dowód własności",
-          "preview": "Podgląd i zapis"
+          "preview": "Podgląd i zapis",
+          "show_expert": "Pokaż ustawienia eksperckie",
+          "hide_expert": "Ukryj ustawienia eksperckie"
         }
       },
       "currency_review": {

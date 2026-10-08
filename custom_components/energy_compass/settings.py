@@ -162,6 +162,7 @@ GROUPS = (
     "presentation",
     "notifications",
 )
+EXPERT_GROUPS = ("planning", "compass", "performance", "presentation")
 
 
 def default_configuration(currency: str, timezone: str) -> dict:

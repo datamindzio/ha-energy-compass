@@ -314,7 +314,9 @@
           "presentation": "Presentation",
           "notifications": "Notification preferences",
           "helpers": "Numeric helper bindings",
-          "preview": "Preview and save"
+          "preview": "Preview and save",
+          "show_expert": "Show expert settings",
+          "hide_expert": "Hide expert settings"
         }
       },
       "currency_review": {
@@ -759,7 +761,9 @@
           "helpers": "Numeric helper bindings",
           "energy_atlas": "Energy Atlas (optional)",
           "energy_atlas_proof": "Energy Atlas: show ownership proof",
-          "preview": "Preview and save"
+          "preview": "Preview and save",
+          "show_expert": "Show expert settings",
+          "hide_expert": "Hide expert settings"
         }
       },
       "currency_review": {
