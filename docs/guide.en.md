@@ -1112,7 +1112,7 @@ diagnostics (`deye_controller`); no events are fired.
 | Service | Purpose |
 | --- | --- |
 | `energy_compass.controller_runtime` | reads or replaces the stored runtime and the restore flag and answers with `runtime`, `restore_pending` and `session`. Used by the blueprint; unknown keys, non-objects and more than 32 768 bytes are rejected |
-| `energy_compass.controller_import_package` | administrator only; one-time copy of mode, session, accepted plan and runtime from the 0.1.36 package (see Migrating); refuses with `package_import_refused` once the new blueprint has written, unless `force` is set |
+| `energy_compass.controller_import_package` | administrator only; one-time copy of mode, session, accepted plan and runtime from the 0.1.36 package (see Migrating); refuses with `package_import_refused` once it has run, even before the new blueprint writes, unless `force` is set |
 
 ### Modes
 

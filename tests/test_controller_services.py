@@ -231,6 +231,17 @@ async def test_import_reports_a_missing_helper(hass, controller_site):
     assert raised.value.translation_placeholders == {"role": "mode"}
 
 
+async def test_a_second_import_is_refused_even_before_any_runtime_write(
+    hass, controller_site
+):
+    add_package(hass)
+    await call(hass, "controller_import_package", {"controller": CONTROLLER})
+    with pytest.raises(ServiceValidationError) as raised:
+        await call(hass, "controller_import_package", {"controller": CONTROLLER})
+    assert raised.value.translation_key == "package_import_refused"
+    assert controller_of(controller_site).state.runtime_written_at is None
+
+
 async def test_import_is_refused_once_the_new_blueprint_wrote(hass, controller_site):
     add_package(hass)
     await call(hass, "controller_import_package", {"controller": CONTROLLER})
@@ -247,7 +258,8 @@ async def test_import_is_refused_once_the_new_blueprint_wrote(hass, controller_s
     )
     assert forced["runtime_keys"] == ["code", "confirmed", "owned_session", "state"]
     assert controller_of(controller_site).state.runtime_written_at is None
-    await call(hass, "controller_import_package", {"controller": CONTROLLER})
+    with pytest.raises(ServiceValidationError):
+        await call(hass, "controller_import_package", {"controller": CONTROLLER})
 
 
 async def test_import_needs_an_administrator(
@@ -281,8 +293,7 @@ def test_english_exception_texts(path):
         "Controller runtime exceeds 32768 bytes."
     )
     assert exceptions["package_import_refused"]["message"] == (
-        "The new blueprint already wrote the controller runtime; set force to import "
-        "anyway."
+        "The package state was already imported; set force to import again."
     )
     assert set(data["services"]) >= {"controller_runtime", "controller_import_package"}
 

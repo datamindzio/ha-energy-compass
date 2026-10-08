@@ -283,15 +283,7 @@ class DeyeController:
 
     async def async_import_package(self, *, force: bool = False) -> dict:
         """One-time copy of the 0.1.36 package helpers into the controller state."""
-        written = self.state.runtime_written_at
-        if (
-            not force
-            and written is not None
-            and (
-                self.state.imported_at is None
-                or core.timestamp(written) >= core.timestamp(self.state.imported_at)
-            )
-        ):
+        if not force and self.state.imported_at is not None:
             raise core.PackageError("package_import_refused", "runtime")
         now = dt_util.utcnow()
         result = core.import_package(

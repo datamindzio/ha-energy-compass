@@ -1391,7 +1391,7 @@
         },
         "force": {
           "name": "Force",
-          "description": "Import even though the new blueprint has already written the runtime."
+          "description": "Import again although the package state was already imported."
         }
       }
     }
@@ -1422,7 +1422,7 @@
       "message": "Package mode is not Off, Simulation or Auto."
     },
     "package_import_refused": {
-      "message": "The new blueprint already wrote the controller runtime; set force to import anyway."
+      "message": "The package state was already imported; set force to import again."
     }
   }
 }

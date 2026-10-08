@@ -1391,7 +1391,7 @@
         },
         "force": {
           "name": "Wymuś",
-          "description": "Importuj, mimo że nowy blueprint zapisał już stan pracy."
+          "description": "Importuj ponownie, mimo że stan pakietu został już zaimportowany."
         }
       }
     }
@@ -1422,7 +1422,7 @@
       "message": "Tryb pakietu nie jest Off, Simulation ani Auto."
     },
     "package_import_refused": {
-      "message": "Nowy blueprint zapisał już stan pracy sterownika; ustaw force, aby mimo to zaimportować."
+      "message": "Stan pakietu został już zaimportowany; ustaw force, aby zaimportować ponownie."
     }
   }
 }

@@ -1123,7 +1123,7 @@ diagnostyce integracji (`deye_controller`); zdarzenia nie są wysyłane.
 | Usługa | Przeznaczenie |
 | --- | --- |
 | `energy_compass.controller_runtime` | odczytuje lub zastępuje zapisany stan pracy i flagę przywrócenia, odpowiada `runtime`, `restore_pending` i `session`. Używa jej blueprint; nieznane klucze, nie-obiekty i ponad 32 768 bajtów są odrzucane |
-| `energy_compass.controller_import_package` | tylko administrator; jednorazowo kopiuje tryb, sesję, zaakceptowany plan i stan pracy z pakietu 0.1.36 (zob. Migracja); odmawia z `package_import_refused`, gdy nowy blueprint już zapisał, chyba że ustawiono `force` |
+| `energy_compass.controller_import_package` | tylko administrator; jednorazowo kopiuje tryb, sesję, zaakceptowany plan i stan pracy z pakietu 0.1.36 (zob. Migracja); odmawia z `package_import_refused` po pierwszym udanym imporcie, jeszcze zanim nowy blueprint cokolwiek zapisze, chyba że ustawiono `force` |
 
 ### Tryby
 
