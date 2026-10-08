@@ -360,6 +360,7 @@ async def test_new_installation_requires_both_input_acknowledgements(
     fields = {str(key): key.default() for key in preview["data_schema"].schema}
     assert fields == {
         "confirm": False,
+        "back_to_menu": False,
         "confirm_buy_source": False,
         "confirm_load_source": False,
     }
@@ -400,6 +401,7 @@ async def test_draft_preview_restarts_acknowledgements(
     preview = await flow.async_step_preview()
     assert {str(key): key.default() for key in preview["data_schema"].schema} == {
         "confirm": False,
+        "back_to_menu": False,
         "confirm_buy_source": False,
         "confirm_load_source": False,
     }
