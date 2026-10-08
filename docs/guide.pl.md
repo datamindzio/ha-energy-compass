@@ -108,8 +108,8 @@ flowchart TD
 Trzy osie na pierwszym formularzu (**Użytkownik**), **Rozliczenie prosumenckie**, **Polska taryfa
 dystrybucyjna** (`buy_tariff`) i **Falownik**, jednorazowo wypełniają edytowalne strojenie nowej
 instalacji. Każda oś jest wybierana raz; wszystkie domyślnie mają wartość **Ogólne** lub **Brak**
-(brak przypisań), a wybór profilu od razu stosuje jego przypisania do wersji roboczej. To wersja 2
-profili startowych; wpis utworzony w wersji 1 zachowuje swój dwuosiowy zapis i nigdy nie jest
+(brak przypisań), a wybór profilu od razu stosuje jego przypisania do wersji roboczej. To wersja 3
+profili startowych; wpis utworzony w wersji 1 lub 2 zachowuje swój zapis i nigdy nie jest
 ponownie wyliczany. Wartości przypięte poniżej (0,20, 0,60, 0,13) zostały zmierzone lub wyznaczone
 na jednej instalacji — taryfa zakupu G12, sprzedaż RCE w net-billingu i bateria LFP Deye — i są
 punktem startowym, nie uniwersalnym domyślnym ustawieniem.
@@ -172,6 +172,13 @@ prognoza z progiem ceny, w której każde powiązanie ma PLN/MWh). Zapisy nowej 
 ponownie do jej utworzenia; Konfiguruj i Rekonfiguruj nigdy tego nie robią. Z
 [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml), który sam już stosuje próg i
 mnożnik 1,23, zostaw mnożnik sprzedaży na 1 (zob. [pomocnik taryfy](tariff-helper.md)).
+
+Wersja 3 dodaje do tego jedną regułę: gdy źródłem sprzedaży jest encja prognozy, która sama stosuje
+swoje rozliczenie (atrybut `settlement` z mnożnikiem, jak w szablonie sprzedaży z
+[`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml)), mnożnik 1,23 nie jest
+przypisywany, nawet z presetem `pse` lub `pse_solcast`, a późniejsze powiązanie takiego źródła usuwa
+niezmienione ręcznie 1,23. Powiązanie tego szablonu
+przez [Wykryte źródła](#wykryte-źródła-nowe-instalacje) ustawia też mnożnik sprzedaży na 1.
 
 `sell_multiplier` w systemie opustów to jednorazowa kopia współczynnika, a nie odnośnik do ceny
 zakupu: to przybliżenie (roczny bilans kWh i niedopasowanie stref G12 nie są modelowane), a
@@ -239,6 +246,120 @@ mnożnikiem, VAT i dodatkiem (`max(RCE, 0) × 1,23` z mnożnikiem net-billingu).
 i znika przy przełączeniu źródła z prognozy lub gdy po edycji nie jest już surowym źródłem RCE w PLN/MWh. W nowej instalacji profil PL net-billing przypisuje
 potem mnożnik 1,23; w Konfiguruj i Rekonfiguruj ustaw mnożnik sprzedaży samodzielnie. Bez integracji
 `rce_pse` użyj [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml).
+
+### Wykryte źródła (nowe instalacje)
+
+Po pierwszym formularzu (**Użytkownik**) **nowej** instalacji krok **Wykryte źródła** szuka źródeł,
+których Energy Compass może użyć, wiąże te, które zostawisz, i otwiera Podgląd — to szybka ścieżka
+do pierwszego planu. Nigdy nie działa w Konfiguruj ani Rekonfiguruj, nie zmienia presetu ani profilu
+startowego i nie dotyka źródła zakupu (jedyną ścieżką zakupu pozostają profil `buy_tariff` i
+**Taryfy**). Kandydatów rozpoznaje po tożsamości integracji (integracja, klucz tłumaczenia encji i
+ustawienia panelu Energia), nigdy po identyfikatorze ani nazwie encji, więc encje przemianowane lub
+spolszczone też zostaną znalezione. Gdy nic nie znaleziono albo nic nie zostawisz, otwiera się menu
+główne jak dotąd. Każde powiązane źródło można dalej edytować w **Źródłach danych**.
+
+**Najpierw panel Energia.** Energy Compass ma czytać te same dane co panel Energia. Dla każdej roli,
+którą panel obejmuje (liczniki skumulowane, moc PV, sieci i baterii, SOC baterii i prognoza PV),
+pierwszeństwo ma wybór z panelu; sygnały integracji poniżej są zapasowe. Dla mocy używany jest
+znormalizowany czujnik mocy zapisany w panelu. Gdy istnieją oba i się różnią, oferowane są oba,
+wstępnie wybrany jest ten z panelu, a wiersz wymienia oba. Ta sama encja znaleziona dwa razy jest
+oferowana raz.
+
+**Kontrolki.** Wiersz z jednym kandydatem to jedno pole wyboru, zaznaczone (SOC z BMS:
+niezaznaczone). Wiersz z kilkoma kandydatami to lista rozwijana: wstępnie wybrany kandydat, pozostali
+w kolejności pierwszeństwa i na końcu **Nie wiąż**. Remis, którego nie da się rozstrzygnąć, ma
+wstępnie wybrane **Nie wiąż**. Wśród równorzędnych kandydatów remis rozstrzyga jedyny wpis
+konfiguracji Solarman z falownikiem Deye, np. dwa liczniki sieci z panelu sprowadzają się do licznika
+falownika.
+
+| Wiersz | Kandydaci w kolejności pierwszeństwa |
+| --- | --- |
+| `pv` | prognoza PV z panelu Energia (`solar_forecast`, wszystkie jej integracje sumowane); czujniki sumaryczne Solcast `solcast_solar` na dziś i jutro (`total_kwh_forecast_today`, `total_kwh_forecast_tomorrow`, atrybut `detailedForecast`) |
+| `sell` | szablon ceny sprzedaży Energy Compass (`template`: unikalny identyfikator zaczynający się od `energy_compass_`, atrybut `settlement` z mnożnikiem i `prices`); `rce_pse` na dziś i jutro (`rce_pse_today_price`, `rce_pse_tomorrow_price`) |
+| `load` | skumulowane zużycie domu z `solarman` (`total_load_consumption`) jako statystyka rejestratora |
+| `soc` | SOC baterii z panelu; zewnętrzny szablon SOC (`template`, klasa urządzenia battery, jednostka %); `solarman` `battery` |
+| `bms_soc` | `solarman` `battery`, atrybut `BMS SOC`; jedyny włączony czujnik pakietu BMS (`battery_N`); nigdy nie jest wstępnie wybrany |
+| `battery_power` | moc baterii z panelu; `battery_power` |
+| `pv_power` | moc PV z panelu; `pv_power` |
+| `grid_import_power`, `grid_export_power` | moc sieci z panelu (znak +1 dla importu, −1 dla eksportu); `grid_power` z tymi samymi znakami |
+| `pv_energy` | energia PV z panelu; `total_production` |
+| `grid_import_energy` | import z sieci z panelu; `total_energy_import` |
+| `grid_export_energy` | eksport do sieci z panelu; `total_energy_export` |
+| `pv_energy_today` | `today_production` |
+| `grid_export_energy_today` | `today_energy_export` |
+
+- **Solarman.** Liczą się tylko wpisy konfiguracji z co najmniej jednym urządzeniem producenta Deye.
+  Falownik i jego pakiety BMS to urządzenia jednego wpisu konfiguracji. Przy kilku wpisach Deye każdy
+  wiersz Solarman ma kilku kandydatów i brak wartości domyślnej. Konwencje znaków (bateria + to
+  rozładowanie, sieć + to import) sprawdzono tylko na jednym profilu Deye; proponowana wartość jest
+  pokazana, żeby można ją było zweryfikować.
+- **Walidacja.** Każdy kandydat jest sprawdzany tymi samymi parserami co Podgląd, na dokładnie tym
+  powiązaniu, które zostałoby zapisane. Prognozy muszą się sparsować (jutro może być jeszcze
+  nieopublikowane); liczniki i moce wymagają liczbowego stanu w W, kW, Wh lub kWh; SOC musi być
+  skończoną wartością od 0 do 100 (SOC ze stanu wymaga jednostki %); statystyka zużycia wymaga klasy
+  stanu skumulowanej i kWh lub Wh. Kandydat nieużywalny nie jest oferowany; uwagi podają go z powodem.
+- **Szablon sprzedaży.** Jego powiązanie ustawia mnożnik sprzedaży na 1, bo szablon sam stosuje
+  próg i mnożnik. Profile startowe w wersji 3 nie dodają wtedy ponownie 1,23 (zob. [Profile
+  startowe](#profile-startowe-nowe-instalacje)). Nieaktualny szablon nie jest oferowany.
+- **`rce_pse`.** Czujnik musi podawać PLN/MWh (ustawienie domyślne integracji); opcja jednostki
+  `PLN/kWh` jest tu odrzucana, podobnie jak w **Taryfy → Źródło ceny sprzedaży → Cena rynkowa RCE
+  (PSE)**, bo wycena byłaby tysiąc razy za niska.
+- **Solcast.** `detailedForecast` istnieje tylko przy włączonej opcji **Include detailed forecast
+  half-hourly**. Czujniki dni 3–7, szczegół godzinowy i czujniki pojedynczych dachów nie są używane.
+- **SOC z BMS.** Jest proponowany bez zaznaczenia. Przy niezbalansowanych ogniwach SOC z BMS i SOC
+  baterii mogą się różnić o więcej niż Bateria → Tolerancja różnicy BMS (domyślnie 5 %), a wtedy
+  każdy plan jest blokowany. Zaznacz tylko, jeśli oba są zgodne przez całą dobę.
+- **Bramki.** `sell` pojawia się tylko przy walucie PLN. Przy wyłączonym PV nie ma wierszy `pv`,
+  `pv_power` ani `pv_energy`; przy wyłączonej baterii nie ma `soc`, `bms_soc` ani `battery_power`.
+  Dwa liczniki dzienne nie podlegają bramkom.
+- **Zapisywane limity wieku** pomiarów: 3600 s dla `battery_power`, `grid_import_power` i
+  `grid_export_power`; 86400 s dla `pv_power`, liczników skumulowanych i liczników dziennych (stałe
+  0 W w nocy nigdy nie aktualizuje stanu).
+- **Nigdy nie wykrywane:** `buy`; `throughput_today` (aby użyć `daily_cycles`, podaj jedną encję z
+  sumą ładowania i rozładowania po stronie AC od północy, zob. [wymagania
+  źródeł](source-requirements.md#daily-battery-throughput)); `battery_energy`,
+  `battery_charge_power` i `battery_discharge_power`; oraz pomocniki.
+
+Podgląd pokazuje potem zwykłe potwierdzenia nowego wpisu. Jego pole **Wróć do menu głównego** (nic
+nie zostanie zapisane) opuszcza Podgląd bez walidacji i zapisu. Tabele pomocnicze są w [wymaganiach
+źródeł](source-requirements.md#automatic-detection) (EN).
+
+### Prognoza PV z panelu Energia
+
+**Źródła danych → Dodaj źródło → PV → Prognoza PV z panelu Energia** (tryb `solar_forecast`) czyta tę
+samą prognozę PV co panel Energia, z każdej integracji z platformą prognozy słonecznej panelu Energia
+(Solcast, Forecast.Solar, Open-Meteo i inne). Wybierz jedną lub kilka załadowanych integracji; ich
+prognozy są sumowane, tak jak robi to panel. Formularz domyślnie wskazuje integracje z ustawień
+słonecznych panelu. Wykryte źródła oferują ten tryb jako pierwszy, gdy panel ma prognozę.
+
+- **Godzinowa reguła panelu.** Każda wartość to Wh w lokalnej godzinie zawierającej jej klucz;
+  wartości z jednej godziny są sumowane. Plan widzi energię godzinową od bieżącej godziny do ostatniej
+  godziny z kluczem, do 49 godzin naprzód; klucze starsze niż dwa dni są pomijane.
+- **Godziny nocne**, które dostawca pomija, liczą się jako 0 Wh. Luka w środku dnia też to 0, więc
+  luka u dostawcy czyni plan ostrożniejszym.
+- **Uwagi o dostawcach.** Platforma Solcast używa typu prognozy wybranego w jego opcjach
+  (`key_estimate`, np. 10. percentyl) w krokach 30-minutowych, a tryb czujnika Solcast czyta
+  `pv_estimate`. Forecast.Solar podaje nieregularne klucze; Energy Compass czyta je tak jak panel.
+- **Bez kontroli wieku.** `wh_hours` nie niesie czasu publikacji. Aktualizacja prognozy jest
+  uwzględniana przy następnym przeliczeniu (planowym lub wywołanym zdarzeniem), nie sama z siebie.
+- **Awarie** działają jak brakująca encja: brakująca, niezaładowana integracja, bez platformy albo bez
+  danych unieważnia wejścia, z komunikatem z nazwą domeny.
+- **Bez mieszania.** Tablice prognoz z encji i prognozy z panelu Energia nie mogą być łączone (oba
+  zwykle pochodzą od tego samego dostawcy, więc energia byłaby policzona dwa razy). Zapis jednego
+  usuwa drugie. Wyłączenie PV w **Instalacji** czyści oba.
+
+Podgląd dodaje dla tego trybu wiersz `PV source: Energy dashboard solar forecast …`.
+
+### Ustawienia eksperckie
+
+Menu główne Konfiguracji, Konfiguruj i Rekonfiguruj zaczyna się tylko od grup podstawowych:
+Instalacja, Źródła danych, Bateria, Możliwości sprzętu, Taryfy, Prognoza zużycia i Ustawienia
+powiadomień.
+**Pokaż ustawienia eksperckie** dodaje cztery grupy eksperckie, **Planowanie**, **Prognoza kosztu
+zużycia**, **Wydajność i jakość danych** i **Prezentacja**, oraz **Pomocniki liczbowe**; **Ukryj
+ustawienia eksperckie** chowa je z powrotem. Widok dotyczy jednego przepływu i nie jest zapisywany.
+Ukryte ustawienia zachowują wartości i dalej działają. Skrypt sterujący przepływem opcji przez REST
+musi wysłać `show_expert` przed wybraniem ukrytej grupy, inaczej Home Assistant odrzuci krok.
 
 ## Przegląd encji
 

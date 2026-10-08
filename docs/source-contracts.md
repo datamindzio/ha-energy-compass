@@ -11,6 +11,14 @@ The following mappings were checked against the indicated integration source ver
 | RCE PSE 2.0.1 price forecast | `prices` is a list of records. Each `rce_pln` is a signed raw market price in PLN/MWh; `dtime` is the **end** of a 15-minute interval. The source also exposes `last_update` and `data_points`. `dtime` may be a naive local timestamp, and the provider parser accepts an hour-24 notation. Tomorrow's records may be absent. | Subtract 15 minutes from each end time; divide by 1000 for PLN/kWh. Require the selected source timezone for naive times and reject ambiguous repeated local hours. Preserve negative prices. Do not use a clipped prosumer-price field as the raw price. Import and export settlement transforms remain independent user choices. |
 | Solcast 4.6.1 detailed forecast | `detailedForecast` records use `period_start` and `pv_estimate`; the provider also defines `pv_estimate10` and `pv_estimate90`. Source code integrates `pv_estimate` as average kW over a 30-minute period. | Multiply each average kW value by 0.5 hour to obtain kWh for its interval. Validate timestamps, issue age, units, overlap, and gaps. Treat `detailedHourly` as a separate mapping until its exact aggregation is validated. A scalar daily solar total is insufficient for interval optimization. |
 
+Further provider facts used by [Detected sources](guide.en.md#detected-sources-new-installations), read from the provider sources:
+
+| Provider | Fact |
+| --- | --- |
+| `rce_pse` | The today and tomorrow sensors are `unknown` with an empty `prices` list before tomorrow's publication and after midnight. The option `price_unit` = `PLN/kWh` changes the sensors' unit and also scales the records (rounded to 0.01), so Energy Compass requires PLN/MWh. |
+| ha-solarman (Deye profiles) | The inverter `Battery` sensor (translation key `battery`) is the inverter SOC in % and carries the BMS value as the attribute `BMS SOC`. Per-pack `Battery N` sensors (`battery_N`) belong to a separate BMS device of the same config entry and may be disabled with it. |
+| Energy dashboard solar forecast (`wh_hours`) | Solcast: 30-minute period starts with Wh per period for the estimate chosen in the integration options, night omitted apart from one or two zero padding slots, up to 730 days of history and 14 days ahead. Open-Meteo: hourly period starts with Wh, zeros kept. Forecast.Solar: irregular keys with Wh; the dashboard reads each key as the start of its hour. Energy Compass sums Wh per local hour as the dashboard does. |
+
 Source references: [RCE PSE](https://github.com/Lewa-Reka/ha-rce-pse), [Solcast](https://github.com/BJReplay/ha-solcast-solar). The checked installed versions were 2.0.1 and 4.6.1 respectively; future provider versions require schema revalidation.
 
 ## Generic selected inputs

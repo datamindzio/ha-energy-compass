@@ -105,8 +105,8 @@ flowchart TD
 Three axes on the first (**User**) setup form, **Prosumer settlement**, **Polish distribution
 tariff** (`buy_tariff`) and **Inverter**, pre-fill editable tuning for a brand-new installation.
 Each axis is chosen once; all default to **Generic** or **None** (no assignments), and picking a
-profile applies its assignments to the draft immediately. This is revision 2 of the setup profiles;
-an entry created under revision 1 keeps its two-axis record and is never re-resolved. The
+profile applies its assignments to the draft immediately. This is revision 3 of the setup profiles;
+an entry created under revision 1 or 2 keeps its record and is never re-resolved. The
 pinned values below (0.20, 0.60, 0.13) were measured or backtested on one site — a G12 buy tariff,
 net-billing RCE sell and a Deye LFP battery — and are a starting point, not a universal default.
 
@@ -169,6 +169,13 @@ floor and every binding in PLN/MWh). New-entry saves re-evaluate it until the in
 Configure and Reconfigure never do. With
 [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml), which already applies the floor and
 the 1.23 factor itself, keep the sell multiplier at 1 (see [tariff helper](tariff-helper.md)).
+
+Revision 3 adds one rule to this: when the sell source is a forecast entity that already applies its
+own settlement (a `settlement` attribute that names a multiplier, as in the sell template of
+[`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml)), the 1.23 multiplier is not
+assigned, even with preset `pse` or `pse_solcast`, and binding such a source later removes a 1.23
+you did not edit. Binding that template through
+[Detected sources](#detected-sources-new-installations) also sets the sell multiplier to 1.
 
 Net-metering's `sell_multiplier` is a one-time copy of the ratio, not a link to the buy price: it is
 an approximation (the yearly kWh bank and G12 band mismatch are not modelled), and a later edit to
@@ -235,6 +242,120 @@ is dropped when the source is switched away from forecast or edited so that it i
 net-billing profile then assigns the 1.23 multiplier; in Configure and Reconfigure set the sell
 multiplier yourself. Without the `rce_pse` integration use
 [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml).
+
+### Detected sources (new installations)
+
+After the first (**User**) form of a **new** installation, **Detected sources** looks for sources
+Energy Compass can use, binds the ones you keep and opens Preview: the quick path to a first plan.
+It never runs in Configure or Reconfigure, never changes the preset or a setup profile, and never
+touches the buy source (the `buy_tariff` profile and **Tariffs** stay the only buy path).
+Candidates are recognised by integration identity (the integration, the entity's translation key
+and the Energy dashboard preferences), never by entity id or name, so renamed or localized
+entities are found too. If nothing is found, or you keep nothing, the main menu opens as before.
+Every bound source stays editable in **Sources**.
+
+**Energy dashboard first.** Energy Compass should read the same data as the Energy dashboard. For
+every role the dashboard covers (lifetime counters, solar, grid and battery power, battery SOC and
+the solar forecast) the dashboard's choice ranks first; the integration signals below are the
+fallback. For power it uses the normalized power sensor the dashboard stores. When both exist and
+differ, both are offered, the dashboard one is preselected and the line names both. The same entity
+found twice is offered once.
+
+**Controls.** A row with one candidate is a single checkbox, ticked (BMS SOC: unticked). A row with
+several candidates is a drop-down: the preselected candidate, the others in order of preference and
+**Do not bind** last. A tie that cannot be resolved offers **Do not bind** preselected. Among
+equally ranked candidates the single Deye Solarman config entry breaks the tie, for example the
+dashboard's two grid meters resolve to the inverter's counter.
+
+| Row | Candidates in order of preference |
+| --- | --- |
+| `pv` | the Energy dashboard solar forecast (`solar_forecast`, all its integrations added together); Solcast `solcast_solar` total sensors for today and tomorrow (`total_kwh_forecast_today`, `total_kwh_forecast_tomorrow`, attribute `detailedForecast`) |
+| `sell` | the Energy Compass sell template (`template`: unique id starting `energy_compass_`, a `settlement` attribute naming a multiplier, and `prices`); `rce_pse` for today and tomorrow (`rce_pse_today_price`, `rce_pse_tomorrow_price`) |
+| `load` | `solarman` lifetime household consumption (`total_load_consumption`) as a recorder statistic |
+| `soc` | the dashboard battery SOC; an external SOC template (`template`, device class battery, unit %); `solarman` `battery` |
+| `bms_soc` | `solarman` `battery` attribute `BMS SOC`; the one enabled BMS pack sensor (`battery_N`); never preselected |
+| `battery_power` | the dashboard battery power; `battery_power` |
+| `pv_power` | the dashboard solar power; `pv_power` |
+| `grid_import_power`, `grid_export_power` | the dashboard grid power (sign +1 for import, −1 for export); `grid_power` with the same signs |
+| `pv_energy` | the dashboard solar energy; `total_production` |
+| `grid_import_energy` | the dashboard grid import; `total_energy_import` |
+| `grid_export_energy` | the dashboard grid export; `total_energy_export` |
+| `pv_energy_today` | `today_production` |
+| `grid_export_energy_today` | `today_energy_export` |
+
+- **Solarman.** Only config entries with at least one device from manufacturer Deye count. The
+  inverter and its BMS packs are devices of one config entry. With several Deye entries every
+  Solarman row has several candidates and no default. The sign conventions (battery + is discharge,
+  grid + is import) were verified on one Deye profile only; the offered value is shown so you can
+  check it.
+- **Validation.** Each candidate is checked with the parsers Preview uses, on the exact binding
+  that would be stored. Forecasts must parse (tomorrow may be unpublished); counters and power need
+  a numeric state in W, kW, Wh or kWh; a SOC must be a finite value from 0 to 100 (a state SOC needs
+  unit %); a load statistic needs a cumulative state class and kWh or Wh. An unusable candidate is
+  not offered; the notes list it with the reason.
+- **Sell template.** Binding it sets the sell multiplier to 1, because the template already applies
+  its floor and multiplier. Setup profiles revision 3 then does not add 1.23 again (see [Setup
+  profiles](#setup-profiles-new-installations)). A stale template is not offered.
+- **`rce_pse`.** The sensor must report PLN/MWh (the integration default); the `PLN/kWh` price
+  unit option is rejected here and in **Tariffs → Sell source → RCE market price (PSE)**, because it
+  would price energy a thousand times too low.
+- **Solcast.** `detailedForecast` exists only while the option **Include detailed forecast
+  half-hourly** is on. The day 3–7 sensors, the hourly detail and the rooftop-site sensors are never
+  used.
+- **BMS SOC.** It is offered unticked. With imbalanced battery cells the BMS SOC and the battery SOC
+  can differ by more than Battery → Soc disagreement percent (default 5 %), and then every plan is
+  blocked. Tick it only if both agree over a full day.
+- **Gates.** `sell` appears only with currency PLN. With PV off there are no `pv`, `pv_power` or
+  `pv_energy` rows; with the battery off no `soc`, `bms_soc` or `battery_power` rows. The two daily
+  counters are never gated.
+- **Stored age limits** of the measurements: 3600 s for `battery_power`, `grid_import_power` and
+  `grid_export_power`; 86400 s for `pv_power`, the lifetime counters and the daily counters (a
+  constant 0 W at night never updates the state).
+- **Never detected:** `buy`; `throughput_today` (to use `daily_cycles` provide one entity with the
+  AC-side charge plus discharge since midnight, see [source requirements](source-requirements.md#daily-battery-throughput));
+  `battery_energy`, `battery_charge_power` and `battery_discharge_power`; and helpers.
+
+Preview then shows the usual acknowledgements for a new entry. Its **Back to the main menu**
+checkbox leaves Preview without validating or saving anything. The matching reference tables are in
+[source requirements](source-requirements.md#automatic-detection).
+
+### Energy dashboard solar forecast
+
+**Sources → Add source → PV → Energy dashboard solar forecast** (mode `solar_forecast`) reads the
+same solar forecast as the Energy dashboard, from every integration with an Energy solar-forecast
+platform (Solcast, Forecast.Solar, Open-Meteo and others). Pick one or more loaded integrations;
+their forecasts are added, as the dashboard adds them. The form defaults to the integrations in the
+dashboard's solar settings. Detected sources offers the same mode first when the dashboard has a
+forecast.
+
+- **Hourly dashboard rule.** Every value is Wh in the local hour that contains its key; values in one
+  hour are summed. The plan sees hourly energy from the current hour to the last hour with a key, up
+  to 49 hours ahead; keys older than two days are ignored.
+- **Night hours** that the provider omits count as 0 Wh. A gap inside the day is also 0, so a
+  provider gap makes the plan more conservative.
+- **Provider notes.** Solcast's platform uses the forecast type chosen in its options (`key_estimate`,
+  for example the 10th percentile) in 30-minute steps, while the Solcast sensor mode reads
+  `pv_estimate`. Forecast.Solar reports irregular keys; Energy Compass reads them as the dashboard
+  does.
+- **No age check.** `wh_hours` carries no publication time. A forecast update is picked up at the
+  next recalculation (scheduled or event-triggered), not by itself.
+- **Failures** act like a missing entity: an integration that is missing, not loaded, without a
+  platform or without data makes the inputs invalid with a message naming its domain.
+- **No mixing.** Entity forecast arrays and Energy dashboard forecasts cannot be combined (both
+  typically come from the same provider, so the energy would be counted twice). Saving one removes
+  the other. Turning PV off in **Installation** clears both.
+
+Preview adds a line `PV source: Energy dashboard solar forecast …` for this mode.
+
+### Expert settings
+
+The main menu of Setup, Configure and Reconfigure starts with the common groups only: Installation,
+Sources, Battery, Hardware, Tariffs, Load forecasting and Notification preferences. **Show expert
+settings** adds the four expert groups, **Planning**, **Consumption outlook**, **Performance and
+input quality** and **Presentation**, and **Numeric helper bindings**; **Hide expert settings** hides
+them again. The view is per flow and is not stored. Hidden settings keep their values and keep
+working. A script that drives the options flow over REST must post `show_expert` before it selects a
+hidden group, otherwise Home Assistant rejects the step.
 
 ## Entity overview
 
