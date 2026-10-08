@@ -302,6 +302,7 @@ async def test_preset_thresholds_are_currency_specific(
             "battery_enabled": False,
         },
     )
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "show_expert"})
     result = await hass.config_entries.flow.async_configure(
         fid, {"next_step_id": "compass"}
     )
@@ -359,6 +360,7 @@ async def test_new_installation_requires_both_input_acknowledgements(
     fields = {str(key): key.default() for key in preview["data_schema"].schema}
     assert fields == {
         "confirm": False,
+        "back_to_menu": False,
         "confirm_buy_source": False,
         "confirm_load_source": False,
     }
@@ -399,6 +401,7 @@ async def test_draft_preview_restarts_acknowledgements(
     preview = await flow.async_step_preview()
     assert {str(key): key.default() for key in preview["data_schema"].schema} == {
         "confirm": False,
+        "back_to_menu": False,
         "confirm_buy_source": False,
         "confirm_load_source": False,
     }
@@ -826,7 +829,7 @@ async def test_pl_net_billing_deye_prefills_new_entry(
             "limit_floor": 0.8,
         }
         assert result["data"]["setup_profiles"] == {
-            "revision": 2,
+            "revision": 3,
             "settlement": "pl_net_billing",
             "buy_tariff": "generic",
             "inverter": "deye_hybrid",
@@ -859,7 +862,7 @@ async def test_generic_profiles_are_a_no_op(
     assert result["type"] == "create_entry"
     assert result["data"]["settings"] == default_configuration("EUR", "UTC")["settings"]
     assert result["data"]["setup_profiles"] == {
-        "revision": 2,
+        "revision": 3,
         "settlement": "generic",
         "buy_tariff": "generic",
         "inverter": "generic",
@@ -1173,6 +1176,7 @@ async def test_installation_preset_change_reconciles_helper_bound_shadow(
     )
 
     # Bind sell_multiplier to a helper through the menu (source_flow.py:1064-1138).
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "show_expert"})
     await hass.config_entries.flow.async_configure(fid, {"next_step_id": "helpers"})
     await hass.config_entries.flow.async_configure(
         fid, {"setting": "sell_multiplier", "mode": "entity"}
@@ -1278,6 +1282,7 @@ async def test_preview_lists_setup_profile_provenance(
         ),
     )
     assert menu["type"] == "menu"
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "show_expert"})
     await hass.config_entries.flow.async_configure(fid, {"next_step_id": "planning"})
     await hass.config_entries.flow.async_configure(fid, {"terminal_value_per_kwh": 0.5})
     preview = await hass.config_entries.flow.async_configure(
@@ -1576,3 +1581,61 @@ async def test_existing_installation_saves_never_touch_profiles(
     assert draft["settings"]["sell_multiplier"] == 1.1
     assert draft["sources"]["buy"]["mode"] == "schedule"
     assert draft["sources"]["sell"]["floor_per_kwh"] == 0.0
+
+
+_TEMPLATE_RECORDS = [
+    {
+        "start": "2026-09-18T10:00:00+00:00",
+        "end": "2026-09-18T10:15:00+00:00",
+        "price": 0.4,
+    }
+]
+
+
+async def _bind_sell_template(hass, fid):
+    flow = hass.config_entries.flow
+    await flow.async_configure(fid, {"next_step_id": "tariffs"})
+    await flow.async_configure(fid, {"next_step_id": "tariff_sell"})
+    await flow.async_configure(fid, {"mode": "forecast"})
+    await flow.async_configure(fid, {"entity_id": "sensor.fx_template"})
+    await flow.async_configure(fid, {"attribute": "prices"})
+    return await flow.async_configure(
+        fid,
+        {
+            "value_path": "price",
+            "start_path": "start",
+            "end_path": "end",
+            "duration_path": "",
+            "unit_path": "",
+            "published_path": "attributes.published_at",
+            "interval_minutes": 15,
+            "unit": "PLN/kWh",
+            "value_kind": "price",
+            "value_sign": 1,
+            "source_timezone": "UTC",
+            "check_age": True,
+            "max_age_hours": 1.25,
+        },
+    )
+
+
+async def test_binding_the_sell_template_withholds_then_restores_the_multiplier(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-09-18T10:00:00+00:00")
+    hass.states.async_set("sensor.rce", "400", {"prices": _RCE_RECORDS})
+    hass.states.async_set(
+        "sensor.fx_template",
+        "0.4",
+        {
+            "prices": _TEMPLATE_RECORDS,
+            "published_at": "2026-09-18T10:00:00+00:00",
+            "settlement": "RCE, floor 0, multiplier 1.23",
+        },
+    )
+    fid, flow = await _new_pl_entry(hass, preset="pse", settlement="pl_net_billing")
+    assert flow._draft["settings"]["sell_multiplier"] == 1.23
+    await _bind_sell_template(hass, fid)
+    assert flow._draft["settings"]["sell_multiplier"] == 1
+    await _flow_rce_save(hass, fid, enter_tariffs=False)
+    assert flow._draft["settings"]["sell_multiplier"] == 1.23

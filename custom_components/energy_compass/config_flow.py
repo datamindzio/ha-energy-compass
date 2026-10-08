@@ -14,6 +14,16 @@ from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 
 from .atlas_env import BASE_URLS, ENROLLMENT_SECRETS
+from .detect import (
+    SKIP,
+    Detection,
+    DetectionContext,
+    apply_detection,
+    detect,
+    detection_text,
+    option_label,
+)
+from .detect_ha import async_detection_snapshot
 from .engine.models import InputError, SolveError
 from .engine.optimize import solve
 from .flow_schema import (
@@ -28,6 +38,7 @@ from .presets import PRESETS
 from .runtime import async_history, build_problem
 from .settings import (
     DOMAIN,
+    EXPERT_GROUPS,
     GROUPS,
     default_configuration,
     explicit_strategy_fields,
@@ -40,6 +51,7 @@ from .setup_profiles import (
     apply_assignments,
     buy_tariff_schedule,
     currency_error,
+    is_settled_sell,
     preview_lines,
     profile_assignments,
     profile_options,
@@ -72,6 +84,10 @@ _LOGGER = logging.getLogger(__name__)
 # they differ. Every other kind (site_key_revoked, site_conflict, rate_limited,
 # cannot_connect, unknown) is used verbatim as the form error slug.
 _REGISTRATION_ERRORS = {"invalid_enrollment_secret": "enrollment_rejected"}
+
+
+def _language_key(language):
+    return "pl" if language and language.startswith("pl") else "en"
 
 
 def _preview_assumptions(config, problem, values, quality):
@@ -144,7 +160,17 @@ def _preview_assumptions(config, problem, values, quality):
                 f"{row['samples_available']}/{row['samples_required']}"
                 for row in samples
             )
-    return source + "\n" + load_text + "."
+    text = source + "\n" + load_text + "."
+    if forecasts := config["sources"]["pv"].get("solar_forecasts"):
+        listed = ", ".join(
+            f"{item['domain']} {item['config_entry_id']}" for item in forecasts
+        )
+        text += (
+            f"\nPV source: Energy dashboard solar forecast {listed}; Wh per local "
+            "hour as in the Energy dashboard, hours without values count as 0; "
+            "no age check."
+        )
+    return text
 
 
 def _schedule_preview(config, problem, values):
@@ -283,13 +309,17 @@ class Editor(SourceEditor):
     _currency_review_pending = False
     _setup_selections: MappingProxyType = MappingProxyType({})
     _profile_assignments: tuple = ()
+    _show_expert: bool = False
 
-    async def _after_source_save(self):
+    def _reresolve_profiles(self):
         if not self._existing_installation and self._setup_selections:
             current = profile_assignments(
                 self._setup_selections,
                 self._draft["preset"],
                 raw_rce_sell=is_raw_rce_sell(self._draft["sources"]["sell"]),
+                settled_sell=is_settled_sell(
+                    self._draft["sources"]["sell"], snapshot(self.hass, self._draft)
+                ),
             )
             reconcile_assignments(
                 self._draft["settings"],
@@ -300,10 +330,18 @@ class Editor(SourceEditor):
                 )["settings"],
             )
             self._profile_assignments = current
+
+    async def _after_source_save(self):
+        self._reresolve_profiles()
         return await super()._after_source_save()
 
     async def async_step_menu(self, user_input=None):
-        menu_options = ["installation", "sources", *GROUPS, "helpers"]
+        groups = [
+            group for group in GROUPS if self._show_expert or group not in EXPERT_GROUPS
+        ]
+        menu_options = ["installation", "sources", *groups]
+        if self._show_expert:
+            menu_options.append("helpers")
         if isinstance(self, config_entries.OptionsFlow):
             # ADR-0019 §2: Atlas settings live in the options flow only, never in
             # setup or reconfigure.
@@ -316,8 +354,20 @@ class Editor(SourceEditor):
             ):
                 # ADR-0019 §7: proof only offered when there is a site to prove.
                 menu_options.append("energy_atlas_proof")
+        menu_options.append("hide_expert" if self._show_expert else "show_expert")
         menu_options.append("preview")
         return self.async_show_menu(step_id="menu", menu_options=menu_options)
+
+    async def _after_installation(self):
+        return await self.async_step_menu()
+
+    async def async_step_show_expert(self, user_input=None):
+        self._show_expert = True
+        return await self.async_step_menu()
+
+    async def async_step_hide_expert(self, user_input=None):
+        self._show_expert = False
+        return await self.async_step_menu()
 
     async def async_step_energy_atlas(self, user_input=None):
         """Opt-in Atlas delivery settings (ADR-0019 §2/§4, amendment T-411 §B).
@@ -500,6 +550,7 @@ class Editor(SourceEditor):
             candidate["sources"]["battery_enabled"] = user_input["battery_enabled"]
             if not user_input["pv_enabled"]:
                 candidate["sources"]["pv"]["arrays"] = []
+                candidate["sources"]["pv"].pop("solar_forecasts", None)
             if not user_input["battery_enabled"]:
                 candidate["sources"].update(soc=None, bms_soc=None)
             currency_changed = candidate["currency"] != self._draft["currency"]
@@ -529,6 +580,9 @@ class Editor(SourceEditor):
                     self._setup_selections,
                     candidate["preset"],
                     raw_rce_sell=is_raw_rce_sell(candidate["sources"]["sell"]),
+                    settled_sell=is_settled_sell(
+                        candidate["sources"]["sell"], snapshot(self.hass, candidate)
+                    ),
                 )
                 reconcile_assignments(
                     candidate["settings"],
@@ -551,7 +605,7 @@ class Editor(SourceEditor):
                 if currency_changed and self._existing_installation:
                     self._currency_review_pending = True
                     return await self.async_step_currency_review()
-                return await self.async_step_menu()
+                return await self._after_installation()
             except InputError:
                 errors["base"] = "invalid_input"
         return self.async_show_form(
@@ -791,6 +845,8 @@ class Editor(SourceEditor):
     async def async_step_preview(self, user_input=None):
         if self._currency_review_pending:
             return await self.async_step_currency_review()
+        if user_input is not None and user_input.get("back_to_menu") is True:
+            return await self.async_step_menu()
         errors = {}
         preview = "Source inputs: failed. Base plan: not checked. Extra-consumption guidance: not checked in preview; computed after saving."
         try:
@@ -870,7 +926,10 @@ class Editor(SourceEditor):
         except (InputError, ValueError, KeyError) as err:
             errors["base"] = "invalid_source"
             preview += "\n" + str(err)
-        schema = {vol.Required("confirm", default=False): selector.BooleanSelector()}
+        schema = {
+            vol.Required("confirm", default=False): selector.BooleanSelector(),
+            vol.Optional("back_to_menu", default=False): selector.BooleanSelector(),
+        }
         if not self._existing_installation:
             schema.update(
                 {
@@ -894,6 +953,9 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
     """Configure provider-independent advisory inputs through native HA forms."""
 
     VERSION = 3
+
+    _detection_pending: bool = False
+    _detection: Detection | None = None
 
     def _user_schema(self, selections):
         return vol.Schema(
@@ -966,6 +1028,9 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
                 selections,
                 user_input["preset"],
                 raw_rce_sell=is_raw_rce_sell(self._draft["sources"]["sell"]),
+                settled_sell=is_settled_sell(
+                    self._draft["sources"]["sell"], snapshot(self.hass, self._draft)
+                ),
             )
             apply_assignments(self._draft["settings"], assignments)
             if (schedule := buy_tariff_schedule(selections)) is not None:
@@ -975,8 +1040,10 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
             self._draft["setup_profiles"] = selection_record(selections)
             self._setup_selections = selections
             self._profile_assignments = assignments
+            self._detection = None
+            self._detection_pending = True
             result = await self.async_step_installation(user_input)
-            if result["type"] != "form":
+            if not (result["type"] == "form" and result["step_id"] == "installation"):
                 return result
             return self.async_show_form(
                 step_id="user",
@@ -984,6 +1051,96 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
                 errors=result["errors"],
             )
         return self.async_show_form(step_id="user", data_schema=self._user_schema({}))
+
+    async def _after_installation(self):
+        if not self._detection_pending:
+            return await self.async_step_menu()
+        self._detection_pending = False
+        return await self.async_step_detected_sources()
+
+    def _detected_schema(self, detection, language):
+        fields = {}
+        for offer in detection.offers:
+            if len(offer.options) == 1:
+                fields[vol.Required(offer.row, default=offer.default == 0)] = (
+                    selector.BooleanSelector()
+                )
+                continue
+            options = [
+                {"value": str(index), "label": option_label(option, language)}
+                for index, option in enumerate(offer.options)
+            ]
+            options.append({"value": "skip", "label": SKIP[_language_key(language)]})
+            default = "skip" if offer.default is None else str(offer.default)
+            fields[vol.Required(offer.row, default=default)] = select(options)
+        return vol.Schema(fields)
+
+    async def async_step_detected_sources(self, user_input=None):
+        language = self.hass.config.language
+        if self._detection is None:
+            try:
+                snapshot_facts = await async_detection_snapshot(self.hass)
+                self._detection = detect(
+                    snapshot_facts,
+                    DetectionContext(
+                        currency=self._draft["currency"],
+                        timezone=self._draft["timezone"],
+                        pv_enabled=self._draft["sources"]["pv"]["enabled"],
+                        battery_enabled=self._draft["sources"]["battery_enabled"],
+                        now=dt_util.utcnow(),
+                    ),
+                )
+            except Exception:
+                _LOGGER.debug(
+                    "Source detection failed; continuing without detected sources",
+                    exc_info=True,
+                )
+                self._detection = Detection((), ())
+        detection = self._detection
+        if not detection.offers and not detection.unusable:
+            return await self.async_step_menu()
+        errors = {}
+        if user_input is not None:
+            chosen = []
+            for offer in detection.offers:
+                value = user_input.get(
+                    offer.row,
+                    offer.default == 0
+                    if len(offer.options) == 1
+                    else "skip"
+                    if offer.default is None
+                    else str(offer.default),
+                )
+                if len(offer.options) == 1 and isinstance(value, bool):
+                    index = 0 if value else None
+                elif len(offer.options) > 1 and value == "skip":
+                    index = None
+                elif (
+                    len(offer.options) > 1
+                    and isinstance(value, str)
+                    and value in {str(i) for i in range(len(offer.options))}
+                ):
+                    index = int(value)
+                else:
+                    errors["base"] = "invalid_input"
+                    break
+                if index is not None:
+                    chosen.append(offer.options[index])
+            if not errors:
+                if not chosen:
+                    return await self.async_step_menu()
+                self._draft = apply_detection(self._draft, chosen)
+                if any(option.kind == "template_sell" for option in chosen):
+                    self._draft["settings"]["sell_multiplier"] = 1
+                self._reresolve_profiles()
+                return await self.async_step_preview()
+        detected, notes = detection_text(detection, language)
+        return self.async_show_form(
+            step_id="detected_sources",
+            data_schema=self._detected_schema(detection, language),
+            errors=errors,
+            description_placeholders={"detected": detected, "notes": notes},
+        )
 
     async def async_step_reconfigure(self, user_input=None):
         self._entry = self._get_reconfigure_entry()

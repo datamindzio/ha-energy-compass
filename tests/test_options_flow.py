@@ -340,6 +340,9 @@ async def test_presentation_options_update_existing_entities(
         result = await hass.config_entries.options.async_init(entry.entry_id)
         fid = result["flow_id"]
         await hass.config_entries.options.async_configure(
+            fid, {"next_step_id": "show_expert"}
+        )
+        await hass.config_entries.options.async_configure(
             fid, {"next_step_id": "presentation"}
         )
         await hass.config_entries.options.async_configure(

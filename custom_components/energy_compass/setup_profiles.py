@@ -42,6 +42,7 @@ class ProfileRevision:
     axes: Mapping[str, Mapping[str, SetupProfile]]
     raw_rce_presets: frozenset[str]
     raw_rce_sources: bool = False
+    settled_sell_sources: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -206,8 +207,15 @@ _REVISION_2 = ProfileRevision(
     raw_rce_sources=True,
 )
 
+_REVISION_3 = ProfileRevision(
+    axes=_REVISION_2.axes,
+    raw_rce_presets=_REVISION_2.raw_rce_presets,
+    raw_rce_sources=True,
+    settled_sell_sources=True,
+)
+
 REVISIONS: Mapping[int, ProfileRevision] = MappingProxyType(
-    {1: _REVISION_1, 2: _REVISION_2}
+    {1: _REVISION_1, 2: _REVISION_2, 3: _REVISION_3}
 )
 SETUP_PROFILES_REVISION: int = max(REVISIONS)
 CURRENT: ProfileRevision = REVISIONS[SETUP_PROFILES_REVISION]
@@ -223,11 +231,14 @@ def profile_assignments(
     *,
     revision: int = SETUP_PROFILES_REVISION,
     raw_rce_sell: bool = False,
+    settled_sell: bool = False,
 ) -> tuple[Assignment, ...]:
     """Resolve the ordered assignments for one selection under one revision.
 
     raw_rce_sell says the draft's sell source is a floored raw RCE forecast;
     only revisions with raw_rce_sources honour it, alongside the preset gate.
+    settled_sell says the sell source already applies its own multiplier; only
+    revisions with settled_sell_sources then withhold the raw RCE multiplier.
     """
     rev = REVISIONS[revision]
     assignments: list[Assignment] = []
@@ -240,8 +251,12 @@ def profile_assignments(
             assignments.append(
                 Assignment(axis, profile_key, "sell_multiplier", profile.sell_ratio)
             )
-        if profile.raw_rce_sell_multiplier is not None and (
-            preset in rev.raw_rce_presets or (rev.raw_rce_sources and raw_rce_sell)
+        if (
+            profile.raw_rce_sell_multiplier is not None
+            and (
+                preset in rev.raw_rce_presets or (rev.raw_rce_sources and raw_rce_sell)
+            )
+            and not (rev.settled_sell_sources and settled_sell)
         ):
             assignments.append(
                 Assignment(
@@ -252,6 +267,26 @@ def profile_assignments(
                 )
             )
     return tuple(assignments)
+
+
+def _settled_sell_binding(
+    price: Mapping[str, object], states: Mapping[str, Mapping[str, object]]
+) -> tuple[str, str] | None:
+    if price.get("mode") != "forecast":
+        return None
+    for binding in price.get("forecast") or ():
+        entity_id = binding["entity"]["entity_id"]
+        attr = states.get(entity_id, {}).get("attributes", {}).get("settlement")
+        if isinstance(attr, str) and "multiplier" in attr:
+            return entity_id, attr
+    return None
+
+
+def is_settled_sell(
+    price: Mapping[str, object], states: Mapping[str, Mapping[str, object]]
+) -> bool:
+    """True when a forecast sell entity already applies its own multiplier."""
+    return _settled_sell_binding(price, states) is not None
 
 
 def apply_assignments(settings: dict, assignments: Iterable[Assignment]) -> None:
@@ -447,16 +482,14 @@ def settlement_notes(
 
     sell_multiplier = values.get("sell_multiplier")
     if forecast_bindings and sell_multiplier is not None and sell_multiplier != 1:
-        for binding in forecast_bindings:
-            entity_id = binding["entity"]["entity_id"]
-            attr = states.get(entity_id, {}).get("attributes", {}).get("settlement")
-            if isinstance(attr, str) and "multiplier" in attr:
-                notes.append(
-                    f"Note: sell source {entity_id} already applies its "
-                    f"settlement ({attr}); sell multiplier {sell_multiplier:g} "
-                    "applies a multiplier again — set it to 1."
-                )
-                break
+        settled = _settled_sell_binding(sell, states)
+        if settled is not None:
+            entity_id, attr = settled
+            notes.append(
+                f"Note: sell source {entity_id} already applies its "
+                f"settlement ({attr}); sell multiplier {sell_multiplier:g} "
+                "applies a multiplier again — set it to 1."
+            )
 
     if (
         settlement == "pl_net_billing"

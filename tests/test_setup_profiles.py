@@ -156,7 +156,7 @@ def test_revision_1_is_frozen():
 
 def test_revisions_are_append_only_and_immutable():
     assert sorted(sp.REVISIONS) == list(range(1, sp.SETUP_PROFILES_REVISION + 1))
-    assert sp.SETUP_PROFILES_REVISION == max(sp.REVISIONS) == 2
+    assert sp.SETUP_PROFILES_REVISION == max(sp.REVISIONS) == 3
     assert sp.CURRENT is sp.REVISIONS[sp.SETUP_PROFILES_REVISION]
 
     with pytest.raises(TypeError):
@@ -488,13 +488,13 @@ def test_selection_record():
             "inverter": "deye_hybrid",
         }
     ) == {
-        "revision": 2,
+        "revision": 3,
         "settlement": "pl_net_billing",
         "buy_tariff": "pge_g12",
         "inverter": "deye_hybrid",
     }
     assert sp.selection_record({}) == {
-        "revision": 2,
+        "revision": 3,
         "settlement": "generic",
         "buy_tariff": "generic",
         "inverter": "generic",
@@ -1268,4 +1268,95 @@ def test_note_rce_floor_variants():
     assert (
         sp.settlement_notes(config, problem, {**values, "sell_multiplier": 1.23}, {})
         == []
+    )
+
+
+def test_revision_3_is_frozen():
+    """Frozen once published: revision 3 is persisted in new entries."""
+    rev3 = sp.REVISIONS[3]
+    assert rev3.axes is sp.REVISIONS[2].axes
+    assert rev3.raw_rce_presets == frozenset({"pse", "pse_solcast"})
+    assert rev3.raw_rce_sources is True
+    assert rev3.settled_sell_sources is True
+    assert sp.CURRENT is rev3
+    assert sp.SETUP_PROFILES_REVISION == 3
+
+
+def test_revisions_1_2_have_no_settled_semantics():
+    for revision in (1, 2):
+        assert sp.REVISIONS[revision].settled_sell_sources is False
+        for preset in ("pse", "generic"):
+            selections = {"settlement": "pl_net_billing", "inverter": "generic"}
+            assert sp.profile_assignments(
+                selections,
+                preset,
+                revision=revision,
+                raw_rce_sell=True,
+                settled_sell=True,
+            ) == sp.profile_assignments(
+                selections, preset, revision=revision, raw_rce_sell=True
+            )
+
+
+@pytest.mark.parametrize(
+    ("preset", "raw", "settled", "expected"),
+    [
+        ("pse", False, True, False),
+        ("generic", True, True, False),
+        ("pse", True, True, False),
+        ("pse", False, False, True),
+        ("generic", True, False, True),
+    ],
+)
+def test_settled_sell_gate_withholds_the_raw_rce_multiplier(
+    preset, raw, settled, expected
+):
+    assignments = sp.profile_assignments(
+        {"settlement": "pl_net_billing"},
+        preset,
+        raw_rce_sell=raw,
+        settled_sell=settled,
+    )
+    has = (
+        sp.Assignment("settlement", "pl_net_billing", "sell_multiplier", 1.23)
+        in assignments
+    )
+    assert has is expected
+
+
+def test_settled_sell_gate_keeps_the_net_metering_ratio():
+    assignments = sp.profile_assignments(
+        {"settlement": "pl_net_metering_80"}, "pse", settled_sell=True
+    )
+    assert sp.Assignment(
+        "settlement", "pl_net_metering_80", "sell_multiplier", 0.8
+    ) in (assignments)
+
+
+def test_is_settled_sell():
+    states = {
+        "sensor.fx_template": {
+            "attributes": {"settlement": "RCE, floor 0, multiplier 1.23"}
+        },
+        "sensor.fx_raw": {"attributes": {"prices": []}},
+        "sensor.fx_text": {"attributes": {"settlement": "gross"}},
+    }
+
+    def forecast(entity_id):
+        return {"mode": "forecast", "forecast": [{"entity": {"entity_id": entity_id}}]}
+
+    assert sp.is_settled_sell(forecast("sensor.fx_template"), states) is True
+    assert sp.is_settled_sell(forecast("sensor.fx_raw"), states) is False
+    assert sp.is_settled_sell(forecast("sensor.fx_text"), states) is False
+    assert sp.is_settled_sell(forecast("sensor.fx_missing"), states) is False
+    assert sp.is_settled_sell({"mode": "fixed", "forecast": []}, states) is False
+    assert (
+        sp.is_settled_sell(
+            {
+                "mode": "fixed",
+                "forecast": [{"entity": {"entity_id": "sensor.fx_template"}}],
+            },
+            states,
+        )
+        is False
     )

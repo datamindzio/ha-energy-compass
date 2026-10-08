@@ -1,5 +1,6 @@
 """Immutable source assembly and bounded advisory computation."""
 
+import logging
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -10,10 +11,16 @@ from zoneinfo import ZoneInfo
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.history import get_significant_states
 from homeassistant.components.recorder.statistics import statistics_during_period
+from homeassistant.config_entries import ConfigEntryState
 
 from .balance_tracker import balance_settings, empty_state, soc_percent
 from .balance_tracker import status as balance_status
-from .config_models import NumericSetting, SourceConfig, resolve_numeric
+from .config_models import (
+    NumericSetting,
+    SolarForecastBinding,
+    SourceConfig,
+    resolve_numeric,
+)
 from .daily_export import (
     DAILY_EXPORT_MEASUREMENTS,
     daily_export_active,
@@ -57,9 +64,11 @@ from .sources.bindings import (
 from .sources.history import load_for_slots_with_quality
 from .sources.prices import price_for_slots
 from .sources.pv import sum_pv_arrays
+from .sources.solar_forecast import solar_forecast_intervals
 from .sources.tariffs import band_rows
 from .sources.throughput import resolve_daily_throughput
 
+_LOGGER = logging.getLogger(__name__)
 _AUTONOMY_HORIZON_HOURS = 48
 
 
@@ -398,6 +407,7 @@ def build_problem(
     export_commitment=None,
     grid_charge_commitment=None,
     balance_state=None,
+    solar_forecasts=None,
 ):
     """Preserve native boundaries and stop at actual contiguous source coverage."""
     values = effective_settings(config, states, now)
@@ -423,6 +433,14 @@ def build_problem(
         )
         for group in source.pv.arrays
     )
+    for binding in source.pv.solar_forecasts:
+        if solar_forecasts is None or binding.config_entry_id not in solar_forecasts:
+            raise InputError(f"Energy solar forecast missing: {binding.domain}")
+        pv_groups += (
+            solar_forecast_intervals(
+                solar_forecasts[binding.config_entry_id], now, config["timezone"]
+            ),
+        )
     groups.extend(pv_groups)
     load_forecast_group = None
     if source.load.mode == "forecast":
@@ -593,7 +611,7 @@ def build_problem(
     soc_target_window: tuple[int, ...] = ()
     soc_target_weight = 0.0
     if battery and values["autonomy_reserve"]:
-        if not source.pv.enabled or not source.pv.arrays:
+        if not source.pv.enabled or not pv_groups:
             autonomy_warnings.append("autonomy_floor_requires_pv")
         else:
             autonomy_groups = (
@@ -836,7 +854,86 @@ def build_problem(
     return problem, values, quality
 
 
+async def async_fetch_solar_forecast(hass, binding: SolarForecastBinding) -> dict:
+    """Read one Energy dashboard solar forecast as the dashboard does."""
+    domain = binding.domain
+    entry = hass.config_entries.async_get_entry(binding.config_entry_id)
+    if entry is None or entry.domain != domain:
+        raise InputError(f"Energy solar forecast entry missing: {domain}")
+    if entry.state is not ConfigEntryState.LOADED:
+        raise InputError(f"Energy solar forecast not loaded: {domain}")
+    try:
+        from homeassistant.components.energy import websocket_api as energy_api
+
+        platforms = await energy_api.async_get_energy_platforms(hass)
+    except Exception as err:
+        raise InputError(f"no Energy solar forecast platform for {domain}") from err
+    platform = platforms.get(domain)
+    if platform is None:
+        raise InputError(f"no Energy solar forecast platform for {domain}")
+    try:
+        forecast = await platform(hass, binding.config_entry_id)
+    except Exception as err:
+        raise InputError(f"Energy solar forecast failed: {domain}") from err
+    wh_hours = forecast.get("wh_hours") if isinstance(forecast, dict) else None
+    if not isinstance(wh_hours, dict) or not wh_hours:
+        raise InputError(f"Energy solar forecast unavailable: {domain}")
+    return dict(wh_hours)
+
+
+async def async_energy_forecast_options(hass) -> dict[str, str]:
+    """Loaded config entries that provide an Energy solar forecast, id to domain."""
+    try:
+        from homeassistant.components.energy import websocket_api as energy_api
+
+        platforms = await energy_api.async_get_energy_platforms(hass)
+    except Exception:
+        _LOGGER.debug("Energy solar forecast platforms unavailable", exc_info=True)
+        return {}
+    return {
+        entry.entry_id: entry.domain
+        for entry in hass.config_entries.async_entries()
+        if entry.domain in platforms and entry.state is ConfigEntryState.LOADED
+    }
+
+
+async def async_prefs_forecast_entries(hass) -> tuple[str, ...]:
+    """Config entry ids the Energy dashboard uses for its solar forecast."""
+    try:
+        from homeassistant.components.energy.data import async_get_manager
+
+        data = (await async_get_manager(hass)).data
+    except Exception:
+        _LOGGER.debug("Energy preferences unavailable", exc_info=True)
+        return ()
+    result = []
+    for source in (data or {}).get("energy_sources", ()):
+        if source.get("type") == "solar":
+            result.extend(source.get("config_entry_solar_forecast") or ())
+    return tuple(dict.fromkeys(result))
+
+
+async def async_solar_forecasts(hass, config: dict) -> dict[str, dict]:
+    """Fetch every configured Energy solar forecast, keyed by config entry id."""
+    bindings = SourceConfig.from_dict(config["sources"]).pv.solar_forecasts
+    return {
+        binding.config_entry_id: await async_fetch_solar_forecast(hass, binding)
+        for binding in bindings
+    }
+
+
 async def async_history(hass, config, states, now):
+    """Recorder history for the load source plus Energy solar forecasts for PV."""
+    history, extra = await _async_load_history(hass, config, states, now)
+    if SourceConfig.from_dict(config["sources"]).pv.solar_forecasts:
+        history = {
+            **history,
+            "solar_forecasts": await async_solar_forecasts(hass, config),
+        }
+    return history, extra
+
+
+async def _async_load_history(hass, config, states, now):
     """Use recorder's own executor for history and external statistic IDs."""
     source = SourceConfig.from_dict(config["sources"]).load
     if source.mode != "recorder":

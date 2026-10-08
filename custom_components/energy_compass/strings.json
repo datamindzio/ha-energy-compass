@@ -124,7 +124,8 @@
         "data": {
           "confirm": "Confirm",
           "confirm_buy_source": "I confirm the displayed buy source and resolved import rate, including a free rate if shown",
-          "confirm_load_source": "I confirm the displayed household load source and estimate or fallback method"
+          "confirm_load_source": "I confirm the displayed household load source and estimate or fallback method",
+          "back_to_menu": "Back to the main menu (nothing is saved)"
         },
         "description": "{preview}"
       },
@@ -315,7 +316,9 @@
           "presentation": "Presentation",
           "notifications": "Notification preferences",
           "helpers": "Numeric helper bindings",
-          "preview": "Preview and save"
+          "preview": "Preview and save",
+          "show_expert": "Show expert settings",
+          "hide_expert": "Hide expert settings"
         }
       },
       "currency_review": {
@@ -432,6 +435,33 @@
           "calibration": "Calibration"
         },
         "description": "Edit fixed rates and separate multipliers, VAT and additions. {detail}"
+      },
+      "pv_solar_forecast": {
+        "title": "Energy dashboard solar forecast",
+        "data": {
+          "config_entries": "Forecast integrations (added together)"
+        },
+        "description": "{detail}"
+      },
+      "detected_sources": {
+        "title": "Detected sources",
+        "description": "Energy Compass found these sources by integration identity and your Energy dashboard settings, not by entity name. Chosen rows are bound when you continue and Preview opens. Every source stays editable in Sources.\n\n{detected}\n\n{notes}",
+        "data": {
+          "pv": "PV forecast",
+          "sell": "Sell price",
+          "load": "Household load history",
+          "soc": "Battery SOC",
+          "bms_soc": "BMS SOC (agreement check)",
+          "battery_power": "Battery power",
+          "pv_power": "PV power",
+          "grid_import_power": "Grid import power",
+          "grid_export_power": "Grid export power",
+          "pv_energy": "PV energy",
+          "grid_import_energy": "Grid import energy",
+          "grid_export_energy": "Grid export energy",
+          "pv_energy_today": "PV energy today",
+          "grid_export_energy_today": "Grid export energy today"
+        }
       }
     },
     "error": {
@@ -567,7 +597,8 @@
         "data": {
           "confirm": "Confirm",
           "confirm_buy_source": "I confirm the displayed buy source and resolved import rate, including a free rate if shown",
-          "confirm_load_source": "I confirm the displayed household load source and estimate or fallback method"
+          "confirm_load_source": "I confirm the displayed household load source and estimate or fallback method",
+          "back_to_menu": "Back to the main menu (nothing is saved)"
         },
         "description": "{preview}"
       },
@@ -760,7 +791,9 @@
           "helpers": "Numeric helper bindings",
           "energy_atlas": "Energy Atlas (optional)",
           "energy_atlas_proof": "Energy Atlas: show ownership proof",
-          "preview": "Preview and save"
+          "preview": "Preview and save",
+          "show_expert": "Show expert settings",
+          "hide_expert": "Hide expert settings"
         }
       },
       "currency_review": {
@@ -898,6 +931,13 @@
       "energy_atlas_proof": {
         "title": "Energy Atlas ownership proof",
         "description": "Send this to the Energy Atlas bot within 15 minutes; it is single-use and not stored anywhere:\n\n{proof}"
+      },
+      "pv_solar_forecast": {
+        "title": "Energy dashboard solar forecast",
+        "data": {
+          "config_entries": "Forecast integrations (added together)"
+        },
+        "description": "{detail}"
       }
     },
     "error": {

@@ -37,6 +37,7 @@ _LABELS = {
         "power_history": "Power history",
         "back": "Back to Sources",
         "group": "PV group",
+        "solar_forecast": "Energy dashboard solar forecast",
         "continuation": "continuation",
         "attribute": "attribute",
         "value": "value",
@@ -77,6 +78,7 @@ _LABELS = {
         "power_history": "Historia mocy",
         "back": "Powrót do źródeł",
         "group": "Grupa PV",
+        "solar_forecast": "Prognoza PV z panelu Energia",
         "continuation": "kontynuacja",
         "attribute": "atrybut",
         "value": "wartość",
@@ -121,6 +123,7 @@ def source_error_detail(error, language):
         "replace or disable PV before removing its final group": "Zastąp ostatnią grupę PV albo wyłącz PV przed jej usunięciem.",
         "remove the PV group explicitly or add a replacement": "Usuń całą grupę PV osobną operacją albo dodaj źródło zastępcze.",
         "disable daily cycles or replace daily throughput before removing it": "Wyłącz dzienny limit cykli albo zastąp pomiar energii przed usunięciem.",
+        "RCE sensor must report PLN/MWh": "Czujnik RCE musi podawać PLN/MWh.",
         "selected source changed; select it again": "Wybrane źródło uległo zmianie; wybierz je ponownie.",
         "price source currency or unit mismatch": "Waluta lub jednostka źródła ceny nie pasuje do instalacji.",
         "price source must be a sensor, number or input_number": "Cena musi pochodzić z encji sensor, number lub input_number.",
@@ -222,6 +225,13 @@ def source_inventory(config, registry=None, language="en"):
                     f"{labels['group']} {group_index + 1} · {labels['continuation']} {binding_index + 1} · {describe(binding)}",
                 )
             )
+    for index, forecast in enumerate(sources["pv"].get("solar_forecasts", ())):
+        result.append(
+            (
+                SourceRef("pv", "solar_forecast", binding_index=index),
+                f"{labels['pv']} · {labels['solar_forecast']} · {forecast['domain']} {forecast['config_entry_id']}",
+            )
+        )
     load = sources["load"]
     if load["mode"] == "forecast":
         origin = describe(load["forecast"])
@@ -265,6 +275,8 @@ def selected_source(config, ref):
                 sources[ref.role],
                 config.get("helpers", {}).get(f"{ref.role}_rate"),
             )
+        if ref.role == "pv" and ref.kind == "solar_forecast":
+            return sources["pv"]["solar_forecasts"][ref.binding_index]
         if ref.role == "pv":
             group = sources["pv"]["arrays"][ref.group_index]
             return group if ref.kind == "group" else group[ref.binding_index]
@@ -318,6 +330,14 @@ def remove_source(config, ref, original, *, cycles_active=False):
                 rows.pop(ref.binding_index)
                 return candidate
         raise InputError("replace or disable the required source before removing it")
+    if ref.role == "pv" and ref.kind == "solar_forecast":
+        forecasts = sources["pv"]["solar_forecasts"]
+        if sources["pv"]["enabled"] and len(forecasts) == 1:
+            raise InputError("replace or disable PV before removing its final group")
+        forecasts.pop(ref.binding_index)
+        if not forecasts:
+            sources["pv"].pop("solar_forecasts")
+        return candidate
     if ref.role == "pv":
         groups = sources["pv"]["arrays"]
         if ref.kind == "group":

@@ -261,6 +261,9 @@ async def test_native_options_save_power_floor(
     await hass.async_block_till_done(wait_background_tasks=True)
     result = await hass.config_entries.options.async_init(entry.entry_id)
     fid = result["flow_id"]
+    await hass.config_entries.options.async_configure(
+        fid, {"next_step_id": "show_expert"}
+    )
     form = await hass.config_entries.options.async_configure(
         fid, {"next_step_id": "planning"}
     )
@@ -435,6 +438,7 @@ async def test_native_initial_flow_saves_power_floor(
             "battery_enabled": False,
         },
     )
+    await hass.config_entries.flow.async_configure(fid, {"next_step_id": "show_expert"})
     await hass.config_entries.flow.async_configure(fid, {"next_step_id": "planning"})
     await hass.config_entries.flow.async_configure(fid, {"minimum_mode_power_kw": 0.25})
     await hass.config_entries.flow.async_configure(fid, {"next_step_id": "preview"})

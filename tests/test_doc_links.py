@@ -24,6 +24,7 @@ FILES = (
     "docs/model.md",
     "docs/tariff-helper.md",
     "docs/source-contracts.md",
+    "docs/source-requirements.md",
 )
 
 _ATX_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")

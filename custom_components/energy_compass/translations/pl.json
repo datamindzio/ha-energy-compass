@@ -124,7 +124,8 @@
         "data": {
           "confirm": "Akceptuję podgląd i zapis",
           "confirm_buy_source": "Potwierdzam pokazane źródło i stawkę zakupu, także zerową stawkę, jeśli ją pokazano",
-          "confirm_load_source": "Potwierdzam pokazane źródło zużycia domu i metodę szacowania lub zastępowania danych"
+          "confirm_load_source": "Potwierdzam pokazane źródło zużycia domu i metodę szacowania lub zastępowania danych",
+          "back_to_menu": "Wróć do menu głównego (nic nie zostanie zapisane)"
         },
         "description": "{preview}"
       },
@@ -315,7 +316,9 @@
           "presentation": "Prezentacja",
           "notifications": "Ustawienia powiadomień",
           "helpers": "Pomocniki liczbowe",
-          "preview": "Podgląd i zapis"
+          "preview": "Podgląd i zapis",
+          "show_expert": "Pokaż ustawienia eksperckie",
+          "hide_expert": "Ukryj ustawienia eksperckie"
         }
       },
       "currency_review": {
@@ -432,6 +435,33 @@
           "calibration": "Kalibracja taryfy"
         },
         "description": "Edytuj stałe stawki oraz oddzielne mnożniki, VAT i dodatki. {detail}"
+      },
+      "pv_solar_forecast": {
+        "title": "Prognoza PV z panelu Energia",
+        "data": {
+          "config_entries": "Integracje prognozy (sumowane)"
+        },
+        "description": "{detail}"
+      },
+      "detected_sources": {
+        "title": "Wykryte źródła",
+        "description": "Energy Compass znalazł te źródła po tożsamości integracji i ustawieniach panelu Energia, nie po nazwie encji. Wybrane wiersze zostaną powiązane, gdy przejdziesz dalej, i otworzy się Podgląd. Każde źródło możesz później zmienić w Źródłach danych.\n\n{detected}\n\n{notes}",
+        "data": {
+          "pv": "Prognoza PV",
+          "sell": "Cena sprzedaży",
+          "load": "Historia zużycia domu",
+          "soc": "SOC baterii",
+          "bms_soc": "SOC z BMS (kontrola zgodności)",
+          "battery_power": "Moc baterii",
+          "pv_power": "Moc PV",
+          "grid_import_power": "Moc importu z sieci",
+          "grid_export_power": "Moc eksportu do sieci",
+          "pv_energy": "Energia PV",
+          "grid_import_energy": "Energia importu z sieci",
+          "grid_export_energy": "Energia eksportu do sieci",
+          "pv_energy_today": "Dzienna energia PV",
+          "grid_export_energy_today": "Dzienna energia eksportu do sieci"
+        }
       }
     },
     "error": {
@@ -567,7 +597,8 @@
         "data": {
           "confirm": "Akceptuję podgląd i zapis",
           "confirm_buy_source": "Potwierdzam pokazane źródło i stawkę zakupu, także zerową stawkę, jeśli ją pokazano",
-          "confirm_load_source": "Potwierdzam pokazane źródło zużycia domu i metodę szacowania lub zastępowania danych"
+          "confirm_load_source": "Potwierdzam pokazane źródło zużycia domu i metodę szacowania lub zastępowania danych",
+          "back_to_menu": "Wróć do menu głównego (nic nie zostanie zapisane)"
         },
         "description": "{preview}"
       },
@@ -760,7 +791,9 @@
           "helpers": "Pomocniki liczbowe",
           "energy_atlas": "Energy Atlas (opcjonalnie)",
           "energy_atlas_proof": "Energy Atlas: pokaż dowód własności",
-          "preview": "Podgląd i zapis"
+          "preview": "Podgląd i zapis",
+          "show_expert": "Pokaż ustawienia eksperckie",
+          "hide_expert": "Ukryj ustawienia eksperckie"
         }
       },
       "currency_review": {
@@ -898,6 +931,13 @@
       "energy_atlas_proof": {
         "title": "Dowód własności Energy Atlas",
         "description": "Wyślij to do bota Energy Atlas w ciągu 15 minut; jest jednorazowy i nigdzie nie jest zapisywany:\n\n{proof}"
+      },
+      "pv_solar_forecast": {
+        "title": "Prognoza PV z panelu Energia",
+        "data": {
+          "config_entries": "Integracje prognozy (sumowane)"
+        },
+        "description": "{detail}"
       }
     },
     "error": {
