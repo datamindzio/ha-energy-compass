@@ -85,6 +85,8 @@ class Harness:
         self.revoked = None
         self.battery = dict(BATTERY)
         self.prefix = PREFIX
+        # (state, attributes) of a controller sensor produced elsewhere.
+        self.fixed_controller = None
         # None, "absent", "unavailable", "schema" or "no_mode_entity".
         self.controller_missing = None
         self.set(MODE, "Auto", options=["Off", "Simulation", "Auto"])
@@ -164,6 +166,14 @@ class Harness:
             and entity.split(".")[1].startswith(self.prefix)
             and not entity.endswith("_charging_raw")
         }
+        if self.fixed_controller is not None:
+            state, attrs = self.fixed_controller
+            self.data[CONTROLLER] = {
+                "state": state,
+                "attributes": attrs,
+                "last_reported": self.now.isoformat(),
+            }
+            return
         if self.controller_missing == "absent":
             self.data.pop(CONTROLLER, None)
             return
@@ -223,6 +233,8 @@ class Harness:
 
     def accept(self):
         """Let Energy Compass process the current publication; the new snapshot or {}."""
+        if self.fixed_controller is not None:
+            return {}
         before = self.controller_state()
         after = core.step(
             before,

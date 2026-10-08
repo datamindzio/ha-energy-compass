@@ -128,3 +128,37 @@ async def tick(hass, freezer, seconds):
     freezer.tick(timedelta(seconds=seconds))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
+
+
+PACKAGE_DOMAINS = {
+    "mode": "input_select",
+    "session": "input_boolean",
+    "session_start": "input_datetime",
+    "restore_pending": "input_boolean",
+    "snapshot": "sensor",
+    "runtime": "sensor",
+}
+
+
+def package_states(hass, *, mode, session, session_start, pending, snapshot, runtime):
+    """Register the 0.1.36 package helpers and give them these states."""
+    registry = er.async_get(hass)
+    ids = {
+        role: registry.async_get_or_create(
+            PACKAGE_DOMAINS[role], platform, unique_id
+        ).entity_id
+        for role, (platform, unique_id) in core.PACKAGE_IDENTITIES.items()
+    }
+    hass.states.async_set(ids["mode"], mode)
+    hass.states.async_set(ids["session"], session)
+    hass.states.async_set(
+        ids["session_start"], "2026-09-19 11:39:00", {"timestamp": session_start}
+    )
+    hass.states.async_set(ids["restore_pending"], pending)
+    hass.states.async_set(
+        ids["snapshot"], snapshot.get("generated_at", "none"), {"snapshot": snapshot}
+    )
+    hass.states.async_set(
+        ids["runtime"], runtime.get("code", "waiting"), {"runtime": runtime}
+    )
+    return ids
