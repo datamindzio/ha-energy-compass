@@ -14,7 +14,7 @@ cards:
     {% set colors = {''CHARGE_PV'':''🟢'',''CHARGE_GRID'':''🔵'',''DISCHARGE_GRID'':''🟠'',''SELF_CONSUME'':''🟣'',''HOLD'':''⚪'',''CURTAIL'':''⚪'',''BASE'':''⚪''}
     %}
 
-    {% set rt = state_attr(''sensor.energy_compass_deye_runtime'',''runtime'') or {} %}
+    {% set rt = state_attr(''sensor.energy_compass_deye_controller_runtime'',''runtime'') or {} %}
 
     {% set plan = ''sensor.replace_with_plan'' %}
 
@@ -53,9 +53,10 @@ cards:
 
     | Unconfirmed writes | {{ rt.get(''uncertain'',[])|length }} |
 
-    | Controller session | {{ states(''input_boolean.energy_compass_deye_session'') }} |
+    | Controller session | {{ state_attr(''sensor.energy_compass_deye_controller'',''session'') }} |
 
-    | Restore after the session | {{ states(''input_boolean.energy_compass_deye_restore_pending'') }} |
+    | Restore after the session | {{ state_attr(''sensor.energy_compass_deye_controller_runtime'',''restore_pending'') }}
+    |
 
 
     {% if rt.get(''warning'') %}⚠️ {{ rt.warning }}{% endif %}
@@ -78,6 +79,8 @@ cards:
   - type: simple-entity
     entity: number.replace_with_battery_grid_charging_current
     name: Grid charge limit
-  - type: simple-entity
-    entity: sensor.energy_compass_deye_next_tou
+  - type: attribute
+    entity: sensor.energy_compass_deye_controller
+    attribute: next_tou
+    format: datetime
     name: Next TOU change

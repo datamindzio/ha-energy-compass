@@ -46,7 +46,9 @@ VALUES = {
     "export_prices": "sensor.sell_prices",
     "deposit": "sensor.export_value",
     "capacity": "12.5",
-    "prefix": "inverter_2_program_",
+    "deye_controller": "sensor.home_sterownik_deye",
+    "deye_mode": "select.home_tryb_sterownika_deye",
+    "deye_runtime": "sensor.home_stan_pracy_sterownika_deye",
 }
 
 
@@ -77,7 +79,7 @@ def test_filled_template_equals_generator_output(section, lang):
         ("plan", "Sensor.Plan"),
         ("capacity", "25; x"),
         ("capacity", "-1"),
-        ("prefix", "inverter deye"),
+        ("deye_mode", "select.Deye Mode"),
         ("tariff_group", "G13"),
         ("afternoon_window", "summer"),
         ("meter_clock", "summer"),
@@ -105,3 +107,20 @@ def test_tariff_and_rce_templates_keep_the_examples_otherwise_unchanged():
             if a != b
         ]
         assert len(changed) == len(lines)
+
+
+def test_the_builder_has_no_package_section_and_no_prefix_field():
+    assert "package" not in builder.SECTIONS
+    assert "prefix" not in builder.FIELDS and "prefix" not in builder.PATTERNS
+    assert {"deye_controller", "deye_mode", "deye_runtime"} <= set(builder.FIELDS)
+    text = builder.TEMPLATES.read_text(encoding="utf-8")
+    assert "inverter_deye_program_" not in text and "deye_solarman" not in text
+    assert "energy_compass_deye_" in text  # the three role examples only
+
+
+def test_the_deye_roles_are_substituted_everywhere_in_the_panel():
+    for lang in ("en", "pl"):
+        text = builder.templates()["panel"][lang]["yaml"]
+        for role in ("deye_controller", "deye_mode", "deye_runtime"):
+            assert builder.token(role) in text or role == "deye_controller"
+        assert "energy_compass_deye_" not in text

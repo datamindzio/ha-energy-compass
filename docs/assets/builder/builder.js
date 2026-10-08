@@ -5,16 +5,16 @@
 
   const TEXT = {
     en: {
-      intro: 'Pick a section, enter your entity IDs and copy the YAML. Dashboard sections go into a Sections view (Edit dashboard → ⋮ → Raw configuration editor); the package goes into config/packages/.',
+      intro: 'Pick a section, enter your entity IDs and copy the YAML. Dashboard sections go into a Sections view (Edit dashboard → ⋮ → Raw configuration editor); the tariff and RCE examples go into config/packages/.',
       lang: 'Language', section: 'Section', copy: 'Copy', copied: 'Copied.',
       invalid: 'Fix the highlighted fields.',
-      note: 'The ApexCharts sections need ApexCharts Card 2.2.3 or later. The package prefix must match your Solarman TOU program entities, e.g. number.<prefix>1_power. Tariff prices are final prices per kWh; the tariff and RCE packages go into config/packages/ and are then selected in Energy Compass as interval forecasts (see the tariff helper guide).',
+      note: 'The ApexCharts sections need ApexCharts Card 2.2.3 or later. The Deye controller entities are the three created by Options → Deye controller; use the IDs shown on the device page. Tariff prices are final prices per kWh; the tariff and RCE packages go into config/packages/ and are then selected in Energy Compass as interval forecasts (see the tariff helper guide).',
     },
     pl: {
-      intro: 'Wybierz sekcję, wpisz identyfikatory swoich encji i skopiuj YAML. Sekcje dashboardu wklej do widoku Sections (Edytuj dashboard → ⋮ → Edytor surowej konfiguracji); pakiet trafia do config/packages/.',
+      intro: 'Wybierz sekcję, wpisz identyfikatory swoich encji i skopiuj YAML. Sekcje dashboardu wklej do widoku Sections (Edytuj dashboard → ⋮ → Edytor surowej konfiguracji); przykłady taryfy i RCE trafiają do config/packages/.',
       lang: 'Język', section: 'Sekcja', copy: 'Kopiuj', copied: 'Skopiowano.',
       invalid: 'Popraw zaznaczone pola.',
-      note: 'Sekcje ApexCharts wymagają ApexCharts Card 2.2.3 lub nowszej. Prefiks pakietu musi pasować do encji programów TOU z Solarman, np. number.<prefiks>1_power. Ceny taryfy to ceny końcowe za kWh; pakiety taryfy i RCE trafiają do config/packages/, a potem wybiera się je w Energy Compass jako prognozy przedziałowe (zob. przewodnik pomocnika taryfy).',
+      note: 'Sekcje ApexCharts wymagają ApexCharts Card 2.2.3 lub nowszej. Encje sterownika Deye to trzy encje utworzone przez Opcje → Sterownik Deye; użyj identyfikatorów ze strony urządzenia. Ceny taryfy to ceny końcowe za kWh; pakiety taryfy i RCE trafiają do config/packages/, a potem wybiera się je w Energy Compass jako prognozy przedziałowe (zob. przewodnik pomocnika taryfy).',
     },
   };
 

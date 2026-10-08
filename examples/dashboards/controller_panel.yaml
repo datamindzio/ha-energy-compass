@@ -22,10 +22,10 @@ cards:
     - condition: and
       conditions:
       - condition: state
-        entity: input_select.energy_compass_deye_mode
+        entity: select.energy_compass_deye_mode
         state: Auto
       - condition: state
-        entity: sensor.energy_compass_deye_runtime
+        entity: sensor.energy_compass_deye_controller_runtime
         state_not: ok
   card:
     type: markdown
@@ -37,7 +37,7 @@ cards:
       {% set colors = {''CHARGE_PV'':''🟢'',''CHARGE_GRID'':''🔵'',''DISCHARGE_GRID'':''🟠'',''SELF_CONSUME'':''🟣'',''HOLD'':''⚪'',''CURTAIL'':''⚪'',''BASE'':''⚪''}
       %}
 
-      {% set rt = state_attr(''sensor.energy_compass_deye_runtime'',''runtime'') or {} %}
+      {% set rt = state_attr(''sensor.energy_compass_deye_controller_runtime'',''runtime'') or {} %}
 
       {% set plan = ''sensor.replace_with_plan'' %}
 
@@ -55,7 +55,7 @@ cards:
 
       {% endif %}
 
-      {% if is_state(''input_select.energy_compass_deye_mode'',''Auto'') %}
+      {% if is_state(''select.energy_compass_deye_mode'',''Auto'') %}
 
       {% if rt.get(''code'') != ''ok'' %}⚠️ Controller: {{ rt.get(''reason'') or rt.get(''code'') or ''No data'' }}{% endif
       %}
@@ -94,7 +94,7 @@ cards:
       {% set colors = {''CHARGE_PV'':''🟢'',''CHARGE_GRID'':''🔵'',''DISCHARGE_GRID'':''🟠'',''SELF_CONSUME'':''🟣'',''HOLD'':''⚪'',''CURTAIL'':''⚪'',''BASE'':''⚪''}
       %}
 
-      {% set rt = state_attr(''sensor.energy_compass_deye_runtime'',''runtime'') or {} %}
+      {% set rt = state_attr(''sensor.energy_compass_deye_controller_runtime'',''runtime'') or {} %}
 
       {% set plan = ''sensor.replace_with_plan'' %}
 
@@ -118,12 +118,12 @@ cards:
       {% endif %}
 
 
-      Control: **{{ {''Auto'':''Automatic'',''Simulation'':''Simulation'',''Off'':''Off''}.get(states(''input_select.energy_compass_deye_mode''),''Unavailable'')
+      Control: **{{ {''Auto'':''Automatic'',''Simulation'':''Simulation'',''Off'':''Off''}.get(states(''select.energy_compass_deye_mode''),''Unavailable'')
       }}**
 
 
-      {% if is_state(''input_select.energy_compass_deye_mode'',''Auto'') and fresh and rt.get(''code'') == ''ok'' and not
-      rt.get(''uncertain'') %}
+      {% if is_state(''select.energy_compass_deye_mode'',''Auto'') and fresh and rt.get(''code'') == ''ok'' and not rt.get(''uncertain'')
+      %}
 
       Settings confirmed: **{{ labels.get(rt.get(''confirmed_mode''),''No mode confirmation'') }}**
 
@@ -136,7 +136,7 @@ cards:
       columns: 12
       rows: auto
   - type: tile
-    entity: input_select.energy_compass_deye_mode
+    entity: select.energy_compass_deye_mode
     name: Control mode
     icon: mdi:compass
     features:
@@ -150,7 +150,7 @@ cards:
     {% set colors = {''CHARGE_PV'':''🟢'',''CHARGE_GRID'':''🔵'',''DISCHARGE_GRID'':''🟠'',''SELF_CONSUME'':''🟣'',''HOLD'':''⚪'',''CURTAIL'':''⚪'',''BASE'':''⚪''}
     %}
 
-    {% set rt = state_attr(''sensor.energy_compass_deye_runtime'',''runtime'') or {} %}
+    {% set rt = state_attr(''sensor.energy_compass_deye_controller_runtime'',''runtime'') or {} %}
 
     {% set plan = ''sensor.replace_with_plan'' %}
 
@@ -191,11 +191,11 @@ cards:
 
     {% set confirmed = rt.get(''confirmed'') or {} %}
 
-    {% set prefix = state_attr(''sensor.energy_compass_deye_tou_settings'',''prefix'') or '''' %}
+    {% set prefix = state_attr(''sensor.energy_compass_deye_controller'',''program_prefix'') or '''' %}
 
     {% set target = confirmed.get(''number.'' ~ prefix ~ n ~ ''_soc'') %}
 
-    {% if is_state(''input_select.energy_compass_deye_mode'',''Auto'') and fresh and rt.get(''code'') == ''ok'' and not rt.get(''uncertain'')
+    {% if is_state(''select.energy_compass_deye_mode'',''Auto'') and fresh and rt.get(''code'') == ''ok'' and not rt.get(''uncertain'')
     and target is not none %}
 
     {{ ''SOC target'' if rt.get(''confirmed_mode'') == ''CHARGE_GRID'' else ''SOC floor'' }} of the controller: **{{ target|round(0)|int
@@ -242,7 +242,7 @@ cards:
     {% set colors = {''CHARGE_PV'':''🟢'',''CHARGE_GRID'':''🔵'',''DISCHARGE_GRID'':''🟠'',''SELF_CONSUME'':''🟣'',''HOLD'':''⚪'',''CURTAIL'':''⚪'',''BASE'':''⚪''}
     %}
 
-    {% set rt = state_attr(''sensor.energy_compass_deye_runtime'',''runtime'') or {} %}
+    {% set rt = state_attr(''sensor.energy_compass_deye_controller_runtime'',''runtime'') or {} %}
 
     {% set plan = ''sensor.replace_with_plan'' %}
 
@@ -367,7 +367,7 @@ cards:
     {% set colors = {''CHARGE_PV'':''🟢'',''CHARGE_GRID'':''🔵'',''DISCHARGE_GRID'':''🟠'',''SELF_CONSUME'':''🟣'',''HOLD'':''⚪'',''CURTAIL'':''⚪'',''BASE'':''⚪''}
     %}
 
-    {% set rt = state_attr(''sensor.energy_compass_deye_runtime'',''runtime'') or {} %}
+    {% set rt = state_attr(''sensor.energy_compass_deye_controller_runtime'',''runtime'') or {} %}
 
     {% set plan = ''sensor.replace_with_plan'' %}
 
@@ -438,11 +438,11 @@ cards:
     columns: 24
     rows: auto
   entities:
-  - entity: input_select.energy_compass_deye_mode
+  - entity: select.energy_compass_deye_mode
     name: Control
   - entity: sensor.replace_with_energy_compass
     name: Battery recommendation
-  - entity: sensor.energy_compass_deye_runtime
+  - entity: sensor.energy_compass_deye_controller_runtime
     name: Controller state
   - entity: sensor.replace_with_battery_state
     name: Battery operation

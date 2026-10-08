@@ -50,6 +50,9 @@ ENTITIES = {
     "import_price": "sensor.replace_with_import_price",
     "export_prices": "sensor.energy_compass_rce_export_forecast",
     "deposit": "sensor.replace_with_export_value",
+    "deye_controller": "sensor.energy_compass_deye_controller",
+    "deye_mode": "select.energy_compass_deye_mode",
+    "deye_runtime": "sensor.energy_compass_deye_controller_runtime",
 }
 CAPACITY_KWH = (
     25  # Must match the Energy Compass battery capacity, not the BMS capacity.
@@ -460,12 +463,8 @@ def consumer_section(entities=ENTITIES, lang="en"):
 
 
 # --- Controller panel and diagnostics -------------------------------------
-# The Deye controller package fixes these entity IDs.
-MODE = "input_select.energy_compass_deye_mode"
-RUNTIME = "sensor.energy_compass_deye_runtime"
-SESSION = "input_boolean.energy_compass_deye_session"
-RESTORE = "input_boolean.energy_compass_deye_restore_pending"
-NEXT_TOU = "sensor.energy_compass_deye_next_tou"
+# The deye_* roles default to the IDs a fresh English installation gets; a localized
+# instance passes its own with --entity (read them from the device page).
 PANEL_TEXT = {
     "en": {
         "title": "Battery",
@@ -649,9 +648,7 @@ PANEL_BASE = (
 {% set colors = """
     + COLORS
     + """ %}
-{% set rt = state_attr('"""
-    + RUNTIME
-    + """','runtime') or {} %}
+{% set rt = state_attr('@deye_runtime@','runtime') or {} %}
 {% set plan = '@plan@' %}
 {% set valid = is_state('@valid@','on') and as_timestamp(state_attr(plan,'valid_until'),0) > as_timestamp(now()) %}
 {% set fresh = as_timestamp(rt.get('original_deadline'),0) > as_timestamp(now()) and as_timestamp(rt.get('last_confirmation'),0) > 0 %}
@@ -682,9 +679,7 @@ def panel_section(entities=ENTITIES, lang="en", capacity=CAPACITY_KWH):
 {% if is_state('@alert@','on') %}
 ⚠️ {{ state_attr('@alert@','reason') or '@t:compass_problem@' }}
 {% endif %}
-{% if is_state('"""
-        + MODE
-        + """','Auto') %}
+{% if is_state('@deye_mode@','Auto') %}
 {% if rt.get('code') != 'ok' %}⚠️ @t:controller@: {{ rt.get('reason') or rt.get('code') or '@t:no_data@' }}{% endif %}
 {% if not fresh %}⚠️ @t:no_fresh@{% endif %}
 {% if rt.get('uncertain') %}⚠️ @t:unconfirmed_writes@: {{ rt.get('uncertain')|length }}.{% endif %}
@@ -707,10 +702,14 @@ def panel_section(entities=ENTITIES, lang="en", capacity=CAPACITY_KWH):
                     {
                         "condition": "and",
                         "conditions": [
-                            {"condition": "state", "entity": MODE, "state": "Auto"},
                             {
                                 "condition": "state",
-                                "entity": RUNTIME,
+                                "entity": e["deye_mode"],
+                                "state": "Auto",
+                            },
+                            {
+                                "condition": "state",
+                                "entity": e["deye_runtime"],
                                 "state_not": "ok",
                             },
                         ],
@@ -751,13 +750,9 @@ def panel_section(entities=ENTITIES, lang="en", capacity=CAPACITY_KWH):
 @t:no_power@
 {% endif %}
 
-@t:control@: **{{ @t:modes@.get(states('"""
-                + MODE
-                + """'),'@t:unavailable@') }}**
+@t:control@: **{{ @t:modes@.get(states('@deye_mode@'),'@t:unavailable@') }}**
 
-{% if is_state('"""
-                + MODE
-                + """','Auto') and fresh and rt.get('code') == 'ok' and not rt.get('uncertain') %}
+{% if is_state('@deye_mode@','Auto') and fresh and rt.get('code') == 'ok' and not rt.get('uncertain') %}
 @t:confirmed@: **{{ labels.get(rt.get('confirmed_mode'),'@t:no_confirmation@') }}**
 {% else %}
 @t:status@: **{{ rt.get('reason') or rt.get('code') or '@t:no_data@' }}**
@@ -768,7 +763,7 @@ def panel_section(entities=ENTITIES, lang="en", capacity=CAPACITY_KWH):
             ),
             {
                 "type": "tile",
-                "entity": MODE,
+                "entity": e["deye_mode"],
                 "name": t["mode"],
                 "icon": "mdi:compass",
                 "features": [{"type": "select-options"}],
@@ -794,11 +789,9 @@ def panel_section(entities=ENTITIES, lang="en", capacity=CAPACITY_KWH):
 
 {% set n = rt.get('active_tou',0)|int %}
 {% set confirmed = rt.get('confirmed') or {} %}
-{% set prefix = state_attr('sensor.energy_compass_deye_tou_settings','prefix') or '' %}
+{% set prefix = state_attr('@deye_controller@','program_prefix') or '' %}
 {% set target = confirmed.get('number.' ~ prefix ~ n ~ '_soc') %}
-{% if is_state('"""
-        + MODE
-        + """','Auto') and fresh and rt.get('code') == 'ok' and not rt.get('uncertain') and target is not none %}
+{% if is_state('@deye_mode@','Auto') and fresh and rt.get('code') == 'ok' and not rt.get('uncertain') and target is not none %}
 {{ '@t:soc_target@' if rt.get('confirmed_mode') == 'CHARGE_GRID' else '@t:soc_floor@' }} @t:of_controller@: **{{ target|round(0)|int }}%**
 {% endif %}
 
@@ -933,9 +926,9 @@ return points;""",
             "hours_to_show": 24,
             "grid_options": {"columns": 24, "rows": "auto"},
             "entities": [
-                {"entity": MODE, "name": t["h_mode"]},
+                {"entity": e["deye_mode"], "name": t["h_mode"]},
                 {"entity": e["machine"], "name": t["h_machine"]},
-                {"entity": RUNTIME, "name": t["h_runtime"]},
+                {"entity": e["deye_runtime"], "name": t["h_runtime"]},
                 {"entity": e["battery_state"], "name": t["h_battery"]},
             ],
         },
@@ -986,8 +979,8 @@ def diagnostics_section(entities=ENTITIES, lang="en"):
         ),
         ("active_tou", "rt.get('active_tou','—')"),
         ("uncertain", "rt.get('uncertain',[])|length"),
-        ("session", f"states('{SESSION}')"),
-        ("restore", f"states('{RESTORE}')"),
+        ("session", "state_attr('@deye_controller@','session')"),
+        ("restore", "state_attr('@deye_runtime@','restore_pending')"),
     ]
     table = "| @t:param@ | @t:state@ |\n|:--|:--|\n" + "\n".join(
         f"| @t:{k}@ | {{{{ {v} }}}} |" for k, v in rows
@@ -1023,7 +1016,13 @@ def diagnostics_section(entities=ENTITIES, lang="en"):
                 "name": t["l_discharge"],
             },
             {"type": "simple-entity", "entity": e["grid_limit"], "name": t["l_grid"]},
-            {"type": "simple-entity", "entity": NEXT_TOU, "name": t["l_tou"]},
+            {
+                "type": "attribute",
+                "entity": e["deye_controller"],
+                "attribute": "next_tou",
+                "format": "datetime",
+                "name": t["l_tou"],
+            },
         ],
     }
     return {
