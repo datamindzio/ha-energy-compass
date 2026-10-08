@@ -40,6 +40,7 @@ from .setup_profiles import (
     apply_assignments,
     buy_tariff_schedule,
     currency_error,
+    is_settled_sell,
     preview_lines,
     profile_assignments,
     profile_options,
@@ -294,12 +295,15 @@ class Editor(SourceEditor):
     _setup_selections: MappingProxyType = MappingProxyType({})
     _profile_assignments: tuple = ()
 
-    async def _after_source_save(self):
+    def _reresolve_profiles(self):
         if not self._existing_installation and self._setup_selections:
             current = profile_assignments(
                 self._setup_selections,
                 self._draft["preset"],
                 raw_rce_sell=is_raw_rce_sell(self._draft["sources"]["sell"]),
+                settled_sell=is_settled_sell(
+                    self._draft["sources"]["sell"], snapshot(self.hass, self._draft)
+                ),
             )
             reconcile_assignments(
                 self._draft["settings"],
@@ -310,6 +314,9 @@ class Editor(SourceEditor):
                 )["settings"],
             )
             self._profile_assignments = current
+
+    async def _after_source_save(self):
+        self._reresolve_profiles()
         return await super()._after_source_save()
 
     async def async_step_menu(self, user_input=None):
@@ -540,6 +547,9 @@ class Editor(SourceEditor):
                     self._setup_selections,
                     candidate["preset"],
                     raw_rce_sell=is_raw_rce_sell(candidate["sources"]["sell"]),
+                    settled_sell=is_settled_sell(
+                        candidate["sources"]["sell"], snapshot(self.hass, candidate)
+                    ),
                 )
                 reconcile_assignments(
                     candidate["settings"],
@@ -977,6 +987,9 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
                 selections,
                 user_input["preset"],
                 raw_rce_sell=is_raw_rce_sell(self._draft["sources"]["sell"]),
+                settled_sell=is_settled_sell(
+                    self._draft["sources"]["sell"], snapshot(self.hass, self._draft)
+                ),
             )
             apply_assignments(self._draft["settings"], assignments)
             if (schedule := buy_tariff_schedule(selections)) is not None:
