@@ -675,6 +675,17 @@ input quality</strong> and <strong>Presentation</strong>, and <strong>Numeric he
 them again. The view is per flow and is not stored. Hidden settings keep their values and keep
 working. A script that drives the options flow over REST must post <code>show_expert</code> before it selects a
 hidden group, otherwise Home Assistant rejects the step.</p>
+<h3 id="saving-options">Saving options</h3>
+<p>Saving <strong>Configure</strong> is applied live. The integration adopts the new settings, sources, helpers and
+tariffs without reloading the entry, so no entity becomes <code>unavailable</code> and the published plan keeps
+running as a retained plan (<code>plan_retained=true</code>, <code>refreshing=true</code>, optimizer <code>calculating</code>) until the
+recalculation publishes its replacement. The <a href="#deye-inverter-controller-solarman">Deye controller</a> keeps
+executing that plan and accepts the new one when it is published; it does not fall back to the base
+profile. Source and helper bindings are re-subscribed at the same time. The entry still <strong>reloads</strong>,
+with the previous plan lost until the first new calculation, when the save changes which entities
+exist or how they are named: <strong>Periodic LFP balance charge</strong> (<code>lfp_balance</code>), <strong>Enable flexible energy depth</strong>
+(<code>flexible_load_enabled</code>), <strong>Expose costs</strong> (<code>expose_costs</code>), <strong>Expose windows</strong> (<code>expose_windows</code>), the
+installation name or the currency, or when <a href="#energy-atlas-optional">Energy Atlas</a> is running for the entry. <strong>Reconfigure</strong> always reloads.</p>
 <h2 id="entity-overview">Entity overview</h2>
 <p><code>&lt;name&gt;</code> is the integration entry's title.</p>
 <section class="table-scroll"><table>
@@ -921,7 +932,8 @@ not clear the alert; only a successful new plan does.</p>
 <h3 id="plan-retention">Plan retention</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-230597e5df17-dark.svg"><img src="assets/diagrams/diagram-230597e5df17.svg" alt="Diagram 6" loading="lazy"></picture></figure>
 <p>A retained plan is never extended beyond its original coverage and is not carried across an
-integration reload or Home Assistant restart.</p>
+integration reload or Home Assistant restart. Saving Configure does not reload the integration, so it
+does not end the plan: see <a href="#saving-options">Saving options</a>.</p>
 <h2 id="operating-modes--the-planned-battery-state">Operating modes — the planned battery state</h2>
 <p>The <strong>Energy compass</strong> sensor shows the operating mode of the current interval; every row of the
 plan's <code>intervals</code> attribute carries <code>dispatch_mode</code>. There are six modes. Per interval of <code>h</code>
@@ -1769,7 +1781,10 @@ generated before that revocation are never accepted. While the error persists, e
 again but keeps the time of the first revocation of that cached plan, so a plan computed after it
 is accepted even when it was published while the Alert was still <code>on</code> (the entities update one by
 one). After a Home Assistant restart the controller
-therefore stays on the base profile until the next calculation publishes.</p>
+therefore stays on the base profile until the next calculation publishes. Saving the integration
+options does not reload it, so it keeps executing the retained plan (optimizer <code>calculating</code>) and
+accepts the replacement when it is published; only a save that reloads the entry
+(<a href="#saving-options">Saving options</a>) ends in the same wait.</p>
 <p>Control also requires fresh telemetry: every entity in <code>telemetry_entities</code> numeric and reported within
 30 s, battery voltage 400–610 V and SOC 0–100 %. Every automation in <code>old_writers</code> must be off and not
 running.</p>
