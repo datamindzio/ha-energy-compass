@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .config_models import NumericSetting
+from .config_models import NumericSetting, SolarForecastBinding
 from .daily_export import DAILY_EXPORT_MEASUREMENTS
 from .engine.models import InputError
 from .presets import PRESETS
@@ -89,6 +89,15 @@ def set_pv_group(draft: dict, index: int, bindings: Sequence[IntervalBinding]) -
     else:
         groups[index] = data
     pv.pop("solar_forecasts", None)
+
+
+def set_pv_solar_forecasts(
+    draft: dict, bindings: Sequence[SolarForecastBinding]
+) -> None:
+    """Use the Energy dashboard solar forecast as the only PV source."""
+    pv = draft["sources"]["pv"]
+    pv["arrays"] = []
+    pv["solar_forecasts"] = [binding.to_dict() for binding in bindings]
 
 
 def set_rce_sell(draft: dict, bindings: Sequence[IntervalBinding]) -> None:

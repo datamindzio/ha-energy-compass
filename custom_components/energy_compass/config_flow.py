@@ -144,7 +144,17 @@ def _preview_assumptions(config, problem, values, quality):
                 f"{row['samples_available']}/{row['samples_required']}"
                 for row in samples
             )
-    return source + "\n" + load_text + "."
+    text = source + "\n" + load_text + "."
+    if forecasts := config["sources"]["pv"].get("solar_forecasts"):
+        listed = ", ".join(
+            f"{item['domain']} {item['config_entry_id']}" for item in forecasts
+        )
+        text += (
+            f"\nPV source: Energy dashboard solar forecast {listed}; Wh per local "
+            "hour as in the Energy dashboard, hours without values count as 0; "
+            "no age check."
+        )
+    return text
 
 
 def _schedule_preview(config, problem, values):
@@ -500,6 +510,7 @@ class Editor(SourceEditor):
             candidate["sources"]["battery_enabled"] = user_input["battery_enabled"]
             if not user_input["pv_enabled"]:
                 candidate["sources"]["pv"]["arrays"] = []
+                candidate["sources"]["pv"].pop("solar_forecasts", None)
             if not user_input["battery_enabled"]:
                 candidate["sources"].update(soc=None, bms_soc=None)
             currency_changed = candidate["currency"] != self._draft["currency"]

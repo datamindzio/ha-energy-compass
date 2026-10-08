@@ -432,6 +432,13 @@
           "calibration": "Kalibracja taryfy"
         },
         "description": "Edytuj stałe stawki oraz oddzielne mnożniki, VAT i dodatki. {detail}"
+      },
+      "pv_solar_forecast": {
+        "title": "Prognoza PV z panelu Energia",
+        "data": {
+          "config_entries": "Integracje prognozy (sumowane)"
+        },
+        "description": "{detail}"
       }
     },
     "error": {
@@ -898,6 +905,13 @@
       "energy_atlas_proof": {
         "title": "Dowód własności Energy Atlas",
         "description": "Wyślij to do bota Energy Atlas w ciągu 15 minut; jest jednorazowy i nigdzie nie jest zapisywany:\n\n{proof}"
+      },
+      "pv_solar_forecast": {
+        "title": "Prognoza PV z panelu Energia",
+        "data": {
+          "config_entries": "Integracje prognozy (sumowane)"
+        },
+        "description": "{detail}"
       }
     },
     "error": {

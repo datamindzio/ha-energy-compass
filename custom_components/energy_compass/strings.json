@@ -432,6 +432,13 @@
           "calibration": "Calibration"
         },
         "description": "Edit fixed rates and separate multipliers, VAT and additions. {detail}"
+      },
+      "pv_solar_forecast": {
+        "title": "Energy dashboard solar forecast",
+        "data": {
+          "config_entries": "Forecast integrations (added together)"
+        },
+        "description": "{detail}"
       }
     },
     "error": {
@@ -898,6 +905,13 @@
       "energy_atlas_proof": {
         "title": "Energy Atlas ownership proof",
         "description": "Send this to the Energy Atlas bot within 15 minutes; it is single-use and not stored anywhere:\n\n{proof}"
+      },
+      "pv_solar_forecast": {
+        "title": "Energy dashboard solar forecast",
+        "data": {
+          "config_entries": "Forecast integrations (added together)"
+        },
+        "description": "{detail}"
       }
     },
     "error": {

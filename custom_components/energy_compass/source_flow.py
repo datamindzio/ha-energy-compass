@@ -8,17 +8,28 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 
-from .config_models import LoadSource, NumericSetting, resolve_numeric
+from .config_models import (
+    LoadSource,
+    NumericSetting,
+    SolarForecastBinding,
+    resolve_numeric,
+)
 from .daily_export import DAILY_EXPORT_MEASUREMENTS
 from .engine.models import InputError
 from .flow_schema import entity_binding, number, select, snapshot
 from .presets import PRESETS
+from .runtime import (
+    async_energy_forecast_options,
+    async_fetch_solar_forecast,
+    async_prefs_forecast_entries,
+)
 from .settings import NUMBERS
 from .source_builders import (
     rce_sell_binding,
     rce_unit_error,
     set_forecast_sell,
     set_load_statistic,
+    set_pv_solar_forecasts,
     set_rce_sell,
 )
 from .source_management import (
@@ -38,6 +49,7 @@ from .sources.bindings import (
     parse_intervals,
     resolve_binding,
 )
+from .sources.solar_forecast import solar_forecast_intervals
 from .sources.tariffs import (
     CATALOG,
     TariffSchedule,
@@ -174,7 +186,7 @@ class SourceEditor:
                 modes.append("schedule" if target == "buy" else "rce")
             return modes
         if target == "pv":
-            return ["forecast"]
+            return ["forecast", "solar_forecast"]
         if target == "load":
             return ["fixed", "forecast", "statistic", "power_history"]
         if target in ("soc", "bms_soc", "throughput_today", *DAILY_EXPORT_MEASUREMENTS):
@@ -209,6 +221,9 @@ class SourceEditor:
             else:
                 self._source["mode"] = mode
                 self._source["group"] = int(group)
+                if mode == "solar_forecast":
+                    self._source["operation"] = "replace"
+                    return await self.async_step_pv_solar_forecast()
                 if (
                     target == "pv"
                     and self._source["group"]
@@ -249,7 +264,9 @@ class SourceEditor:
             if ref.kind == "group":
                 raise InputError("select a PV continuation to edit")
             mode = (
-                "forecast"
+                "solar_forecast"
+                if ref.kind == "solar_forecast"
+                else "forecast"
                 if ref.kind in ("interval", "forecast")
                 else "schedule"
                 if ref.role == "buy"
@@ -280,6 +297,8 @@ class SourceEditor:
             }
             if mode == "schedule":
                 return await self.async_step_tariff_schedule()
+            if mode == "solar_forecast":
+                return await self.async_step_pv_solar_forecast()
             selected = selected_source(self._draft, ref)
             if ref.role in ("buy", "sell") and mode == "entity":
                 selected = self._draft["helpers"][f"{ref.role}_rate"]
@@ -553,6 +572,82 @@ class SourceEditor:
     def _rce_binding(self, entity_id):
         return rce_sell_binding(
             entity_binding(self.hass, entity_id), self._draft["timezone"]
+        )
+
+    async def async_step_pv_solar_forecast(self, user_input=None):
+        if (
+            self._source["target"] != "pv"
+            or self._source["mode"] != "solar_forecast"
+            or not self._draft["sources"]["pv"]["enabled"]
+        ):
+            return self.async_show_form(
+                step_id="pv_solar_forecast",
+                data_schema=vol.Schema({}),
+                errors={"base": "invalid_input"},
+            )
+        available = await async_energy_forecast_options(self.hass)
+        stored = [
+            item["config_entry_id"]
+            for item in self._draft["sources"]["pv"].get("solar_forecasts", ())
+        ]
+        defaults = (
+            stored
+            if self._source.get("operation") == "edit"
+            else list(await async_prefs_forecast_entries(self.hass))
+        )
+        errors = {}
+        detail = ""
+        if user_input is not None:
+            chosen = user_input.get("config_entries")
+            defaults = chosen if isinstance(chosen, list) else defaults
+            try:
+                if (
+                    not isinstance(chosen, list)
+                    or not chosen
+                    or len(set(chosen)) != len(chosen)
+                    or any(item not in available for item in chosen)
+                ):
+                    raise InputError("choose loaded Energy solar forecast integrations")
+                bindings = [
+                    SolarForecastBinding(item, available[item]) for item in chosen
+                ]
+                now = dt_util.utcnow()
+                for binding in bindings:
+                    solar_forecast_intervals(
+                        await async_fetch_solar_forecast(self.hass, binding),
+                        now,
+                        self._draft["timezone"],
+                    )
+                candidate = deepcopy(self._draft)
+                if self._source_ref:
+                    assert_selected(candidate, self._source_ref, self._source_original)
+                set_pv_solar_forecasts(candidate, bindings)
+                self._draft = candidate
+                return await self._after_source_save()
+            except InputError as err:
+                errors["base"] = "invalid_source"
+                detail = source_error_detail(err, self.hass.config.language)
+        options = [
+            {
+                "value": entry_id,
+                "label": f"{entry.title} ({entry.domain})"
+                if (entry := self.hass.config_entries.async_get_entry(entry_id))
+                else entry_id,
+            }
+            for entry_id in available
+        ]
+        return self.async_show_form(
+            step_id="pv_solar_forecast",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "config_entries",
+                        default=[item for item in defaults if item in available],
+                    ): select(options, multiple=True)
+                }
+            ),
+            errors=errors,
+            description_placeholders={"detail": detail},
         )
 
     async def _save_schedule_source(self, schedule):
@@ -997,6 +1092,7 @@ class SourceEditor:
                 daily_estimate=None,
             )
         else:
+            candidate["sources"]["pv"].pop("solar_forecasts", None)
             groups = candidate["sources"]["pv"]["arrays"]
             index = int(self._source["group"]) - 1
             if index < 0 or index > len(groups):

@@ -138,16 +138,35 @@ class PriceSource:
 
 
 @dataclass(frozen=True)
+class SolarForecastBinding:
+    config_entry_id: str
+    domain: str
+
+    def to_dict(self) -> dict[str, str]:
+        """Serialize one Energy dashboard solar forecast integration entry."""
+        return {"config_entry_id": self.config_entry_id, "domain": self.domain}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> SolarForecastBinding:
+        """Restore one Energy dashboard solar forecast integration entry."""
+        return cls(value["config_entry_id"], value["domain"])
+
+
+@dataclass(frozen=True)
 class PvSource:
     enabled: bool
     arrays: tuple[tuple[IntervalBinding, ...], ...] = ()
+    solar_forecasts: tuple[SolarForecastBinding, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize explicit additive arrays and continuation groups."""
-        return {
+        data: dict[str, Any] = {
             "enabled": self.enabled,
             "arrays": [[item.to_dict() for item in group] for group in self.arrays],
         }
+        if self.solar_forecasts:
+            data["solar_forecasts"] = [item.to_dict() for item in self.solar_forecasts]
+        return data
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> PvSource:
@@ -157,6 +176,10 @@ class PvSource:
             tuple(
                 tuple(IntervalBinding.from_dict(item) for item in group)
                 for group in value["arrays"]
+            ),
+            tuple(
+                SolarForecastBinding.from_dict(item)
+                for item in value.get("solar_forecasts", ())
             ),
         )
 
@@ -284,12 +307,20 @@ def validate_sources(config: SourceConfig, own_entity_ids: set[str]) -> None:
             if setting and setting.entity:
                 dependencies.append(setting.entity)
     if config.pv.enabled:
-        if not config.pv.arrays or any(not group for group in config.pv.arrays):
+        if config.pv.arrays and config.pv.solar_forecasts:
+            raise InputError(
+                "PV forecast arrays and Energy solar forecasts cannot be combined"
+            )
+        if config.pv.solar_forecasts:
+            identifiers = [item.config_entry_id for item in config.pv.solar_forecasts]
+            if len(set(identifiers)) != len(identifiers):
+                raise InputError("duplicate Energy solar forecast")
+        elif not config.pv.arrays or any(not group for group in config.pv.arrays):
             raise InputError("enabled PV needs forecast arrays")
         dependencies.extend(
             binding.entity for group in config.pv.arrays for binding in group
         )
-    elif config.pv.arrays:
+    elif config.pv.arrays or config.pv.solar_forecasts:
         raise InputError("disabled PV cannot have active bindings")
     if config.load.mode == "forecast":
         if config.load.forecast is None:
