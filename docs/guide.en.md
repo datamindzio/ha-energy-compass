@@ -1288,7 +1288,8 @@ controller options and store, so the controller needs 0.1.37 and the new bluepri
    **Options → Deye controller**. The old blueprint and package keep controlling until you swap them.
 2. **Optional shadow check.** The controller sensor's `generation` should equal the state of the package's
    plan sensor after each acceptance.
-3. **Swap in a quiet window** (a `CHARGE_PV` or `SELF_CONSUME` row, not near a full hour, with no other
+3. **Compare efficiency and capacity first.** The old blueprint used its own `eta` (default 0.9747) and `capacity_kwh` (default 25); the new one uses the plan's `eta_charge`, `eta_discharge` and `capacity_kwh`, which come from the Energy Compass battery settings (efficiency 1.0 unless set). Make `eta_charge` and `eta_discharge` equal to the old `eta` before the swap, or the first run rewrites the grid-charge and discharge currents by that ratio; a capacity difference moves only SOC thresholds, as below.
+4. **Swap in a quiet window** (a `CHARGE_PV` or `SELF_CONSUME` row, not near a full hour, with no other
    writer running). Turn the old automation off without stopping its actions, call
    `energy_compass.controller_import_package` for the controller sensor and check the answer (the
    package's session, accepted generation, mode and restore flag). It copies the state, adopts the
@@ -1297,10 +1298,10 @@ controller options and store, so the controller needs 0.1.37 and the new bluepri
    `alert_entity`, `compass_entity`, `solarman_device`, `capacity_kwh`, `eta`) and turn it on. The first
    run changes nothing on the inverter when the capacity is unchanged; a capacity change moves only the
    active program's SOC and voltage threshold in a `HOLD` or grid row.
-4. **Repoint** dashboards and your own automations: the mode helper is now a `select`, the restore flag
+5. **Repoint** dashboards and your own automations: the mode helper is now a `select`, the restore flag
    and the session are attributes, and the dashboard roles are `deye_controller`, `deye_mode` and
    `deye_runtime`.
-5. **Remove the package** include from `configuration.yaml`. It takes effect at the next restart; do not
+6. **Remove the package** include from `configuration.yaml`. It takes effect at the next restart; do not
    reload `template` or the input helpers meanwhile. Afterwards delete the ten orphaned registry entries.
 
 Without the import, swap the blueprint anyway and accept one stretch on the base profile until the next

@@ -1299,7 +1299,8 @@ i magazyn sterownika, więc sterownik wymaga 0.1.37 razem z nowym blueprintem.
    **Opcje → Sterownik Deye**. Stary blueprint i pakiet dalej sterują do czasu podmiany.
 2. **Opcjonalna kontrola w tle.** `generation` sensora sterownika powinno równać się stanowi sensora planu
    pakietu po każdej akceptacji.
-3. **Podmiana w spokojnym oknie** (wiersz `CHARGE_PV` lub `SELF_CONSUME`, nie przy pełnej godzinie, bez
+3. **Najpierw porównaj sprawność i pojemność.** Stary blueprint używał własnych `eta` (domyślnie 0,9747) i `capacity_kwh` (domyślnie 25); nowy używa `eta_charge`, `eta_discharge` i `capacity_kwh` planu, pochodzących z ustawień baterii w Energy Compass (sprawność 1,0, jeśli nie ustawiono). Ustaw `eta_charge` i `eta_discharge` równe dawnemu `eta` przed podmianą, bo inaczej pierwszy przebieg przepisze prądy ładowania z sieci i rozładowania o ten stosunek; różnica pojemności przesuwa tylko progi SOC, jak niżej.
+4. **Podmiana w spokojnym oknie** (wiersz `CHARGE_PV` lub `SELF_CONSUME`, nie przy pełnej godzinie, bez
    innych piszących). Wyłącz starą automatyzację bez zatrzymywania jej akcji, wywołaj
    `energy_compass.controller_import_package` dla sensora sterownika i sprawdź odpowiedź (sesja pakietu,
    zaakceptowana generacja, tryb i flaga przywrócenia). Usługa kopiuje stan, przejmuje sesję pakietu i
@@ -1308,9 +1309,9 @@ i magazyn sterownika, więc sterownik wymaga 0.1.37 razem z nowym blueprintem.
    `alert_entity`, `compass_entity`, `solarman_device`, `capacity_kwh`, `eta`) i włącz ją. Pierwszy
    przebieg niczego nie zmienia na falowniku, jeśli pojemność jest ta sama; zmiana pojemności przesuwa
    tylko próg SOC i napięcia aktywnego programu w wierszu `HOLD` lub z sieci.
-4. **Przepnij** dashboardy i własne automatyzacje: pomocnik trybu jest teraz `select`, flaga przywrócenia
+5. **Przepnij** dashboardy i własne automatyzacje: pomocnik trybu jest teraz `select`, flaga przywrócenia
    i sesja to atrybuty, a role dashboardów to `deye_controller`, `deye_mode` i `deye_runtime`.
-5. **Usuń pakiet** z `configuration.yaml`. Działa to od następnego restartu; w międzyczasie nie przeładowuj
+6. **Usuń pakiet** z `configuration.yaml`. Działa to od następnego restartu; w międzyczasie nie przeładowuj
    `template` ani pomocników `input_*`. Potem usuń dziesięć osieroconych wpisów rejestru.
 
 Bez importu i tak wymień blueprint i zaakceptuj jeden okres na profilu bazowym do następnego planu.

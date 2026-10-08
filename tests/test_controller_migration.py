@@ -37,8 +37,10 @@ from custom_components.energy_compass.settings import default_configuration
 pytestmark = pytest.mark.usefixtures("recorder_mock", "enable_custom_integrations")
 
 SERVICE_CONTROLLER = "sensor.synthetic_deye_controller"
+SITE_ETA = 0.9746794344808963
 STALE = {"conservative_grid_charge": True, "grid_current_limit_commissioned": 10}
 CURRENTS = ("charge_entity", "discharge_entity", "grid_entity")
+CURRENTS_OF_INTEREST = CURRENTS
 
 
 def running_session(state="CHARGE_PV", **row):
@@ -89,15 +91,15 @@ def ready_publication(old):
     }
 
 
-async def imported_controller(hass, freezer, old, capacity=25.0):
+async def imported_controller(hass, freezer, old, capacity=25.0, eta=SITE_ETA):
     """Load an entry whose settings equal v0.1.35's defaults and import `old`."""
     freezer.move_to(old.now)
     device = register_solarman(hass)
     config = default_configuration("EUR", "UTC")
     config["settings"] |= {
         "capacity_kwh": capacity,
-        "eta_charge": 0.9746794344808963,
-        "eta_discharge": 0.9746794344808963,
+        "eta_charge": eta,
+        "eta_discharge": eta,
         "charge_kw": 8.0,
         "discharge_kw": 8.0,
     }
@@ -130,6 +132,7 @@ def new_harness_from(hass, old):
     state = hass.states.get(SERVICE_CONTROLLER)
     attrs = json.loads(json.dumps(dict(state.attributes)))
     attrs["mode_entity"] = NEW_MODE
+    attrs["device_id"] = "test_solarman_device"
     h = NewHarness()
     h.now = old.now
     for entity, value in old.data.items():
@@ -254,3 +257,48 @@ async def test_rollback_before_the_package_is_removed(hass, freezer):
     runner = Runner(old)
     runner.run()
     assert runner.writes == [] and runner.reads == []
+
+
+ETA_ROWS = {
+    "DISCHARGE_GRID": {
+        "charge_kwh": 0,
+        "discharge_kwh": 0.5,
+        "pv_kwh": 0,
+        "end_soc_kwh": 5,
+    },
+    "CHARGE_GRID": {"charge_kwh": 0.5, "pv_kwh": 0, "end_soc_kwh": 20},
+}
+
+
+@pytest.mark.parametrize("state", list(ETA_ROWS))
+@pytest.mark.parametrize("eta", [SITE_ETA, 1.0, 0.95])
+async def test_the_efficiency_now_comes_from_energy_compass_settings(
+    hass, freezer, state, eta
+):
+    """The v0.1.35 blueprint took eta from its own input; EC settings must match it."""
+    old = running_session(state, **ETA_ROWS[state])
+    old_decision, _ = old_verdict(old)
+    await imported_controller(hass, freezer, old, eta=eta)
+    new = new_harness_from(hass, old)
+    new_decision, new_cleanup = new_verdict(new)
+    assert new_decision["valid"] and not new_cleanup
+    currents = {new.ctx[key] for key in CURRENTS_OF_INTEREST}
+    changed = {
+        entity
+        for entity, value in new_decision["desired"].items()
+        if value != old_decision["desired"][entity]
+    }
+    new.ctx["target"] = new_decision
+    new.ctx["cleanup"] = False
+    commands = {command["entity"] for command in new.render(new.expression("commands"))}
+    runner = NewRunner(new)
+    runner.run()
+    if eta == SITE_ETA:
+        assert changed == set() and commands == set()
+        assert runner.writes == [] and runner.reads == []
+    else:
+        assert changed <= currents
+        assert commands == changed
+        assert {entity for entity, _ in runner.writes} <= currents
+        if state == "DISCHARGE_GRID" and eta == 1.0:
+            assert changed

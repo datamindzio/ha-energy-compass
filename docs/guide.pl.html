@@ -2174,6 +2174,7 @@ i magazyn sterownika, więc sterownik wymaga 0.1.37 razem z nowym blueprintem.</
    <strong>Opcje → Sterownik Deye</strong>. Stary blueprint i pakiet dalej sterują do czasu podmiany.</li>
 <li><strong>Opcjonalna kontrola w tle.</strong> <code>generation</code> sensora sterownika powinno równać się stanowi sensora planu
    pakietu po każdej akceptacji.</li>
+<li><strong>Najpierw porównaj sprawność i pojemność.</strong> Stary blueprint używał własnych <code>eta</code> (domyślnie 0,9747) i <code>capacity_kwh</code> (domyślnie 25); nowy używa <code>eta_charge</code>, <code>eta_discharge</code> i <code>capacity_kwh</code> planu, pochodzących z ustawień baterii w Energy Compass (sprawność 1,0, jeśli nie ustawiono). Ustaw <code>eta_charge</code> i <code>eta_discharge</code> równe dawnemu <code>eta</code> przed podmianą, bo inaczej pierwszy przebieg przepisze prądy ładowania z sieci i rozładowania o ten stosunek; różnica pojemności przesuwa tylko progi SOC, jak niżej.</li>
 <li><strong>Podmiana w spokojnym oknie</strong> (wiersz <code>CHARGE_PV</code> lub <code>SELF_CONSUME</code>, nie przy pełnej godzinie, bez
    innych piszących). Wyłącz starą automatyzację bez zatrzymywania jej akcji, wywołaj
    <code>energy_compass.controller_import_package</code> dla sensora sterownika i sprawdź odpowiedź (sesja pakietu,
