@@ -1061,7 +1061,7 @@ inverter device (it is preselected when there is only one). Energy Compass finds
 `program_1_time` … `program_6_charging`, derives the entity ID prefix they share and tracks them. It
 refuses the device when a program is missing or disabled, when the entity IDs do not share one
 prefix, or when another Energy Compass entry already controls it. Enabling reloads the entry once;
-moving the controller to another device applies live. The step is visible without the expert toggle.
+moving the controller to another device applies live. Both are refused while the mode is not `Off` or a restore is pending: select `Off` and wait until `restore_pending` is off first, otherwise nothing could restore the base profile. The step is visible without the expert toggle.
 
 An installation that ran the 0.1.36 package, has one Energy Compass entry and exactly one Solarman device
 with all six programs gets the controller enabled automatically at the first start of 0.1.37. The mode

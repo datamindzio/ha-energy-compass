@@ -110,6 +110,39 @@ async def test_disabling_reloads_and_removes_the_controller(hass):
     assert state is None or state.state == "unavailable"
 
 
+@pytest.mark.parametrize("hold", ["mode", "restore_pending"])
+@pytest.mark.parametrize("change", ["disable", "device"])
+async def test_the_controller_is_not_released_while_it_still_owns_the_inverter(
+    hass, hold, change
+):
+    first = register_solarman(hass)
+    second = register_solarman(hass, prefix="second_program_", tag="second")
+    entry = await make_entry(
+        hass, {"controller": {"enabled": True, "device_id": first.id}}
+    )
+    controller = entry.runtime_data.controller
+    if hold == "mode":
+        controller.async_set_mode("Auto")
+    else:
+        controller.async_update_runtime(None, True)
+    form = await open_step(hass, entry)
+    data = (
+        {"enabled": False, "device_id": first.id}
+        if change == "disable"
+        else {"enabled": True, "device_id": second.id}
+    )
+    result = await submit(hass, form, data)
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "controller_not_released"}
+    assert entry.options["controller"] == {"enabled": True, "device_id": first.id}
+    controller.async_set_mode("Off")
+    controller.async_update_runtime(None, False)
+    result = await submit(hass, result, data)
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done()
+    assert entry.options["controller"]["enabled"] is (change == "device")
+
+
 async def test_saving_without_a_change_does_not_reload(hass):
     device = register_solarman(hass)
     entry = await make_entry(
@@ -315,4 +348,5 @@ def test_option_texts_exist_in_every_translation_file(path):
         "controller_tou_incomplete",
         "controller_tou_prefix",
         "controller_device_in_use",
+        "controller_not_released",
     }

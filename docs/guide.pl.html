@@ -1753,7 +1753,7 @@ sześć programów TOU (czas, moc, napięcie, SOC i ładowanie, razem 30 encji) 
 <code>program_1_time</code> … <code>program_6_charging</code>, wyznacza wspólny prefiks identyfikatorów i je śledzi.
 Odrzuca urządzenie, gdy brakuje programu lub jest wyłączony, gdy identyfikatory encji nie mają
 wspólnego prefiksu albo gdy inny wpis Energy Compass już steruje tym urządzeniem. Włączenie przeładowuje
-wpis raz; przeniesienie sterownika na inne urządzenie działa na żywo. Krok jest widoczny bez przełącznika
+wpis raz; przeniesienie sterownika na inne urządzenie działa na żywo. Oba są odrzucane, gdy tryb nie jest <code>Off</code> albo oczekuje przywrócenie: najpierw wybierz <code>Off</code> i poczekaj, aż <code>restore_pending</code> wygaśnie, bo inaczej nic nie przywróci profilu bazowego. Krok jest widoczny bez przełącznika
 ustawień eksperckich.</p>
 <p>Instalacja, która używała pakietu 0.1.36, ma jeden wpis Energy Compass i dokładnie jedno urządzenie Solarman
 ze wszystkimi sześcioma programami, dostaje sterownik włączony automatycznie przy pierwszym starcie

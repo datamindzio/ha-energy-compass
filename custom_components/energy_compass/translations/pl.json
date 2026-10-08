@@ -969,7 +969,8 @@
       "controller_device_required": "Wybierz urządzenie falownika Solarman.",
       "controller_tou_incomplete": "Urządzenie nie ma wszystkich sześciu programów TOU (czas, moc, napięcie, SOC, ładowanie).",
       "controller_tou_prefix": "Identyfikatory encji programów TOU nie mają wspólnego prefiksu; przywróć domyślne identyfikatory.",
-      "controller_device_in_use": "Inny wpis Energy Compass już steruje tym urządzeniem."
+      "controller_device_in_use": "Inny wpis Energy Compass już steruje tym urządzeniem.",
+      "controller_not_released": "Wybierz tryb Deye Off i poczekaj na przywrócenie profilu bazowego (przywrócenie nie oczekuje), zanim wyłączysz sterownik lub zmienisz jego urządzenie."
     },
     "abort": {
       "site_not_registered": "Ta witryna została zapomniana w innym oknie; włącz ponownie Energy Atlas, aby zarejestrować nową."

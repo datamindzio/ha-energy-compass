@@ -969,7 +969,8 @@
       "controller_device_required": "Choose the Solarman inverter device.",
       "controller_tou_incomplete": "The device does not have all six TOU programs (time, power, voltage, SOC, charging).",
       "controller_tou_prefix": "The TOU program entity IDs do not share one prefix; restore their default IDs.",
-      "controller_device_in_use": "Another Energy Compass entry already controls this device."
+      "controller_device_in_use": "Another Energy Compass entry already controls this device.",
+      "controller_not_released": "Select the Deye mode Off and wait until the base profile is restored (restore pending off) before disabling the controller or changing its device."
     },
     "abort": {
       "site_not_registered": "This site was forgotten in another window; re-enable Energy Atlas to register a new one."

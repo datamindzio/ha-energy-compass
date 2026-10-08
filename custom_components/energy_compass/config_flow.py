@@ -391,9 +391,21 @@ class Editor(SourceEditor):
                     errors["device_id"] = f"controller_{problem}"
                 elif device_in_use(self.hass, self.config_entry.entry_id, device_id):
                     errors["device_id"] = "controller_device_in_use"
+            new = {"enabled": enabled, "device_id": device_id}
+            change = controller_options_change(current, new)
+            running = getattr(
+                getattr(self.config_entry, "runtime_data", None), "controller", None
+            )
+            if (
+                not errors
+                and change != "none"
+                and current.get("enabled")
+                and running is not None
+                and (running.state.restore_pending or running.state.mode != "Off")
+            ):
+                # Without the controller nothing could restore the base profile.
+                errors["base"] = "controller_not_released"
             if not errors:
-                new = {"enabled": enabled, "device_id": device_id}
-                change = controller_options_change(current, new)
                 if self.config_entry.state is config_entries.ConfigEntryState.LOADED:
                     if change != "reload":
                         self.automatic_reload = False
