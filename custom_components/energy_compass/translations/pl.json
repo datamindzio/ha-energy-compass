@@ -1271,6 +1271,12 @@
           "holding": "Trwa trzymanie",
           "overdue": "Zaległe"
         }
+      },
+      "deye_controller": {
+        "name": "Sterownik Deye"
+      },
+      "deye_runtime": {
+        "name": "Stan pracy sterownika Deye"
       }
     },
     "select": {
@@ -1284,6 +1290,9 @@
           "max_export": "Maksymalny eksport",
           "grid_friendly": "Przyjazna dla sieci"
         }
+      },
+      "deye_mode": {
+        "name": "Tryb sterownika Deye"
       }
     },
     "binary_sensor": {

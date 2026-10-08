@@ -1271,6 +1271,12 @@
           "holding": "Holding",
           "overdue": "Overdue"
         }
+      },
+      "deye_controller": {
+        "name": "Deye controller"
+      },
+      "deye_runtime": {
+        "name": "Deye controller runtime"
       }
     },
     "select": {
@@ -1284,6 +1290,9 @@
           "max_export": "Maximum export",
           "grid_friendly": "Grid friendly"
         }
+      },
+      "deye_mode": {
+        "name": "Deye mode"
       }
     },
     "binary_sensor": {

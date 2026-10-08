@@ -8,6 +8,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 
 from .balance_tracker import SENSOR_STATES
+from .controller_entity import DeyeControllerSensor, DeyeRuntimeSensor
 from .entity import EnergyCompassEntity, next_change
 from .settings import DOMAIN
 from .sources.bindings import parse_timestamp
@@ -58,9 +59,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 and registered.disabled_by == er.RegistryEntryDisabler.INTEGRATION
             ):
                 registry.async_update_entity(entity_id, disabled_by=None)
-    async_add_entities(
-        [EnergyCompassSensor(entry.runtime_data, key) for key in SENSOR_KEYS]
-    )
+    entities = [EnergyCompassSensor(entry.runtime_data, key) for key in SENSOR_KEYS]
+    if (controller := entry.runtime_data.controller) is not None:
+        entities += [DeyeControllerSensor(controller), DeyeRuntimeSensor(controller)]
+    async_add_entities(entities)
 
 
 class EnergyCompassSensor(EnergyCompassEntity, SensorEntity):

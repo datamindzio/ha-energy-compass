@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from math import sqrt
 
 import pytest
+from controller_support import controller_site  # noqa: F401
 
 from custom_components.energy_compass.engine.models import (
     Battery,
