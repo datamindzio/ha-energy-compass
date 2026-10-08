@@ -368,7 +368,9 @@ profile. Source and helper bindings are re-subscribed at the same time. The entr
 with the previous plan lost until the first new calculation, when the save changes which entities
 exist or how they are named: **Periodic LFP balance charge** (`lfp_balance`), **Enable flexible energy depth**
 (`flexible_load_enabled`), **Expose costs** (`expose_costs`), **Expose windows** (`expose_windows`), the
-installation name or the currency, or when [Energy Atlas](#energy-atlas-optional) is running for the entry. **Reconfigure** always reloads.
+installation name or the currency. A running [Energy Atlas](#energy-atlas-optional) is refreshed in
+place (state tracking and site attributes), without a restart of its sink. **Reconfigure** always
+reloads.
 
 ## Entity overview
 

@@ -372,8 +372,9 @@ profil bazowy. Powiązania źródeł i pomocników są jednocześnie subskrybowa
 **przeładowuje się** (poprzedni plan znika do pierwszego nowego obliczenia), gdy zapis zmienia zestaw
 encji lub ich nazwę: **Okresowe balansowanie LFP** (`lfp_balance`), **Włącz głębokość elastycznego zużycia**
 (`flexible_load_enabled`), **Włącz encje kosztów** (`expose_costs`), **Włącz encje okresów**
-(`expose_windows`), nazwę instalacji lub walutę, albo gdy dla wpisu działa
-[Energy Atlas](#energy-atlas-opcjonalnie). **Rekonfiguracja** zawsze przeładowuje.
+(`expose_windows`), nazwę instalacji lub walutę. Działający
+[Energy Atlas](#energy-atlas-opcjonalnie) jest odświeżany w miejscu (śledzenie stanów i atrybuty
+witryny), bez restartu jego kolejki wysyłki. **Rekonfiguracja** zawsze przeładowuje.
 
 ## Przegląd encji
 
