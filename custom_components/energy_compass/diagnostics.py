@@ -38,6 +38,9 @@ async def async_get_config_entry_diagnostics(hass, entry):
             "report": coordinator.balance_report(),
         },
         "energy_atlas": _atlas_diagnostics(coordinator, entry),
+        "deye_controller": coordinator.controller.diagnostics()
+        if coordinator.controller is not None
+        else {"enabled": False},
         "setup_profiles": coordinator.configuration.get("setup_profiles"),
     }
 
