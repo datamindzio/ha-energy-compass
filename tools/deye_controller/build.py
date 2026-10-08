@@ -1,8 +1,9 @@
-"""Build the Deye (Solarman) controller blueprint and its companion package.
+"""Build the Deye (Solarman) controller blueprint.
 
-This file is the only source. The blueprint and package in the repository are
-generated from it; edit here, then run `python tools/deye_controller/build.py`.
-`--check` fails when the committed files differ from the generator output.
+This file is the only source. The blueprint in the repository is generated from
+it; edit here, then run `python tools/deye_controller/build.py`. `--check` fails
+when the committed file differs from the generator output or the retired
+package file still exists.
 """
 
 import argparse
@@ -15,8 +16,7 @@ REPO = Path(__file__).resolve().parents[2]
 BLUEPRINT_PATH = (
     REPO / "blueprints/automation/energy_compass/deye_solarman_controller.yaml"
 )
-PACKAGE_PATH = REPO / "packages/energy_compass_deye.yaml"
-DEFAULT_PROGRAM_PREFIX = "inverter_deye_program_"
+RETIRED_PACKAGE_PATH = REPO / "packages/energy_compass_deye.yaml"
 
 
 class Input:
@@ -29,10 +29,20 @@ class Input:
 # Blueprint inputs, grouped into collapsible sections in the automation editor.
 # Every key here must be documented in docs/guide.en.md and docs/guide.pl.md
 # (enforced by tests/test_deye_controller_docs.py).
-def entity(name, description, domain, integration=None, multiple=False, default=None):
+def entity(
+    name,
+    description,
+    domain,
+    integration=None,
+    multiple=False,
+    default=None,
+    device_class=None,
+):
     selector = {"domain": domain}
     if integration:
         selector["integration"] = integration
+    if device_class:
+        selector["device_class"] = device_class
     out = {
         "name": name,
         "description": description,
@@ -62,35 +72,12 @@ INPUTS = {
         "name": "Energy Compass",
         "icon": "mdi:compass",
         "input": {
-            "plan_entity": entity(
-                "Plan",
-                "The Plan sensor of the Energy Compass installation to execute.",
+            "controller_entity": entity(
+                "Energy Compass controller",
+                "The Deye controller sensor of the Energy Compass installation (Options \u2192 Deye controller).",
                 "sensor",
                 "energy_compass",
-            ),
-            "optimizer_entity": entity(
-                "Optimizer status",
-                "The Optimizer status sensor of the same installation.",
-                "sensor",
-                "energy_compass",
-            ),
-            "valid_entity": entity(
-                "Forecast valid",
-                "The Forecast valid binary sensor of the same installation.",
-                "binary_sensor",
-                "energy_compass",
-            ),
-            "alert_entity": entity(
-                "Alert",
-                "The Alert binary sensor of the same installation.",
-                "binary_sensor",
-                "energy_compass",
-            ),
-            "compass_entity": entity(
-                "Consumption compass",
-                "The Consumption compass sensor; its changes re-run the controller.",
-                "sensor",
-                "energy_compass",
+                device_class="timestamp",
             ),
         },
     },
@@ -98,11 +85,6 @@ INPUTS = {
         "name": "Deye inverter (Solarman)",
         "icon": "mdi:solar-power",
         "input": {
-            "solarman_device": {
-                "name": "Solarman device",
-                "description": "Inverter device used to read back holding registers 108-177 after each write.",
-                "selector": {"device": {"filter": {"integration": "solarman"}}},
-            },
             "charge_entity": entity(
                 "Battery max charging current", "Register 108.", "number", "solarman"
             ),
@@ -190,15 +172,6 @@ INPUTS = {
                 1,
                 "A",
             ),
-            "capacity_kwh": number(
-                "Battery capacity",
-                "Usable capacity the Energy Compass plan uses; converts planned end SOC kWh into %.",
-                25,
-                1,
-                200,
-                0.1,
-                "kWh",
-            ),
             "max_power_w": number(
                 "Maximum battery power",
                 "DC charge/discharge power cap and the TOU program power.",
@@ -235,14 +208,6 @@ INPUTS = {
                 1,
                 "A",
             ),
-            "eta": number(
-                "One-way battery efficiency",
-                "Used to convert planned kWh into DC current.",
-                0.9746794344808963,
-                0.5,
-                1,
-                "any",
-            ),
             "old_writers": entity(
                 "Previous battery automations",
                 "Automations that also write these registers. Control is blocked until each is off and not running.",
@@ -253,20 +218,10 @@ INPUTS = {
         },
     },
 }
-PLAN, OPTIMIZER, VALID, ALERT = (
-    Input(k)
-    for k in ["plan_entity", "optimizer_entity", "valid_entity", "alert_entity"]
-)
+CONTROLLER = Input("controller_entity")
 CHARGE, DISCHARGE, GRID = (
     Input(k) for k in ["charge_entity", "discharge_entity", "grid_entity"]
 )
-MODE = "input_select.energy_compass_deye_mode"
-CACHE = "sensor.energy_compass_deye_plan"
-RUNTIME = "sensor.energy_compass_deye_runtime"
-PENDING = "input_boolean.energy_compass_deye_restore_pending"
-SESSION = "input_boolean.energy_compass_deye_session"
-START = "input_datetime.energy_compass_deye_session_start"
-TOU_SETTINGS = "sensor.energy_compass_deye_tou_settings"
 PROGRAM_FIELDS = [
     ("power", 153, 10),
     ("voltage", 159, 0.01),
@@ -274,7 +229,7 @@ PROGRAM_FIELDS = [
     ("charging", 171, 1),
 ]
 # Entity -> Solarman holding register. The TOU program entities come from the
-# prefix the package publishes, so one package edit re-targets all 24 of them.
+# prefix the controller sensor publishes, so one device choice re-targets all 24.
 REGISTERS = (
     "{% set ns = namespace(r=dict([(charge_entity, {'address':108,'scale':1}), (discharge_entity, {'address':109,'scale':1}), (grid_entity, {'address':128,'scale':1})])) %}"
     "{% for i in range(1,7) %}"
@@ -285,52 +240,17 @@ REGISTERS = (
     + "{% endfor %}{{ ns.r }}"
 )
 
-CANDIDATE = r"""
-{% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
-{% set cache = state_attr(cache_entity, 'snapshot') or {} %}
-{% set rt = state_attr(runtime_entity, 'runtime') or {} %}
-{% set t = as_timestamp(now()) %}
-{% set g = p.get('generated_at') %}
-{% set raw_rows = p.get('intervals', []) %}
-{% set rows = raw_rows if raw_rows is sequence and raw_rows is not string else [] %}
-{% set ns = namespace(ok=rows is sequence and rows is not string and rows|length > 0, end=none, covered=false) %}
-{% for r in rows if r is mapping %}
-  {% set start = as_timestamp(r.get('start'), 0) %}
-  {% set end = as_timestamp(r.get('end'), 0) %}
-  {% if start <= 0 or end <= start or (ns.end is not none and start != ns.end) %}{% set ns.ok = false %}{% endif %}
-  {% set ns.end = end %}
-  {% if start <= t < end %}{% set ns.covered = true %}{% endif %}
-  {% if r.get('state') not in ['CHARGE_GRID','CHARGE_PV','SELF_CONSUME','DISCHARGE_GRID','HOLD','CURTAIL'] %}{% set ns.ok = false %}{% endif %}
-  {% if r.get('balance_hold', false) is not boolean %}{% set ns.ok = false %}{% endif %}
-  {% for key in ['pv_kwh','load_kwh','charge_kwh','discharge_kwh','curtail_kwh','end_soc_kwh','grid_import_kwh','grid_export_kwh','buy_per_kwh','sell_per_kwh'] %}
-    {% if not is_number(r.get(key)) %}{% set ns.ok = false %}
-    {% elif key not in ['buy_per_kwh','sell_per_kwh'] and r[key]|float < -0.000001 %}{% set ns.ok = false %}{% endif %}
-  {% endfor %}
-{% endfor %}
-{% if rows|select('mapping')|list|length != rows|length %}{% set ns.ok = false %}{% endif %}
-{% set session = state_attr(session_start_entity, 'timestamp')|float(0) %}
-{# Optimizer restarts on every input change and each solve takes minutes, so
-   'ready' can last milliseconds. A completed, published generation retained
-   during the next solve is equally valid; plans computed before the last
-   revocation are not. #}
-{% set ok = ns.ok and ns.covered and p.get('dispatch_policy') is mapping
-  and is_state(session_entity, 'on') and as_timestamp(g,0) >= session
-  and as_timestamp(g,0) <= t and as_timestamp(g,0) > as_timestamp(cache.get('generated_at'),0)
-  and g != rt.get('revoked_generation') and as_timestamp(g,0) > as_timestamp(rt.get('revoked_at'),0)
-  and is_state(valid_entity,'on') and is_state(alert_entity,'off')
-  and ((states(optimizer_entity) == 'ready' and p.get('refreshing') == false and p.get('plan_retained') == false)
-    or (states(optimizer_entity) == 'calculating' and p.get('refreshing') == true and p.get('plan_retained') == true))
-  and g == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at')
-  and as_timestamp(p.get('valid_until'),0) > t %}
-{{ dict(schema=1, session=session, accepted_at=now().isoformat(), generated_at=g,
-  valid_until=p.get('valid_until'), coverage_end=ns.end, intervals=rows, dispatch_policy=p.get('dispatch_policy')) if ok else {} }}
-"""
-
 DECISION = r"""
 {% set t = as_timestamp(now()) %}
-{% set cache = state_attr(cache_entity,'snapshot') or {} %}
-{% set rt = state_attr(runtime_entity,'runtime') or {} %}
-{% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
+{% set c = states[controller_entity].attributes if states[controller_entity] is not none else {} %}
+{% set cache = c.get('accepted') or {} %}
+{% set rt = runtime or {} %}
+{# Capacity and efficiency belong to the accepted generation: a retained plan must
+   not run with settings saved after it was computed. #}
+{% set b = cache.get('battery') or {} %}
+{% set capacity_kwh = b.get('capacity_kwh')|float(0) %}
+{% set eta_charge = b.get('eta_charge')|float(0) %}
+{% set eta_discharge = b.get('eta_discharge')|float(0) %}
 {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
 {% for e in telemetry_entities %}
   {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
@@ -357,26 +277,16 @@ DECISION = r"""
 {% for r in cache.get('intervals',[]) %}
   {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
 {% endfor %}
-{% set retained = states(optimizer_entity)=='calculating' %}
-{% set coherent = p.get('generated_at') == cache.get('generated_at') == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at') %}
-{% set live_ok = is_state(alert_entity,'off') and (retained or (states(optimizer_entity)=='ready' and is_state(valid_entity,'on') and coherent and p.get('plan_retained') == false and p.get('refreshing') == false)) %}
+{% set retained = c.get('retained') is sameas true %}
 {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
 {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
-{% elif not is_state(session_entity,'on') or cache.get('session') != state_attr(session_start_entity,'timestamp')|float(0) %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
-{% elif cache.get('generated_at') == rt.get('revoked_generation') %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
-{% elif not live_ok %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+{% elif c.get('plan_reason') == 'session' or not cache or cache.get('session') != c.get('session') %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
+{% elif c.get('plan_reason') == 'revoked' %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
+{% elif c.get('plan_reason') != 'ok' %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+{% elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1) %}{% set ns.reason='plan: brak parametrów baterii (pojemność, sprawność) w planie' %}
 {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
 {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
 {% set ns.valid = ns.reason == 'ok' %}
-{# HA publishes plan/status/validity separately. Retry a newer publication before
-   restoring BASE; never extend the accepted snapshot's original lifetime. #}
-{% set handoff_pending = ns.reason == 'plan: błąd źródeł, brak gotowości lub niespójne generacje'
-  and not coherent and states(optimizer_entity) == 'ready' and is_state(alert_entity,'off')
-  and states(mode_entity) == 'Auto' and ns.row
-  and t < (as_timestamp(cache.get('valid_until'),0)|round(0,'floor'))
-  and t < (cache.get('coverage_end',0)|float(0)|round(0,'floor'))
-  and (as_timestamp(p.get('generated_at'),0) > as_timestamp(cache.get('generated_at'),0)
-    or as_timestamp(state_attr(optimizer_entity,'generated_at'),0) > as_timestamp(cache.get('generated_at'),0)) %}
 {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
 {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
 {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
@@ -387,13 +297,13 @@ DECISION = r"""
    wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
    mocy nigdy nie jest przekroczony. #}
 {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-{% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+{% set discharge_raw = ([max_current, max_power_w * eta_discharge / v]|min if v > 0 and ns.telemetry else 0) %}
 {% set charge_held = states(charge_entity)|float(0) %}
 {% set discharge_held = states(discharge_entity)|float(0) %}
 {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
 {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
 {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
-{% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
+{% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta_discharge / (v * 1.02)]|min else discharge_raw %}
 {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
 {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
    jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -443,9 +353,9 @@ DECISION = r"""
     {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
        CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
        Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
-    {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta / v]|min %}
+    {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta_charge / v]|min %}
     {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
-    {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta / v]|min %}
+    {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta_charge / v]|min %}
     {% set charge = charge_cap %}
     {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
     {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
@@ -466,7 +376,7 @@ DECISION = r"""
       {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
     {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
   {% else %}
-    {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
+    {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta_discharge / v]|min %}
     {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
     {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
     {% if energy_mode %}
@@ -539,7 +449,6 @@ DECISION = r"""
 {% endfor %}
 {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
 {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
-  handoff_pending=handoff_pending and norm.ok and ns.writers and commissioned,
   writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
   retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
   row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
@@ -554,7 +463,7 @@ BASE_DECISION = DECISION.replace(
 )
 
 DIFF = r"""
-{% set rt=state_attr(runtime_entity,'runtime') or {} %}
+{% set rt=runtime or {} %}
 {% set dirty=rt.get('uncertain',[]) %}
 {% set ns=namespace(changed=[], stop=[], limits=[], enable=[], protective=false, stopped=[]) %}
 {% set active='select.' ~ program_prefix ~ target.active_tou ~ '_charging' %}
@@ -589,7 +498,7 @@ DIFF = r"""
 {{ ns.stop + ns.limits + ns.enable }}
 """
 GUARD = r"""
-{% set rt=state_attr(runtime_entity,'runtime') or {} %}
+{% set rt=runtime or {} %}
 {% set current=baseline if cleanup else fresh %}
 {% set ns=namespace(prerequisites=true) %}
 {% if command.phase == 'enable' %}
@@ -609,7 +518,7 @@ GUARD = r"""
 """
 
 CAP_ONLY_REPLAN = r"""
-{% set rt=state_attr(runtime_entity,'runtime') or {} %}
+{% set rt=runtime or {} %}
 {% set ns=namespace(same=true,changed=false) %}
 {% for e,value in target.desired.items() %}
   {% if e in [charge_entity,discharge_entity,grid_entity] %}
@@ -644,32 +553,29 @@ def service(name, entity=None, data=None, **kw):
     return out | kw
 
 
-def persist(runtime):
+def persist(runtime=None, restore_pending=None):
+    """Replace the stored runtime and/or restore flag, then adopt the stored answer."""
+    data = {"controller": "{{ controller_entity }}"}
+    if runtime is not None:
+        data["runtime"] = runtime
+    if restore_pending is not None:
+        data["restore_pending"] = restore_pending
     return [
-        variables(runtime_update=runtime),
-        {
-            "event": "energy_compass_deye_runtime",
-            "event_data": {"runtime": "{{ runtime_update }}"},
-        },
-        {
-            "wait_template": "{{ state_attr(runtime_entity,'runtime') == runtime_update }}",
-            "timeout": {"seconds": 1},
-            "continue_on_timeout": False,
-        },
+        service(
+            "energy_compass.controller_runtime",
+            data=data,
+            response_variable="runtime_response",
+        ),
+        variables(
+            runtime="{{ runtime_response.runtime }}",
+            restore_pending="{{ runtime_response.restore_pending }}",
+        ),
     ]
 
 
 INITIAL = {
-    "plan_entity": PLAN,
-    "optimizer_entity": OPTIMIZER,
-    "valid_entity": VALID,
-    "alert_entity": ALERT,
-    "cache_entity": CACHE,
-    "runtime_entity": RUNTIME,
-    "mode_entity": MODE,
-    "session_entity": SESSION,
-    "session_start_entity": START,
-    "restore_entity": PENDING,
+    "controller_entity": CONTROLLER,
+    "mode_entity": "{{ state_attr(controller_entity,'mode_entity') }}",
     "charge_entity": CHARGE,
     "discharge_entity": DISCHARGE,
     "grid_entity": GRID,
@@ -683,19 +589,20 @@ INITIAL = {
     "reached_discharge_current": Input("reached_discharge_current"),
     "balance_grid_current": Input("balance_grid_current"),
     "telemetry_entities": Input("telemetry_entities"),
-    "eta": Input("eta"),
     "relinquish_current": Input("relinquish_current"),
-    "capacity_kwh": Input("capacity_kwh"),
     "max_power_w": Input("max_power_w"),
     "max_current": Input("max_current"),
     "max_grid_current": Input("max_grid_current"),
     "old_writers": Input("old_writers"),
-    "program_prefix": f"{{{{ state_attr('{TOU_SETTINGS}', 'prefix') or '' }}}}",
+    "program_prefix": "{{ state_attr(controller_entity,'program_prefix') or '' }}",
+    "device_id": "{{ state_attr(controller_entity,'device_id') }}",
     "registers": REGISTERS,
+    "runtime": {},
+    "restore_pending": False,
 }
 
-mark_dirty = "{{ dict(state_attr(runtime_entity,'runtime') or {}, uncertain=((state_attr(runtime_entity,'runtime') or {}).get('uncertain',[]) + [command.entity])|unique|list) }}"
-mark_confirmed = "{{ dict(state_attr(runtime_entity,'runtime') or {}, uncertain=(state_attr(runtime_entity,'runtime') or {}).get('uncertain',[])|reject('equalto',command.entity)|list, confirmed=dict((state_attr(runtime_entity,'runtime') or {}).get('confirmed',{}), **dict([(command.entity,command.value)])), last_confirmation=now().isoformat()) }}"
+mark_dirty = "{{ dict(runtime or {}, uncertain=((runtime or {}).get('uncertain',[]) + [command.entity])|unique|list) }}"
+mark_confirmed = "{{ dict(runtime or {}, uncertain=(runtime or {}).get('uncertain',[])|reject('equalto',command.entity)|list, confirmed=dict((runtime or {}).get('confirmed',{}), **dict([(command.entity,command.value)])), last_confirmation=now().isoformat()) }}"
 WRITE = [
     variables(fresh=DECISION, baseline=BASE_DECISION, allowed=GUARD),
     {
@@ -737,7 +644,7 @@ WRITE = [
                     service(
                         "solarman.read_holding_registers",
                         data={
-                            "device": Input("solarman_device"),
+                            "device": "{{ device_id }}",
                             "address": 108,
                             "count": 70,
                         },
@@ -748,7 +655,7 @@ WRITE = [
                         observed="{% set ns=namespace(values={}) %}{% for e,reg in registers.items() %}{% set raw=raw_response.get(reg.address,raw_response.get(reg.address|string)) if raw_response is mapping else none %}{% if is_number(raw) %}{% set value={0:'Disabled',1:'Grid',32:'Sell'}.get(raw|int,'unsupported') if e.startswith('select.') else (raw|float*reg.scale)|round(6) %}{% set ns.values=dict(ns.values, **dict([(e,value)])) %}{% endif %}{% endfor %}{{ ns.values }}"
                     ),
                     *persist(
-                        "{% set rt=state_attr(runtime_entity,'runtime') or {} %}{% set ns=namespace(dirty=rt.get('uncertain',[])) %}{% for e,value in observed.items() %}{% set equal=states(e)==value if e.startswith('select.') else is_number(states(e)) and (states(e)|float-value|float)|abs < 0.00001 %}{% if not equal %}{% set ns.dirty=ns.dirty+[e] %}{% endif %}{% endfor %}{{ dict(rt, uncertain=ns.dirty|unique|list, confirmed=dict(rt.get('confirmed',{}), **observed)) }}"
+                        "{% set rt=runtime or {} %}{% set ns=namespace(dirty=rt.get('uncertain',[])) %}{% for e,value in observed.items() %}{% set equal=states(e)==value if e.startswith('select.') else is_number(states(e)) and (states(e)|float-value|float)|abs < 0.00001 %}{% if not equal %}{% set ns.dirty=ns.dirty+[e] %}{% endif %}{% endfor %}{{ dict(rt, uncertain=ns.dirty|unique|list, confirmed=dict(rt.get('confirmed',{}), **observed)) }}"
                     ),
                     variables(
                         raw_value="{{ raw_response.get(registers[command.entity].address, raw_response.get(registers[command.entity].address|string)) if raw_response is mapping else none }}",
@@ -766,90 +673,32 @@ WRITE = [
 
 ACTIONS = [
     variables(**INITIAL),
-    variables(current_ceiling={}),
+    # Without Energy Compass neither the mode nor the runtime is readable, so no
+    # write can be proven safe or recorded: hold the inverter exactly as it is.
     {
         "if": [
             condition(
-                "{{ trigger.id|default('') == 'start' or not is_state(session_entity,'on') }}"
+                "{{ states[controller_entity] is none or state_attr(controller_entity,'controller_schema') != 1 or not (mode_entity is string and mode_entity != '') }}"
             )
         ],
         "then": [
-            service(
-                "input_datetime.set_datetime",
-                START,
-                {"timestamp": "{{ as_timestamp(now())|round(0,'ceil') }}"},
-            ),
-            service("input_boolean.turn_on", SESSION),
+            {"stop": "Energy Compass niedostępny: sterowanie wstrzymane bez zapisów"}
         ],
     },
-    {
-        "if": [
-            condition(
-                "{{ states(optimizer_entity) not in ['ready','calculating'] or not is_state(alert_entity,'off') or (trigger.platform|default('') == 'state' and trigger.to_state is not none and ((trigger.entity_id == alert_entity and trigger.to_state.state != 'off') or (trigger.entity_id == optimizer_entity and trigger.to_state.state not in ['ready','calculating']))) }}"
-            )
-        ],
-        # An error that persists revokes again on every run. Keep the first
-        # revocation time of the same generation: a plan computed after it but
-        # published while the alert was still on (entities update one by one)
-        # must stay acceptable.
-        "then": persist(
-            "{% set rt = state_attr(runtime_entity,'runtime') or {} %}{% set g = (state_attr(cache_entity,'snapshot') or {}).get('generated_at') %}{{ dict(rt, revoked_generation=g, revoked_at=rt.get('revoked_at') if rt.get('revoked_at') and 'revoked_generation' in rt and rt.get('revoked_generation') == g else now().isoformat(), revoked_reason='Błąd obliczeń lub źródeł: wymagany nowy plan') }}"
-        ),
-    },
-    # Re-read a split publication before persisting a failure or touching Deye.
-    # Only transient handoff mismatches retry; all safety gates stay in DECISION.
-    variables(candidate={}, decision={}),
-    {
-        "repeat": {
-            "count": 3,
-            "sequence": [
-                {
-                    "if": [
-                        condition("{{ repeat.index == 1 or decision.handoff_pending }}")
-                    ],
-                    "then": [
-                        variables(candidate=CANDIDATE),
-                        {
-                            "if": [condition("{{ candidate|length > 0 }}")],
-                            "then": [
-                                {
-                                    "event": "energy_compass_deye_accept_plan",
-                                    "event_data": {"snapshot": "{{ candidate }}"},
-                                },
-                                {
-                                    "wait_template": "{{ state_attr(cache_entity,'snapshot') == candidate }}",
-                                    "timeout": {"seconds": 1},
-                                    "continue_on_timeout": False,
-                                },
-                            ],
-                        },
-                        variables(decision=DECISION),
-                        {
-                            "if": [
-                                condition(
-                                    "{{ decision.handoff_pending and repeat.index < 3 }}"
-                                )
-                            ],
-                            "then": [{"delay": {"milliseconds": 200}}],
-                        },
-                    ],
-                },
-            ],
-        }
-    },
+    *persist(),
+    variables(current_ceiling={}),
+    variables(decision=DECISION),
     *persist(
-        "{{ dict(state_attr(runtime_entity,'runtime') or {}, reached_key=decision.reached_key if decision.target_reached else (state_attr(runtime_entity,'runtime') or {}).get('reached_key'), slot_energy=decision.slot_energy, desired=decision.desired, requested_mode=decision.requested_mode, battery_mode_commissioned=decision.commissioned, state=decision.state, accepted_generation=decision.generation, original_deadline=decision.deadline, active_tou=decision.active_tou, retained=decision.retained, code='ok' if decision.valid else 'blocked', reason=decision.reason, warning=decision.warning, takeover_blocked=not decision.writers_safe, since=(state_attr(runtime_entity,'runtime') or {}).get('since',now().isoformat()) if (state_attr(runtime_entity,'runtime') or {}).get('reason') == decision.reason else now().isoformat()) }}"
+        "{{ dict(runtime or {}, reached_key=decision.reached_key if decision.target_reached else (runtime or {}).get('reached_key'), slot_energy=decision.slot_energy, desired=decision.desired, requested_mode=decision.requested_mode, battery_mode_commissioned=decision.commissioned, state=decision.state, accepted_generation=decision.generation, original_deadline=decision.deadline, active_tou=decision.active_tou, retained=decision.retained, code='ok' if decision.valid else 'blocked', reason=decision.reason, warning=decision.warning, takeover_blocked=not decision.writers_safe, since=(runtime or {}).get('since',now().isoformat()) if (runtime or {}).get('reason') == decision.reason else now().isoformat()) }}"
     ),
     {
         "if": [
-            condition(
-                "{{ is_state(mode_entity,'Simulation') and is_state(restore_entity,'on') }}"
-            )
+            condition("{{ is_state(mode_entity,'Simulation') and restore_pending }}")
         ],
         "then": [
-            service("input_select.select_option", MODE, {"option": "Off"}),
+            service("select.select_option", "{{ mode_entity }}", {"option": "Off"}),
             *persist(
-                "{{ dict(state_attr(runtime_entity,'runtime') or {},code='simulation_blocked',reason='Najpierw przywróć bazę w Off; po potwierdzeniu wybierz Simulation ponownie') }}"
+                "{{ dict(runtime or {},code='simulation_blocked',reason='Najpierw przywróć bazę w Off; po potwierdzeniu wybierz Simulation ponownie') }}"
             ),
             {
                 "stop": "Simulation odrzucone: pozostał obowiązek przywrócenia, wybrano Off"
@@ -861,11 +710,7 @@ ACTIONS = [
         "then": [{"stop": "Symulacja: profil obliczony, bez zapisów falownika"}],
     },
     {
-        "if": [
-            condition(
-                "{{ is_state(mode_entity,'Off') and not is_state(restore_entity,'on') }}"
-            )
-        ],
+        "if": [condition("{{ is_state(mode_entity,'Off') and not restore_pending }}")],
         "then": [{"stop": "Sterowanie zwolnione: pozostaw nastawy ręczne"}],
     },
     {
@@ -878,7 +723,7 @@ ACTIONS = [
     },
     variables(
         aborted=False,
-        cleanup="{{ not decision.valid or is_state(mode_entity,'Off') or is_state(restore_entity,'on') and not (state_attr(runtime_entity,'runtime') or {}).get('owned_session') == state_attr(session_start_entity,'timestamp') }}",
+        cleanup="{{ not decision.valid or is_state(mode_entity,'Off') or restore_pending and not (runtime or {}).get('owned_session') == state_attr(controller_entity,'session') }}",
     ),
     {
         "repeat": {
@@ -889,20 +734,6 @@ ACTIONS = [
                     transaction_attempt="{{ repeat.index }}",
                     replan=False,
                 ),
-                # A publication can also land after preflight. Before any transaction,
-                # leave the still-valid profile for the already queued state trigger.
-                {
-                    "if": [
-                        condition(
-                            "{{ transaction_attempt == 1 and not cleanup and not aborted and target.handoff_pending }}"
-                        )
-                    ],
-                    "then": [
-                        {
-                            "stop": "Publikacja planu po kontroli: ponowny odczyt w kolejnym przebiegu"
-                        }
-                    ],
-                },
                 {
                     "if": [condition("{{ cleanup or aborted }}")],
                     "then": [variables(cleanup=True), variables(target=BASE_DECISION)],
@@ -919,9 +750,9 @@ ACTIONS = [
                 {
                     "if": [condition("{{ commands|length > 0 }}")],
                     "then": [
-                        service("input_boolean.turn_on", PENDING),
                         *persist(
-                            "{{ dict(state_attr(runtime_entity,'runtime') or {}, owned_session=state_attr(session_start_entity,'timestamp')) }}"
+                            runtime="{{ dict(runtime or {}, owned_session=state_attr(controller_entity,'session')) }}",
+                            restore_pending=True,
                         ),
                     ],
                 },
@@ -961,21 +792,24 @@ ACTIONS = [
                 variables(
                     fresh=DECISION,
                     baseline=BASE_DECISION,
-                    profile_confirmed="{% set rt=state_attr(runtime_entity,'runtime') or {} %}{% set ns=namespace(ok=not rt.get('uncertain',[])) %}{% for e,value in target.desired.items() %}{% if rt.get('confirmed',{}).get(e) != value %}{% set ns.ok=false %}{% endif %}{% endfor %}{{ ns.ok }}",
+                    profile_confirmed="{% set rt=runtime or {} %}{% set ns=namespace(ok=not rt.get('uncertain',[])) %}{% for e,value in target.desired.items() %}{% if rt.get('confirmed',{}).get(e) != value %}{% set ns.ok=false %}{% endif %}{% endfor %}{{ ns.ok }}",
                 ),
                 {
                     "if": [condition("{{ replan }}")],
                     "then": [variables(replan=CAP_ONLY_REPLAN)],
                 },
+                # Energy Compass accepts a newer plan at any moment. When it lands
+                # between target and fresh and nothing was written, the queued run
+                # applies it; aborting here would restore BASE for no safety reason.
                 {
                     "if": [
                         condition(
-                            "{{ transaction_attempt == 1 and not cleanup and not aborted and commands|length == 0 and fresh.handoff_pending }}"
+                            "{{ transaction_attempt == 1 and not cleanup and not aborted and commands|length == 0 and fresh.valid and fresh.requested_mode == 'Auto' and fresh.generation != target.generation }}"
                         )
                     ],
                     "then": [
                         {
-                            "stop": "Publikacja planu podczas kontroli bez zapisów: ponowny odczyt w kolejnym przebiegu"
+                            "stop": "Nowy plan zaakceptowany podczas kontroli bez zapisów: ponowny odczyt w kolejnym przebiegu"
                         }
                     ],
                 },
@@ -1006,10 +840,10 @@ ACTIONS = [
                     "then": [
                         {
                             "if": [condition("{{ cleanup and profile_confirmed }}")],
-                            "then": [service("input_boolean.turn_off", PENDING)],
+                            "then": persist(restore_pending=False),
                         },
                         *persist(
-                            "{{ dict(state_attr(runtime_entity,'runtime') or {}, confirmed_mode=('BASE' if cleanup else target.state) if profile_confirmed else 'unconfirmed', code=('restored' if cleanup else 'ok') if profile_confirmed else 'verification_required', reason=target.reason if profile_confirmed else 'Wymagane potwierdzenie bazowych nastaw podczas przejęcia sterowania') }}"
+                            "{{ dict(runtime or {}, confirmed_mode=('BASE' if cleanup else target.state) if profile_confirmed else 'unconfirmed', code=('restored' if cleanup else 'ok') if profile_confirmed else 'verification_required', reason=target.reason if profile_confirmed else 'Wymagane potwierdzenie bazowych nastaw podczas przejęcia sterowania') }}"
                         ),
                         {
                             "stop": "Przebieg zakończony: sprawdź stan potwierdzenia w diagnostyce"
@@ -1021,7 +855,7 @@ ACTIONS = [
         }
     },
     *persist(
-        "{{ dict(state_attr(runtime_entity,'runtime') or {}, confirmed_mode='unconfirmed',code='write_failed',reason='Brak potwierdzenia nastaw; zachowano obowiązek przywrócenia') }}"
+        "{{ dict(runtime or {}, confirmed_mode='unconfirmed',code='write_failed',reason='Brak potwierdzenia nastaw; zachowano obowiązek przywrócenia') }}"
     ),
 ]
 
@@ -1030,35 +864,17 @@ TRIGGERS = [
     {"trigger": "time_pattern", "minutes": "/1", "id": "minute"},
     {
         "trigger": "state",
-        "entity_id": [
-            PLAN,
-            OPTIMIZER,
-            VALID,
-            ALERT,
-            Input("compass_entity"),
-            MODE,
-            SESSION,
-            PENDING,
-            Input("operation_entity"),
-        ],
+        "entity_id": [CONTROLLER, Input("operation_entity")],
         "id": "change",
     },
     {"trigger": "state", "entity_id": Input("old_writers"), "id": "change"},
-    # Attribute changes carry the TOU program values and times, so no `to:` here.
-    {"trigger": "state", "entity_id": TOU_SETTINGS, "id": "settings"},
     {
         "trigger": "state",
         "entity_id": [Input("soc_entity"), CHARGE, DISCHARGE, GRID],
         "to": None,
         "id": "settings",
     },
-    {"trigger": "time", "at": "sensor.energy_compass_deye_deadline", "id": "expiry"},
-    {
-        "trigger": "time",
-        "at": "sensor.energy_compass_deye_interval_end",
-        "id": "interval",
-    },
-    {"trigger": "time", "at": "sensor.energy_compass_deye_next_tou", "id": "tou"},
+    {"trigger": "time", "at": CONTROLLER, "id": "timing"},
 ]
 for field in ["from", "to"]:
     for state in ["unknown", "unavailable"]:
@@ -1073,7 +889,7 @@ for field in ["from", "to"]:
 
 DESCRIPTION = """Executes an Energy Compass plan on a Deye hybrid inverter through the Solarman integration.
 
-Requires the companion package `packages/energy_compass_deye.yaml` (mode select, session helpers, plan cache, runtime and timing sensors). The package's `inverter_deye_program_` prefix must match your Solarman TOU program entities.
+Requires Energy Compass 0.1.37 or newer with **Options → Deye controller** enabled; select its *Deye controller* sensor below. No package or helpers are needed.
 
 Mode `Off` releases control after a confirmed restore, `Simulation` computes targets without writing, `Auto` writes and verifies every register. See the Deye controller section of the Energy Compass guide."""
 
@@ -1092,120 +908,6 @@ BLUEPRINT = {
     "triggers": TRIGGERS,
     "actions": ACTIONS,
 }
-
-
-def tou_settings(prefix):
-    entities = [
-        f"{'select' if field == 'charging' else 'number'}.{prefix}{{i}}_{field}"
-        for field, _, _ in PROGRAM_FIELDS
-    ] + [f"time.{prefix}{{i}}_time"]
-    values = "".join(
-        f"{{% set ns.v = dict(ns.v, **dict([('{e}', states('{e}'))])) %}}".replace(
-            "{i}", "' ~ i ~ '"
-        )
-        for e in entities
-    )
-    return {
-        "name": "Energy Compass Deye TOU settings",
-        "unique_id": "energy_compass_deye_tou_settings",
-        "state": "{% set ns = namespace(v={}) %}{% for i in range(1,7) %}"
-        + values
-        + "{% endfor %}{{ ns.v.values()|reject('in', ['unknown','unavailable'])|list|length }}",
-        "attributes": {
-            "prefix": prefix,
-            "values": "{% set ns = namespace(v={}) %}{% for i in range(1,7) %}"
-            + values
-            + "{% endfor %}{{ ns.v }}",
-        },
-    }
-
-
-def package(prefix=DEFAULT_PROGRAM_PREFIX):
-    next_tou = (
-        "{% set ns=namespace(times=[]) %}{% for i in range(1,7) %}"
-        f"{{% set raw=states('time.{prefix}'~i~'_time') %}}"
-        "{% if raw not in ['unknown','unavailable'] %}{% set at=today_at(raw) %}{% set at=at if at > now() else at + timedelta(days=1) %}"
-        "{% set ns.times=ns.times+[at] %}{% endif %}{% endfor %}{{ (ns.times|min).isoformat() if ns.times else none }}"
-    )
-    return {
-        "input_select": {
-            "energy_compass_deye_mode": {
-                "name": "Energy Compass Deye mode",
-                "options": ["Off", "Simulation", "Auto"],
-                "icon": "mdi:compass",
-            }
-        },
-        "input_boolean": {
-            "energy_compass_deye_session": {
-                "name": "Energy Compass Deye session ready",
-                "initial": False,
-            },
-            "energy_compass_deye_restore_pending": {
-                "name": "Energy Compass Deye restore pending"
-            },
-        },
-        "input_datetime": {
-            "energy_compass_deye_session_start": {
-                "name": "Energy Compass Deye session start",
-                "has_date": True,
-                "has_time": True,
-            }
-        },
-        "template": [
-            {
-                "triggers": [
-                    {
-                        "trigger": "event",
-                        "event_type": "energy_compass_deye_accept_plan",
-                    }
-                ],
-                "sensor": [
-                    {
-                        "name": "Energy Compass Deye plan",
-                        "unique_id": "energy_compass_deye_plan",
-                        "state": "{{ trigger.event.data.snapshot.generated_at }}",
-                        "attributes": {"snapshot": "{{ trigger.event.data.snapshot }}"},
-                    }
-                ],
-            },
-            {
-                "triggers": [
-                    {"trigger": "event", "event_type": "energy_compass_deye_runtime"}
-                ],
-                "sensor": [
-                    {
-                        "name": "Energy Compass Deye runtime",
-                        "unique_id": "energy_compass_deye_runtime",
-                        "state": '{{ trigger.event.data.runtime.get("code", "waiting") }}',
-                        "attributes": {"runtime": "{{ trigger.event.data.runtime }}"},
-                    }
-                ],
-            },
-            {
-                "sensor": [
-                    tou_settings(prefix),
-                    {
-                        "name": "Energy Compass Deye next TOU",
-                        "unique_id": "energy_compass_deye_next_tou",
-                        "device_class": "timestamp",
-                        "state": next_tou,
-                    },
-                    {
-                        "name": "Energy Compass Deye deadline",
-                        "unique_id": "energy_compass_deye_deadline",
-                        "device_class": "timestamp",
-                        "state": "{{ (state_attr('sensor.energy_compass_deye_plan','snapshot') or {}).get('valid_until') }}",
-                    },
-                    {
-                        "name": "Energy Compass Deye interval end",
-                        "unique_id": "energy_compass_deye_interval_end",
-                        "device_class": "timestamp",
-                        "state": "{% set c=state_attr('sensor.energy_compass_deye_plan','snapshot') or {} %}{% set ns=namespace(end=none) %}{% for r in c.get('intervals',[]) %}{% if as_timestamp(r.start) <= as_timestamp(now()) < as_timestamp(r.end) %}{% set ns.end=r.end %}{% endif %}{% endfor %}{{ ns.end }}",
-                    },
-                ]
-            },
-        ],
-    }
 
 
 HEADER = "# Generated by tools/deye_controller/build.py - do not edit; edit the generator and rebuild.\n"
@@ -1236,36 +938,36 @@ def dump(value):
     )
 
 
-def outputs(prefix=DEFAULT_PROGRAM_PREFIX):
-    return {BLUEPRINT_PATH: dump(BLUEPRINT), PACKAGE_PATH: dump(package(prefix))}
+def outputs():
+    return {BLUEPRINT_PATH: dump(BLUEPRINT)}
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "--check", action="store_true", help="fail if the committed files are stale"
-    )
-    parser.add_argument(
-        "--prefix",
-        default=DEFAULT_PROGRAM_PREFIX,
-        help="TOU program entity prefix; with a non-default prefix the package is printed, not written",
+        "--check",
+        action="store_true",
+        help="fail if the committed blueprint is stale or the retired package exists",
     )
     args = parser.parse_args(argv)
-    if args.prefix != DEFAULT_PROGRAM_PREFIX:
-        sys.stdout.write(dump(package(args.prefix)))
-        return 0
     stale = [
         path
         for path, text in outputs().items()
         if not path.exists() or path.read_text() != text
     ]
+    retired = [RETIRED_PACKAGE_PATH] if RETIRED_PACKAGE_PATH.exists() else []
     if args.check:
         for path in stale:
             print(
                 f"stale: {path.relative_to(REPO)} - run python tools/deye_controller/build.py",
                 file=sys.stderr,
             )
-        return 1 if stale else 0
+        for path in retired:
+            print(
+                f"retired: {path.relative_to(REPO)} must be deleted",
+                file=sys.stderr,
+            )
+        return 1 if stale or retired else 0
     for path, text in outputs().items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)

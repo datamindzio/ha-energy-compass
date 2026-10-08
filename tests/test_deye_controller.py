@@ -1,211 +1,34 @@
 """Behaviour of the generated Deye (Solarman) controller blueprint.
 
 The blueprint is loaded with the inputs below substituted, then its Jinja
-templates and action tree run against a sanitized state sample.
+templates and action tree run against a sanitized state sample. The harness in
+`deye_harness.py` plays Energy Compass: it accepts the sample's plan through
+`controller.step` and serves the runtime service.
 """
 
-import copy
 import datetime as dt
-import json
-from pathlib import Path
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
-import yaml
-from jinja2 import StrictUndefined
-from jinja2.nativetypes import NativeEnvironment
-
-ROOT = Path(__file__).resolve().parents[1]
-BLUEPRINT = ROOT / "blueprints/automation/energy_compass/deye_solarman_controller.yaml"
-PACKAGE = ROOT / "packages/energy_compass_deye.yaml"
-STATES = ROOT / "tests/fixtures/deye_controller/states.json"
-P = "sensor.energy_compass_home_pilot_plan"
-O = "sensor.energy_compass_home_pilot_stan_optymalizatora"
-F = "binary_sensor.energy_compass_home_pilot_poprawna_prognoza"
-A = "binary_sensor.energy_compass_home_pilot_alert"
-CACHE = "sensor.energy_compass_deye_plan"
-RT = "sensor.energy_compass_deye_runtime"
-MODE = "input_select.energy_compass_deye_mode"
-TOU = "sensor.energy_compass_deye_tou_settings"
-PREFIX = "inverter_deye_program_"
-INPUTS = {
-    "plan_entity": P,
-    "optimizer_entity": O,
-    "valid_entity": F,
-    "alert_entity": A,
-    "compass_entity": "sensor.energy_compass_home_pilot_kompas_energii",
-    "solarman_device": "test_solarman_device",
-    "charge_entity": "number.inverter_deye_battery_max_charging_current",
-    "discharge_entity": "number.inverter_deye_battery_max_discharging_current",
-    "grid_entity": "number.inverter_deye_battery_grid_charging_current",
-    "operation_entity": "select.inverter_deye_battery_operation_mode",
-    "soc_entity": "sensor.inverter_deye_battery",
-    "voltage_entity": "sensor.inverter_deye_battery_voltage",
-    "telemetry_entities": [
-        "sensor.inverter_deye_battery",
-        "sensor.inverter_deye_battery_voltage",
-        "sensor.inverter_deye_update_interval",
-    ],
-    "old_writers": [
-        "automation.energy_storage_charging",
-        "automation.auto_slow_battery_balancing",
-        "automation.energy_storage_discharge",
-        "automation.energy_storage_morning_discharge",
-    ],
-}
-
-
-class InputRef:
-    def __init__(self, name):
-        self.name = name
-
-
-class BlueprintLoader(yaml.SafeLoader):
-    pass
-
-
-BlueprintLoader.add_constructor(
-    "!input", lambda loader, node: InputRef(loader.construct_scalar(node))
+from deye_harness import (
+    BATTERY,
+    BLUEPRINT,
+    CACHE,
+    INPUTS,
+    MODE,
+    PREFIX,
+    RT,
+    A,
+    ControllerGone,
+    F,
+    Harness,
+    O,
+    P,
+    Runner,
+    timestamp,
 )
 
-
-def load_blueprint(inputs=INPUTS):
-    """Return the automation config a blueprint instance with `inputs` produces."""
-    doc = yaml.load(BLUEPRINT.read_text(), Loader=BlueprintLoader)
-    values = {
-        key: spec["default"]
-        for section in doc["blueprint"]["input"].values()
-        for key, spec in section["input"].items()
-        if "default" in spec
-    }
-    values |= inputs
-
-    def substitute(x):
-        if isinstance(x, InputRef):
-            return copy.deepcopy(values[x.name])
-        if isinstance(x, dict):
-            return {k: substitute(v) for k, v in x.items()}
-        if isinstance(x, list):
-            return [substitute(v) for v in x]
-        return x
-
-    return substitute({k: v for k, v in doc.items() if k != "blueprint"})
-
-
-def timestamp(x, default=None):
-    try:
-        if isinstance(x, (float, int)):
-            return float(x)
-        return (
-            x if isinstance(x, dt.datetime) else dt.datetime.fromisoformat(x)
-        ).timestamp()
-    except ValueError, TypeError:
-        return default
-
-
-class States:
-    def __init__(self, data):
-        self.data = data
-
-    def __call__(self, entity):
-        return self.data.get(entity, {}).get("state", "unknown")
-
-    def __getitem__(self, entity):
-        if entity not in self.data:
-            return None
-        x = self.data[entity]
-        return SimpleNamespace(
-            state=x.get("state", "unknown"),
-            attributes=x.get("attributes", {}),
-            last_reported=timestamp(x.get("last_reported"), 0),
-        )
-
-
-class Harness:
-    def __init__(self, inputs=INPUTS):
-        self.doc = load_blueprint(inputs)
-        self.data = {
-            x["entity_id"]: copy.deepcopy(x) for x in json.loads(STATES.read_text())
-        }
-        self.now = dt.datetime(2026, 9, 19, 11, 42, tzinfo=ZoneInfo("Europe/Warsaw"))
-        for x in self.data.values():
-            x["last_reported"] = self.now.isoformat()
-        self.set(MODE, "Auto")
-        self.set("input_boolean.energy_compass_deye_session", "on")
-        self.set("input_boolean.energy_compass_deye_restore_pending", "off")
-        self.set(
-            "input_datetime.energy_compass_deye_session_start",
-            str(self.now.timestamp() - 180),
-            timestamp=self.now.timestamp() - 180,
-        )
-        self.set(RT, "ok", runtime={})
-        self.set(TOU, "30", prefix=PREFIX)
-        for entity in self.doc["actions"][0]["variables"]["old_writers"]:
-            self.set(entity, "off", current=0)
-        self.env = NativeEnvironment(undefined=StrictUndefined)
-        self.env.globals.update(
-            states=States(self.data),
-            state_attr=lambda e, a: self.data.get(e, {}).get("attributes", {}).get(a),
-            is_state=lambda e, s: self.data.get(e, {}).get("state") == s,
-            now=lambda: self.now,
-            as_timestamp=timestamp,
-            is_number=lambda x: isinstance(x, (int, float, str)) and self.finite(x),
-            dict=dict,
-        )
-        self.compiled = {}
-        # Script variables render in order; later ones see the earlier ones.
-        self.ctx = {}
-        for key, value in self.doc["actions"][0]["variables"].items():
-            self.ctx[key] = self.render(value)
-
-    @staticmethod
-    def finite(x):
-        import math
-
-        try:
-            return math.isfinite(float(x))
-        except ValueError, TypeError:
-            return False
-
-    def set(self, entity, state, **attrs):
-        self.data[entity] = {
-            "state": state,
-            "attributes": attrs,
-            "last_reported": self.now.isoformat(),
-        }
-
-    def render(self, template, **kwargs):
-        if not isinstance(template, str):
-            return template
-        if template not in self.compiled:
-            self.compiled[template] = self.env.from_string(template)
-        return self.compiled[template].render(**(self.ctx | kwargs))
-
-    def expression(self, name):
-        def walk(x):
-            if isinstance(x, dict):
-                if isinstance(x.get("variables", {}).get(name), str):
-                    return x["variables"][name]
-                for v in x.values():
-                    r = walk(v)
-                    if r is not None:
-                        return r
-            if isinstance(x, list):
-                for v in x:
-                    r = walk(v)
-                    if r is not None:
-                        return r
-
-        return walk(self.doc)
-
-    def accept(self):
-        value = self.render(self.expression("candidate"))
-        self.set(CACHE, value.get("generated_at", "none"), snapshot=value)
-        return value
-
-    def decision(self):
-        return self.render(self.expression("decision"))
+from custom_components.energy_compass import controller as core
 
 
 @pytest.fixture
@@ -252,21 +75,30 @@ def test_state_table(h, state, charging, charge, discharge):
 def test_frozen_expiry_and_revoke(h):
     old = h.accept()
     h.data[P]["attributes"]["valid_until"] = "2026-09-20T00:00:00+00:00"
-    assert h.render(h.expression("candidate")) == {}
+    assert h.accept() == {}
     h.data[O]["state"] = "calculating"
     h.data[F]["state"] = "off"
     assert h.decision()["valid"]
     h.data[A]["state"] = "on"
     assert not h.decision()["valid"]
-    h.set(RT, "error", runtime={"revoked_generation": old["generated_at"]})
+    h.revoked = core.Revocation(old["generated_at"], h.now.isoformat(), "error: x")
     h.data[A]["state"] = "off"
-    assert not h.decision()["valid"]
+    d = h.decision()
+    assert not d["valid"] and d["reason"].startswith("plan: generacja unieważniona")
 
 
 def test_startup_gate(h):
     h.accept()
-    h.data["input_boolean.energy_compass_deye_session"]["state"] = "off"
-    assert not h.decision()["valid"]
+    h.restart()
+    d = h.decision()
+    assert not d["valid"] and d["reason"].startswith("sesja:")
+
+
+def test_a_plan_of_another_session_is_not_executed(h):
+    h.accept()
+    h.session += 60
+    d = h.decision()
+    assert not d["valid"] and d["reason"].startswith("sesja:")
 
 
 @pytest.mark.parametrize(
@@ -304,144 +136,6 @@ def test_oldwriter(h):
     assert not h.decision()["writers_safe"]
 
 
-class Stopped(Exception):
-    pass
-
-
-class Runner:
-    def __init__(self, h):
-        self.h = h
-        self.ctx = {"trigger": {"id": "change"}}
-        self.writes = []
-        self.reads = []
-        self.raw = {}
-        self.drop = set()
-        self.hook = None
-        self.before_action = None
-        self.delays = []
-        for entity, reg in h.ctx["registers"].items():
-            value = h.data[entity]["state"]
-            self.raw[reg["address"]] = (
-                {"Disabled": 0, "Grid": 1, "Sell": 32}.get(value, 0)
-                if entity.startswith("select.")
-                else round(float(value) / reg["scale"])
-            )
-
-    def value(self, v):
-        if isinstance(v, str):
-            return self.h.render(v, **self.ctx)
-        if isinstance(v, dict):
-            return {k: self.value(x) for k, x in v.items()}
-        if isinstance(v, list):
-            return [self.value(x) for x in v]
-        return v
-
-    def conditions(self, conds):
-        return all(self.value(x["value_template"]) for x in conds)
-
-    def run(self):
-        try:
-            self.actions(self.h.doc["actions"])
-        except Stopped:
-            pass
-
-    def actions(self, actions):
-        for action in actions:
-            if self.before_action:
-                self.before_action(self, action)
-            if "variables" in action:
-                for k, v in action["variables"].items():
-                    self.ctx[k] = self.value(v)
-            elif "if" in action:
-                self.actions(
-                    action.get("then", [])
-                    if self.conditions(action["if"])
-                    else action.get("else", [])
-                )
-            elif "choose" in action:
-                selected = next(
-                    (c for c in action["choose"] if self.conditions(c["conditions"])),
-                    None,
-                )
-                self.actions(
-                    selected["sequence"] if selected else action.get("default", [])
-                )
-            elif "repeat" in action:
-                spec = action["repeat"]
-                old = self.ctx.get("repeat")
-                values = (
-                    self.value(spec["for_each"])
-                    if "for_each" in spec
-                    else range(int(self.value(spec["count"])))
-                )
-                for i, item in enumerate(values):
-                    self.ctx["repeat"] = {"item": item, "index": i + 1}
-                    self.actions(spec["sequence"])
-                self.ctx["repeat"] = old
-            elif "event" in action:
-                payload = self.value(action["event_data"])
-                if action["event"] == "energy_compass_deye_accept_plan":
-                    self.h.set(
-                        CACHE,
-                        payload["snapshot"]["generated_at"],
-                        snapshot=payload["snapshot"],
-                    )
-                else:
-                    self.h.set(
-                        RT,
-                        payload["runtime"].get("code", "waiting"),
-                        runtime=payload["runtime"],
-                    )
-            elif "wait_template" in action:
-                if not self.value(action["wait_template"]):
-                    raise Stopped()
-            elif "delay" in action:
-                seconds = self.value(action["delay"]).get("milliseconds", 0) / 1000
-                self.delays.append(seconds)
-                self.h.now += dt.timedelta(seconds=seconds)
-            elif "stop" in action:
-                raise Stopped()
-            elif "action" in action:
-                self.service(action)
-            else:
-                raise AssertionError(action)
-
-    def service(self, action):
-        service = action["action"]
-        data = self.value(action.get("data", {}))
-        entity = self.value(action.get("target", {})).get("entity_id")
-        if service in ["number.set_value", "select.select_option"]:
-            value = data.get("value", data.get("option"))
-            self.writes.append((entity, value))
-            self.h.data[entity]["state"] = str(value)
-            register = self.h.ctx["registers"][entity]
-            if entity not in self.drop:
-                self.raw[register["address"]] = (
-                    {"Disabled": 0, "Grid": 1, "Sell": 32}[value]
-                    if service.startswith("select")
-                    else int(float(value) / register["scale"])
-                )
-            if self.hook:
-                self.hook(self, entity, value)
-        elif service == "solarman.read_holding_registers":
-            self.reads.append(data["address"])
-            self.ctx[action["response_variable"]] = {
-                address: raw
-                for address, raw in self.raw.items()
-                if data["address"] <= address < data["address"] + data["count"]
-            }
-        elif service.startswith("input_boolean."):
-            self.h.data[entity]["state"] = (
-                "on" if service.endswith("turn_on") else "off"
-            )
-        elif service == "input_select.select_option":
-            self.h.data[entity]["state"] = data["option"]
-        elif service == "input_datetime.set_datetime":
-            self.h.set(entity, str(data["timestamp"]), timestamp=int(data["timestamp"]))
-        else:
-            raise AssertionError(service)
-
-
 def test_action_order_and_ten_noops(h):
     row = h.data[P]["attributes"]["intervals"][0]
     row.update(state="CHARGE_GRID", charge_kwh=0.5, pv_kwh=0, end_soc_kwh=20)
@@ -472,7 +166,7 @@ def test_lost_optimistic_write_retried(h):
     runner.drop.add(bad)
     runner.run()
     assert bad in h.data[RT]["attributes"]["runtime"]["uncertain"]
-    assert h.data["input_boolean.energy_compass_deye_restore_pending"]["state"] == "on"
+    assert h.restore_pending is True
     assert not any(v == "Grid" or v == "Sell" for e, v in runner.writes)
     n = sum(e == bad for e, v in runner.writes)
     assert n >= 3
@@ -488,7 +182,7 @@ def test_off_restores_then_releases(h):
     runner.run()
     h.data[MODE]["state"] = "Off"
     runner.run()
-    assert h.data["input_boolean.energy_compass_deye_restore_pending"]["state"] == "off"
+    assert h.restore_pending is False
     n = len(runner.writes)
     h.data[h.ctx["grid_entity"]]["state"] = "7"
     runner.run()
@@ -742,13 +436,8 @@ def test_voltage_sell_counts_from_start_of_each_row():
     assert d["slot_energy"] == {"key": d["reached_key"], "discharge": 5600.0}
 
 
-def test_generation_consistency_and_session(h):
-    h.data[F]["attributes"]["generated_at"] = "other"
-    assert h.accept() == {}
-    h.data[F]["attributes"]["generated_at"] = h.data[P]["attributes"]["generated_at"]
-    h.data["input_datetime.energy_compass_deye_session_start"]["attributes"][
-        "timestamp"
-    ] = h.now.timestamp()
+def test_plans_older_than_the_session_are_rejected(h):
+    h.session = h.now.timestamp()
     assert h.accept() == {}
 
 
@@ -840,7 +529,7 @@ def test_current_caps_and_ac_power(h):
             pv_kwh=0,
             end_soc_kwh=20 if state == "CHARGE_GRID" else 5,
         )
-        h.data.pop(CACHE, None)
+        h.set(CACHE, "none", snapshot={})
         h.accept()
         d = h.decision()
         assert d["desired"][h.ctx["charge_entity"]] <= 18
@@ -848,7 +537,9 @@ def test_current_caps_and_ac_power(h):
         assert d["desired"][h.ctx["discharge_entity"]] <= 18
         assert d["desired"][h.ctx["charge_entity"]] * d["voltage"] <= 8000
         assert (
-            d["desired"][h.ctx["discharge_entity"]] * d["voltage"] / h.ctx["eta"]
+            d["desired"][h.ctx["discharge_entity"]]
+            * d["voltage"]
+            / BATTERY["eta_discharge"]
             <= 8000
         )
 
@@ -856,7 +547,7 @@ def test_current_caps_and_ac_power(h):
 def test_restart_restores_before_fresh_forcing(h):
     r = Runner(h)
     r.run()
-    h.data["input_boolean.energy_compass_deye_session"]["state"] = "off"
+    h.restart()
     r.ctx["trigger"] = {"id": "start"}
     r.writes.clear()
     r.run()
@@ -881,14 +572,11 @@ def test_cache_replaced_atomically(h):
 
 def test_off_oldwriter_blocks_even_cleanup(h):
     h.data[MODE]["state"] = "Off"
-    h.data["input_boolean.energy_compass_deye_restore_pending"]["state"] = "on"
+    h.restore_pending = True
     h.data[h.ctx["old_writers"][0]]["attributes"]["current"] = 1
     r = Runner(h)
     r.run()
-    assert (
-        not r.writes
-        and h.data["input_boolean.energy_compass_deye_restore_pending"]["state"] == "on"
-    )
+    assert not r.writes and h.restore_pending is True
 
 
 def test_unconfirmed_equal_profile_not_claimed_confirmed(h):
@@ -926,10 +614,7 @@ def test_all_templates_compile_and_one_automation(h):
             for child in value:
                 walk(child)
 
-    package = yaml.safe_load(PACKAGE.read_text())
     walk(h.doc)
-    walk(package)
-    assert "automation" not in package
     assert h.doc["mode"] == "queued" and h.doc["max"] == 2
     assert not any(t.get("seconds") for t in h.doc["triggers"])
     assert len(h.ctx["registers"]) == 27
@@ -963,13 +648,88 @@ def test_installation_limits_come_from_inputs():
     assert all(d["desired"][f"number.{PREFIX}{i}_power"] <= 1000 for i in range(1, 7))
 
 
-def test_missing_package_blocks_control(h):
+def test_capacity_comes_from_the_accepted_generation(h):
+    row = h.data[P]["attributes"]["intervals"][0]
+    row.update(state="HOLD", charge_kwh=0, discharge_kwh=0, end_soc_kwh=12)
     h.accept()
-    h.data[TOU]["attributes"] = {}
-    h.ctx["program_prefix"] = h.render(
-        h.doc["actions"][0]["variables"]["program_prefix"]
+    assert h.decision()["target_soc"] == 48
+    h.battery["capacity_kwh"] = 24.0
+    # A save after acceptance changes nothing for the plan already executing.
+    assert h.decision()["target_soc"] == 48
+    h.data[P]["attributes"]["generated_at"] = "2026-09-19T09:41:59+00:00"
+    h.accept()
+    assert h.decision()["target_soc"] == 50
+
+
+def test_eta_split_uses_charge_and_discharge_efficiency(h):
+    row = h.data[P]["attributes"]["intervals"][0]
+    row.update(
+        state="CHARGE_GRID", charge_kwh=0.5, pv_kwh=0, load_kwh=0.05, end_soc_kwh=20
     )
-    assert not h.decision()["valid"]
+    h.accept()
+    base = h.decision()["desired"][h.ctx["grid_entity"]]
+    h.battery |= {"eta_charge": 0.5, "eta_discharge": 0.9746794344808963}
+    h.data[P]["attributes"]["generated_at"] = "2026-09-19T09:41:00+00:00"
+    h.accept()
+    assert h.decision()["desired"][h.ctx["grid_entity"]] < base
+    row.update(state="DISCHARGE_GRID", charge_kwh=0, discharge_kwh=0.15, end_soc_kwh=5)
+    h.data[P]["attributes"]["generated_at"] = "2026-09-19T09:41:30+00:00"
+    h.accept()
+    same_discharge = h.decision()["desired"][h.ctx["discharge_entity"]]
+    h.battery |= {"eta_charge": 1.0, "eta_discharge": 0.5}
+    h.data[P]["attributes"]["generated_at"] = "2026-09-19T09:41:45+00:00"
+    h.accept()
+    assert h.decision()["desired"][h.ctx["discharge_entity"]] > same_discharge
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"capacity_kwh": 0},
+        {"eta_charge": 0},
+        {"eta_discharge": 1.2},
+        {"eta_charge": -0.5},
+    ],
+)
+def test_missing_battery_parameters_block(h, broken):
+    h.battery |= broken
+    h.accept()
+    d = h.decision()
+    assert not d["valid"] and d["state"] == "BASE"
+    assert (
+        d["reason"] == "plan: brak parametrów baterii (pojemność, sprawność) w planie"
+    )
+
+
+@pytest.mark.parametrize(
+    "missing", ["absent", "unavailable", "schema", "no_mode_entity"]
+)
+def test_missing_controller_holds_without_writes(h, missing):
+    row = h.data[P]["attributes"]["intervals"][0]
+    row.update(state="CHARGE_GRID", charge_kwh=0.5, pv_kwh=0, end_soc_kwh=20)
+    r = Runner(h)
+    r.run()
+    r.writes.clear()
+    r.reads.clear()
+    r.runtime_calls.clear()
+    h.controller_missing = missing
+    r.run()
+    assert not r.writes and not r.reads and not r.runtime_calls
+
+
+def test_controller_lost_mid_run_cannot_write(h):
+    row = h.data[P]["attributes"]["intervals"][0]
+    row.update(state="CHARGE_GRID", charge_kwh=0.5, pv_kwh=0, end_soc_kwh=20)
+    r = Runner(h)
+
+    def lose(runner, action):
+        if "repeat" in action and "count" in action["repeat"]:
+            h.controller_missing = "unavailable"
+
+    r.before_action = lose
+    with pytest.raises(ControllerGone):
+        r.run()
+    assert not r.writes and not r.reads
 
 
 def test_utc_duration_across_dst(h):
@@ -991,9 +751,7 @@ def test_utc_duration_across_dst(h):
     )
     for e in [O, F]:
         h.data[e]["attributes"]["generated_at"] = "2026-10-25T00:00:00+00:00"
-    h.data["input_datetime.energy_compass_deye_session_start"]["attributes"][
-        "timestamp"
-    ] = timestamp("2026-10-24T00:00:00+00:00")
+    h.session = timestamp("2026-10-24T00:00:00+00:00")
     for x in h.data.values():
         x["last_reported"] = h.now.isoformat()
     h.accept()
@@ -1018,7 +776,7 @@ def test_owned_to_simulation_requires_off_cleanup(h):
     assert h.data[MODE]["state"] == "Off" and len(r.writes) == count
     assert h.data[RT]["attributes"]["runtime"]["code"] == "simulation_blocked"
     r.run()
-    assert h.data["input_boolean.energy_compass_deye_restore_pending"]["state"] == "off"
+    assert h.restore_pending is False
     h.data[MODE]["state"] = "Simulation"
     count = len(r.writes)
     r.run()
@@ -1054,7 +812,7 @@ def test_cleanup_rechecks_fresh_baseline_before_enable_and_release(h, voltage, p
             h.ctx["grid_entity"],
         ]:
             assert value <= fresh["desired"][entity]
-    if h.data["input_boolean.energy_compass_deye_restore_pending"]["state"] == "off":
+    if not h.restore_pending:
         assert h.data[RT]["attributes"]["runtime"]["confirmed"] == fresh["desired"]
     else:
         assert h.data[RT]["attributes"]["runtime"]["confirmed_mode"] == "unconfirmed"
@@ -1589,16 +1347,17 @@ def publish_generation(h, entities=(P, O, F)):
     h.data[O]["state"] = "ready"
 
 
-def test_plan_published_between_candidate_and_decision_keeps_export(h):
+def test_acceptance_during_transaction_rechecks_before_any_write(h):
     runner = exporting_runner(h)
     h.data[O]["state"] = "calculating"
 
-    def publish(r, action):
-        if isinstance(action.get("variables", {}).get("decision"), str):
+    def accept(r, action):
+        if isinstance(action.get("variables", {}).get("target"), str):
             publish_generation(h)
+            h.accept()
             r.before_action = None
 
-    runner.before_action = publish
+    runner.before_action = accept
     runner.run()
     assert not runner.writes
     assert (
@@ -1608,71 +1367,24 @@ def test_plan_published_between_candidate_and_decision_keeps_export(h):
     assert h.data[RT]["attributes"]["runtime"]["confirmed_mode"] == "DISCHARGE_GRID"
 
 
-def test_split_publication_rechecks_before_any_inverter_write(h):
-    runner = exporting_runner(h)
-    publish_generation(h, (P, O))
-
-    def finish(r, action):
-        if "delay" in action:
-            assert not r.writes
-            publish_generation(h)
-            r.before_action = None
-
-    runner.before_action = finish
-    runner.run()
-    assert not runner.writes
-    assert (
-        h.data[CACHE]["attributes"]["snapshot"]["generated_at"]
-        == "2026-09-19T09:41:59+00:00"
-    )
-    assert h.data[RT]["attributes"]["runtime"]["confirmed_mode"] == "DISCHARGE_GRID"
-
-
-@pytest.mark.parametrize(
-    "fault", ["persistent_mismatch", "alert", "expired", "stale", "off", "revoked"]
-)
-def test_handoff_retry_never_masks_safety_failure(h, fault):
-    runner = exporting_runner(h)
-    old = h.data[CACHE]["attributes"]["snapshot"]["generated_at"]
-    publish_generation(h, (P, O))
-
-    def fail(r, action):
-        if "delay" not in action:
-            return
-        if fault == "alert":
-            h.data[A]["state"] = "on"
-        elif fault == "expired":
-            h.data[CACHE]["attributes"]["snapshot"]["valid_until"] = h.now.isoformat()
-        elif fault == "stale":
-            h.data[h.ctx["voltage_entity"]]["last_reported"] = (
-                h.now - dt.timedelta(seconds=31)
-            ).isoformat()
-        elif fault == "off":
-            h.data[MODE]["state"] = "Off"
-        elif fault == "revoked":
-            h.data[RT]["attributes"]["runtime"]["revoked_generation"] = old
-        r.before_action = None
-
-    runner.before_action = fail
-    runner.run()
-    assert runner.delays and sum(runner.delays) <= 1
-    assert (h.ctx["discharge_entity"], 0) in runner.writes
-    assert ("select.inverter_deye_program_3_charging", "Disabled") in runner.writes
-    assert not any(value == "Sell" for entity, value in runner.writes)
-    assert h.data[CACHE]["attributes"]["snapshot"]["generated_at"] == old
+def test_blueprint_has_no_handoff_retry():
+    text = BLUEPRINT.read_text()
+    for word in ("handoff", "milliseconds", "candidate", "Publikacja planu"):
+        assert word not in text
 
 
 @pytest.mark.parametrize("phase", ["target", "fresh"])
-def test_late_publication_without_writes_defers_to_queued_run(h, phase):
+def test_acceptance_after_decision_runs_in_the_queued_run(h, phase):
     runner = exporting_runner(h)
     h.data[O]["state"] = "calculating"
 
-    def publish(r, action):
+    def accept(r, action):
         if phase in action.get("variables", {}):
             publish_generation(h)
+            h.accept()
             r.before_action = None
 
-    runner.before_action = publish
+    runner.before_action = accept
     runner.run()
     assert not runner.writes
     runner.run()
@@ -2106,28 +1818,25 @@ def test_retained_publication_rejected_with_alert_or_invalid_forecast(h):
 
 def test_plan_generated_before_revocation_is_never_accepted(h):
     g = h.data[P]["attributes"]["generated_at"]
-    h.set(
-        RT,
-        "restored",
-        runtime={
-            "revoked_generation": "older",
-            "revoked_at": (
-                dt.datetime.fromisoformat(g) + dt.timedelta(seconds=1)
-            ).isoformat(),
-        },
+    h.revoked = core.Revocation(
+        "older",
+        (dt.datetime.fromisoformat(g) + dt.timedelta(seconds=1)).isoformat(),
+        "error: x",
     )
     assert h.accept() == {}
     retained_publication(h)
     assert h.accept() == {}
-    h.data[RT]["attributes"]["runtime"]["revoked_at"] = (
-        dt.datetime.fromisoformat(g) - dt.timedelta(seconds=1)
-    ).isoformat()
+    h.revoked = core.Revocation(
+        "older",
+        (dt.datetime.fromisoformat(g) - dt.timedelta(seconds=1)).isoformat(),
+        "error: x",
+    )
     assert h.accept()["generated_at"] == g
 
 
-def test_revocation_records_time(h):
+def test_blueprint_does_not_stamp_revocations():
     text = BLUEPRINT.read_text()
-    assert text.count("else now().isoformat(), revoked_reason=") == 1
+    assert "revoked_at" not in text and "revoked_generation=" not in text
 
 
 def _balance_row(h, state, **changes):
@@ -2231,21 +1940,36 @@ def _revocation(h):
 
 
 def test_repeated_revocation_keeps_the_first_revocation_time(h):
-    # While an error persists every run revokes again. Moving revoked_at to
-    # each run's now() rejected a plan computed after the first revocation but
-    # published while the alert was still on (sensors update one by one).
+    # While an error persists every publication revokes again. Moving the time
+    # would reject a plan computed after the first revocation.
     g = h.accept()["generated_at"]
-    first = (h.now - dt.timedelta(minutes=45)).isoformat()
-    h.set(RT, "restored", runtime={"revoked_generation": g, "revoked_at": first})
-    runtime = _revocation(h)
-    assert runtime["revoked_generation"] == g
-    assert runtime["revoked_at"] == first
+    h.data[O]["state"] = "error"
+    h.accept()
+    first = h.revoked
+    assert first.generation == g
+    h.now += dt.timedelta(minutes=10)
+    for state in h.data.values():
+        state["last_reported"] = h.now.isoformat()
+    h.accept()
+    assert h.revoked.at == first.at
+    d = h.decision()
+    assert not d["valid"] and d["reason"].startswith("plan: generacja unieważniona")
 
 
 def test_revoking_a_new_generation_records_the_current_time(h):
+    h.accept()
+    h.data[O]["state"] = "error"
+    h.accept()
+    old = h.revoked
+    h.now += dt.timedelta(minutes=10)
+    for state in h.data.values():
+        state["last_reported"] = h.now.isoformat()
+    h.data[O]["state"] = "ready"
+    for entity in (P, O, F):
+        h.data[entity]["attributes"]["generated_at"] = "2026-09-19T09:50:00+00:00"
     g = h.accept()["generated_at"]
-    old = (h.now - dt.timedelta(hours=5)).isoformat()
-    h.set(RT, "ok", runtime={"revoked_generation": "older", "revoked_at": old})
-    runtime = _revocation(h)
-    assert runtime["revoked_generation"] == g
-    assert dt.datetime.fromisoformat(runtime["revoked_at"]) == h.now
+    h.now += dt.timedelta(minutes=1)
+    h.data[O]["state"] = "error"
+    h.accept()
+    assert h.revoked.generation == g != old.generation
+    assert dt.datetime.fromisoformat(h.revoked.at) == h.now

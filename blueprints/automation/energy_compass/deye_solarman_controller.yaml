@@ -4,7 +4,7 @@ blueprint:
   description: |-
     Executes an Energy Compass plan on a Deye hybrid inverter through the Solarman integration.
 
-    Requires the companion package `packages/energy_compass_deye.yaml` (mode select, session helpers, plan cache, runtime and timing sensors). The package's `inverter_deye_program_` prefix must match your Solarman TOU program entities.
+    Requires Energy Compass 0.1.37 or newer with **Options → Deye controller** enabled; select its *Deye controller* sensor below. No package or helpers are needed.
 
     Mode `Off` releases control after a confirmed restore, `Simulation` computes targets without writing, `Auto` writes and verifies every register. See the Deye controller section of the Energy Compass guide.
   domain: automation
@@ -16,57 +16,19 @@ blueprint:
       name: Energy Compass
       icon: mdi:compass
       input:
-        plan_entity:
-          name: Plan
-          description: The Plan sensor of the Energy Compass installation to execute.
+        controller_entity:
+          name: Energy Compass controller
+          description: The Deye controller sensor of the Energy Compass installation (Options → Deye controller).
           selector:
             entity:
               filter:
                 domain: sensor
                 integration: energy_compass
-        optimizer_entity:
-          name: Optimizer status
-          description: The Optimizer status sensor of the same installation.
-          selector:
-            entity:
-              filter:
-                domain: sensor
-                integration: energy_compass
-        valid_entity:
-          name: Forecast valid
-          description: The Forecast valid binary sensor of the same installation.
-          selector:
-            entity:
-              filter:
-                domain: binary_sensor
-                integration: energy_compass
-        alert_entity:
-          name: Alert
-          description: The Alert binary sensor of the same installation.
-          selector:
-            entity:
-              filter:
-                domain: binary_sensor
-                integration: energy_compass
-        compass_entity:
-          name: Consumption compass
-          description: The Consumption compass sensor; its changes re-run the controller.
-          selector:
-            entity:
-              filter:
-                domain: sensor
-                integration: energy_compass
+                device_class: timestamp
     inverter:
       name: Deye inverter (Solarman)
       icon: mdi:solar-power
       input:
-        solarman_device:
-          name: Solarman device
-          description: Inverter device used to read back holding registers 108-177 after each write.
-          selector:
-            device:
-              filter:
-                integration: solarman
         charge_entity:
           name: Battery max charging current
           description: Register 108.
@@ -199,17 +161,6 @@ blueprint:
               step: 1
               mode: box
               unit_of_measurement: A
-        capacity_kwh:
-          name: Battery capacity
-          description: Usable capacity the Energy Compass plan uses; converts planned end SOC kWh into %.
-          default: 25
-          selector:
-            number:
-              min: 1
-              max: 200
-              step: 0.1
-              mode: box
-              unit_of_measurement: kWh
         max_power_w:
           name: Maximum battery power
           description: DC charge/discharge power cap and the TOU program power.
@@ -254,16 +205,6 @@ blueprint:
               step: 1
               mode: box
               unit_of_measurement: A
-        eta:
-          name: One-way battery efficiency
-          description: Used to convert planned kWh into DC current.
-          default: 0.9746794344808963
-          selector:
-            number:
-              min: 0.5
-              max: 1
-              step: any
-              mode: box
         old_writers:
           name: Previous battery automations
           description: Automations that also write these registers. Control is blocked until each is off and not running.
@@ -285,22 +226,12 @@ triggers:
   id: minute
 - trigger: state
   entity_id:
-  - !input 'plan_entity'
-  - !input 'optimizer_entity'
-  - !input 'valid_entity'
-  - !input 'alert_entity'
-  - !input 'compass_entity'
-  - input_select.energy_compass_deye_mode
-  - input_boolean.energy_compass_deye_session
-  - input_boolean.energy_compass_deye_restore_pending
+  - !input 'controller_entity'
   - !input 'operation_entity'
   id: change
 - trigger: state
   entity_id: !input 'old_writers'
   id: change
-- trigger: state
-  entity_id: sensor.energy_compass_deye_tou_settings
-  id: settings
 - trigger: state
   entity_id:
   - !input 'soc_entity'
@@ -310,14 +241,8 @@ triggers:
   to: null
   id: settings
 - trigger: time
-  at: sensor.energy_compass_deye_deadline
-  id: expiry
-- trigger: time
-  at: sensor.energy_compass_deye_interval_end
-  id: interval
-- trigger: time
-  at: sensor.energy_compass_deye_next_tou
-  id: tou
+  at: !input 'controller_entity'
+  id: timing
 - trigger: state
   entity_id: !input 'telemetry_entities'
   from: unknown
@@ -336,16 +261,8 @@ triggers:
   id: availability
 actions:
 - variables:
-    plan_entity: !input 'plan_entity'
-    optimizer_entity: !input 'optimizer_entity'
-    valid_entity: !input 'valid_entity'
-    alert_entity: !input 'alert_entity'
-    cache_entity: sensor.energy_compass_deye_plan
-    runtime_entity: sensor.energy_compass_deye_runtime
-    mode_entity: input_select.energy_compass_deye_mode
-    session_entity: input_boolean.energy_compass_deye_session
-    session_start_entity: input_datetime.energy_compass_deye_session_start
-    restore_entity: input_boolean.energy_compass_deye_restore_pending
+    controller_entity: !input 'controller_entity'
+    mode_entity: '{{ state_attr(controller_entity,''mode_entity'') }}'
     charge_entity: !input 'charge_entity'
     discharge_entity: !input 'discharge_entity'
     grid_entity: !input 'grid_entity'
@@ -359,376 +276,284 @@ actions:
     reached_discharge_current: !input 'reached_discharge_current'
     balance_grid_current: !input 'balance_grid_current'
     telemetry_entities: !input 'telemetry_entities'
-    eta: !input 'eta'
     relinquish_current: !input 'relinquish_current'
-    capacity_kwh: !input 'capacity_kwh'
     max_power_w: !input 'max_power_w'
     max_current: !input 'max_current'
     max_grid_current: !input 'max_grid_current'
     old_writers: !input 'old_writers'
-    program_prefix: '{{ state_attr(''sensor.energy_compass_deye_tou_settings'', ''prefix'') or '''' }}'
+    program_prefix: '{{ state_attr(controller_entity,''program_prefix'') or '''' }}'
+    device_id: '{{ state_attr(controller_entity,''device_id'') }}'
     registers: '{% set ns = namespace(r=dict([(charge_entity, {''address'':108,''scale'':1}), (discharge_entity, {''address'':109,''scale'':1}),
       (grid_entity, {''address'':128,''scale'':1})])) %}{% for i in range(1,7) %}{% set ns.r = dict(ns.r, **dict([(''number.''
       ~ program_prefix ~ i ~ ''_power'', {''address'':153+i,''scale'':10})])) %}{% set ns.r = dict(ns.r, **dict([(''number.''
       ~ program_prefix ~ i ~ ''_voltage'', {''address'':159+i,''scale'':0.01})])) %}{% set ns.r = dict(ns.r, **dict([(''number.''
       ~ program_prefix ~ i ~ ''_soc'', {''address'':165+i,''scale'':1})])) %}{% set ns.r = dict(ns.r, **dict([(''select.''
       ~ program_prefix ~ i ~ ''_charging'', {''address'':171+i,''scale'':1})])) %}{% endfor %}{{ ns.r }}'
+    runtime: {}
+    restore_pending: false
+- if:
+  - condition: template
+    value_template: '{{ states[controller_entity] is none or state_attr(controller_entity,''controller_schema'') != 1 or not
+      (mode_entity is string and mode_entity != '''') }}'
+  then:
+  - stop: 'Energy Compass niedostępny: sterowanie wstrzymane bez zapisów'
+- action: energy_compass.controller_runtime
+  data:
+    controller: '{{ controller_entity }}'
+  response_variable: runtime_response
+- variables:
+    runtime: '{{ runtime_response.runtime }}'
+    restore_pending: '{{ runtime_response.restore_pending }}'
 - variables:
     current_ceiling: {}
-- if:
-  - condition: template
-    value_template: '{{ trigger.id|default('''') == ''start'' or not is_state(session_entity,''on'') }}'
-  then:
-  - action: input_datetime.set_datetime
-    target:
-      entity_id: input_datetime.energy_compass_deye_session_start
-    data:
-      timestamp: '{{ as_timestamp(now())|round(0,''ceil'') }}'
-  - action: input_boolean.turn_on
-    target:
-      entity_id: input_boolean.energy_compass_deye_session
-- if:
-  - condition: template
-    value_template: '{{ states(optimizer_entity) not in [''ready'',''calculating''] or not is_state(alert_entity,''off'')
-      or (trigger.platform|default('''') == ''state'' and trigger.to_state is not none and ((trigger.entity_id == alert_entity
-      and trigger.to_state.state != ''off'') or (trigger.entity_id == optimizer_entity and trigger.to_state.state not in [''ready'',''calculating''])))
-      }}'
-  then:
-  - variables:
-      runtime_update: '{% set rt = state_attr(runtime_entity,''runtime'') or {} %}{% set g = (state_attr(cache_entity,''snapshot'')
-        or {}).get(''generated_at'') %}{{ dict(rt, revoked_generation=g, revoked_at=rt.get(''revoked_at'') if rt.get(''revoked_at'')
-        and ''revoked_generation'' in rt and rt.get(''revoked_generation'') == g else now().isoformat(), revoked_reason=''Błąd
-        obliczeń lub źródeł: wymagany nowy plan'') }}'
-  - event: energy_compass_deye_runtime
-    event_data:
-      runtime: '{{ runtime_update }}'
-  - wait_template: '{{ state_attr(runtime_entity,''runtime'') == runtime_update }}'
-    timeout:
-      seconds: 1
-    continue_on_timeout: false
 - variables:
-    candidate: {}
-    decision: {}
-- repeat:
-    count: 3
-    sequence:
-    - if:
-      - condition: template
-        value_template: '{{ repeat.index == 1 or decision.handoff_pending }}'
-      then:
-      - variables:
-          candidate: |-
-            {% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
-            {% set cache = state_attr(cache_entity, 'snapshot') or {} %}
-            {% set rt = state_attr(runtime_entity, 'runtime') or {} %}
-            {% set t = as_timestamp(now()) %}
-            {% set g = p.get('generated_at') %}
-            {% set raw_rows = p.get('intervals', []) %}
-            {% set rows = raw_rows if raw_rows is sequence and raw_rows is not string else [] %}
-            {% set ns = namespace(ok=rows is sequence and rows is not string and rows|length > 0, end=none, covered=false) %}
-            {% for r in rows if r is mapping %}
-              {% set start = as_timestamp(r.get('start'), 0) %}
-              {% set end = as_timestamp(r.get('end'), 0) %}
-              {% if start <= 0 or end <= start or (ns.end is not none and start != ns.end) %}{% set ns.ok = false %}{% endif %}
-              {% set ns.end = end %}
-              {% if start <= t < end %}{% set ns.covered = true %}{% endif %}
-              {% if r.get('state') not in ['CHARGE_GRID','CHARGE_PV','SELF_CONSUME','DISCHARGE_GRID','HOLD','CURTAIL'] %}{% set ns.ok = false %}{% endif %}
-              {% if r.get('balance_hold', false) is not boolean %}{% set ns.ok = false %}{% endif %}
-              {% for key in ['pv_kwh','load_kwh','charge_kwh','discharge_kwh','curtail_kwh','end_soc_kwh','grid_import_kwh','grid_export_kwh','buy_per_kwh','sell_per_kwh'] %}
-                {% if not is_number(r.get(key)) %}{% set ns.ok = false %}
-                {% elif key not in ['buy_per_kwh','sell_per_kwh'] and r[key]|float < -0.000001 %}{% set ns.ok = false %}{% endif %}
-              {% endfor %}
-            {% endfor %}
-            {% if rows|select('mapping')|list|length != rows|length %}{% set ns.ok = false %}{% endif %}
-            {% set session = state_attr(session_start_entity, 'timestamp')|float(0) %}
-            {# Optimizer restarts on every input change and each solve takes minutes, so
-               'ready' can last milliseconds. A completed, published generation retained
-               during the next solve is equally valid; plans computed before the last
-               revocation are not. #}
-            {% set ok = ns.ok and ns.covered and p.get('dispatch_policy') is mapping
-              and is_state(session_entity, 'on') and as_timestamp(g,0) >= session
-              and as_timestamp(g,0) <= t and as_timestamp(g,0) > as_timestamp(cache.get('generated_at'),0)
-              and g != rt.get('revoked_generation') and as_timestamp(g,0) > as_timestamp(rt.get('revoked_at'),0)
-              and is_state(valid_entity,'on') and is_state(alert_entity,'off')
-              and ((states(optimizer_entity) == 'ready' and p.get('refreshing') == false and p.get('plan_retained') == false)
-                or (states(optimizer_entity) == 'calculating' and p.get('refreshing') == true and p.get('plan_retained') == true))
-              and g == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at')
-              and as_timestamp(p.get('valid_until'),0) > t %}
-            {{ dict(schema=1, session=session, accepted_at=now().isoformat(), generated_at=g,
-              valid_until=p.get('valid_until'), coverage_end=ns.end, intervals=rows, dispatch_policy=p.get('dispatch_policy')) if ok else {} }}
-      - if:
-        - condition: template
-          value_template: '{{ candidate|length > 0 }}'
-        then:
-        - event: energy_compass_deye_accept_plan
-          event_data:
-            snapshot: '{{ candidate }}'
-        - wait_template: '{{ state_attr(cache_entity,''snapshot'') == candidate }}'
-          timeout:
-            seconds: 1
-          continue_on_timeout: false
-      - variables:
-          decision: |-
-            {% set t = as_timestamp(now()) %}
-            {% set cache = state_attr(cache_entity,'snapshot') or {} %}
-            {% set rt = state_attr(runtime_entity,'runtime') or {} %}
-            {% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
-            {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
-            {% for e in telemetry_entities %}
-              {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
-            {% endfor %}
-            {% set v = states(voltage_entity)|float(0) %}
-            {% set soc = states(soc_entity)|float(-1) %}
-            {% if not (400 <= v <= 610 and 0 <= soc <= 100) %}{% set ns.telemetry=false %}{% endif %}
-            {% for e in old_writers %}
-              {% if not is_state(e,'off') or state_attr(e,'current') != 0 %}{% set ns.writers=false %}{% endif %}
-            {% endfor %}
-            {% for i in range(1,7) %}
-              {% set s = states('time.' ~ program_prefix ~ i ~ '_time') %}
-              {% set parts = s.split(':') %}
-              {% if parts|length == 3 and is_number(parts[0]) and is_number(parts[1]) and is_number(parts[2]) and 0 <= parts[0]|int < 24 and 0 <= parts[1]|int < 60 and 0 <= parts[2]|int < 60 %}
-                {% set ns.times=ns.times + [parts[0]|int * 3600 + parts[1]|int * 60 + parts[2]|int] %}
-              {% endif %}
-            {% endfor %}
-            {% set times_ok = ns.times|length == 6 and ns.times|unique|list|length == 6 and ns.times == ns.times|sort %}
-            {% set clock = now().hour * 3600 + now().minute * 60 + now().second %}
-            {% if times_ok %}
-              {% set ns.active=6 %}
-              {% for s in ns.times %}{% if s <= clock %}{% set ns.active=loop.index %}{% endif %}{% endfor %}
-            {% endif %}
-            {% for r in cache.get('intervals',[]) %}
-              {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
-            {% endfor %}
-            {% set retained = states(optimizer_entity)=='calculating' %}
-            {% set coherent = p.get('generated_at') == cache.get('generated_at') == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at') %}
-            {% set live_ok = is_state(alert_entity,'off') and (retained or (states(optimizer_entity)=='ready' and is_state(valid_entity,'on') and coherent and p.get('plan_retained') == false and p.get('refreshing') == false)) %}
-            {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
-            {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
-            {% elif not is_state(session_entity,'on') or cache.get('session') != state_attr(session_start_entity,'timestamp')|float(0) %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
-            {% elif cache.get('generated_at') == rt.get('revoked_generation') %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
-            {% elif not live_ok %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
-            {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
-            {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
-            {% set ns.valid = ns.reason == 'ok' %}
-            {# HA publishes plan/status/validity separately. Retry a newer publication before
-               restoring BASE; never extend the accepted snapshot's original lifetime. #}
-            {% set handoff_pending = ns.reason == 'plan: błąd źródeł, brak gotowości lub niespójne generacje'
-              and not coherent and states(optimizer_entity) == 'ready' and is_state(alert_entity,'off')
-              and states(mode_entity) == 'Auto' and ns.row
-              and t < (as_timestamp(cache.get('valid_until'),0)|round(0,'floor'))
-              and t < (cache.get('coverage_end',0)|float(0)|round(0,'floor'))
-              and (as_timestamp(p.get('generated_at'),0) > as_timestamp(cache.get('generated_at'),0)
-                or as_timestamp(state_attr(optimizer_entity,'generated_at'),0) > as_timestamp(cache.get('generated_at'),0)) %}
-            {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
-            {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
-            {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
-            {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
-               podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
-               (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
-               co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
-               wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
-               mocy nigdy nie jest przekroczony. #}
-            {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-            {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
-            {% set charge_held = states(charge_entity)|float(0) %}
-            {% set discharge_held = states(discharge_entity)|float(0) %}
-            {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
-            {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
-            {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
-            {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
-            {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
-            {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
-               jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
-               zatrzaskiwal sie po kilkunastu sekundach (29.09). Ze swiezym licznikiem
-               energii rozladowania wiersz konczy sie po oddaniu zaplanowanej energii,
-               liczonej od pierwszego przebiegu wiersza (runtime slot_energy). Licznik
-               Solarman zglasza sie tylko przy zmianie (w spoczynku nawet godzinami), wiec
-               jego swiezosc gwarantuje heartbeat telemetrii tego samego falownika. #}
-            {% set energy_mode = states(operation_entity) == 'Voltage' and discharge_energy_entity is string and discharge_energy_entity != ''
-              and is_number(states(discharge_energy_entity)) %}
-            {% set counted = states(discharge_energy_entity)|float(0) if energy_mode else 0 %}
-            {% set slot = rt.get('slot_energy') %}
-            {% set slot_start = slot.get('discharge')|float if energy_mode and slot is mapping and slot.get('key') == reached_key and is_number(slot.get('discharge')) else counted %}
-            {% set discharged = [0, counted - slot_start]|max %}
-            {# Po osiagnieciu celu DISCHARGE_GRID kierunek Disabled, ale rozladowanie nie 0 A:
-               przy 0 A dom szedl z sieci po 1,25 zl przy baterii 100 % (01.10 17:00, wiersz
-               z 0,025 kWh rozladowania osiagniety od razu, ~420 W importu). Maly prad
-               (1 A ~ 530 W) pokrywa baze domu bez sprzedazy (Zero Export To Load), a wieksze
-               obciazenia nie oprozniaja baterii zaplanowanej na wieczorna sprzedaz. #}
-            {% set reached_discharge = [discharge_cap, reached_discharge_current]|min %}
-            {% set target_soc = 10.0 %}
+    decision: |-
+      {% set t = as_timestamp(now()) %}
+      {% set c = states[controller_entity].attributes if states[controller_entity] is not none else {} %}
+      {% set cache = c.get('accepted') or {} %}
+      {% set rt = runtime or {} %}
+      {# Capacity and efficiency belong to the accepted generation: a retained plan must
+         not run with settings saved after it was computed. #}
+      {% set b = cache.get('battery') or {} %}
+      {% set capacity_kwh = b.get('capacity_kwh')|float(0) %}
+      {% set eta_charge = b.get('eta_charge')|float(0) %}
+      {% set eta_discharge = b.get('eta_discharge')|float(0) %}
+      {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
+      {% for e in telemetry_entities %}
+        {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
+      {% endfor %}
+      {% set v = states(voltage_entity)|float(0) %}
+      {% set soc = states(soc_entity)|float(-1) %}
+      {% if not (400 <= v <= 610 and 0 <= soc <= 100) %}{% set ns.telemetry=false %}{% endif %}
+      {% for e in old_writers %}
+        {% if not is_state(e,'off') or state_attr(e,'current') != 0 %}{% set ns.writers=false %}{% endif %}
+      {% endfor %}
+      {% for i in range(1,7) %}
+        {% set s = states('time.' ~ program_prefix ~ i ~ '_time') %}
+        {% set parts = s.split(':') %}
+        {% if parts|length == 3 and is_number(parts[0]) and is_number(parts[1]) and is_number(parts[2]) and 0 <= parts[0]|int < 24 and 0 <= parts[1]|int < 60 and 0 <= parts[2]|int < 60 %}
+          {% set ns.times=ns.times + [parts[0]|int * 3600 + parts[1]|int * 60 + parts[2]|int] %}
+        {% endif %}
+      {% endfor %}
+      {% set times_ok = ns.times|length == 6 and ns.times|unique|list|length == 6 and ns.times == ns.times|sort %}
+      {% set clock = now().hour * 3600 + now().minute * 60 + now().second %}
+      {% if times_ok %}
+        {% set ns.active=6 %}
+        {% for s in ns.times %}{% if s <= clock %}{% set ns.active=loop.index %}{% endif %}{% endfor %}
+      {% endif %}
+      {% for r in cache.get('intervals',[]) %}
+        {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
+      {% endfor %}
+      {% set retained = c.get('retained') is sameas true %}
+      {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
+      {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
+      {% elif c.get('plan_reason') == 'session' or not cache or cache.get('session') != c.get('session') %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
+      {% elif c.get('plan_reason') == 'revoked' %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
+      {% elif c.get('plan_reason') != 'ok' %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+      {% elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1) %}{% set ns.reason='plan: brak parametrów baterii (pojemność, sprawność) w planie' %}
+      {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
+      {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
+      {% set ns.valid = ns.reason == 'ok' %}
+      {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
+      {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
+      {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
+      {# Histereza sufitu pradu: przy 8 kW granica 15/14 A to 533,3 V. Ladowanie PV
+         podnosilo napiecie ponad granice, cel spadal do 14 A, zapis zatrzymywal prad
+         (0 A, PV szlo do sieci), napiecie opadalo o ~2 V i cel wracal do 15 A — petla
+         co ~70 s (01.10). Biezacy prad zostaje, dopoki miesci sie w limicie mocy, a
+         wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
+         mocy nigdy nie jest przekroczony. #}
+      {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
+      {% set discharge_raw = ([max_current, max_power_w * eta_discharge / v]|min if v > 0 and ns.telemetry else 0) %}
+      {% set charge_held = states(charge_entity)|float(0) %}
+      {% set discharge_held = states(discharge_entity)|float(0) %}
+      {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
+      {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
+      {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
+      {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta_discharge / (v * 1.02)]|min else discharge_raw %}
+      {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
+      {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
+         jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
+         zatrzaskiwal sie po kilkunastu sekundach (29.09). Ze swiezym licznikiem
+         energii rozladowania wiersz konczy sie po oddaniu zaplanowanej energii,
+         liczonej od pierwszego przebiegu wiersza (runtime slot_energy). Licznik
+         Solarman zglasza sie tylko przy zmianie (w spoczynku nawet godzinami), wiec
+         jego swiezosc gwarantuje heartbeat telemetrii tego samego falownika. #}
+      {% set energy_mode = states(operation_entity) == 'Voltage' and discharge_energy_entity is string and discharge_energy_entity != ''
+        and is_number(states(discharge_energy_entity)) %}
+      {% set counted = states(discharge_energy_entity)|float(0) if energy_mode else 0 %}
+      {% set slot = rt.get('slot_energy') %}
+      {% set slot_start = slot.get('discharge')|float if energy_mode and slot is mapping and slot.get('key') == reached_key and is_number(slot.get('discharge')) else counted %}
+      {% set discharged = [0, counted - slot_start]|max %}
+      {# Po osiagnieciu celu DISCHARGE_GRID kierunek Disabled, ale rozladowanie nie 0 A:
+         przy 0 A dom szedl z sieci po 1,25 zl przy baterii 100 % (01.10 17:00, wiersz
+         z 0,025 kWh rozladowania osiagniety od razu, ~420 W importu). Maly prad
+         (1 A ~ 530 W) pokrywa baze domu bez sprzedazy (Zero Export To Load), a wieksze
+         obciazenia nie oprozniaja baterii zaplanowanej na wieczorna sprzedaz. #}
+      {% set reached_discharge = [discharge_cap, reached_discharge_current]|min %}
+      {% set target_soc = 10.0 %}
+      {% set target_voltage = 49.6 %}
+      {% set charge = relinquish_current if state == 'BASE' else (charge_cap if state in ['CHARGE_PV','SELF_CONSUME'] else 0) %}
+      {% set discharge = relinquish_current if state == 'BASE' else (discharge_cap if state in ['CHARGE_PV','SELF_CONSUME'] else 0) %}
+      {% set grid = 0 %}
+      {% set direction = 'Disabled' %}
+      {% set power = max_power_w %}
+      {# SELF_CONSUME nie ustawia progu SOC ani nie zatrzaskuje celu: falownik sam
+         pokrywa dom z baterii do rezerwy 10%. Prog SOC rowny biezacemu SOC blokowal
+         rozladowanie i wymuszal drogi zakup z sieci. Ladowanie ma cap jak CHARGE_PV:
+         chwilowa nadwyzka PV idzie do baterii zamiast na tani eksport. Kierunek
+         Disabled i prad sieciowy 0 A, wiec zrodlem ladowania jest wylacznie PV.
+         Swiadome odejscie od planu (plan liczy SOC bez ladowania); replanning to
+         wchlania. #}
+      {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] %}
+        {% set h = (as_timestamp(ns.row.end) - as_timestamp(ns.row.start)) / 3600 %}
+        {% set target_soc = [100, [10, ns.row.end_soc_kwh|float / capacity_kwh * 100]|max]|min %}
+        {% set charging = state == 'CHARGE_GRID' %}
+        {% set target_soc = target_soc|round(0,'floor' if charging else 'ceil') %}
+        {# Balansowanie LFP: cel zawsze 100 %, plan moze konczyc slot na progu 99 %. #}
+        {% if balance and charging %}{% set target_soc = 100 %}{% endif %}
+        {% set knots = [496,512,515,520,522,523,528,531,536,584 if charging else 544] %}
+        {% set lo = [8, (target_soc / 10)|int - 1]|min %}
+        {% set physical = knots[lo] + (target_soc - (lo + 1)*10)/10 * (knots[lo+1]-knots[lo]) %}
+        {% set target_voltage = (physical|round(0,'floor' if charging else 'ceil'))/10 %}
+        {% if charging %}
+          {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
+             CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
+             Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
+          {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta_charge / v]|min %}
+          {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
+          {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta_charge / v]|min %}
+          {% set charge = charge_cap %}
+          {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
+          {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
+             wyszedlby 0 A. Co najmniej maly prad z sieci (2 A ~ 1 kW przy 530 V)
+             pozwala BMS pobierac prad absorpcji; faktyczny prad ogranicza BMS.
+             Wiekszy planowany udzial sieci (dojscie do progu) zostaje. #}
+          {% if balance %}{% set grid = [balance_grid_current, grid]|max %}{% set direction = 'Grid' %}{% endif %}
+          {# Tryb Voltage: falownik konczy ladowanie z sieci, gdy pakiet dojdzie do napiecia
+             TOU, a prad ladowania podnosi pakiet o 2-3 V w kilka sekund. Cel z krzywej SOC
+             (51,4 V przy 512 V w spoczynku) zatrzymywal ladowanie po ~20 s; tez sterownik
+             uznawal cel za osiagniety na napieciu spoczynkowym (03/04.10: noc CHARGE_GRID
+             bez ladowania, rano import po 1,25 zl). Energie wiersza wyznacza planowany
+             prad sieci; TOU dostaje sufit, a koniec wiersza nastepuje dopiero na suficie.
+             Licznik energii ladowania Solarman odswieza sie co ~10 min, wiec nie konczy
+             15-minutowego wiersza. #}
+          {% if not balance and states(operation_entity)=='Voltage' %}
+            {% set target_voltage = voltage_grid_charge_ceiling|float %}
+            {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+          {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+        {% else %}
+          {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta_discharge / v]|min %}
+          {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
+          {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
+          {% if energy_mode %}
+            {# Falownik zatrzymuje sie sam dopiero na progu 49,6 V; koniec wiersza wyznacza licznik. #}
             {% set target_voltage = 49.6 %}
-            {% set charge = relinquish_current if state == 'BASE' else (charge_cap if state in ['CHARGE_PV','SELF_CONSUME'] else 0) %}
-            {% set discharge = relinquish_current if state == 'BASE' else (discharge_cap if state in ['CHARGE_PV','SELF_CONSUME'] else 0) %}
-            {% set grid = 0 %}
-            {% set direction = 'Disabled' %}
-            {% set power = max_power_w %}
-            {# SELF_CONSUME nie ustawia progu SOC ani nie zatrzaskuje celu: falownik sam
-               pokrywa dom z baterii do rezerwy 10%. Prog SOC rowny biezacemu SOC blokowal
-               rozladowanie i wymuszal drogi zakup z sieci. Ladowanie ma cap jak CHARGE_PV:
-               chwilowa nadwyzka PV idzie do baterii zamiast na tani eksport. Kierunek
-               Disabled i prad sieciowy 0 A, wiec zrodlem ladowania jest wylacznie PV.
-               Swiadome odejscie od planu (plan liczy SOC bez ladowania); replanning to
-               wchlania. #}
-            {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] %}
-              {% set h = (as_timestamp(ns.row.end) - as_timestamp(ns.row.start)) / 3600 %}
-              {% set target_soc = [100, [10, ns.row.end_soc_kwh|float / capacity_kwh * 100]|max]|min %}
-              {% set charging = state == 'CHARGE_GRID' %}
-              {% set target_soc = target_soc|round(0,'floor' if charging else 'ceil') %}
-              {# Balansowanie LFP: cel zawsze 100 %, plan moze konczyc slot na progu 99 %. #}
-              {% if balance and charging %}{% set target_soc = 100 %}{% endif %}
-              {% set knots = [496,512,515,520,522,523,528,531,536,584 if charging else 544] %}
-              {% set lo = [8, (target_soc / 10)|int - 1]|min %}
-              {% set physical = knots[lo] + (target_soc - (lo + 1)*10)/10 * (knots[lo+1]-knots[lo]) %}
-              {% set target_voltage = (physical|round(0,'floor' if charging else 'ceil'))/10 %}
-              {% if charging %}
-                {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
-                   CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
-                   Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
-                {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta / v]|min %}
-                {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
-                {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta / v]|min %}
-                {% set charge = charge_cap %}
-                {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
-                {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
-                   wyszedlby 0 A. Co najmniej maly prad z sieci (2 A ~ 1 kW przy 530 V)
-                   pozwala BMS pobierac prad absorpcji; faktyczny prad ogranicza BMS.
-                   Wiekszy planowany udzial sieci (dojscie do progu) zostaje. #}
-                {% if balance %}{% set grid = [balance_grid_current, grid]|max %}{% set direction = 'Grid' %}{% endif %}
-                {# Tryb Voltage: falownik konczy ladowanie z sieci, gdy pakiet dojdzie do napiecia
-                   TOU, a prad ladowania podnosi pakiet o 2-3 V w kilka sekund. Cel z krzywej SOC
-                   (51,4 V przy 512 V w spoczynku) zatrzymywal ladowanie po ~20 s; tez sterownik
-                   uznawal cel za osiagniety na napieciu spoczynkowym (03/04.10: noc CHARGE_GRID
-                   bez ladowania, rano import po 1,25 zl). Energie wiersza wyznacza planowany
-                   prad sieci; TOU dostaje sufit, a koniec wiersza nastepuje dopiero na suficie.
-                   Licznik energii ladowania Solarman odswieza sie co ~10 min, wiec nie konczy
-                   15-minutowego wiersza. #}
-                {% if not balance and states(operation_entity)=='Voltage' %}
-                  {% set target_voltage = voltage_grid_charge_ceiling|float %}
-                  {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
-                {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
-              {% else %}
-                {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
-                {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
-                {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
-                {% if energy_mode %}
-                  {# Falownik zatrzymuje sie sam dopiero na progu 49,6 V; koniec wiersza wyznacza licznik. #}
-                  {% set target_voltage = 49.6 %}
-                  {% if discharged >= [0, ns.row.discharge_kwh|float]|max - 0.05 %}{% set discharge=reached_discharge %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
-                {% elif (states(operation_entity)=='Capacity' and soc <= target_soc) or (states(operation_entity)=='Voltage' and v <= target_voltage*10) %}{% set discharge=reached_discharge %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
-              {% endif %}
-            {% endif %}
-            {# HOLD/CURTAIL: rozladowanie 0 A, ladowanie i siec hold_grid_current (1 A).
-               Rozladowanie 0 A nie zatrzymuje poboru wlasnego falownika: pierwszy HOLD na
-               zywo (21.09 22:00) przy trzech pradach 0 A oddawal z baterii 140 W, dom szedl
-               z sieci. Kierunek Grid, prog TOU SOC i 1 A ladowania z sieci pozwalaja
-               falownikowi pokryc ten pobor z sieci, gdy SOC dojdzie do progu. Prog
-               zaokraglony W DOL: przy progu >= SOC falownik dokupowal z sieci (530 W przy
-               1 A, 21.09); przy progu <= SOC dryf w dol ograniczony do jednego kroku.
-               Krzywa rozladowania (544 V przy 100%) trzyma cel w zatwierdzonym 495-560 V.
-               Bez zatrzasku reached_key: cel sledzi plan w kazdym przebiegu. #}
-            {% if state in ['HOLD','CURTAIL'] and ns.row %}
-              {% set target_soc = [100, [10, ns.row.end_soc_kwh|float / capacity_kwh * 100]|max]|min|round(0,'floor') %}
-              {% set knots = [496,512,515,520,522,523,528,531,536,544] %}
-              {% set lo = [8, (target_soc / 10)|int - 1]|min %}
-              {% set physical = knots[lo] + (target_soc - (lo + 1)*10)/10 * (knots[lo+1]-knots[lo]) %}
-              {% set target_voltage = (physical|round(0,'floor'))/10 %}
-              {% set charge = hold_grid_current %}{% set discharge = 0 %}
-              {% set grid = hold_grid_current %}{% set direction = 'Grid' %}
-            {% endif %}
-            {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
-            {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-            {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
-            {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
-              {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
-              {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
-            {% endif %}
-            {% set commissioned = states(operation_entity) in commissioned_battery_modes %}
-            {% if states(mode_entity) != 'Simulation' and not commissioned %}
-              {% set ns.valid=false %}
-              {% set ns.reason='bateria: tryb ' ~ states(operation_entity) ~ ' niezatwierdzony; przywróć ' ~ commissioned_battery_modes|join(', ') ~ ' lub wykonaj odbiór fizycznych progów przed dopuszczeniem tego trybu' %}
-              {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}
-              {% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
-            {% endif %}
-            {% set ns.desired=dict([(charge_entity,charge),(discharge_entity,discharge),(grid_entity,grid)]) %}
-            {% for i in range(1,7) %}
-              {% set active=i == ns.active and state != 'BASE' %}
-              {% set prefix='number.' ~ program_prefix ~ i ~ '_' %}
-              {% set ns.desired=dict(ns.desired, **dict([(prefix~'soc', target_soc if active else 10),(prefix~'voltage',target_voltage if active else 49.6),(prefix~'power',power if active else max_power_w),('select.' ~ program_prefix ~ i ~ '_charging',direction if active else 'Disabled')])) %}
-            {% endfor %}
-            {% set norm=namespace(values={},ok=true) %}
-            {% for e,value in ns.desired.items() %}
-              {% if e.startswith('number.') %}
-                {% set step=state_attr(e,'step')|float(0) %}
-                {% set minimum=state_attr(e,'min') %}{% set maximum=state_attr(e,'max') %}
-                {% if not is_number(minimum) or not is_number(maximum) or step <= 0 or minimum|float > value or maximum|float < value %}{% set norm.ok=false %}
-                {% else %}
-                  {% set step=[step,100]|max if e.endswith('_power') else step %}
-                  {% set rounding='ceil' if (e.endswith('_soc') or e.endswith('_voltage')) and state not in ['CHARGE_GRID','HOLD','CURTAIL'] else 'floor' %}
-                  {# Decimal targets must not lose a step to binary division noise. Power
-                     uses 100 W buckets; only sub-microwatt noise may round up a boundary. #}
-                  {% set units=(value/step)|round(9) if e.endswith('_soc') or e.endswith('_voltage') or e.endswith('_power') else value/step %}
-                  {% set value=(units|round(0,rounding)*step)|round(6) %}
-                {% endif %}
-              {% elif value not in (state_attr(e,'options') or []) %}{% set norm.ok=false %}{% endif %}
-              {# Voltage rebounds after disabling battery current. Keep this transaction's
-                 current ceilings monotone; cleanup retains its original BASE profile. #}
-              {% if state != 'BASE' and e in [charge_entity,discharge_entity,grid_entity]
-                and e in (current_ceiling|default({})) %}
-                {% set value=[value,current_ceiling[e]]|min %}
-              {% endif %}
-              {% set norm.values=dict(norm.values, **dict([(e,value)])) %}
-            {% endfor %}
-            {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
-            {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
-              handoff_pending=handoff_pending and norm.ok and ns.writers and commissioned,
-              writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
-              retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
-              row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
-              requested_mode=states(mode_entity), commissioned=commissioned, target_reached=ns.reached, reached_key=reached_key, voltage=v, soc=soc, target_voltage=target_voltage, target_soc=target_soc,
-              energy_mode=energy_mode, discharged_kwh=discharged|round(3),
-              slot_energy=dict(key=reached_key, discharge=slot_start) if energy_mode else rt.get('slot_energy'),
-              warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' else '') }}
-      - if:
-        - condition: template
-          value_template: '{{ decision.handoff_pending and repeat.index < 3 }}'
-        then:
-        - delay:
-            milliseconds: 200
+            {% if discharged >= [0, ns.row.discharge_kwh|float]|max - 0.05 %}{% set discharge=reached_discharge %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+          {% elif (states(operation_entity)=='Capacity' and soc <= target_soc) or (states(operation_entity)=='Voltage' and v <= target_voltage*10) %}{% set discharge=reached_discharge %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+        {% endif %}
+      {% endif %}
+      {# HOLD/CURTAIL: rozladowanie 0 A, ladowanie i siec hold_grid_current (1 A).
+         Rozladowanie 0 A nie zatrzymuje poboru wlasnego falownika: pierwszy HOLD na
+         zywo (21.09 22:00) przy trzech pradach 0 A oddawal z baterii 140 W, dom szedl
+         z sieci. Kierunek Grid, prog TOU SOC i 1 A ladowania z sieci pozwalaja
+         falownikowi pokryc ten pobor z sieci, gdy SOC dojdzie do progu. Prog
+         zaokraglony W DOL: przy progu >= SOC falownik dokupowal z sieci (530 W przy
+         1 A, 21.09); przy progu <= SOC dryf w dol ograniczony do jednego kroku.
+         Krzywa rozladowania (544 V przy 100%) trzyma cel w zatwierdzonym 495-560 V.
+         Bez zatrzasku reached_key: cel sledzi plan w kazdym przebiegu. #}
+      {% if state in ['HOLD','CURTAIL'] and ns.row %}
+        {% set target_soc = [100, [10, ns.row.end_soc_kwh|float / capacity_kwh * 100]|max]|min|round(0,'floor') %}
+        {% set knots = [496,512,515,520,522,523,528,531,536,544] %}
+        {% set lo = [8, (target_soc / 10)|int - 1]|min %}
+        {% set physical = knots[lo] + (target_soc - (lo + 1)*10)/10 * (knots[lo+1]-knots[lo]) %}
+        {% set target_voltage = (physical|round(0,'floor'))/10 %}
+        {% set charge = hold_grid_current %}{% set discharge = 0 %}
+        {% set grid = hold_grid_current %}{% set direction = 'Grid' %}
+      {% endif %}
+      {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
+      {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
+      {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+      {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
+        {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
+        {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
+      {% endif %}
+      {% set commissioned = states(operation_entity) in commissioned_battery_modes %}
+      {% if states(mode_entity) != 'Simulation' and not commissioned %}
+        {% set ns.valid=false %}
+        {% set ns.reason='bateria: tryb ' ~ states(operation_entity) ~ ' niezatwierdzony; przywróć ' ~ commissioned_battery_modes|join(', ') ~ ' lub wykonaj odbiór fizycznych progów przed dopuszczeniem tego trybu' %}
+        {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}
+        {% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
+      {% endif %}
+      {% set ns.desired=dict([(charge_entity,charge),(discharge_entity,discharge),(grid_entity,grid)]) %}
+      {% for i in range(1,7) %}
+        {% set active=i == ns.active and state != 'BASE' %}
+        {% set prefix='number.' ~ program_prefix ~ i ~ '_' %}
+        {% set ns.desired=dict(ns.desired, **dict([(prefix~'soc', target_soc if active else 10),(prefix~'voltage',target_voltage if active else 49.6),(prefix~'power',power if active else max_power_w),('select.' ~ program_prefix ~ i ~ '_charging',direction if active else 'Disabled')])) %}
+      {% endfor %}
+      {% set norm=namespace(values={},ok=true) %}
+      {% for e,value in ns.desired.items() %}
+        {% if e.startswith('number.') %}
+          {% set step=state_attr(e,'step')|float(0) %}
+          {% set minimum=state_attr(e,'min') %}{% set maximum=state_attr(e,'max') %}
+          {% if not is_number(minimum) or not is_number(maximum) or step <= 0 or minimum|float > value or maximum|float < value %}{% set norm.ok=false %}
+          {% else %}
+            {% set step=[step,100]|max if e.endswith('_power') else step %}
+            {% set rounding='ceil' if (e.endswith('_soc') or e.endswith('_voltage')) and state not in ['CHARGE_GRID','HOLD','CURTAIL'] else 'floor' %}
+            {# Decimal targets must not lose a step to binary division noise. Power
+               uses 100 W buckets; only sub-microwatt noise may round up a boundary. #}
+            {% set units=(value/step)|round(9) if e.endswith('_soc') or e.endswith('_voltage') or e.endswith('_power') else value/step %}
+            {% set value=(units|round(0,rounding)*step)|round(6) %}
+          {% endif %}
+        {% elif value not in (state_attr(e,'options') or []) %}{% set norm.ok=false %}{% endif %}
+        {# Voltage rebounds after disabling battery current. Keep this transaction's
+           current ceilings monotone; cleanup retains its original BASE profile. #}
+        {% if state != 'BASE' and e in [charge_entity,discharge_entity,grid_entity]
+          and e in (current_ceiling|default({})) %}
+          {% set value=[value,current_ceiling[e]]|min %}
+        {% endif %}
+        {% set norm.values=dict(norm.values, **dict([(e,value)])) %}
+      {% endfor %}
+      {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
+      {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
+        writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
+        retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
+        row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
+        requested_mode=states(mode_entity), commissioned=commissioned, target_reached=ns.reached, reached_key=reached_key, voltage=v, soc=soc, target_voltage=target_voltage, target_soc=target_soc,
+        energy_mode=energy_mode, discharged_kwh=discharged|round(3),
+        slot_energy=dict(key=reached_key, discharge=slot_start) if energy_mode else rt.get('slot_energy'),
+        warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' else '') }}
+- action: energy_compass.controller_runtime
+  data:
+    controller: '{{ controller_entity }}'
+    runtime: '{{ dict(runtime or {}, reached_key=decision.reached_key if decision.target_reached else (runtime or {}).get(''reached_key''),
+      slot_energy=decision.slot_energy, desired=decision.desired, requested_mode=decision.requested_mode, battery_mode_commissioned=decision.commissioned,
+      state=decision.state, accepted_generation=decision.generation, original_deadline=decision.deadline, active_tou=decision.active_tou,
+      retained=decision.retained, code=''ok'' if decision.valid else ''blocked'', reason=decision.reason, warning=decision.warning,
+      takeover_blocked=not decision.writers_safe, since=(runtime or {}).get(''since'',now().isoformat()) if (runtime or {}).get(''reason'')
+      == decision.reason else now().isoformat()) }}'
+  response_variable: runtime_response
 - variables:
-    runtime_update: '{{ dict(state_attr(runtime_entity,''runtime'') or {}, reached_key=decision.reached_key if decision.target_reached
-      else (state_attr(runtime_entity,''runtime'') or {}).get(''reached_key''), slot_energy=decision.slot_energy, desired=decision.desired,
-      requested_mode=decision.requested_mode, battery_mode_commissioned=decision.commissioned, state=decision.state, accepted_generation=decision.generation,
-      original_deadline=decision.deadline, active_tou=decision.active_tou, retained=decision.retained, code=''ok'' if decision.valid
-      else ''blocked'', reason=decision.reason, warning=decision.warning, takeover_blocked=not decision.writers_safe, since=(state_attr(runtime_entity,''runtime'')
-      or {}).get(''since'',now().isoformat()) if (state_attr(runtime_entity,''runtime'') or {}).get(''reason'') == decision.reason
-      else now().isoformat()) }}'
-- event: energy_compass_deye_runtime
-  event_data:
-    runtime: '{{ runtime_update }}'
-- wait_template: '{{ state_attr(runtime_entity,''runtime'') == runtime_update }}'
-  timeout:
-    seconds: 1
-  continue_on_timeout: false
+    runtime: '{{ runtime_response.runtime }}'
+    restore_pending: '{{ runtime_response.restore_pending }}'
 - if:
   - condition: template
-    value_template: '{{ is_state(mode_entity,''Simulation'') and is_state(restore_entity,''on'') }}'
+    value_template: '{{ is_state(mode_entity,''Simulation'') and restore_pending }}'
   then:
-  - action: input_select.select_option
+  - action: select.select_option
     target:
-      entity_id: input_select.energy_compass_deye_mode
+      entity_id: '{{ mode_entity }}'
     data:
       option: 'Off'
+  - action: energy_compass.controller_runtime
+    data:
+      controller: '{{ controller_entity }}'
+      runtime: '{{ dict(runtime or {},code=''simulation_blocked'',reason=''Najpierw przywróć bazę w Off; po potwierdzeniu
+        wybierz Simulation ponownie'') }}'
+    response_variable: runtime_response
   - variables:
-      runtime_update: '{{ dict(state_attr(runtime_entity,''runtime'') or {},code=''simulation_blocked'',reason=''Najpierw
-        przywróć bazę w Off; po potwierdzeniu wybierz Simulation ponownie'') }}'
-  - event: energy_compass_deye_runtime
-    event_data:
-      runtime: '{{ runtime_update }}'
-  - wait_template: '{{ state_attr(runtime_entity,''runtime'') == runtime_update }}'
-    timeout:
-      seconds: 1
-    continue_on_timeout: false
+      runtime: '{{ runtime_response.runtime }}'
+      restore_pending: '{{ runtime_response.restore_pending }}'
   - stop: 'Simulation odrzucone: pozostał obowiązek przywrócenia, wybrano Off'
 - if:
   - condition: template
@@ -737,7 +562,7 @@ actions:
   - stop: 'Symulacja: profil obliczony, bez zapisów falownika'
 - if:
   - condition: template
-    value_template: '{{ is_state(mode_entity,''Off'') and not is_state(restore_entity,''on'') }}'
+    value_template: '{{ is_state(mode_entity,''Off'') and not restore_pending }}'
   then:
   - stop: 'Sterowanie zwolnione: pozostaw nastawy ręczne'
 - if:
@@ -747,17 +572,23 @@ actions:
   - stop: 'Przejęcie zablokowane: wyłącz dawne automatyzacje i zatrzymaj wykonania'
 - variables:
     aborted: false
-    cleanup: '{{ not decision.valid or is_state(mode_entity,''Off'') or is_state(restore_entity,''on'') and not (state_attr(runtime_entity,''runtime'')
-      or {}).get(''owned_session'') == state_attr(session_start_entity,''timestamp'') }}'
+    cleanup: '{{ not decision.valid or is_state(mode_entity,''Off'') or restore_pending and not (runtime or {}).get(''owned_session'')
+      == state_attr(controller_entity,''session'') }}'
 - repeat:
     count: 3
     sequence:
     - variables:
         target: |-
           {% set t = as_timestamp(now()) %}
-          {% set cache = state_attr(cache_entity,'snapshot') or {} %}
-          {% set rt = state_attr(runtime_entity,'runtime') or {} %}
-          {% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
+          {% set c = states[controller_entity].attributes if states[controller_entity] is not none else {} %}
+          {% set cache = c.get('accepted') or {} %}
+          {% set rt = runtime or {} %}
+          {# Capacity and efficiency belong to the accepted generation: a retained plan must
+             not run with settings saved after it was computed. #}
+          {% set b = cache.get('battery') or {} %}
+          {% set capacity_kwh = b.get('capacity_kwh')|float(0) %}
+          {% set eta_charge = b.get('eta_charge')|float(0) %}
+          {% set eta_discharge = b.get('eta_discharge')|float(0) %}
           {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
           {% for e in telemetry_entities %}
             {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
@@ -784,26 +615,16 @@ actions:
           {% for r in cache.get('intervals',[]) %}
             {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
           {% endfor %}
-          {% set retained = states(optimizer_entity)=='calculating' %}
-          {% set coherent = p.get('generated_at') == cache.get('generated_at') == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at') %}
-          {% set live_ok = is_state(alert_entity,'off') and (retained or (states(optimizer_entity)=='ready' and is_state(valid_entity,'on') and coherent and p.get('plan_retained') == false and p.get('refreshing') == false)) %}
+          {% set retained = c.get('retained') is sameas true %}
           {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
           {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
-          {% elif not is_state(session_entity,'on') or cache.get('session') != state_attr(session_start_entity,'timestamp')|float(0) %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
-          {% elif cache.get('generated_at') == rt.get('revoked_generation') %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
-          {% elif not live_ok %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+          {% elif c.get('plan_reason') == 'session' or not cache or cache.get('session') != c.get('session') %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
+          {% elif c.get('plan_reason') == 'revoked' %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
+          {% elif c.get('plan_reason') != 'ok' %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+          {% elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1) %}{% set ns.reason='plan: brak parametrów baterii (pojemność, sprawność) w planie' %}
           {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
           {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
           {% set ns.valid = ns.reason == 'ok' %}
-          {# HA publishes plan/status/validity separately. Retry a newer publication before
-             restoring BASE; never extend the accepted snapshot's original lifetime. #}
-          {% set handoff_pending = ns.reason == 'plan: błąd źródeł, brak gotowości lub niespójne generacje'
-            and not coherent and states(optimizer_entity) == 'ready' and is_state(alert_entity,'off')
-            and states(mode_entity) == 'Auto' and ns.row
-            and t < (as_timestamp(cache.get('valid_until'),0)|round(0,'floor'))
-            and t < (cache.get('coverage_end',0)|float(0)|round(0,'floor'))
-            and (as_timestamp(p.get('generated_at'),0) > as_timestamp(cache.get('generated_at'),0)
-              or as_timestamp(state_attr(optimizer_entity,'generated_at'),0) > as_timestamp(cache.get('generated_at'),0)) %}
           {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
           {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
           {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
@@ -814,13 +635,13 @@ actions:
              wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
              mocy nigdy nie jest przekroczony. #}
           {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-          {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+          {% set discharge_raw = ([max_current, max_power_w * eta_discharge / v]|min if v > 0 and ns.telemetry else 0) %}
           {% set charge_held = states(charge_entity)|float(0) %}
           {% set discharge_held = states(discharge_entity)|float(0) %}
           {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
           {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
           {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
-          {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
+          {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta_discharge / (v * 1.02)]|min else discharge_raw %}
           {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
           {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
              jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -870,9 +691,9 @@ actions:
               {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
                  CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
                  Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
-              {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta / v]|min %}
+              {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta_charge / v]|min %}
               {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
-              {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta / v]|min %}
+              {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta_charge / v]|min %}
               {% set charge = charge_cap %}
               {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
               {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
@@ -893,7 +714,7 @@ actions:
                 {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
               {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
             {% else %}
-              {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
+              {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta_discharge / v]|min %}
               {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
               {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
               {% if energy_mode %}
@@ -966,7 +787,6 @@ actions:
           {% endfor %}
           {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
           {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
-            handoff_pending=handoff_pending and norm.ok and ns.writers and commissioned,
             writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
             retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
             row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
@@ -978,11 +798,6 @@ actions:
         replan: false
     - if:
       - condition: template
-        value_template: '{{ transaction_attempt == 1 and not cleanup and not aborted and target.handoff_pending }}'
-      then:
-      - stop: 'Publikacja planu po kontroli: ponowny odczyt w kolejnym przebiegu'
-    - if:
-      - condition: template
         value_template: '{{ cleanup or aborted }}'
       then:
       - variables:
@@ -990,9 +805,15 @@ actions:
       - variables:
           target: |-
             {% set t = as_timestamp(now()) %}
-            {% set cache = state_attr(cache_entity,'snapshot') or {} %}
-            {% set rt = state_attr(runtime_entity,'runtime') or {} %}
-            {% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
+            {% set c = states[controller_entity].attributes if states[controller_entity] is not none else {} %}
+            {% set cache = c.get('accepted') or {} %}
+            {% set rt = runtime or {} %}
+            {# Capacity and efficiency belong to the accepted generation: a retained plan must
+               not run with settings saved after it was computed. #}
+            {% set b = cache.get('battery') or {} %}
+            {% set capacity_kwh = b.get('capacity_kwh')|float(0) %}
+            {% set eta_charge = b.get('eta_charge')|float(0) %}
+            {% set eta_discharge = b.get('eta_discharge')|float(0) %}
             {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
             {% for e in telemetry_entities %}
               {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
@@ -1019,26 +840,16 @@ actions:
             {% for r in cache.get('intervals',[]) %}
               {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
             {% endfor %}
-            {% set retained = states(optimizer_entity)=='calculating' %}
-            {% set coherent = p.get('generated_at') == cache.get('generated_at') == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at') %}
-            {% set live_ok = is_state(alert_entity,'off') and (retained or (states(optimizer_entity)=='ready' and is_state(valid_entity,'on') and coherent and p.get('plan_retained') == false and p.get('refreshing') == false)) %}
+            {% set retained = c.get('retained') is sameas true %}
             {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
             {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
-            {% elif not is_state(session_entity,'on') or cache.get('session') != state_attr(session_start_entity,'timestamp')|float(0) %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
-            {% elif cache.get('generated_at') == rt.get('revoked_generation') %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
-            {% elif not live_ok %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+            {% elif c.get('plan_reason') == 'session' or not cache or cache.get('session') != c.get('session') %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
+            {% elif c.get('plan_reason') == 'revoked' %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
+            {% elif c.get('plan_reason') != 'ok' %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+            {% elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1) %}{% set ns.reason='plan: brak parametrów baterii (pojemność, sprawność) w planie' %}
             {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
             {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
             {% set ns.valid = ns.reason == 'ok' %}
-            {# HA publishes plan/status/validity separately. Retry a newer publication before
-               restoring BASE; never extend the accepted snapshot's original lifetime. #}
-            {% set handoff_pending = ns.reason == 'plan: błąd źródeł, brak gotowości lub niespójne generacje'
-              and not coherent and states(optimizer_entity) == 'ready' and is_state(alert_entity,'off')
-              and states(mode_entity) == 'Auto' and ns.row
-              and t < (as_timestamp(cache.get('valid_until'),0)|round(0,'floor'))
-              and t < (cache.get('coverage_end',0)|float(0)|round(0,'floor'))
-              and (as_timestamp(p.get('generated_at'),0) > as_timestamp(cache.get('generated_at'),0)
-                or as_timestamp(state_attr(optimizer_entity,'generated_at'),0) > as_timestamp(cache.get('generated_at'),0)) %}
             {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
             {% if true %}{% set state='BASE' %}{% endif %}
             {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
@@ -1049,13 +860,13 @@ actions:
                wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
                mocy nigdy nie jest przekroczony. #}
             {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-            {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+            {% set discharge_raw = ([max_current, max_power_w * eta_discharge / v]|min if v > 0 and ns.telemetry else 0) %}
             {% set charge_held = states(charge_entity)|float(0) %}
             {% set discharge_held = states(discharge_entity)|float(0) %}
             {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
             {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
             {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
-            {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
+            {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta_discharge / (v * 1.02)]|min else discharge_raw %}
             {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
             {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -1105,9 +916,9 @@ actions:
                 {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
                    CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
                    Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
-                {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta / v]|min %}
+                {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta_charge / v]|min %}
                 {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
-                {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta / v]|min %}
+                {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta_charge / v]|min %}
                 {% set charge = charge_cap %}
                 {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
                 {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
@@ -1128,7 +939,7 @@ actions:
                   {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                 {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
               {% else %}
-                {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
+                {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta_discharge / v]|min %}
                 {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
                 {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
                 {% if energy_mode %}
@@ -1201,7 +1012,6 @@ actions:
             {% endfor %}
             {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
             {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
-              handoff_pending=handoff_pending and norm.ok and ns.writers and commissioned,
               writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
               retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
               row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
@@ -1218,7 +1028,7 @@ actions:
             }}'
     - variables:
         commands: |-
-          {% set rt=state_attr(runtime_entity,'runtime') or {} %}
+          {% set rt=runtime or {} %}
           {% set dirty=rt.get('uncertain',[]) %}
           {% set ns=namespace(changed=[], stop=[], limits=[], enable=[], protective=false, stopped=[]) %}
           {% set active='select.' ~ program_prefix ~ target.active_tou ~ '_charging' %}
@@ -1256,19 +1066,15 @@ actions:
       - condition: template
         value_template: '{{ commands|length > 0 }}'
       then:
-      - action: input_boolean.turn_on
-        target:
-          entity_id: input_boolean.energy_compass_deye_restore_pending
+      - action: energy_compass.controller_runtime
+        data:
+          controller: '{{ controller_entity }}'
+          runtime: '{{ dict(runtime or {}, owned_session=state_attr(controller_entity,''session'')) }}'
+          restore_pending: true
+        response_variable: runtime_response
       - variables:
-          runtime_update: '{{ dict(state_attr(runtime_entity,''runtime'') or {}, owned_session=state_attr(session_start_entity,''timestamp''))
-            }}'
-      - event: energy_compass_deye_runtime
-        event_data:
-          runtime: '{{ runtime_update }}'
-      - wait_template: '{{ state_attr(runtime_entity,''runtime'') == runtime_update }}'
-        timeout:
-          seconds: 1
-        continue_on_timeout: false
+          runtime: '{{ runtime_response.runtime }}'
+          restore_pending: '{{ runtime_response.restore_pending }}'
     - repeat:
         for_each: '{{ commands }}'
         sequence:
@@ -1285,9 +1091,15 @@ actions:
               - variables:
                   fresh: |-
                     {% set t = as_timestamp(now()) %}
-                    {% set cache = state_attr(cache_entity,'snapshot') or {} %}
-                    {% set rt = state_attr(runtime_entity,'runtime') or {} %}
-                    {% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
+                    {% set c = states[controller_entity].attributes if states[controller_entity] is not none else {} %}
+                    {% set cache = c.get('accepted') or {} %}
+                    {% set rt = runtime or {} %}
+                    {# Capacity and efficiency belong to the accepted generation: a retained plan must
+                       not run with settings saved after it was computed. #}
+                    {% set b = cache.get('battery') or {} %}
+                    {% set capacity_kwh = b.get('capacity_kwh')|float(0) %}
+                    {% set eta_charge = b.get('eta_charge')|float(0) %}
+                    {% set eta_discharge = b.get('eta_discharge')|float(0) %}
                     {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
                     {% for e in telemetry_entities %}
                       {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
@@ -1314,26 +1126,16 @@ actions:
                     {% for r in cache.get('intervals',[]) %}
                       {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
                     {% endfor %}
-                    {% set retained = states(optimizer_entity)=='calculating' %}
-                    {% set coherent = p.get('generated_at') == cache.get('generated_at') == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at') %}
-                    {% set live_ok = is_state(alert_entity,'off') and (retained or (states(optimizer_entity)=='ready' and is_state(valid_entity,'on') and coherent and p.get('plan_retained') == false and p.get('refreshing') == false)) %}
+                    {% set retained = c.get('retained') is sameas true %}
                     {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
                     {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
-                    {% elif not is_state(session_entity,'on') or cache.get('session') != state_attr(session_start_entity,'timestamp')|float(0) %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
-                    {% elif cache.get('generated_at') == rt.get('revoked_generation') %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
-                    {% elif not live_ok %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+                    {% elif c.get('plan_reason') == 'session' or not cache or cache.get('session') != c.get('session') %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
+                    {% elif c.get('plan_reason') == 'revoked' %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
+                    {% elif c.get('plan_reason') != 'ok' %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+                    {% elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1) %}{% set ns.reason='plan: brak parametrów baterii (pojemność, sprawność) w planie' %}
                     {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
                     {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
                     {% set ns.valid = ns.reason == 'ok' %}
-                    {# HA publishes plan/status/validity separately. Retry a newer publication before
-                       restoring BASE; never extend the accepted snapshot's original lifetime. #}
-                    {% set handoff_pending = ns.reason == 'plan: błąd źródeł, brak gotowości lub niespójne generacje'
-                      and not coherent and states(optimizer_entity) == 'ready' and is_state(alert_entity,'off')
-                      and states(mode_entity) == 'Auto' and ns.row
-                      and t < (as_timestamp(cache.get('valid_until'),0)|round(0,'floor'))
-                      and t < (cache.get('coverage_end',0)|float(0)|round(0,'floor'))
-                      and (as_timestamp(p.get('generated_at'),0) > as_timestamp(cache.get('generated_at'),0)
-                        or as_timestamp(state_attr(optimizer_entity,'generated_at'),0) > as_timestamp(cache.get('generated_at'),0)) %}
                     {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
                     {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
                     {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
@@ -1344,13 +1146,13 @@ actions:
                        wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
                        mocy nigdy nie jest przekroczony. #}
                     {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-                    {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                    {% set discharge_raw = ([max_current, max_power_w * eta_discharge / v]|min if v > 0 and ns.telemetry else 0) %}
                     {% set charge_held = states(charge_entity)|float(0) %}
                     {% set discharge_held = states(discharge_entity)|float(0) %}
                     {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
                     {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
                     {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
-                    {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
+                    {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta_discharge / (v * 1.02)]|min else discharge_raw %}
                     {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
                     {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                        jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -1400,9 +1202,9 @@ actions:
                         {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
                            CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
                            Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
-                        {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta / v]|min %}
+                        {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta_charge / v]|min %}
                         {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
-                        {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta / v]|min %}
+                        {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta_charge / v]|min %}
                         {% set charge = charge_cap %}
                         {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
                         {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
@@ -1423,7 +1225,7 @@ actions:
                           {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                         {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                       {% else %}
-                        {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
+                        {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta_discharge / v]|min %}
                         {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
                         {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
                         {% if energy_mode %}
@@ -1496,7 +1298,6 @@ actions:
                     {% endfor %}
                     {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
                     {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
-                      handoff_pending=handoff_pending and norm.ok and ns.writers and commissioned,
                       writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
                       retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
                       row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
@@ -1506,9 +1307,15 @@ actions:
                       warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' else '') }}
                   baseline: |-
                     {% set t = as_timestamp(now()) %}
-                    {% set cache = state_attr(cache_entity,'snapshot') or {} %}
-                    {% set rt = state_attr(runtime_entity,'runtime') or {} %}
-                    {% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
+                    {% set c = states[controller_entity].attributes if states[controller_entity] is not none else {} %}
+                    {% set cache = c.get('accepted') or {} %}
+                    {% set rt = runtime or {} %}
+                    {# Capacity and efficiency belong to the accepted generation: a retained plan must
+                       not run with settings saved after it was computed. #}
+                    {% set b = cache.get('battery') or {} %}
+                    {% set capacity_kwh = b.get('capacity_kwh')|float(0) %}
+                    {% set eta_charge = b.get('eta_charge')|float(0) %}
+                    {% set eta_discharge = b.get('eta_discharge')|float(0) %}
                     {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
                     {% for e in telemetry_entities %}
                       {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
@@ -1535,26 +1342,16 @@ actions:
                     {% for r in cache.get('intervals',[]) %}
                       {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
                     {% endfor %}
-                    {% set retained = states(optimizer_entity)=='calculating' %}
-                    {% set coherent = p.get('generated_at') == cache.get('generated_at') == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at') %}
-                    {% set live_ok = is_state(alert_entity,'off') and (retained or (states(optimizer_entity)=='ready' and is_state(valid_entity,'on') and coherent and p.get('plan_retained') == false and p.get('refreshing') == false)) %}
+                    {% set retained = c.get('retained') is sameas true %}
                     {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
                     {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
-                    {% elif not is_state(session_entity,'on') or cache.get('session') != state_attr(session_start_entity,'timestamp')|float(0) %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
-                    {% elif cache.get('generated_at') == rt.get('revoked_generation') %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
-                    {% elif not live_ok %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+                    {% elif c.get('plan_reason') == 'session' or not cache or cache.get('session') != c.get('session') %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
+                    {% elif c.get('plan_reason') == 'revoked' %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
+                    {% elif c.get('plan_reason') != 'ok' %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+                    {% elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1) %}{% set ns.reason='plan: brak parametrów baterii (pojemność, sprawność) w planie' %}
                     {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
                     {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
                     {% set ns.valid = ns.reason == 'ok' %}
-                    {# HA publishes plan/status/validity separately. Retry a newer publication before
-                       restoring BASE; never extend the accepted snapshot's original lifetime. #}
-                    {% set handoff_pending = ns.reason == 'plan: błąd źródeł, brak gotowości lub niespójne generacje'
-                      and not coherent and states(optimizer_entity) == 'ready' and is_state(alert_entity,'off')
-                      and states(mode_entity) == 'Auto' and ns.row
-                      and t < (as_timestamp(cache.get('valid_until'),0)|round(0,'floor'))
-                      and t < (cache.get('coverage_end',0)|float(0)|round(0,'floor'))
-                      and (as_timestamp(p.get('generated_at'),0) > as_timestamp(cache.get('generated_at'),0)
-                        or as_timestamp(state_attr(optimizer_entity,'generated_at'),0) > as_timestamp(cache.get('generated_at'),0)) %}
                     {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
                     {% if true %}{% set state='BASE' %}{% endif %}
                     {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
@@ -1565,13 +1362,13 @@ actions:
                        wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
                        mocy nigdy nie jest przekroczony. #}
                     {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-                    {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                    {% set discharge_raw = ([max_current, max_power_w * eta_discharge / v]|min if v > 0 and ns.telemetry else 0) %}
                     {% set charge_held = states(charge_entity)|float(0) %}
                     {% set discharge_held = states(discharge_entity)|float(0) %}
                     {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
                     {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
                     {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
-                    {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
+                    {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta_discharge / (v * 1.02)]|min else discharge_raw %}
                     {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
                     {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                        jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -1621,9 +1418,9 @@ actions:
                         {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
                            CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
                            Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
-                        {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta / v]|min %}
+                        {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta_charge / v]|min %}
                         {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
-                        {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta / v]|min %}
+                        {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta_charge / v]|min %}
                         {% set charge = charge_cap %}
                         {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
                         {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
@@ -1644,7 +1441,7 @@ actions:
                           {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                         {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                       {% else %}
-                        {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
+                        {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta_discharge / v]|min %}
                         {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
                         {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
                         {% if energy_mode %}
@@ -1717,7 +1514,6 @@ actions:
                     {% endfor %}
                     {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
                     {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
-                      handoff_pending=handoff_pending and norm.ok and ns.writers and commissioned,
                       writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
                       retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
                       row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
@@ -1726,7 +1522,7 @@ actions:
                       slot_energy=dict(key=reached_key, discharge=slot_start) if energy_mode else rt.get('slot_energy'),
                       warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' else '') }}
                   allowed: |-
-                    {% set rt=state_attr(runtime_entity,'runtime') or {} %}
+                    {% set rt=runtime or {} %}
                     {% set current=baseline if cleanup else fresh %}
                     {% set ns=namespace(prerequisites=true) %}
                     {% if command.phase == 'enable' %}
@@ -1747,22 +1543,27 @@ actions:
                 - condition: template
                   value_template: '{{ allowed and not confirmed_write }}'
                 then:
+                - action: energy_compass.controller_runtime
+                  data:
+                    controller: '{{ controller_entity }}'
+                    runtime: '{{ dict(runtime or {}, uncertain=((runtime or {}).get(''uncertain'',[]) + [command.entity])|unique|list)
+                      }}'
+                  response_variable: runtime_response
                 - variables:
-                    runtime_update: '{{ dict(state_attr(runtime_entity,''runtime'') or {}, uncertain=((state_attr(runtime_entity,''runtime'')
-                      or {}).get(''uncertain'',[]) + [command.entity])|unique|list) }}'
-                - event: energy_compass_deye_runtime
-                  event_data:
-                    runtime: '{{ runtime_update }}'
-                - wait_template: '{{ state_attr(runtime_entity,''runtime'') == runtime_update }}'
-                  timeout:
-                    seconds: 1
-                  continue_on_timeout: false
+                    runtime: '{{ runtime_response.runtime }}'
+                    restore_pending: '{{ runtime_response.restore_pending }}'
                 - variables:
                     fresh: |-
                       {% set t = as_timestamp(now()) %}
-                      {% set cache = state_attr(cache_entity,'snapshot') or {} %}
-                      {% set rt = state_attr(runtime_entity,'runtime') or {} %}
-                      {% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
+                      {% set c = states[controller_entity].attributes if states[controller_entity] is not none else {} %}
+                      {% set cache = c.get('accepted') or {} %}
+                      {% set rt = runtime or {} %}
+                      {# Capacity and efficiency belong to the accepted generation: a retained plan must
+                         not run with settings saved after it was computed. #}
+                      {% set b = cache.get('battery') or {} %}
+                      {% set capacity_kwh = b.get('capacity_kwh')|float(0) %}
+                      {% set eta_charge = b.get('eta_charge')|float(0) %}
+                      {% set eta_discharge = b.get('eta_discharge')|float(0) %}
                       {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
                       {% for e in telemetry_entities %}
                         {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
@@ -1789,26 +1590,16 @@ actions:
                       {% for r in cache.get('intervals',[]) %}
                         {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
                       {% endfor %}
-                      {% set retained = states(optimizer_entity)=='calculating' %}
-                      {% set coherent = p.get('generated_at') == cache.get('generated_at') == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at') %}
-                      {% set live_ok = is_state(alert_entity,'off') and (retained or (states(optimizer_entity)=='ready' and is_state(valid_entity,'on') and coherent and p.get('plan_retained') == false and p.get('refreshing') == false)) %}
+                      {% set retained = c.get('retained') is sameas true %}
                       {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
                       {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
-                      {% elif not is_state(session_entity,'on') or cache.get('session') != state_attr(session_start_entity,'timestamp')|float(0) %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
-                      {% elif cache.get('generated_at') == rt.get('revoked_generation') %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
-                      {% elif not live_ok %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+                      {% elif c.get('plan_reason') == 'session' or not cache or cache.get('session') != c.get('session') %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
+                      {% elif c.get('plan_reason') == 'revoked' %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
+                      {% elif c.get('plan_reason') != 'ok' %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+                      {% elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1) %}{% set ns.reason='plan: brak parametrów baterii (pojemność, sprawność) w planie' %}
                       {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
                       {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
                       {% set ns.valid = ns.reason == 'ok' %}
-                      {# HA publishes plan/status/validity separately. Retry a newer publication before
-                         restoring BASE; never extend the accepted snapshot's original lifetime. #}
-                      {% set handoff_pending = ns.reason == 'plan: błąd źródeł, brak gotowości lub niespójne generacje'
-                        and not coherent and states(optimizer_entity) == 'ready' and is_state(alert_entity,'off')
-                        and states(mode_entity) == 'Auto' and ns.row
-                        and t < (as_timestamp(cache.get('valid_until'),0)|round(0,'floor'))
-                        and t < (cache.get('coverage_end',0)|float(0)|round(0,'floor'))
-                        and (as_timestamp(p.get('generated_at'),0) > as_timestamp(cache.get('generated_at'),0)
-                          or as_timestamp(state_attr(optimizer_entity,'generated_at'),0) > as_timestamp(cache.get('generated_at'),0)) %}
                       {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
                       {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
                       {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
@@ -1819,13 +1610,13 @@ actions:
                          wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
                          mocy nigdy nie jest przekroczony. #}
                       {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-                      {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                      {% set discharge_raw = ([max_current, max_power_w * eta_discharge / v]|min if v > 0 and ns.telemetry else 0) %}
                       {% set charge_held = states(charge_entity)|float(0) %}
                       {% set discharge_held = states(discharge_entity)|float(0) %}
                       {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
                       {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
                       {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
-                      {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
+                      {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta_discharge / (v * 1.02)]|min else discharge_raw %}
                       {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
                       {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                          jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -1875,9 +1666,9 @@ actions:
                           {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
                              CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
                              Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
-                          {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta / v]|min %}
+                          {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta_charge / v]|min %}
                           {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
-                          {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta / v]|min %}
+                          {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta_charge / v]|min %}
                           {% set charge = charge_cap %}
                           {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
                           {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
@@ -1898,7 +1689,7 @@ actions:
                             {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                           {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                         {% else %}
-                          {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
+                          {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta_discharge / v]|min %}
                           {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
                           {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
                           {% if energy_mode %}
@@ -1971,7 +1762,6 @@ actions:
                       {% endfor %}
                       {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
                       {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
-                        handoff_pending=handoff_pending and norm.ok and ns.writers and commissioned,
                         writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
                         retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
                         row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
@@ -1981,9 +1771,15 @@ actions:
                         warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' else '') }}
                     baseline: |-
                       {% set t = as_timestamp(now()) %}
-                      {% set cache = state_attr(cache_entity,'snapshot') or {} %}
-                      {% set rt = state_attr(runtime_entity,'runtime') or {} %}
-                      {% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
+                      {% set c = states[controller_entity].attributes if states[controller_entity] is not none else {} %}
+                      {% set cache = c.get('accepted') or {} %}
+                      {% set rt = runtime or {} %}
+                      {# Capacity and efficiency belong to the accepted generation: a retained plan must
+                         not run with settings saved after it was computed. #}
+                      {% set b = cache.get('battery') or {} %}
+                      {% set capacity_kwh = b.get('capacity_kwh')|float(0) %}
+                      {% set eta_charge = b.get('eta_charge')|float(0) %}
+                      {% set eta_discharge = b.get('eta_discharge')|float(0) %}
                       {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
                       {% for e in telemetry_entities %}
                         {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
@@ -2010,26 +1806,16 @@ actions:
                       {% for r in cache.get('intervals',[]) %}
                         {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
                       {% endfor %}
-                      {% set retained = states(optimizer_entity)=='calculating' %}
-                      {% set coherent = p.get('generated_at') == cache.get('generated_at') == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at') %}
-                      {% set live_ok = is_state(alert_entity,'off') and (retained or (states(optimizer_entity)=='ready' and is_state(valid_entity,'on') and coherent and p.get('plan_retained') == false and p.get('refreshing') == false)) %}
+                      {% set retained = c.get('retained') is sameas true %}
                       {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
                       {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
-                      {% elif not is_state(session_entity,'on') or cache.get('session') != state_attr(session_start_entity,'timestamp')|float(0) %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
-                      {% elif cache.get('generated_at') == rt.get('revoked_generation') %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
-                      {% elif not live_ok %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+                      {% elif c.get('plan_reason') == 'session' or not cache or cache.get('session') != c.get('session') %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
+                      {% elif c.get('plan_reason') == 'revoked' %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
+                      {% elif c.get('plan_reason') != 'ok' %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+                      {% elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1) %}{% set ns.reason='plan: brak parametrów baterii (pojemność, sprawność) w planie' %}
                       {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
                       {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
                       {% set ns.valid = ns.reason == 'ok' %}
-                      {# HA publishes plan/status/validity separately. Retry a newer publication before
-                         restoring BASE; never extend the accepted snapshot's original lifetime. #}
-                      {% set handoff_pending = ns.reason == 'plan: błąd źródeł, brak gotowości lub niespójne generacje'
-                        and not coherent and states(optimizer_entity) == 'ready' and is_state(alert_entity,'off')
-                        and states(mode_entity) == 'Auto' and ns.row
-                        and t < (as_timestamp(cache.get('valid_until'),0)|round(0,'floor'))
-                        and t < (cache.get('coverage_end',0)|float(0)|round(0,'floor'))
-                        and (as_timestamp(p.get('generated_at'),0) > as_timestamp(cache.get('generated_at'),0)
-                          or as_timestamp(state_attr(optimizer_entity,'generated_at'),0) > as_timestamp(cache.get('generated_at'),0)) %}
                       {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
                       {% if true %}{% set state='BASE' %}{% endif %}
                       {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
@@ -2040,13 +1826,13 @@ actions:
                          wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
                          mocy nigdy nie jest przekroczony. #}
                       {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-                      {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+                      {% set discharge_raw = ([max_current, max_power_w * eta_discharge / v]|min if v > 0 and ns.telemetry else 0) %}
                       {% set charge_held = states(charge_entity)|float(0) %}
                       {% set discharge_held = states(discharge_entity)|float(0) %}
                       {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
                       {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
                       {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
-                      {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
+                      {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta_discharge / (v * 1.02)]|min else discharge_raw %}
                       {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
                       {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
                          jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -2096,9 +1882,9 @@ actions:
                           {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
                              CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
                              Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
-                          {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta / v]|min %}
+                          {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta_charge / v]|min %}
                           {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
-                          {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta / v]|min %}
+                          {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta_charge / v]|min %}
                           {% set charge = charge_cap %}
                           {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
                           {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
@@ -2119,7 +1905,7 @@ actions:
                             {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                           {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                         {% else %}
-                          {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
+                          {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta_discharge / v]|min %}
                           {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
                           {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
                           {% if energy_mode %}
@@ -2192,7 +1978,6 @@ actions:
                       {% endfor %}
                       {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
                       {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
-                        handoff_pending=handoff_pending and norm.ok and ns.writers and commissioned,
                         writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
                         retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
                         row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
@@ -2201,7 +1986,7 @@ actions:
                         slot_energy=dict(key=reached_key, discharge=slot_start) if energy_mode else rt.get('slot_energy'),
                         warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' else '') }}
                     allowed: |-
-                      {% set rt=state_attr(runtime_entity,'runtime') or {} %}
+                      {% set rt=runtime or {} %}
                       {% set current=baseline if cleanup else fresh %}
                       {% set ns=namespace(prerequisites=true) %}
                       {% if command.phase == 'enable' %}
@@ -2244,7 +2029,7 @@ actions:
                       raw_response: {}
                   - action: solarman.read_holding_registers
                     data:
-                      device: !input 'solarman_device'
+                      device: '{{ device_id }}'
                       address: 108
                       count: 70
                     response_variable: raw_response
@@ -2254,19 +2039,18 @@ actions:
                         if raw_response is mapping else none %}{% if is_number(raw) %}{% set value={0:''Disabled'',1:''Grid'',32:''Sell''}.get(raw|int,''unsupported'')
                         if e.startswith(''select.'') else (raw|float*reg.scale)|round(6) %}{% set ns.values=dict(ns.values,
                         **dict([(e,value)])) %}{% endif %}{% endfor %}{{ ns.values }}'
-                  - variables:
-                      runtime_update: '{% set rt=state_attr(runtime_entity,''runtime'') or {} %}{% set ns=namespace(dirty=rt.get(''uncertain'',[]))
-                        %}{% for e,value in observed.items() %}{% set equal=states(e)==value if e.startswith(''select.'')
-                        else is_number(states(e)) and (states(e)|float-value|float)|abs < 0.00001 %}{% if not equal %}{% set
-                        ns.dirty=ns.dirty+[e] %}{% endif %}{% endfor %}{{ dict(rt, uncertain=ns.dirty|unique|list, confirmed=dict(rt.get(''confirmed'',{}),
+                  - action: energy_compass.controller_runtime
+                    data:
+                      controller: '{{ controller_entity }}'
+                      runtime: '{% set rt=runtime or {} %}{% set ns=namespace(dirty=rt.get(''uncertain'',[])) %}{% for e,value
+                        in observed.items() %}{% set equal=states(e)==value if e.startswith(''select.'') else is_number(states(e))
+                        and (states(e)|float-value|float)|abs < 0.00001 %}{% if not equal %}{% set ns.dirty=ns.dirty+[e] %}{%
+                        endif %}{% endfor %}{{ dict(rt, uncertain=ns.dirty|unique|list, confirmed=dict(rt.get(''confirmed'',{}),
                         **observed)) }}'
-                  - event: energy_compass_deye_runtime
-                    event_data:
-                      runtime: '{{ runtime_update }}'
-                  - wait_template: '{{ state_attr(runtime_entity,''runtime'') == runtime_update }}'
-                    timeout:
-                      seconds: 1
-                    continue_on_timeout: false
+                    response_variable: runtime_response
+                  - variables:
+                      runtime: '{{ runtime_response.runtime }}'
+                      restore_pending: '{{ runtime_response.restore_pending }}'
                   - variables:
                       raw_value: '{{ raw_response.get(registers[command.entity].address, raw_response.get(registers[command.entity].address|string))
                         if raw_response is mapping else none }}'
@@ -2277,18 +2061,16 @@ actions:
                     - condition: template
                       value_template: '{{ confirmed_write }}'
                     then:
+                    - action: energy_compass.controller_runtime
+                      data:
+                        controller: '{{ controller_entity }}'
+                        runtime: '{{ dict(runtime or {}, uncertain=(runtime or {}).get(''uncertain'',[])|reject(''equalto'',command.entity)|list,
+                          confirmed=dict((runtime or {}).get(''confirmed'',{}), **dict([(command.entity,command.value)])),
+                          last_confirmation=now().isoformat()) }}'
+                      response_variable: runtime_response
                     - variables:
-                        runtime_update: '{{ dict(state_attr(runtime_entity,''runtime'') or {}, uncertain=(state_attr(runtime_entity,''runtime'')
-                          or {}).get(''uncertain'',[])|reject(''equalto'',command.entity)|list, confirmed=dict((state_attr(runtime_entity,''runtime'')
-                          or {}).get(''confirmed'',{}), **dict([(command.entity,command.value)])), last_confirmation=now().isoformat())
-                          }}'
-                    - event: energy_compass_deye_runtime
-                      event_data:
-                        runtime: '{{ runtime_update }}'
-                    - wait_template: '{{ state_attr(runtime_entity,''runtime'') == runtime_update }}'
-                      timeout:
-                        seconds: 1
-                      continue_on_timeout: false
+                        runtime: '{{ runtime_response.runtime }}'
+                        restore_pending: '{{ runtime_response.restore_pending }}'
           - if:
             - condition: template
               value_template: '{{ not confirmed_write }}'
@@ -2299,7 +2081,7 @@ actions:
               then:
               - variables:
                   replan: |-
-                    {% set rt=state_attr(runtime_entity,'runtime') or {} %}
+                    {% set rt=runtime or {} %}
                     {% set ns=namespace(same=true,changed=false) %}
                     {% for e,value in target.desired.items() %}
                       {% if e in [charge_entity,discharge_entity,grid_entity] %}
@@ -2320,9 +2102,15 @@ actions:
     - variables:
         fresh: |-
           {% set t = as_timestamp(now()) %}
-          {% set cache = state_attr(cache_entity,'snapshot') or {} %}
-          {% set rt = state_attr(runtime_entity,'runtime') or {} %}
-          {% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
+          {% set c = states[controller_entity].attributes if states[controller_entity] is not none else {} %}
+          {% set cache = c.get('accepted') or {} %}
+          {% set rt = runtime or {} %}
+          {# Capacity and efficiency belong to the accepted generation: a retained plan must
+             not run with settings saved after it was computed. #}
+          {% set b = cache.get('battery') or {} %}
+          {% set capacity_kwh = b.get('capacity_kwh')|float(0) %}
+          {% set eta_charge = b.get('eta_charge')|float(0) %}
+          {% set eta_discharge = b.get('eta_discharge')|float(0) %}
           {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
           {% for e in telemetry_entities %}
             {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
@@ -2349,26 +2137,16 @@ actions:
           {% for r in cache.get('intervals',[]) %}
             {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
           {% endfor %}
-          {% set retained = states(optimizer_entity)=='calculating' %}
-          {% set coherent = p.get('generated_at') == cache.get('generated_at') == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at') %}
-          {% set live_ok = is_state(alert_entity,'off') and (retained or (states(optimizer_entity)=='ready' and is_state(valid_entity,'on') and coherent and p.get('plan_retained') == false and p.get('refreshing') == false)) %}
+          {% set retained = c.get('retained') is sameas true %}
           {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
           {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
-          {% elif not is_state(session_entity,'on') or cache.get('session') != state_attr(session_start_entity,'timestamp')|float(0) %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
-          {% elif cache.get('generated_at') == rt.get('revoked_generation') %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
-          {% elif not live_ok %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+          {% elif c.get('plan_reason') == 'session' or not cache or cache.get('session') != c.get('session') %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
+          {% elif c.get('plan_reason') == 'revoked' %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
+          {% elif c.get('plan_reason') != 'ok' %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+          {% elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1) %}{% set ns.reason='plan: brak parametrów baterii (pojemność, sprawność) w planie' %}
           {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
           {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
           {% set ns.valid = ns.reason == 'ok' %}
-          {# HA publishes plan/status/validity separately. Retry a newer publication before
-             restoring BASE; never extend the accepted snapshot's original lifetime. #}
-          {% set handoff_pending = ns.reason == 'plan: błąd źródeł, brak gotowości lub niespójne generacje'
-            and not coherent and states(optimizer_entity) == 'ready' and is_state(alert_entity,'off')
-            and states(mode_entity) == 'Auto' and ns.row
-            and t < (as_timestamp(cache.get('valid_until'),0)|round(0,'floor'))
-            and t < (cache.get('coverage_end',0)|float(0)|round(0,'floor'))
-            and (as_timestamp(p.get('generated_at'),0) > as_timestamp(cache.get('generated_at'),0)
-              or as_timestamp(state_attr(optimizer_entity,'generated_at'),0) > as_timestamp(cache.get('generated_at'),0)) %}
           {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
           {% if states(mode_entity) == 'Off' %}{% set state='BASE' %}{% endif %}
           {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
@@ -2379,13 +2157,13 @@ actions:
              wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
              mocy nigdy nie jest przekroczony. #}
           {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-          {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+          {% set discharge_raw = ([max_current, max_power_w * eta_discharge / v]|min if v > 0 and ns.telemetry else 0) %}
           {% set charge_held = states(charge_entity)|float(0) %}
           {% set discharge_held = states(discharge_entity)|float(0) %}
           {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
           {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
           {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
-          {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
+          {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta_discharge / (v * 1.02)]|min else discharge_raw %}
           {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
           {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
              jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -2435,9 +2213,9 @@ actions:
               {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
                  CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
                  Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
-              {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta / v]|min %}
+              {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta_charge / v]|min %}
               {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
-              {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta / v]|min %}
+              {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta_charge / v]|min %}
               {% set charge = charge_cap %}
               {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
               {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
@@ -2458,7 +2236,7 @@ actions:
                 {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
               {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
             {% else %}
-              {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
+              {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta_discharge / v]|min %}
               {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
               {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
               {% if energy_mode %}
@@ -2531,7 +2309,6 @@ actions:
           {% endfor %}
           {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
           {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
-            handoff_pending=handoff_pending and norm.ok and ns.writers and commissioned,
             writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
             retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
             row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
@@ -2541,9 +2318,15 @@ actions:
             warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' else '') }}
         baseline: |-
           {% set t = as_timestamp(now()) %}
-          {% set cache = state_attr(cache_entity,'snapshot') or {} %}
-          {% set rt = state_attr(runtime_entity,'runtime') or {} %}
-          {% set p = states[plan_entity].attributes if states[plan_entity] is not none else {} %}
+          {% set c = states[controller_entity].attributes if states[controller_entity] is not none else {} %}
+          {% set cache = c.get('accepted') or {} %}
+          {% set rt = runtime or {} %}
+          {# Capacity and efficiency belong to the accepted generation: a retained plan must
+             not run with settings saved after it was computed. #}
+          {% set b = cache.get('battery') or {} %}
+          {% set capacity_kwh = b.get('capacity_kwh')|float(0) %}
+          {% set eta_charge = b.get('eta_charge')|float(0) %}
+          {% set eta_discharge = b.get('eta_discharge')|float(0) %}
           {% set ns = namespace(telemetry=true, writers=true, times=[], row={}, active=0, desired={}, reason='ok', valid=true, reached=false) %}
           {% for e in telemetry_entities %}
             {% if not is_number(states(e)) or not (0 <= t - as_timestamp(states[e].last_reported,0) <= 30) %}{% set ns.telemetry=false %}{% endif %}
@@ -2570,26 +2353,16 @@ actions:
           {% for r in cache.get('intervals',[]) %}
             {% if as_timestamp(r.start,0) <= t < (as_timestamp(r.end,0)|round(0,'floor')) %}{% set ns.row=r %}{% endif %}
           {% endfor %}
-          {% set retained = states(optimizer_entity)=='calculating' %}
-          {% set coherent = p.get('generated_at') == cache.get('generated_at') == state_attr(optimizer_entity,'generated_at') == state_attr(valid_entity,'generated_at') %}
-          {% set live_ok = is_state(alert_entity,'off') and (retained or (states(optimizer_entity)=='ready' and is_state(valid_entity,'on') and coherent and p.get('plan_retained') == false and p.get('refreshing') == false)) %}
+          {% set retained = c.get('retained') is sameas true %}
           {% if not ns.telemetry %}{% set ns.reason='telemetria: wymagany świeży SOC, napięcie i heartbeat (30 s)' %}
           {% elif not times_ok %}{% set ns.reason='TOU: wymagane sześć różnych rosnących godzin' %}
-          {% elif not is_state(session_entity,'on') or cache.get('session') != state_attr(session_start_entity,'timestamp')|float(0) %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
-          {% elif cache.get('generated_at') == rt.get('revoked_generation') %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
-          {% elif not live_ok %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+          {% elif c.get('plan_reason') == 'session' or not cache or cache.get('session') != c.get('session') %}{% set ns.reason='sesja: oczekiwanie na nowy poprawny plan po uruchomieniu' %}
+          {% elif c.get('plan_reason') == 'revoked' %}{% set ns.reason='plan: generacja unieważniona po błędzie, wymagany nowy plan' %}
+          {% elif c.get('plan_reason') != 'ok' %}{% set ns.reason='plan: błąd źródeł, brak gotowości lub niespójne generacje' %}
+          {% elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1) %}{% set ns.reason='plan: brak parametrów baterii (pojemność, sprawność) w planie' %}
           {% elif t >= (as_timestamp(cache.get('valid_until'),0)|round(0,'floor')) or t >= (cache.get('coverage_end',0)|float(0)|round(0,'floor')) or not ns.row %}{% set ns.reason='plan: oryginalny termin ważności minął lub brak przedziału' %}
           {% elif states(operation_entity) not in ['Capacity','Voltage'] %}{% set ns.reason='bateria: wymagany tryb Capacity albo Voltage' %}{% endif %}
           {% set ns.valid = ns.reason == 'ok' %}
-          {# HA publishes plan/status/validity separately. Retry a newer publication before
-             restoring BASE; never extend the accepted snapshot's original lifetime. #}
-          {% set handoff_pending = ns.reason == 'plan: błąd źródeł, brak gotowości lub niespójne generacje'
-            and not coherent and states(optimizer_entity) == 'ready' and is_state(alert_entity,'off')
-            and states(mode_entity) == 'Auto' and ns.row
-            and t < (as_timestamp(cache.get('valid_until'),0)|round(0,'floor'))
-            and t < (cache.get('coverage_end',0)|float(0)|round(0,'floor'))
-            and (as_timestamp(p.get('generated_at'),0) > as_timestamp(cache.get('generated_at'),0)
-              or as_timestamp(state_attr(optimizer_entity,'generated_at'),0) > as_timestamp(cache.get('generated_at'),0)) %}
           {% set state = ns.row.get('state','BASE') if ns.valid else 'BASE' %}
           {% if true %}{% set state='BASE' %}{% endif %}
           {% set balance = ns.row.get('balance_hold', false) is sameas true and state in ['CHARGE_PV','CHARGE_GRID'] %}
@@ -2600,13 +2373,13 @@ actions:
              wyzszy krok wchodzi dopiero z 2 % zapasem napiecia (~10 V przy 530 V). Limit
              mocy nigdy nie jest przekroczony. #}
           {% set charge_raw = ([max_current, max_power_w / v]|min if v > 0 and ns.telemetry else 0) %}
-          {% set discharge_raw = ([max_current, max_power_w * eta / v]|min if v > 0 and ns.telemetry else 0) %}
+          {% set discharge_raw = ([max_current, max_power_w * eta_discharge / v]|min if v > 0 and ns.telemetry else 0) %}
           {% set charge_held = states(charge_entity)|float(0) %}
           {% set discharge_held = states(discharge_entity)|float(0) %}
           {% set charge_step = state_attr(charge_entity,'step')|float(1) %}
           {% set discharge_step = state_attr(discharge_entity,'step')|float(1) %}
           {% set charge_cap = charge_held if 0 < charge_held <= charge_raw and charge_held + charge_step > [max_current, max_power_w / (v * 1.02)]|min else charge_raw %}
-          {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta / (v * 1.02)]|min else discharge_raw %}
+          {% set discharge_cap = discharge_held if 0 < discharge_held <= discharge_raw and discharge_held + discharge_step > [max_current, max_power_w * eta_discharge / (v * 1.02)]|min else discharge_raw %}
           {% set reached_key=[cache.get('generated_at'),ns.row.get('start'),state,states(operation_entity)] %}
           {# Tryb Voltage: napiecie pod obciazeniem spada o ~0,7 V przy 7 kW, a krzywa LFP
              jest plaska (51,5-52,8 V to ~30-70 %), wiec cel napieciowy DISCHARGE_GRID
@@ -2656,9 +2429,9 @@ actions:
               {# Tylko udzial sieci idzie za planem; calkowite ladowanie ma limit jak
                  CHARGE_PV, wiec PV ponad prognoze laduje baterie zamiast eksportu.
                  Po osiagnieciu celu SOC siec 0 A i TOU Disabled, PV dalej laduje. #}
-              {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta / v]|min %}
+              {% set planned = [charge_cap, [0,ns.row.charge_kwh|float]|max / h * 1000 * eta_charge / v]|min %}
               {% set surplus = [0, ns.row.pv_kwh|float - ns.row.curtail_kwh|float - ns.row.load_kwh|float]|max %}
-              {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta / v]|min %}
+              {% set grid = [max_grid_current,planned,[0,ns.row.charge_kwh|float-surplus]|max / h * 1000 * eta_charge / v]|min %}
               {% set charge = charge_cap %}
               {% set direction = 'Grid' if grid >= 1 and planned >= 1 else 'Disabled' %}
               {# Balansowanie: pelna bateria ma w planie charge_kwh ~ 0, wiec udzial sieci
@@ -2679,7 +2452,7 @@ actions:
                 {% if v >= target_voltage*10 %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
               {% elif not balance and states(operation_entity)=='Capacity' and soc >= target_soc %}{% set grid=0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
             {% else %}
-              {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta / v]|min %}
+              {% set discharge = [discharge_cap, [0,ns.row.discharge_kwh|float]|max / h * 1000 / eta_discharge / v]|min %}
               {% set power = [max_power_w, [0,ns.row.discharge_kwh|float]|max / h * 1000]|min %}
               {% set direction = 'Sell' if state=='DISCHARGE_GRID' and discharge >= 1 else 'Disabled' %}
               {% if energy_mode %}
@@ -2752,7 +2525,6 @@ actions:
           {% endfor %}
           {% if not norm.ok %}{% set ns.valid=false %}{% set ns.reason='nastawy: brak zakresu/kroku lub cel poza zakresem encji' %}{% endif %}
           {{ dict(valid=ns.valid, reason=ns.reason, state=state, desired=norm.values, telemetry=ns.telemetry,
-            handoff_pending=handoff_pending and norm.ok and ns.writers and commissioned,
             writers_safe=ns.writers, settings_ok=norm.ok, active_tou=ns.active, times=ns.times,
             retained=retained, generation=cache.get('generated_at'), deadline=cache.get('valid_until'),
             row_start=ns.row.get('start'), row_end=ns.row.get('end'), operation=states(operation_entity),
@@ -2760,16 +2532,16 @@ actions:
             energy_mode=energy_mode, discharged_kwh=discharged|round(3),
             slot_energy=dict(key=reached_key, discharge=slot_start) if energy_mode else rt.get('slot_energy'),
             warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' else '') }}
-        profile_confirmed: '{% set rt=state_attr(runtime_entity,''runtime'') or {} %}{% set ns=namespace(ok=not rt.get(''uncertain'',[]))
-          %}{% for e,value in target.desired.items() %}{% if rt.get(''confirmed'',{}).get(e) != value %}{% set ns.ok=false
-          %}{% endif %}{% endfor %}{{ ns.ok }}'
+        profile_confirmed: '{% set rt=runtime or {} %}{% set ns=namespace(ok=not rt.get(''uncertain'',[])) %}{% for e,value
+          in target.desired.items() %}{% if rt.get(''confirmed'',{}).get(e) != value %}{% set ns.ok=false %}{% endif %}{%
+          endfor %}{{ ns.ok }}'
     - if:
       - condition: template
         value_template: '{{ replan }}'
       then:
       - variables:
           replan: |-
-            {% set rt=state_attr(runtime_entity,'runtime') or {} %}
+            {% set rt=runtime or {} %}
             {% set ns=namespace(same=true,changed=false) %}
             {% for e,value in target.desired.items() %}
               {% if e in [charge_entity,discharge_entity,grid_entity] %}
@@ -2786,10 +2558,10 @@ actions:
               and fresh.operation == target.operation }}
     - if:
       - condition: template
-        value_template: '{{ transaction_attempt == 1 and not cleanup and not aborted and commands|length == 0 and fresh.handoff_pending
-          }}'
+        value_template: '{{ transaction_attempt == 1 and not cleanup and not aborted and commands|length == 0 and fresh.valid
+          and fresh.requested_mode == ''Auto'' and fresh.generation != target.generation }}'
       then:
-      - stop: 'Publikacja planu podczas kontroli bez zapisów: ponowny odczyt w kolejnym przebiegu'
+      - stop: 'Nowy plan zaakceptowany podczas kontroli bez zapisów: ponowny odczyt w kolejnym przebiegu'
     - if:
       - condition: template
         value_template: '{{ not cleanup and (not fresh.valid or fresh.desired != target.desired or fresh.generation != target.generation
@@ -2801,7 +2573,7 @@ actions:
         then:
         - variables:
             replan: |-
-              {% set rt=state_attr(runtime_entity,'runtime') or {} %}
+              {% set rt=runtime or {} %}
               {% set ns=namespace(same=true,changed=false) %}
               {% for e,value in target.desired.items() %}
                 {% if e in [charge_entity,discharge_entity,grid_entity] %}
@@ -2834,32 +2606,35 @@ actions:
         - condition: template
           value_template: '{{ cleanup and profile_confirmed }}'
         then:
-        - action: input_boolean.turn_off
-          target:
-            entity_id: input_boolean.energy_compass_deye_restore_pending
+        - action: energy_compass.controller_runtime
+          data:
+            controller: '{{ controller_entity }}'
+            restore_pending: false
+          response_variable: runtime_response
+        - variables:
+            runtime: '{{ runtime_response.runtime }}'
+            restore_pending: '{{ runtime_response.restore_pending }}'
+      - action: energy_compass.controller_runtime
+        data:
+          controller: '{{ controller_entity }}'
+          runtime: '{{ dict(runtime or {}, confirmed_mode=(''BASE'' if cleanup else target.state) if profile_confirmed else
+            ''unconfirmed'', code=(''restored'' if cleanup else ''ok'') if profile_confirmed else ''verification_required'',
+            reason=target.reason if profile_confirmed else ''Wymagane potwierdzenie bazowych nastaw podczas przejęcia sterowania'')
+            }}'
+        response_variable: runtime_response
       - variables:
-          runtime_update: '{{ dict(state_attr(runtime_entity,''runtime'') or {}, confirmed_mode=(''BASE'' if cleanup else
-            target.state) if profile_confirmed else ''unconfirmed'', code=(''restored'' if cleanup else ''ok'') if profile_confirmed
-            else ''verification_required'', reason=target.reason if profile_confirmed else ''Wymagane potwierdzenie bazowych
-            nastaw podczas przejęcia sterowania'') }}'
-      - event: energy_compass_deye_runtime
-        event_data:
-          runtime: '{{ runtime_update }}'
-      - wait_template: '{{ state_attr(runtime_entity,''runtime'') == runtime_update }}'
-        timeout:
-          seconds: 1
-        continue_on_timeout: false
+          runtime: '{{ runtime_response.runtime }}'
+          restore_pending: '{{ runtime_response.restore_pending }}'
       - stop: 'Przebieg zakończony: sprawdź stan potwierdzenia w diagnostyce'
     - variables:
         cleanup: '{{ not replan }}'
         aborted: false
+- action: energy_compass.controller_runtime
+  data:
+    controller: '{{ controller_entity }}'
+    runtime: '{{ dict(runtime or {}, confirmed_mode=''unconfirmed'',code=''write_failed'',reason=''Brak potwierdzenia nastaw;
+      zachowano obowiązek przywrócenia'') }}'
+  response_variable: runtime_response
 - variables:
-    runtime_update: '{{ dict(state_attr(runtime_entity,''runtime'') or {}, confirmed_mode=''unconfirmed'',code=''write_failed'',reason=''Brak
-      potwierdzenia nastaw; zachowano obowiązek przywrócenia'') }}'
-- event: energy_compass_deye_runtime
-  event_data:
-    runtime: '{{ runtime_update }}'
-- wait_template: '{{ state_attr(runtime_entity,''runtime'') == runtime_update }}'
-  timeout:
-    seconds: 1
-  continue_on_timeout: false
+    runtime: '{{ runtime_response.runtime }}'
+    restore_pending: '{{ runtime_response.restore_pending }}'
