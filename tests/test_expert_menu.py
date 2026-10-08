@@ -96,9 +96,9 @@ async def test_every_flow_starts_hidden_and_round_trips(
     fid = menu["flow_id"]
     flow = manager._progress[fid]
     assert flow.show_advanced_options is True
-    atlas = ["energy_atlas"] if kind == "options" else []
-    hidden = [*HIDDEN[:-2], *atlas, "show_expert", "preview"]
-    shown = [*SHOWN[:-2], *atlas, "hide_expert", "preview"]
+    options_only = ["deye_controller", "energy_atlas"] if kind == "options" else []
+    hidden = [*HIDDEN[:-2], *options_only, "show_expert", "preview"]
+    shown = [*SHOWN[:-2], *options_only, "hide_expert", "preview"]
     assert menu["menu_options"] == hidden
     menu = await manager.async_configure(fid, {"next_step_id": "show_expert"})
     assert menu["step_id"] == "menu"

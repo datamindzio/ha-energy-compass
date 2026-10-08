@@ -24,6 +24,7 @@ _LOGGER = logging.getLogger(__name__)
 
 PROCESS_SESSION = "controller_process_session"
 ENTRY_SESSIONS = "controller_sessions"
+AUTO_ENABLED = "controller_auto_enabled"
 MODE_UNIQUE_SUFFIX = "deye_mode"
 _TOU_DOMAINS = frozenset(domain for _, domain in core.TOU_FIELDS)
 _PACKAGE_DOMAINS = {
@@ -43,6 +44,88 @@ def controller_session(hass: HomeAssistant, entry_id: str) -> float:
         PROCESS_SESSION, float(math.ceil(dt_util.utcnow().timestamp()))
     )
     return data.setdefault(ENTRY_SESSIONS, {}).setdefault(entry_id, process)
+
+
+def solarman_devices(hass: HomeAssistant) -> set[str]:
+    """Device ids that own at least one Solarman entity."""
+    registry = er.async_get(hass)
+    return {
+        item.device_id
+        for item in registry.entities.values()
+        if item.platform == "solarman" and item.device_id
+    }
+
+
+def device_resolution(hass: HomeAssistant, device_id: str | None) -> core.TouResolution:
+    """Resolve the six TOU programs of one device from the entity registry."""
+    if not device_id:
+        return core.TouResolution(None, (), None)
+    registry = er.async_get(hass)
+    return core.resolve_tou(
+        core.TouFact(
+            item.entity_id,
+            item.domain,
+            item.platform,
+            item.translation_key,
+            item.disabled,
+        )
+        for item in er.async_entries_for_device(
+            registry, device_id, include_disabled_entities=True
+        )
+    )
+
+
+def default_device(hass: HomeAssistant) -> str | None:
+    """The only Solarman device that has TOU programs, if there is exactly one."""
+    registry = er.async_get(hass)
+    devices = {
+        item.device_id
+        for item in registry.entities.values()
+        if item.platform == "solarman"
+        and item.translation_key == "program_1_time"
+        and item.device_id
+    }
+    return next(iter(devices)) if len(devices) == 1 else None
+
+
+def device_in_use(hass: HomeAssistant, entry_id: str, device_id: str) -> bool:
+    """Whether another entry already runs a controller on this device."""
+    return any(
+        (other.options.get("controller") or {}).get("enabled")
+        and other.options["controller"].get("device_id") == device_id
+        for other in hass.config_entries.async_entries(DOMAIN)
+        if other.entry_id != entry_id
+    )
+
+
+def async_auto_enable(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Enable the controller for a lone installation that already ran the package."""
+    if "controller" in entry.options:
+        return False
+    package_mode = core.PACKAGE_IDENTITIES["mode"]
+    if (
+        er.async_get(hass).async_get_entity_id("input_select", *package_mode) is None
+        or len(hass.config_entries.async_entries(DOMAIN)) != 1
+    ):
+        return False
+    usable = [
+        device
+        for device in solarman_devices(hass)
+        if device_resolution(hass, device).problem is None
+        and device_resolution(hass, device).prefix
+    ]
+    if len(usable) != 1:
+        return False
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            **entry.options,
+            "controller": {"enabled": True, "device_id": usable[0]},
+        },
+    )
+    hass.data.setdefault(DOMAIN, {}).setdefault(AUTO_ENABLED, set()).add(entry.entry_id)
+    _LOGGER.debug("Enabled the Deye controller for an installation with the package")
+    return True
 
 
 class DeyeController:
@@ -88,6 +171,16 @@ class DeyeController:
         self._unsub_coordinator = self.coordinator.async_add_listener(
             self._handle_update
         )
+        auto = self.hass.data.get(DOMAIN, {}).get(AUTO_ENABLED, set())
+        if self.entry.entry_id in auto:
+            auto.discard(self.entry.entry_id)
+            self.state = replace(
+                self.state,
+                history=(
+                    *self.state.history,
+                    core.Event(now.isoformat(), "auto_enabled"),
+                )[-core.HISTORY_LIMIT :],
+            )
         self._save()
         self._evaluate()
 
@@ -398,26 +491,7 @@ class DeyeController:
         )
 
     def _resolve(self) -> None:
-        facts = []
-        if self.device_id:
-            registry = er.async_get(self.hass)
-            facts = [
-                core.TouFact(
-                    item.entity_id,
-                    item.domain,
-                    item.platform,
-                    item.translation_key,
-                    item.disabled,
-                )
-                for item in er.async_entries_for_device(
-                    registry, self.device_id, include_disabled_entities=True
-                )
-            ]
-        resolution = (
-            core.resolve_tou(facts)
-            if self.device_id
-            else core.TouResolution(None, (), None)
-        )
+        resolution = device_resolution(self.hass, self.device_id)
         changed = resolution.entities != self.resolution.entities
         self.resolution = resolution
         if changed or self._unsub_tou is None:

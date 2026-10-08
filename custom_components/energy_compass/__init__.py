@@ -7,7 +7,7 @@ from homeassistant.const import Platform
 from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
 
-from .controller_ha import PROCESS_SESSION, DeyeController
+from .controller_ha import PROCESS_SESSION, DeyeController, async_auto_enable
 from .controller_services import async_register as async_register_controller_services
 from .coordinator import EnergyCompassCoordinator
 from .settings import DOMAIN, default_configuration, explicit_strategy_fields
@@ -44,6 +44,7 @@ async def async_setup(hass, config) -> bool:
 
 async def async_setup_entry(hass, entry) -> bool:
     """Own all scheduling and source subscriptions through the config entry."""
+    async_auto_enable(hass, entry)
     coordinator = EnergyCompassCoordinator(hass, entry)
     entry.runtime_data = coordinator
     try:

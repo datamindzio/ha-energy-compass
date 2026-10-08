@@ -68,11 +68,11 @@ def publication(generated_at=None, **override):
     return data
 
 
-def register_solarman(hass):
-    solarman = MockConfigEntry(domain="solarman", title="Inverter")
+def register_solarman(hass, prefix=PREFIX, tag="inverter"):
+    solarman = MockConfigEntry(domain="solarman", title=tag)
     solarman.add_to_hass(hass)
     device = dr.async_get(hass).async_get_or_create(
-        config_entry_id=solarman.entry_id, identifiers={("solarman", "inverter")}
+        config_entry_id=solarman.entry_id, identifiers={("solarman", tag)}
     )
     registry = er.async_get(hass)
     for number in range(1, 7):
@@ -80,11 +80,11 @@ def register_solarman(hass):
             entry = registry.async_get_or_create(
                 domain,
                 "solarman",
-                f"inverter_{number}_{name}",
+                f"{tag}_{number}_{name}",
                 config_entry=solarman,
                 device_id=device.id,
                 translation_key=f"program_{number}_{name}",
-                suggested_object_id=f"{PREFIX}{number}_{name}",
+                suggested_object_id=f"{prefix}{number}_{name}",
             )
             hass.states.async_set(
                 entry.entity_id, TIMES[number] if name == "time" else "0"

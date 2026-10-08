@@ -793,7 +793,8 @@
           "energy_atlas_proof": "Energy Atlas: pokaż dowód własności",
           "preview": "Podgląd i zapis",
           "show_expert": "Pokaż ustawienia eksperckie",
-          "hide_expert": "Ukryj ustawienia eksperckie"
+          "hide_expert": "Ukryj ustawienia eksperckie",
+          "deye_controller": "Sterownik Deye"
         }
       },
       "currency_review": {
@@ -938,6 +939,14 @@
           "config_entries": "Integracje prognozy (sumowane)"
         },
         "description": "{detail}"
+      },
+      "deye_controller": {
+        "title": "Sterownik Deye",
+        "description": "Energy Compass przechowuje tryb sterownika, zaakceptowany plan, sesję i stan pracy; plan wykonuje blueprint sterownika Deye (Solarman), który zapisuje falownik. Wybierz urządzenie falownika Solarman; jego sześć programów TOU zostanie znalezionych automatycznie.\n\n{status}",
+        "data": {
+          "enabled": "Włącz sterownik Deye",
+          "device_id": "Urządzenie falownika Solarman"
+        }
       }
     },
     "error": {
@@ -956,7 +965,11 @@
       "rate_limited": "Zbyt wiele prób; spróbuj ponownie później.",
       "cannot_connect": "Nie udało się połączyć z kolektorem Energy Atlas.",
       "unknown": "Rejestracja nie powiodła się z nieznanego powodu.",
-      "schedule_currency": "Taryfa OSD wymaga waluty PLN; najpierw zmień źródło ceny zakupu."
+      "schedule_currency": "Taryfa OSD wymaga waluty PLN; najpierw zmień źródło ceny zakupu.",
+      "controller_device_required": "Wybierz urządzenie falownika Solarman.",
+      "controller_tou_incomplete": "Urządzenie nie ma wszystkich sześciu programów TOU (czas, moc, napięcie, SOC, ładowanie).",
+      "controller_tou_prefix": "Identyfikatory encji programów TOU nie mają wspólnego prefiksu; przywróć domyślne identyfikatory.",
+      "controller_device_in_use": "Inny wpis Energy Compass już steruje tym urządzeniem."
     },
     "abort": {
       "site_not_registered": "Ta witryna została zapomniana w innym oknie; włącz ponownie Energy Atlas, aby zarejestrować nową."

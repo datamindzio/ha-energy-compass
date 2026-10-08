@@ -793,7 +793,8 @@
           "energy_atlas_proof": "Energy Atlas: show ownership proof",
           "preview": "Preview and save",
           "show_expert": "Show expert settings",
-          "hide_expert": "Hide expert settings"
+          "hide_expert": "Hide expert settings",
+          "deye_controller": "Deye controller"
         }
       },
       "currency_review": {
@@ -938,6 +939,14 @@
           "config_entries": "Forecast integrations (added together)"
         },
         "description": "{detail}"
+      },
+      "deye_controller": {
+        "title": "Deye controller",
+        "description": "Energy Compass keeps the controller's mode, accepted plan, session and runtime; the Deye (Solarman) controller blueprint executes the plan and writes the inverter. Choose the Solarman inverter device; its six TOU programs are found automatically.\n\n{status}",
+        "data": {
+          "enabled": "Enable the Deye controller",
+          "device_id": "Solarman inverter device"
+        }
       }
     },
     "error": {
@@ -956,7 +965,11 @@
       "rate_limited": "Too many attempts; try again later.",
       "cannot_connect": "Could not reach the Energy Atlas collector.",
       "unknown": "Registration failed for an unknown reason.",
-      "schedule_currency": "The Polish tariff schedule requires currency PLN; change the buy source first."
+      "schedule_currency": "The Polish tariff schedule requires currency PLN; change the buy source first.",
+      "controller_device_required": "Choose the Solarman inverter device.",
+      "controller_tou_incomplete": "The device does not have all six TOU programs (time, power, voltage, SOC, charging).",
+      "controller_tou_prefix": "The TOU program entity IDs do not share one prefix; restore their default IDs.",
+      "controller_device_in_use": "Another Energy Compass entry already controls this device."
     },
     "abort": {
       "site_not_registered": "This site was forgotten in another window; re-enable Energy Atlas to register a new one."
