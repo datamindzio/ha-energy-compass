@@ -121,6 +121,7 @@ def source_error_detail(error, language):
         "replace or disable PV before removing its final group": "Zastąp ostatnią grupę PV albo wyłącz PV przed jej usunięciem.",
         "remove the PV group explicitly or add a replacement": "Usuń całą grupę PV osobną operacją albo dodaj źródło zastępcze.",
         "disable daily cycles or replace daily throughput before removing it": "Wyłącz dzienny limit cykli albo zastąp pomiar energii przed usunięciem.",
+        "RCE sensor must report PLN/MWh": "Czujnik RCE musi podawać PLN/MWh.",
         "selected source changed; select it again": "Wybrane źródło uległo zmianie; wybierz je ponownie.",
         "price source currency or unit mismatch": "Waluta lub jednostka źródła ceny nie pasuje do instalacji.",
         "price source must be a sensor, number or input_number": "Cena musi pochodzić z encji sensor, number lub input_number.",

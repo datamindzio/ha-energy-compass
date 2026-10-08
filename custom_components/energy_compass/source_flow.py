@@ -14,6 +14,13 @@ from .engine.models import InputError
 from .flow_schema import entity_binding, number, select, snapshot
 from .presets import PRESETS
 from .settings import NUMBERS
+from .source_builders import (
+    rce_sell_binding,
+    rce_unit_error,
+    set_forecast_sell,
+    set_load_statistic,
+    set_rce_sell,
+)
 from .source_management import (
     assert_selected,
     remove_source,
@@ -26,7 +33,6 @@ from .source_management import (
     source_role_options,
 )
 from .sources.bindings import (
-    EntityBinding,
     IntervalBinding,
     field_paths,
     parse_intervals,
@@ -511,6 +517,8 @@ class SourceEditor:
                 state = self.hass.states.get(binding.entity.entity_id)
                 if state is None:
                     raise InputError("missing entity")
+                if message := rce_unit_error(state.attributes):
+                    raise InputError(message)
                 states = {
                     state.entity_id: {
                         "state": state.state,
@@ -543,21 +551,8 @@ class SourceEditor:
         )
 
     def _rce_binding(self, entity_id):
-        preset = PRESETS["pse"]
-        selected = entity_binding(self.hass, entity_id, preset.price_attribute)
-        return IntervalBinding(
-            EntityBinding(
-                selected.entity_id, selected.registry_id, preset.price_attribute
-            ),
-            value_path=preset.price_value_field,
-            start_path=preset.price_start_field,
-            end_path=preset.price_end_field,
-            interval_minutes=preset.price_interval_minutes,
-            unit=preset.price_unit,
-            value_kind="price",
-            value_sign=1.0,
-            source_timezone=self._draft["timezone"],
-            max_age_seconds=24 * 3600,
+        return rce_sell_binding(
+            entity_binding(self.hass, entity_id), self._draft["timezone"]
         )
 
     async def _save_schedule_source(self, schedule):
@@ -577,15 +572,7 @@ class SourceEditor:
 
     async def _save_rce_source(self, binding):
         candidate = deepcopy(self._draft)
-        price = candidate["sources"]["sell"]
-        price.update(
-            mode="forecast",
-            forecast=[binding.to_dict()],
-            fixed=None,
-            floor_per_kwh=0.0,
-        )
-        price.pop("schedule", None)
-        candidate["helpers"].pop("sell_rate", None)
+        set_rce_sell(candidate, [binding])
         if self._source_ref:
             assert_selected(self._draft, self._source_ref, self._source_original)
         self._draft = candidate
@@ -634,14 +621,11 @@ class SourceEditor:
                         errors={"base": "invalid_source"},
                     )
             if target == "load":
-                candidate["sources"]["load"].update(
-                    mode="recorder",
-                    statistic_id=user_input["statistic_id"],
-                    power=None,
-                    forecast=None,
-                    daily_estimate=None,
-                    history_unit=user_input["unit"],
-                    history_sign=user_input["sign"],
+                set_load_statistic(
+                    candidate,
+                    user_input["statistic_id"],
+                    user_input["unit"],
+                    user_input["sign"],
                 )
             else:
                 candidate["measurements"][target] = {
@@ -985,18 +969,24 @@ class SourceEditor:
             assert_selected(candidate, self._source_ref, self._source_original)
         if target in ("buy", "sell"):
             price = candidate["sources"][target]
-            if editing_interval:
-                pass
-            elif self._source["operation"] == "append" and price["mode"] == "forecast":
-                price["forecast"].append(data)
+            appending = (
+                self._source["operation"] == "append" and price["mode"] == "forecast"
+            )
+            if target == "sell" and not editing_interval and not appending:
+                set_forecast_sell(candidate, [binding])
             else:
-                price["forecast"] = [data]
-            price["mode"] = "forecast"
-            price["fixed"] = None
-            price.pop("schedule", None)
-            if not is_raw_rce_sell(price):
-                price.pop("floor_per_kwh", None)
-            candidate["helpers"].pop(f"{target}_rate", None)
+                if editing_interval:
+                    pass
+                elif appending:
+                    price["forecast"].append(data)
+                else:
+                    price["forecast"] = [data]
+                price["mode"] = "forecast"
+                price["fixed"] = None
+                price.pop("schedule", None)
+                if not is_raw_rce_sell(price):
+                    price.pop("floor_per_kwh", None)
+                candidate["helpers"].pop(f"{target}_rate", None)
         elif target == "load":
             old = candidate["sources"]["load"]
             old.update(
