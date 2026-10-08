@@ -195,21 +195,35 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                 raise
             self.atlas = bridge
 
-    async def async_apply_configuration(self, config: dict) -> None:
+    async def async_apply_configuration(
+        self, config: dict, *, wait: bool = True
+    ) -> None:
         """Adopt a configuration written outside the flows and supersede any run.
 
-        Order is load-bearing: persist, then replace the cached snapshot, then bump
-        the generation, then ask for a recalculation.
+        An unusable binding raises `InputError` before anything is persisted or
+        unsubscribed, so a rejected save leaves the running state untouched.
+
+        Order is load-bearing: persist, then replace the cached snapshot and move
+        the source listeners, then bump the generation, then ask for a
+        recalculation. `wait=False` leaves that recalculation running in the
+        background so a caller on the UI path returns at once; the published plan
+        stays retained until its replacement arrives.
         """
+        rebind_configuration(self.hass, deepcopy(config))
         self.hass.config_entries.async_update_entry(
             self.entry, options={**self.entry.options, "configuration": config}
         )
-        self.configuration = rebind_configuration(self.hass, deepcopy(config))
+        self._subscribe()
         self._generation += 1
         self._epoch += 1
         self._fingerprint = None
         self._pending = True
-        await self.async_recalculate()
+        if wait:
+            await self.async_recalculate()
+        else:
+            self.entry.async_create_background_task(
+                self.hass, self.async_recalculate(), "energy_compass options apply"
+            )
 
     async def _seed_balance(self):
         """First start: replay recorder SOC; no qualifying hold means due now."""
@@ -274,6 +288,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                 self._source_unsub = async_track_state_change_event(
                     self.hass, ids, self._source_changed
                 )
+            self._refresh_atlas()
             ir.async_delete_issue(self.hass, DOMAIN, self.entry.entry_id)
         except InputError as err:
             self._invalidate("invalid_input", str(err))
@@ -286,6 +301,21 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                 translation_key="source_removed",
                 translation_placeholders={"name": self.entry.title},
             )
+
+    def _refresh_atlas(self):
+        if self.atlas is None or self.atlas.sink is None:
+            return
+        from .atlas import build_attrs
+        from .atlas.location import home_h3_res6
+
+        self.atlas.update(
+            self.configuration,
+            build_attrs(
+                self.configuration,
+                self.entry.options.get("atlas", {}),
+                home_h3_res6(self.hass),
+            ),
+        )
 
     @callback
     def _registry_changed(self, event):

@@ -361,6 +361,21 @@ ustawienia eksperckie** chowa je z powrotem. Widok dotyczy jednego przepływu i 
 Ukryte ustawienia zachowują wartości i dalej działają. Skrypt sterujący przepływem opcji przez REST
 musi wysłać `show_expert` przed wybraniem ukrytej grupy, inaczej Home Assistant odrzuci krok.
 
+### Zapis opcji
+
+Zapis w **Konfiguracji** działa na żywo. Integracja przejmuje nowe ustawienia, źródła, pomocniki i
+taryfy bez przeładowania wpisu, więc żadna encja nie przechodzi w `unavailable`, a opublikowany plan
+dalej działa jako plan zachowany (`plan_retained=true`, `refreshing=true`, optymalizator
+`calculating`) do czasu, aż przeliczenie opublikuje następcę. [Sterownik
+Deye](#sterownik-falownika-deye-solarman) wykonuje ten plan dalej i przyjmuje nowy po publikacji; nie wraca na
+profil bazowy. Powiązania źródeł i pomocników są jednocześnie subskrybowane od nowa. Wpis nadal
+**przeładowuje się** (poprzedni plan znika do pierwszego nowego obliczenia), gdy zapis zmienia zestaw
+encji lub ich nazwę: **Okresowe balansowanie LFP** (`lfp_balance`), **Włącz głębokość elastycznego zużycia**
+(`flexible_load_enabled`), **Włącz encje kosztów** (`expose_costs`), **Włącz encje okresów**
+(`expose_windows`), nazwę instalacji lub walutę. Działający
+[Energy Atlas](#energy-atlas-opcjonalnie) jest odświeżany w miejscu (śledzenie stanów i atrybuty
+witryny), bez restartu jego kolejki wysyłki. **Rekonfiguracja** zawsze przeładowuje.
+
 ## Przegląd encji
 
 `<name>` to tytuł wpisu integracji.
@@ -508,7 +523,8 @@ sequenceDiagram
 ```
 
 Zachowany plan nigdy nie jest wydłużany poza pierwotne pokrycie i nie przetrwa przeładowania
-integracji ani restartu Home Assistant.
+integracji ani restartu Home Assistant. Zapis w Konfiguracji nie przeładowuje integracji, więc nie
+kończy planu: zob. [Zapis opcji](#zapis-opcji).
 
 ## Tryby pracy — planowany stan baterii
 
@@ -1094,7 +1110,10 @@ niż `off` unieważnia plan w pamięci; plany sprzed unieważnienia nigdy nie s�
 ponownie, ale zachowuje czas pierwszego unieważnienia tego planu w pamięci, więc plan policzony po
 nim zostaje przyjęty także wtedy, gdy opublikowano go przy Alercie jeszcze `on` (encje zmieniają
 stan po kolei). Po
-restarcie Home Assistant sterownik trzyma więc profil bazowy do publikacji kolejnego obliczenia.
+restarcie Home Assistant sterownik trzyma więc profil bazowy do publikacji kolejnego obliczenia. Zapis opcji integracji jej nie
+przeładowuje, więc sterownik dalej wykonuje zachowany plan (optymalizator `calculating`) i przyjmuje
+następcę po publikacji; to samo oczekiwanie wraca tylko po zapisie, który przeładowuje wpis
+([Zapis opcji](#zapis-opcji)).
 
 Sterowanie wymaga też świeżej telemetrii: każda encja z `telemetry_entities` liczbowa i zgłoszona
 w ciągu 30 s, napięcie baterii 400–610 V i SOC 0–100 %. Każda automatyzacja z `old_writers` musi być

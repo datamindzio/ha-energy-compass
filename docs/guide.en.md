@@ -357,6 +357,21 @@ them again. The view is per flow and is not stored. Hidden settings keep their v
 working. A script that drives the options flow over REST must post `show_expert` before it selects a
 hidden group, otherwise Home Assistant rejects the step.
 
+### Saving options
+
+Saving **Configure** is applied live. The integration adopts the new settings, sources, helpers and
+tariffs without reloading the entry, so no entity becomes `unavailable` and the published plan keeps
+running as a retained plan (`plan_retained=true`, `refreshing=true`, optimizer `calculating`) until the
+recalculation publishes its replacement. The [Deye controller](#deye-inverter-controller-solarman) keeps
+executing that plan and accepts the new one when it is published; it does not fall back to the base
+profile. Source and helper bindings are re-subscribed at the same time. The entry still **reloads**,
+with the previous plan lost until the first new calculation, when the save changes which entities
+exist or how they are named: **Periodic LFP balance charge** (`lfp_balance`), **Enable flexible energy depth**
+(`flexible_load_enabled`), **Expose costs** (`expose_costs`), **Expose windows** (`expose_windows`), the
+installation name or the currency. A running [Energy Atlas](#energy-atlas-optional) is refreshed in
+place (state tracking and site attributes), without a restart of its sink. **Reconfigure** always
+reloads.
+
 ## Entity overview
 
 `<name>` is the integration entry's title.
@@ -503,7 +518,8 @@ sequenceDiagram
 ```
 
 A retained plan is never extended beyond its original coverage and is not carried across an
-integration reload or Home Assistant restart.
+integration reload or Home Assistant restart. Saving Configure does not reload the integration, so it
+does not end the plan: see [Saving options](#saving-options).
 
 ## Operating modes — the planned battery state
 
@@ -1082,7 +1098,10 @@ generated before that revocation are never accepted. While the error persists, e
 again but keeps the time of the first revocation of that cached plan, so a plan computed after it
 is accepted even when it was published while the Alert was still `on` (the entities update one by
 one). After a Home Assistant restart the controller
-therefore stays on the base profile until the next calculation publishes.
+therefore stays on the base profile until the next calculation publishes. Saving the integration
+options does not reload it, so it keeps executing the retained plan (optimizer `calculating`) and
+accepts the replacement when it is published; only a save that reloads the entry
+([Saving options](#saving-options)) ends in the same wait.
 
 Control also requires fresh telemetry: every entity in `telemetry_entities` numeric and reported within
 30 s, battery voltage 400–610 V and SOC 0–100 %. Every automation in `old_writers` must be off and not
