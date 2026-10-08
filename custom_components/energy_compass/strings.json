@@ -1349,11 +1349,67 @@
           "description": "How many days of history to send, counting back from now. Leave empty to send all available history."
         }
       }
+    },
+    "controller_runtime": {
+      "name": "Deye controller runtime",
+      "description": "Read or replace the Deye controller runtime. Used by the Deye controller blueprint.",
+      "fields": {
+        "controller": {
+          "name": "Controller",
+          "description": "The Deye controller sensor of the installation."
+        },
+        "runtime": {
+          "name": "Runtime",
+          "description": "The complete runtime to store. Leave empty to only read it."
+        },
+        "restore_pending": {
+          "name": "Restore pending",
+          "description": "Whether the base profile must still be restored."
+        }
+      }
+    },
+    "controller_import_package": {
+      "name": "Import Deye package state",
+      "description": "One-time migration from the 0.1.36 package: copies mode, session, accepted plan and runtime into Energy Compass.",
+      "fields": {
+        "controller": {
+          "name": "Controller",
+          "description": "The Deye controller sensor of the installation."
+        },
+        "force": {
+          "name": "Force",
+          "description": "Import even though the new blueprint has already written the runtime."
+        }
+      }
     }
   },
   "exceptions": {
     "atlas_backfill_not_enabled": {
       "message": "No Energy Compass entry has Energy Atlas enabled and registered; open Options → Energy Atlas first."
+    },
+    "controller_not_found": {
+      "message": "{entity} is not an enabled Energy Compass Deye controller."
+    },
+    "runtime_invalid_key": {
+      "message": "Unknown controller runtime key: {key}."
+    },
+    "runtime_invalid": {
+      "message": "Controller runtime must be a JSON object."
+    },
+    "runtime_too_large": {
+      "message": "Controller runtime exceeds 32768 bytes."
+    },
+    "package_missing": {
+      "message": "Package helper missing: {role}."
+    },
+    "package_session_inactive": {
+      "message": "The package session is not active in this Home Assistant run."
+    },
+    "package_mode_invalid": {
+      "message": "Package mode is not Off, Simulation or Auto."
+    },
+    "package_import_refused": {
+      "message": "The new blueprint already wrote the controller runtime; set force to import anyway."
     }
   }
 }

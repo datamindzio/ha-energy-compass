@@ -1349,11 +1349,67 @@
           "description": "Ile dni historii wysłać, licząc wstecz od teraz. Puste pole wysyła całą dostępną historię."
         }
       }
+    },
+    "controller_runtime": {
+      "name": "Stan pracy sterownika Deye",
+      "description": "Odczytuje lub zastępuje stan pracy sterownika Deye. Używane przez blueprint sterownika Deye.",
+      "fields": {
+        "controller": {
+          "name": "Sterownik",
+          "description": "Sensor sterownika Deye tej instalacji."
+        },
+        "runtime": {
+          "name": "Stan pracy",
+          "description": "Pełny stan pracy do zapisania. Pozostaw puste, aby go tylko odczytać."
+        },
+        "restore_pending": {
+          "name": "Oczekuje przywrócenie",
+          "description": "Czy profil bazowy nadal trzeba przywrócić."
+        }
+      }
+    },
+    "controller_import_package": {
+      "name": "Importuj stan pakietu Deye",
+      "description": "Jednorazowa migracja z pakietu 0.1.36: kopiuje tryb, sesję, zaakceptowany plan i stan pracy do Energy Compass.",
+      "fields": {
+        "controller": {
+          "name": "Sterownik",
+          "description": "Sensor sterownika Deye tej instalacji."
+        },
+        "force": {
+          "name": "Wymuś",
+          "description": "Importuj, mimo że nowy blueprint zapisał już stan pracy."
+        }
+      }
     }
   },
   "exceptions": {
     "atlas_backfill_not_enabled": {
       "message": "Żaden wpis Energy Compass nie ma włączonego i zarejestrowanego Energy Atlas; najpierw otwórz Opcje → Energy Atlas."
+    },
+    "controller_not_found": {
+      "message": "{entity} nie jest włączonym sterownikiem Deye w Energy Compass."
+    },
+    "runtime_invalid_key": {
+      "message": "Nieznany klucz stanu pracy sterownika: {key}."
+    },
+    "runtime_invalid": {
+      "message": "Stan pracy sterownika musi być obiektem JSON."
+    },
+    "runtime_too_large": {
+      "message": "Stan pracy sterownika przekracza 32768 bajtów."
+    },
+    "package_missing": {
+      "message": "Brak pomocnika pakietu: {role}."
+    },
+    "package_session_inactive": {
+      "message": "Sesja pakietu nie jest aktywna w tym uruchomieniu Home Assistant."
+    },
+    "package_mode_invalid": {
+      "message": "Tryb pakietu nie jest Off, Simulation ani Auto."
+    },
+    "package_import_refused": {
+      "message": "Nowy blueprint zapisał już stan pracy sterownika; ustaw force, aby mimo to zaimportować."
     }
   }
 }

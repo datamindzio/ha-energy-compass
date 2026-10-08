@@ -8,6 +8,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
 
 from .controller_ha import PROCESS_SESSION, DeyeController
+from .controller_services import async_register as async_register_controller_services
 from .coordinator import EnergyCompassCoordinator
 from .settings import DOMAIN, default_configuration, explicit_strategy_fields
 
@@ -34,6 +35,7 @@ async def async_setup(hass, config) -> bool:
     from .atlas.backfill_service import async_register as async_register_backfill
 
     async_register_backfill(hass)
+    async_register_controller_services(hass)
     hass.data.setdefault(DOMAIN, {}).setdefault(
         PROCESS_SESSION, float(math.ceil(dt_util.utcnow().timestamp()))
     )

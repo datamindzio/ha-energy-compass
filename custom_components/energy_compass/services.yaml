@@ -9,3 +9,34 @@ atlas_backfill:
           max: 3650
           step: 1
           mode: box
+
+controller_runtime:
+  fields:
+    controller:
+      required: true
+      selector:
+        entity:
+          integration: energy_compass
+          domain: sensor
+    runtime:
+      required: false
+      selector:
+        object: {}
+    restore_pending:
+      required: false
+      selector:
+        boolean: {}
+
+controller_import_package:
+  fields:
+    controller:
+      required: true
+      selector:
+        entity:
+          integration: energy_compass
+          domain: sensor
+    force:
+      required: false
+      default: false
+      selector:
+        boolean: {}

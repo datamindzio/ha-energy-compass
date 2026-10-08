@@ -26,6 +26,14 @@ PROCESS_SESSION = "controller_process_session"
 ENTRY_SESSIONS = "controller_sessions"
 MODE_UNIQUE_SUFFIX = "deye_mode"
 _TOU_DOMAINS = frozenset(domain for _, domain in core.TOU_FIELDS)
+_PACKAGE_DOMAINS = {
+    "mode": "input_select",
+    "session": "input_boolean",
+    "session_start": "input_datetime",
+    "restore_pending": "input_boolean",
+    "snapshot": "sensor",
+    "runtime": "sensor",
+}
 
 
 def controller_session(hass: HomeAssistant, entry_id: str) -> float:
@@ -179,6 +187,69 @@ class DeyeController:
             "restore_pending": self.state.restore_pending,
             "session": self.session,
         }
+
+    async def async_import_package(self, *, force: bool = False) -> dict:
+        """One-time copy of the 0.1.36 package helpers into the controller state."""
+        written = self.state.runtime_written_at
+        if (
+            not force
+            and written is not None
+            and (
+                self.state.imported_at is None
+                or core.timestamp(written) >= core.timestamp(self.state.imported_at)
+            )
+        ):
+            raise core.PackageError("package_import_refused", "runtime")
+        now = dt_util.utcnow()
+        result = core.import_package(
+            self._package_facts(), battery=self._fallback_battery(), now=now
+        )
+        sessions = self.hass.data.setdefault(DOMAIN, {}).setdefault(ENTRY_SESSIONS, {})
+        sessions[self.entry.entry_id] = self.session = result.session
+        self._replace(
+            replace(
+                result.state,
+                history=(*self.state.history, *result.state.history)[
+                    -core.HISTORY_LIMIT :
+                ],
+            )
+        )
+        self._evaluate(now)
+        self._notify(self._runtime_listeners)
+        accepted, revoked = self.state.accepted, self.state.revoked
+        return {
+            "mode": self.state.mode,
+            "session": self.session,
+            "restore_pending": self.state.restore_pending,
+            "accepted_generation": accepted.get("generated_at") if accepted else None,
+            "revoked_generation": revoked.generation if revoked else None,
+            "runtime_keys": sorted(self.state.runtime),
+            "dropped_keys": list(result.dropped_keys),
+            "snapshot_kept": result.snapshot_kept,
+        }
+
+    def _package_facts(self) -> core.PackageFacts:
+        registry = er.async_get(self.hass)
+        found = {}
+        for role, (platform, unique_id) in core.PACKAGE_IDENTITIES.items():
+            domain = _PACKAGE_DOMAINS[role]
+            entity_id = registry.async_get_entity_id(domain, platform, unique_id)
+            found[role] = self.hass.states.get(entity_id) if entity_id else None
+        mode, session, start, pending, snapshot, runtime = (
+            found[role] for role in core.PACKAGE_IDENTITIES
+        )
+        return core.PackageFacts(
+            mode=mode.state if mode else None,
+            session=session.state if session else None,
+            session_start=start.attributes.get("timestamp") if start else None,
+            restore_pending=pending.state if pending else None,
+            snapshot=None
+            if snapshot is None
+            else (snapshot.attributes.get("snapshot") or {}),
+            runtime=None
+            if runtime is None
+            else (runtime.attributes.get("runtime") or {}),
+        )
 
     @callback
     def async_set_device(self, device_id: str | None) -> None:
