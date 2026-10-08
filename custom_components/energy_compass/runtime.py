@@ -1187,6 +1187,16 @@ def compute(
         "coverage_reason": analysis.coverage_reason,
         "calibration": values["calibration"],
         "capacity_calibration": values["capacity_calibration"],
+        "controller_parameters": {
+            key: values[key]
+            for key in (
+                "capacity_kwh",
+                "eta_charge",
+                "eta_discharge",
+                "charge_kw",
+                "discharge_kw",
+            )
+        },
         "probe_kwh": values["probe_kwh"],
         "flexible_energy_depth": flexible.depth_kwh,
         "flexible_anchor_price_per_kwh": flexible.anchor_price_per_kwh,
