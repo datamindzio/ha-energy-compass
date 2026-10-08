@@ -28,6 +28,7 @@ class AtlasBridge:
         self.hass = hass
         self.entry = entry
         self.config = config
+        self._attrs: dict | None = None
         self.environment = atlas_settings["environment"]
         self.dir = environment_dir(hass, entry.entry_id, self.environment)
         self.sink: SinkThread | None = None
@@ -42,6 +43,7 @@ class AtlasBridge:
                 self.environment,
             )
             return
+        self._attrs = attrs
         self.sink = SinkThread(self.dir, BASE_URLS[self.environment], attrs)
         await self.hass.async_add_executor_job(self.sink.start)
         ids = tracked_entity_ids(self.config)
@@ -56,6 +58,31 @@ class AtlasBridge:
         feed = resolve_feed(self.config, states, dt_util.utcnow())
         if feed:
             self.sink.feed(dt_util.utcnow(), feed)
+
+    @callback
+    def update(self, config: dict, attrs: dict) -> None:
+        """Follow a live configuration change without restarting the sink thread.
+
+        The state subscription moves only when the tracked entities differ, and the
+        sink is told about attributes only when they differ, so repeated calls
+        (every source rebind) are free.
+        """
+        previous = tracked_entity_ids(self.config)
+        self.config = config
+        if self.sink is None:
+            return
+        ids = tracked_entity_ids(config)
+        if ids != previous:
+            if self._unsub_state is not None:
+                self._unsub_state()
+                self._unsub_state = None
+            if ids:
+                self._unsub_state = async_track_state_change_event(
+                    self.hass, ids, self._state_changed
+                )
+        if attrs != self._attrs:
+            self._attrs = attrs
+            self.sink.set_attrs(attrs)
 
     @callback
     def _state_changed(self, event) -> None:

@@ -1183,11 +1183,10 @@ class EnergyCompassOptionsFlow(Editor, config_entries.OptionsFlowWithReload):
         return await self.async_step_menu()
 
     def _applies_live(self, previous):
-        """Only a loaded, Atlas-free entry whose entity set is unchanged skips the reload."""
+        """Only a loaded entry whose entity set is unchanged skips the reload."""
         entry = self.config_entry
         return (
             entry.state is config_entries.ConfigEntryState.LOADED
-            and entry.runtime_data.atlas is None
             and not options_require_reload(previous, self._draft)
         )
 

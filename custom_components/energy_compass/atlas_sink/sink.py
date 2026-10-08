@@ -182,6 +182,10 @@ class SinkThread(threading.Thread):
     def feed(self, ts: datetime, values: dict[str, float]) -> None:
         self._queue.put(("feed", ts, dict(values)))
 
+    def set_attrs(self, attrs: dict) -> None:
+        """Swap the site attributes; the tracker reads them at its next check."""
+        self._attrs = dict(attrs)
+
     def add_solve(self, payload: dict) -> None:
         self._queue.put(("solve", dict(payload)))
 

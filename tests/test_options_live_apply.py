@@ -4,13 +4,19 @@ import ast
 import threading
 from copy import deepcopy
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.energy_compass import coordinator as module
 from custom_components.energy_compass import settings
+from custom_components.energy_compass.atlas import bridge as bridge_module
+from custom_components.energy_compass.atlas.mapping import _POWER_MEASUREMENTS
+from custom_components.energy_compass.atlas.storage import environment_dir
+from custom_components.energy_compass.engine.models import InputError
 from custom_components.energy_compass.settings import (
     ENTITY_SET_SETTINGS,
     ENTITY_SET_TOP_LEVEL,
@@ -272,4 +278,201 @@ async def test_source_binding_change_moves_the_state_listener(
     hass.states.async_set("input_number.new", "6", {"unit_of_measurement": "kW"})
     await hass.async_block_till_done()
     assert coordinator._generation > generation
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def _invalid_binding(config):
+    broken = deepcopy(config)
+    broken["helpers"]["grid_import_kw"] = {
+        "entity": {"entity_id": "input_number.old", "registry_id": "no-such-id"},
+        "unit": "kW",
+        "max_age_seconds": None,
+    }
+    return broken
+
+
+async def _entry_with_helper(hass):
+    config = _config()
+    config["helpers"]["grid_import_kw"] = {
+        "entity": {"entity_id": "input_number.old"},
+        "unit": "kW",
+        "max_age_seconds": None,
+    }
+    hass.states.async_set("input_number.old", "5", {"unit_of_measurement": "kW"})
+    return config, await _setup(hass, config)
+
+
+async def test_invalid_binding_is_rejected_before_anything_changes(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-09-17T10:00:00+00:00")
+    config, entry = await _entry_with_helper(hass)
+    coordinator = entry.runtime_data
+    stored = deepcopy(dict(entry.options))
+    unsub, generation = coordinator._source_unsub, coordinator._generation
+    with pytest.raises(InputError):
+        await coordinator.async_apply_configuration(_invalid_binding(config))
+    assert dict(entry.options) == stored
+    assert coordinator._source_unsub is unsub
+    assert coordinator._generation == generation
+    assert coordinator.configuration["helpers"] == config["helpers"]
+    assert hass.states.get("sensor.options_optimizer_status").state == "ready"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_strategy_select_surfaces_an_invalid_stored_binding(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-09-17T10:00:00+00:00")
+    config, entry = await _entry_with_helper(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={"configuration": _invalid_binding(config)}
+    )
+    unsub = entry.runtime_data._source_unsub
+    with pytest.raises((InputError, HomeAssistantError)):
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {"entity_id": "select.options_strategy", "option": "max_export"},
+            blocking=True,
+        )
+    assert entry.runtime_data._source_unsub is unsub
+    assert merged_strategy(entry) != "max_export"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def merged_strategy(entry):
+    return entry.options["configuration"]["settings"]["strategy"]
+
+
+async def test_options_flow_shows_a_form_error_when_the_live_apply_is_rejected(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-09-17T10:00:00+00:00")
+    entry = await _setup(hass, _config())
+    stored = deepcopy(dict(entry.options))
+    fid = await _walk(hass, entry, TARIFF_STEPS)
+    with patch.object(
+        entry.runtime_data,
+        "async_apply_configuration",
+        side_effect=InputError("registered source removed; reconfigure required"),
+    ):
+        result = await hass.config_entries.options.async_configure(
+            fid, {"confirm": True}
+        )
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "invalid_source"}
+    assert dict(entry.options) == stored
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.fixture
+def atlas_sink(monkeypatch):
+    class Sink:
+        instances: ClassVar[list] = []
+
+        def __init__(self, dir, base_url, attrs, **kwargs):
+            self.attrs = dict(attrs)
+            self.set_calls = []
+            Sink.instances.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self, timeout_s=10):
+            pass
+
+        def feed(self, ts, values):
+            pass
+
+        def set_attrs(self, attrs):
+            self.set_calls.append(dict(attrs))
+            self.attrs = dict(attrs)
+
+        def status(self):
+            return {"registered": True}
+
+    Sink.instances.clear()
+    monkeypatch.setattr(bridge_module, "SinkThread", Sink)
+    return Sink
+
+
+async def _atlas_entry(hass, battery=True):
+    config = _config()
+    config["sources"]["battery_enabled"] = battery
+    measurement = _POWER_MEASUREMENTS[0]
+    config["measurements"][measurement] = {
+        "entity": {"entity_id": "sensor.feed_old"},
+        "unit": "W",
+        "max_age_seconds": None,
+    }
+    entry = MockConfigEntry(
+        domain="energy_compass",
+        data=config,
+        options={"atlas": {"enabled": True, "environment": "staging", "pv_kwp": 5.0}},
+        title=config["name"],
+        version=2,
+    )
+    entry.add_to_hass(hass)
+    directory = environment_dir(hass, entry.entry_id, "staging")
+    directory.mkdir(parents=True)
+    (directory / "site.json").write_text('{"site_id": "site-1"}')
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    return config, measurement, entry
+
+
+async def test_live_apply_refreshes_the_running_atlas_bridge(
+    recorder_mock, hass, enable_custom_integrations, freezer, atlas_sink
+):
+    freezer.move_to("2026-09-17T10:00:00+00:00")
+    config, measurement, entry = await _atlas_entry(hass)
+    coordinator = entry.runtime_data
+    bridge, sink = coordinator.atlas, coordinator.atlas.sink
+    assert bridge is not None
+    assert sink is not None
+    changed = deepcopy(config)
+    changed["measurements"][measurement]["entity"]["entity_id"] = "sensor.feed_new"
+    changed["settings"]["capacity_kwh"] = 12.0
+    changed["settings"]["operating_floor"] = 10.0
+    with patch.object(
+        bridge_module,
+        "async_track_state_change_event",
+        wraps=bridge_module.async_track_state_change_event,
+    ) as track:
+        await coordinator.async_apply_configuration(changed)
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert coordinator.atlas is bridge
+    assert bridge.sink is sink
+    assert bridge.config["settings"]["capacity_kwh"] == 12.0
+    assert track.call_count == 1
+    assert set(track.call_args.args[1]) == {"sensor.feed_new"}
+    assert sink.set_calls[-1]["battery_kwh_nominal"] == 12.0
+    assert sink.set_calls[-1]["soc_floor_pct"] == 10.0
+    assert sink.set_calls[-1]["pv_kwp"] == 5.0
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_atlas_options_save_applies_live_and_does_not_resubscribe(
+    recorder_mock, hass, enable_custom_integrations, freezer, atlas_sink
+):
+    freezer.move_to("2026-09-17T10:00:00+00:00")
+    _, _, entry = await _atlas_entry(hass, battery=False)
+    coordinator = entry.runtime_data
+    bridge = coordinator.atlas
+    fid = await _walk(hass, entry, TARIFF_STEPS)
+    with patch.object(
+        bridge_module,
+        "async_track_state_change_event",
+        wraps=bridge_module.async_track_state_change_event,
+    ) as track:
+        result = await hass.config_entries.options.async_configure(
+            fid, {"confirm": True}
+        )
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert result["type"] == "create_entry"
+    assert entry.runtime_data is coordinator
+    assert coordinator.atlas is bridge
+    assert track.call_count == 0
+    assert atlas_sink.instances[0].set_calls == []
     assert await hass.config_entries.async_unload(entry.entry_id)
