@@ -48,7 +48,7 @@ The balance is not an invoice amount or a cash payment; fixed fees and battery w
 | `import_price_entity` | no | current buy price; fills a purchase-cost gap after a restart. Without it the gap counts as 0 |
 | `deposit_entity` | no | export value sensor with statistics (below); needed for deposit in the month and year views |
 | `deposit_backfill` | no | external statistic id with the valued history before the counter started (below) |
-| `runtime_entity`, `mode_entity` | no | Deye controller runtime sensor and mode select; defaults to the [controller package](guide.en.md#deye-inverter-controller-solarman) entities. Used to say whether the plan is being executed |
+| `runtime_entity`, `mode_entity` | no | Deye controller runtime sensor and mode select; defaults to the [Deye controller](guide.en.md#deye-inverter-controller-solarman) entities of a fresh English installation (`sensor.energy_compass_deye_controller_runtime`, `select.energy_compass_deye_mode`); set them when your IDs differ. Used to say whether the plan is being executed |
 | `currency` | no | ISO currency code, default `PLN` |
 | `language` | no | `en` or `pl`; default follows the Home Assistant language |
 | `tariff_label` | no | short tariff name shown in the subtitle and purchase texts, for example `PGE G12` |

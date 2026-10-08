@@ -133,7 +133,7 @@
         <li><a href="#reference">Source reference</a></li>
         <li><a href="guide.en.html">States and strategies guide</a></li>
         <li><a href="guide.pl.html" lang="pl">Przewodnik: stany i strategie</a></li>
-        <li><a href="builder.html">YAML builder (dashboards, Deye package)</a></li>
+        <li><a href="builder.html">YAML builder (dashboards, tariff examples)</a></li>
       </ul>
     </nav>
     <a class="download" href="https://github.com/datamindzio/ha-energy-compass/blob/main/README.md">Repository and installation</a>
@@ -237,7 +237,7 @@
 
     <section id="entities" aria-labelledby="entities-title">
       <h2 id="entities-title">All 16 entities</h2>
-      <p>Each installation creates 13 sensor definitions, two binary sensors and one strategy select. Actual entity IDs depend on the entry name, language and registry history; use the entity picker or Developer tools → States to find yours. The keys below are stable internal identifiers, not literal entity IDs.</p>
+      <p>Each installation creates 13 sensor definitions, two binary sensors and one strategy select, plus two sensors and one select when the optional Deye controller is enabled. Actual entity IDs depend on the entry name, language and registry history; use the entity picker or Developer tools → States to find yours. The keys below are stable internal identifiers, not literal entity IDs.</p>
       <p><strong>Expose costs</strong> controls the three cost sensors. <strong>Expose windows</strong> controls the four <code>next_…</code> sensors. A disabled entity is different from an enabled entity whose value is unavailable.</p>
       <section class="table-scroll" aria-label="Entity index" tabindex="0">
         <table>
@@ -260,6 +260,9 @@
             <tr><th scope="row"><a href="#forecast_valid">Forecast valid</a></th><td>on / off</td><td>Does a published plan still cover now?</td></tr>
             <tr><th scope="row"><a href="#alert">Alert</a></th><td>on / off</td><td>Why did the latest input check or calculation fail?</td></tr>
             <tr><th scope="row"><a href="#strategy">Strategy</a></th><td>One of six strategies</td><td>Which objective bundle does the optimizer solve?</td></tr>
+            <tr><th scope="row"><a href="#deye_controller">Deye controller</a></th><td>Timestamp</td><td>When must the Deye controller blueprint run next?</td></tr>
+            <tr><th scope="row"><a href="#deye_mode">Deye mode</a></th><td>Off / Simulation / Auto</td><td>Is the Deye controller allowed to write?</td></tr>
+            <tr><th scope="row"><a href="#deye_runtime">Deye controller runtime</a></th><td>Runtime code</td><td>What did the Deye controller last decide and confirm?</td></tr>
           </tbody>
         </table>
       </section>
@@ -493,6 +496,25 @@
           </table>
         </section>
         <p>Strategies change planning weights and a few policy flags only; reported costs stay real currency. A new selection releases the carried operating-mode commitment for the next plan. The plan sensor reports <code>strategy</code>, <code>autonomy_shortfall_kwh</code> and <code>cap_violation_kwh</code>. Each strategy, its conditions and the automatic switch blueprint are described with diagrams in the <a href="guide.en.html#dispatch-strategies">states and strategies guide</a> (<a href="guide.pl.html#strategie-dyspozycji" lang="pl">wersja polska</a>).</p>
+      </article>
+
+      <article id="deye_controller">
+        <h3>Deye controller</h3>
+        <p class="entity-meta"><code>deye_controller</code> · <span lang="pl">Sterownik Deye</span> · Timestamp sensor, only with <strong>Options → Deye controller</strong> enabled</p>
+        <p>The state is the next instant the Deye controller blueprint must run: the earliest row end, the accepted plan's <code>valid_until</code> or <code>coverage_end</code>, or the next local TOU program boundary. Its attributes are the contract between Energy Compass and the blueprint: <code>controller_schema</code>, <code>mode</code>, <code>mode_entity</code>, <code>restore_pending</code>, <code>session</code>, <code>plan_reason</code> (<code>ok</code>, <code>session</code>, <code>revoked</code>, <code>sources</code>), <code>status</code>, <code>retained</code>, <code>generation</code>, <code>valid_until</code>, <code>coverage_end</code>, <code>accepted_at</code>, <code>revoked_generation</code>, <code>revoked_at</code>, <code>revoked_reason</code>, the battery parameters <code>capacity_kwh</code>, <code>eta_charge</code>, <code>eta_discharge</code>, <code>charge_kw</code> and <code>discharge_kw</code>, <code>device_id</code>, <code>program_prefix</code>, <code>tou_problem</code>, <code>next_tou</code>, and the unrecorded <code>accepted</code> plan and <code>tou</code> values.</p>
+        <p><strong>Unavailable:</strong> only while the entry is unloaded. The accepted plan is kept across an entry reload and dropped at a Home Assistant restart.</p>
+      </article>
+
+      <article id="deye_mode">
+        <h3>Deye mode</h3>
+        <p class="entity-meta"><code>deye_mode</code> · <span lang="pl">Tryb sterownika Deye</span> · Select, only with the controller enabled</p>
+        <p><code>Off</code> releases control after a confirmed restore of the base profile, <code>Simulation</code> computes every target without writing, <code>Auto</code> writes and verifies every register. The options are not translated. A fresh controller starts in <code>Off</code>.</p>
+      </article>
+
+      <article id="deye_runtime">
+        <h3>Deye controller runtime</h3>
+        <p class="entity-meta"><code>deye_runtime</code> · <span lang="pl">Stan pracy sterownika Deye</span> · Sensor, only with the controller enabled</p>
+        <p>The state is the runtime code (<code>waiting</code>, <code>ok</code>, <code>blocked</code>, <code>restored</code>, <code>verification_required</code>, <code>write_failed</code> or <code>simulation_blocked</code>). The recorded attributes are <code>restore_pending</code>, <code>reason</code>, <code>state</code>, <code>requested_mode</code>, <code>confirmed_mode</code>, <code>since</code>, <code>warning</code>, <code>takeover_blocked</code> and <code>accepted_generation</code>; the full <code>runtime</code> and <code>updated_at</code> are not recorded. Detail-only changes are published at most once a minute.</p>
       </article>
     </section>
 

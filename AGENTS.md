@@ -3,7 +3,7 @@
 ## Documentation sweep (required for every change)
 
 Any change to behaviour, entities, settings, defaults, strategies, modes, reason codes, blueprints,
-the Deye controller and its package, dashboard examples or the release version ships with a
+the Deye controller (blueprint, controller entities, options and services), dashboard examples or the release version ships with a
 **doc sweep** in the same commit or PR. The docs describe the
 code; when they disagree, the code is right and the docs are fixed.
 
@@ -44,7 +44,7 @@ passes. State in the PR which docs changed, or why none needed to.
 | `strategy_switch` blueprint | `guide.*` § Automatic strategy switching, `docs/installation.md` |
 | Notification blueprint: input, gate, message, helper format | `guide.*` § Window notifications (diagram, messages table, inputs table), `docs/installation.md` § Opt-in notifications, `README*.md` notification paragraph |
 | Deye controller: input, default, profile, plan acceptance, write/confirm rule, runtime code | `guide.*` § Deye inverter controller (inputs table, profiles table, runtime codes, diagram), `docs/installation.md` § Deye inverter controller |
-| Deye package: helper, template sensor, TOU prefix | `guide.*` § Deye inverter controller → Package entities, `docs/installation.md` § Deye inverter controller step 1 |
+| Deye controller entities, options step, services, store, `plan_reason`, session or migration | `guide.*` § Deye inverter controller → Enabling, Controller entities, Services, Plan acceptance, Migrating from the package; `docs/installation.md` § Deye inverter controller step 1; `docs/index.html` entity index and articles; `translations/*.json` + `strings.json` |
 | Plan attribute or state consumed by the controller (`intervals`, `dispatch_policy`, `balance_hold`, `generated_at`, `valid_until`, `refreshing`, `plan_retained`) | the controller generator and its tests first, then `guide.*` § Deye inverter controller |
 | Cost card (`cards/cost/`): config key, view, notice, string | `docs/cost-card.md` (configuration table), `guide.*` § Cost card (keys table); every user-visible string lives in the card's `TEXT.en` and `TEXT.pl` — change both; `node --test test-*.mjs` in `cards/cost/` |
 | Export value counter blueprint or `tools/export_value_backfill.py` | `docs/cost-card.md` § Export value, `guide.*` § Cost card |
@@ -56,7 +56,7 @@ passes. State in the PR which docs changed, or why none needed to.
 
 | Generated file | Source | Rebuild |
 | --- | --- | --- |
-| `blueprints/automation/energy_compass/deye_solarman_controller.yaml`, `packages/energy_compass_deye.yaml` | `tools/deye_controller/build.py` | `python tools/deye_controller/build.py` |
+| `blueprints/automation/energy_compass/deye_solarman_controller.yaml` | `tools/deye_controller/build.py` | `python tools/deye_controller/build.py` |
 | `examples/dashboards/*.yaml` | `tools/dashboards/build.py` (+ `state_bands.js`) | `python tools/dashboards/build.py` |
 | `docs/guide.*.html`, `docs/assets/diagrams/*.svg` | `docs/guide.*.md` | `python tools/build_guides.py` |
 | `docs/builder.html`, `docs/assets/builder/templates.js` | `tools/build_builder.py` (renders both generators with `__EC_*__` tokens; style from `docs/index.html`) | `python tools/build_builder.py` |
@@ -66,13 +66,15 @@ Edit the source, rebuild, and commit source and output together. A change to eit
 hand-written and must only validate and substitute tokens — never re-implement generator logic in it.
 CI runs all three builders with
 `--check` and fails on any difference. `tests/test_deye_controller_docs.py` fails when a Deye
-controller input, package entity or runtime code, a notification blueprint input, a cost-card config
+controller input, controller entity key or attribute, service, `plan_reason` or runtime code, a notification blueprint input, a cost-card config
 key or an export value counter input is missing from either guide (card keys and counter inputs also
 from `docs/cost-card.md`), or a dashboard example is not linked from `docs/installation.md` — fix the
 docs, never weaken the test. CI also runs the cost card's Node tests (`cards/cost/test-*.mjs`).
 
 The controller behaviour is covered by `tests/test_deye_controller.py` (templates and action tree
-against a sanitized state sample) and `tests/test_deye_controller_blueprint.py` (the blueprint and
-package loaded by Home Assistant). A controller change adds or updates a test there. Keep
+against a sanitized state sample, with `tests/deye_harness.py` playing Energy Compass),
+`tests/test_deye_controller_blueprint.py` (the blueprint loaded by Home Assistant), `tests/test_controller_*.py`
+(the integration-owned state) and `tests/test_controller_parity.py` (acceptance against the frozen v0.1.35
+blueprint in `tests/golden/`, which must never change). A controller change adds or updates a test there. Keep
 household-specific values (device IDs, entity names of one installation) out of the repository:
 they belong in blueprint inputs, not in the generator.
