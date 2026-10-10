@@ -1,7 +1,7 @@
 """Build the static YAML builder page: docs/builder.html + docs/assets/builder/templates.js.
 
-The dashboard and package generators stay the only source. This script renders
-their output once per language with placeholder tokens (`__EC_PLAN__`, ...);
+The dashboard generator stays the only source. This script renders its output
+once per language with placeholder tokens (`__EC_PLAN__`, ...);
 docs/assets/builder/builder.js only substitutes validated values for the tokens,
 so the page holds no generator logic of its own.
 
@@ -31,14 +31,12 @@ def _load(name, path):
 
 
 dashboards = _load("dashboards_build", "tools/dashboards/build.py")
-controller = _load("deye_controller_build", "tools/deye_controller/build.py")
 
 # Validation patterns shared with builder.js; values matching them are safe to
 # splice into YAML plain scalars, JavaScript strings and Jinja literals.
 PATTERNS = {
     "entity": r"^[a-z_]+\.[a-z0-9_]+$",
     "number": r"^[0-9]+(\.[0-9]+)?$",
-    "prefix": r"^[a-z0-9_]+$",
     "signed": r"^-?[0-9]+(\.[0-9]+)?$",
     "tariff_group": r"^(G11|G12|G12w)$",
     "afternoon_window": r"^(fixed|seasonal)$",
@@ -234,11 +232,23 @@ FIELDS = {
         "Battery capacity used by Energy Compass (kWh)",
         "Pojemność baterii w Energy Compass (kWh)",
     ),
-    "prefix": (
-        "prefix",
-        controller.DEFAULT_PROGRAM_PREFIX,
-        "TOU program entity prefix",
-        "Prefiks encji programów TOU",
+    "deye_controller": (
+        "entity",
+        "sensor.energy_compass_deye_controller",
+        "Deye controller sensor (Options → Deye controller)",
+        "Sensor sterownika Deye (Opcje → Sterownik Deye)",
+    ),
+    "deye_mode": (
+        "entity",
+        "select.energy_compass_deye_mode",
+        "Deye mode select",
+        "Wybór trybu sterownika Deye",
+    ),
+    "deye_runtime": (
+        "entity",
+        "sensor.energy_compass_deye_controller_runtime",
+        "Deye controller runtime sensor",
+        "Sensor stanu pracy sterownika Deye",
     ),
 }
 SECTIONS = {
@@ -253,7 +263,6 @@ SECTIONS = {
         "Cost card (purchase, deposit, balance)",
         "Karta kosztów (zakup, depozyt, bilans)",
     ),
-    "package": ("Deye controller package", "Pakiet sterownika Deye"),
     "tariff": ("Buy price: G11/G12/G12w tariff", "Cena zakupu: taryfa G11/G12/G12w"),
     "rce": ("Sell price: RCE (net-billing)", "Cena sprzedaży: RCE (net-billing)"),
 }
@@ -283,8 +292,6 @@ def section_text(name, lang, values):
                 line.format(default.group(1)), line.format(values[role]), 1
             )
         return text
-    if name == "package":
-        return dump(controller.package(values["prefix"]), controller.Dumper)
     entities = {role: values[role] for role in dashboards.ENTITIES}
     kwargs = {"capacity": values["capacity"]} if name in ("plan", "panel") else {}
     return dump(dashboards.SECTIONS[name](entities, lang, **kwargs))
@@ -339,7 +346,7 @@ PAGE_TEMPLATE = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Energy Compass YAML builder</title>
-  <meta name="description" content="Build Energy Compass dashboard sections and the Deye controller package with your own entity IDs.">
+  <meta name="description" content="Build Energy Compass dashboard sections and the tariff and sell-price examples with your own entity IDs.">
   <style>__STYLE__
     .builder { max-width: 60rem; margin: 2rem auto; padding: 0 1.2rem; }
     .builder form { display: grid; gap: .8rem; margin: 1.2rem 0; }

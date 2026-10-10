@@ -426,5 +426,29 @@
       "max": 255,
       "step": 1.0
     }
+  },
+  {
+    "entity_id": "sensor.energy_compass_home_pilot_deye_controller",
+    "state": "2026-09-19T09:45:00+00:00",
+    "attributes": {
+      "controller_schema": 1,
+      "mode_entity": "select.energy_compass_home_pilot_deye_mode"
+    }
+  },
+  {
+    "entity_id": "select.energy_compass_home_pilot_deye_mode",
+    "state": "Off",
+    "attributes": {
+      "options": [
+        "Off",
+        "Simulation",
+        "Auto"
+      ]
+    }
+  },
+  {
+    "entity_id": "sensor.energy_compass_home_pilot_deye_controller_runtime",
+    "state": "waiting",
+    "attributes": {}
   }
 ]

@@ -2,8 +2,8 @@ import {dayBounds, periodBounds, periodRows, perKwh, balancePerKwh, mergeChanges
 
 const REQUIRED = ['cost_entity','import_entity','export_entity','plan_entity','valid_entity','export_prices_entity'];
 const OPTIONAL_DEFAULTS = {
-  runtime_entity: 'sensor.energy_compass_deye_runtime',
-  mode_entity: 'input_select.energy_compass_deye_mode',
+  runtime_entity: 'sensor.energy_compass_deye_controller_runtime',
+  mode_entity: 'select.energy_compass_deye_mode',
   currency: 'PLN',
 };
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

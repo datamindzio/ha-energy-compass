@@ -19,8 +19,8 @@ const HOUSEHOLD_CONFIG = {
   valid_entity:'binary_sensor.energy_compass_home_pilot_poprawna_prognoza',
   export_prices_entity:'sensor.energy_compass_rce_export_forecast',
   deposit_entity:'sensor.pv_depozyt',
-  runtime_entity:'sensor.energy_compass_deye_runtime',
-  mode_entity:'input_select.energy_compass_deye_mode',
+  runtime_entity:'sensor.energy_compass_deye_controller_runtime',
+  mode_entity:'select.energy_compass_deye_mode',
 };
 
 function render({purchase=3,deposit=10,futurePurchase=2,futureDeposit=1,complete=true}={}) {

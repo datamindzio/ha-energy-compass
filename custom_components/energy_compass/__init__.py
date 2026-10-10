@@ -1,10 +1,14 @@
 """Read-only, configurable household energy advice."""
 
+import math
 from copy import deepcopy
 
 from homeassistant.const import Platform
 from homeassistant.helpers import config_validation as cv
+from homeassistant.util import dt as dt_util
 
+from .controller_ha import PROCESS_SESSION, DeyeController, async_auto_enable
+from .controller_services import async_register as async_register_controller_services
 from .coordinator import EnergyCompassCoordinator
 from .settings import DOMAIN, default_configuration, explicit_strategy_fields
 
@@ -31,14 +35,22 @@ async def async_setup(hass, config) -> bool:
     from .atlas.backfill_service import async_register as async_register_backfill
 
     async_register_backfill(hass)
+    async_register_controller_services(hass)
+    hass.data.setdefault(DOMAIN, {}).setdefault(
+        PROCESS_SESSION, float(math.ceil(dt_util.utcnow().timestamp()))
+    )
     return True
 
 
 async def async_setup_entry(hass, entry) -> bool:
     """Own all scheduling and source subscriptions through the config entry."""
+    async_auto_enable(hass, entry)
     coordinator = EnergyCompassCoordinator(hass, entry)
     entry.runtime_data = coordinator
     try:
+        if (entry.options.get("controller") or {}).get("enabled"):
+            coordinator.controller = DeyeController(hass, entry, coordinator)
+            await coordinator.controller.async_start()
         atlas_settings = entry.options.get("atlas", {})
         if atlas_settings.get("enabled"):
             # ADR-0019 §3: only imported/started when Atlas is enabled. Started before
@@ -60,6 +72,8 @@ async def async_setup_entry(hass, entry) -> bool:
         await coordinator.async_start()
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:
+        if coordinator.controller is not None:
+            await coordinator.controller.async_stop()
         if coordinator.atlas is not None:
             await coordinator.atlas.async_stop()
         await coordinator.async_stop()
@@ -71,6 +85,9 @@ async def async_unload_entry(hass, entry) -> bool:
     """Unload entities before releasing the entry's runtime ownership."""
     if await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         coordinator = entry.runtime_data
+        if coordinator.controller is not None:
+            await coordinator.controller.async_stop()
+            coordinator.controller = None
         if coordinator.atlas is not None:
             await coordinator.atlas.async_stop()
         await coordinator.async_stop()
@@ -79,10 +96,17 @@ async def async_unload_entry(hass, entry) -> bool:
 
 
 async def async_remove_entry(hass, entry) -> None:
-    """Delete every Atlas site key for this entry (ADR-0019 §4); orphaned sites stay in Atlas."""
+    """Delete every Atlas site key and the controller store of this entry.
+
+    Orphaned Atlas sites stay in Atlas (ADR-0019 §4).
+    """
+    from homeassistant.helpers.storage import Store
+
     from .atlas import forget_entry
 
     await hass.async_add_executor_job(forget_entry, hass, entry.entry_id)
+    await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.controller").async_remove()
+    hass.data.get(DOMAIN, {}).get("controller_sessions", {}).pop(entry.entry_id, None)
 
 
 async def async_migrate_entry(hass, entry) -> bool:

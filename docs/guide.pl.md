@@ -369,7 +369,7 @@ dalej działa jako plan zachowany (`plan_retained=true`, `refreshing=true`, opty
 `calculating`) do czasu, aż przeliczenie opublikuje następcę. [Sterownik
 Deye](#sterownik-falownika-deye-solarman) wykonuje ten plan dalej i przyjmuje nowy po publikacji; nie wraca na
 profil bazowy. Powiązania źródeł i pomocników są jednocześnie subskrybowane od nowa. Wpis nadal
-**przeładowuje się** (poprzedni plan znika do pierwszego nowego obliczenia), gdy zapis zmienia zestaw
+**przeładowuje się** (poprzedni plan znika do pierwszego nowego obliczenia, a sterownik w tym czasie dalej wykonuje swój zaakceptowany plan), gdy zapis zmienia zestaw
 encji lub ich nazwę: **Okresowe balansowanie LFP** (`lfp_balance`), **Włącz głębokość elastycznego zużycia**
 (`flexible_load_enabled`), **Włącz encje kosztów** (`expose_costs`), **Włącz encje okresów**
 (`expose_windows`), nazwę instalacji lub walutę. Działający
@@ -398,6 +398,9 @@ witryny), bez restartu jego kolejki wysyłki. **Rekonfiguracja** zawsze przeład
 | `binary_sensor.<name>_forecast_valid` | Forecast valid | Poprawna prognoza | `on` / `off` |
 | `binary_sensor.<name>_alert` | Alert | Alert | `on` / `off` (diagnostyczny, problem) |
 | `select.<name>_strategy` | Strategy | Strategia | jedna z sześciu strategii |
+| `sensor.<name>_deye_controller` | Deye controller | Sterownik Deye | znacznik czasu następnego przebiegu sterownika; tylko przy włączonym [sterowniku Deye](#sterownik-falownika-deye-solarman) |
+| `select.<name>_deye_mode` | Deye mode | Tryb sterownika Deye | `Off` / `Simulation` / `Auto`; tylko przy włączonym sterowniku |
+| `sensor.<name>_deye_controller_runtime` | Deye controller runtime | Stan pracy sterownika Deye | kod przebiegu; tylko przy włączonym sterowniku |
 
 Sensory kosztów można wyłączyć opcją **Prezentacja → Włącz encje kosztów**, znaczniki okien —
 **Włącz encje okresów**, a głębokość elastycznego zużycia — **Prognoza kosztu zużycia → Włącz
@@ -524,7 +527,8 @@ sequenceDiagram
 
 Zachowany plan nigdy nie jest wydłużany poza pierwotne pokrycie i nie przetrwa przeładowania
 integracji ani restartu Home Assistant. Zapis w Konfiguracji nie przeładowuje integracji, więc nie
-kończy planu: zob. [Zapis opcji](#zapis-opcji).
+kończy planu: zob. [Zapis opcji](#zapis-opcji). [Sterownik Deye](#sterownik-falownika-deye-solarman)
+przechowuje własną kopię zaakceptowanego planu przez przeładowanie wpisu, ale porzuca ją przy restarcie.
 
 ## Tryby pracy — planowany stan baterii
 
@@ -1048,32 +1052,78 @@ Sam Energy Compass nigdy nie zapisuje do falownika. Robi to opcjonalny blueprint
 [`deye_solarman_controller.yaml`](../blueprints/automation/energy_compass/deye_solarman_controller.yaml):
 wykonuje plan na hybrydowym falowniku Deye przez
 [integrację Solarman](https://github.com/davidrapan/ha-solarman), zapisuje trzy prądy baterii i sześć
-programów czasowych (TOU), a każdy zapis sprawdza odczytem rejestrów. Wymaga pakietu
-[`energy_compass_deye.yaml`](../packages/energy_compass_deye.yaml). Instalację opisuje
-[przewodnik instalacji](installation.md#deye-inverter-controller) (EN). Oba pliki generuje
+programów czasowych (TOU), a każdy zapis sprawdza odczytem rejestrów.
+Stan sterownika przechowuje integracja. Przy włączonym **Opcje → Sterownik Deye** Energy Compass
+prowadzi tryb, zaakceptowany plan, sesję i unieważnienia, wyznacza czas kolejnego przebiegu i
+przechowuje stan pracy; blueprint zachowuje rachunek profilu, porównanie, bramki bezpieczeństwa i
+zapisy rejestrów. Nie trzeba pakietu, pomocników ani zmian w `configuration.yaml`, a zaakceptowany plan
+przeżywa przeładowanie wpisu. Wymaga Energy Compass 0.1.37 lub nowszego. Instalację opisuje
+[przewodnik instalacji](installation.md#deye-inverter-controller) (EN). Blueprint generuje
 `tools/deye_controller/build.py`; zmienia się generator, nie YAML. Profil startowy
 `deye_hybrid` wypełnia `idle_drain_kw` 0,13 i `refresh_minutes` 60 dla nowej instalacji; zob.
 [Profile startowe](#profile-startowe-nowe-instalacje).
 
-### Encje pakietu
+### Włączenie sterownika
 
-| Encja | Rola |
+Otwórz **Opcje → Sterownik Deye**, włącz **Włącz sterownik Deye** i wybierz urządzenie falownika
+Solarman (gdy jest tylko jedno, jest wstępnie wybrane). Energy Compass znajduje na tym urządzeniu
+sześć programów TOU (czas, moc, napięcie, SOC i ładowanie, razem 30 encji) po kluczach tłumaczeń Solarman
+`program_1_time` … `program_6_charging`, wyznacza wspólny prefiks identyfikatorów i je śledzi.
+Odrzuca urządzenie, gdy brakuje programu lub jest wyłączony, gdy identyfikatory encji nie mają
+wspólnego prefiksu albo gdy inny wpis Energy Compass już steruje tym urządzeniem. Włączenie przeładowuje
+wpis raz; przeniesienie sterownika na inne urządzenie działa na żywo. Oba są odrzucane, gdy tryb nie jest `Off` albo oczekuje przywrócenie: najpierw wybierz `Off` i poczekaj, aż `restore_pending` wygaśnie, bo inaczej nic nie przywróci profilu bazowego. Krok jest widoczny bez przełącznika
+ustawień eksperckich.
+
+Instalacja, która używała pakietu 0.1.36, ma jeden wpis Energy Compass i dokładnie jedno urządzenie Solarman
+ze wszystkimi sześcioma programami, dostaje sterownik włączony automatycznie przy pierwszym starcie
+0.1.37. Tryb zaczyna od `Off`, więc nic się nie zapisuje, dopóki go nie wybierzesz; zob.
+[Migracja z pakietu](#migracja-z-pakietu-0136-i-starsze).
+
+### Encje sterownika
+
+Trzy encje istnieją tylko przy włączonym sterowniku; należą do urządzenia Energy Compass.
+`<name>` to tytuł wpisu.
+
+| Klucz | Encja | Rola |
+| --- | --- | --- |
+| `deye_controller` | `sensor.<name>_deye_controller` (znacznik czasu) | stan to najbliższa chwila, w której blueprint musi działać (najwcześniejszy koniec wiersza, `valid_until`, `coverage_end` albo granica programu TOU); atrybuty to poniższy kontrakt |
+| `deye_mode` | `select.<name>_deye_mode` | **Off** / **Simulation** / **Auto**; jedyny przełącznik obsługiwany ręcznie; opcje nie są tłumaczone |
+| `deye_runtime` | `sensor.<name>_deye_controller_runtime` | kod przebiegu (niżej); atrybut `runtime` zawiera stan, powód, potwierdzone wartości i niepewne rejestry |
+
+Identyfikatory zależą od nazwy wpisu i języka, w którym encje utworzono (instalacja polska dostaje nazwy
+w rodzaju `…_sterownik_deye`); odczytaj je ze strony urządzenia. Blueprint potrzebuje tylko sensora
+sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.
+
+| Atrybut sterownika | Znaczenie |
 | --- | --- |
-| `input_select.energy_compass_deye_mode` | **Off** / **Simulation** / **Auto**; jedyny przełącznik obsługiwany ręcznie |
-| `input_boolean.energy_compass_deye_session` | włączony po rozpoczęciu sesji sterowania (start Home Assistant lub pierwszy przebieg) |
-| `input_datetime.energy_compass_deye_session_start` | początek sesji; akceptowane są tylko plany wygenerowane później |
-| `input_boolean.energy_compass_deye_restore_pending` | włączony od pierwszego zapisu do ponownego potwierdzenia profilu bazowego |
-| `sensor.energy_compass_deye_plan` | zaakceptowany plan (atrybut `snapshot`) |
-| `sensor.energy_compass_deye_runtime` | kod przebiegu (niżej); atrybut `runtime` zawiera stan, powód, potwierdzone wartości i niepewne rejestry |
-| `sensor.energy_compass_deye_tou_settings` | prefiks programów TOU (atrybut `prefix`) i ich bieżące wartości; zmiana uruchamia sterownik |
-| `sensor.energy_compass_deye_next_tou` | najbliższa lokalna granica programu TOU |
-| `sensor.energy_compass_deye_deadline` | `valid_until` zaakceptowanego planu |
-| `sensor.energy_compass_deye_interval_end` | koniec bieżącego przedziału planu |
+| `controller_schema` | `1`; blueprint odrzuca sterownik z innym schematem |
+| `mode`, `mode_entity` | tryb (odbity z selecta, więc zmiana uruchamia blueprint) i identyfikator encji selecta |
+| `restore_pending` | włączony od pierwszego zapisu do ponownego potwierdzenia profilu bazowego |
+| `session` | znacznik sesji tego uruchomienia Home Assistant (znacznik czasu, liczba) |
+| `plan_reason` | czy zaakceptowany plan wolno wykonać: `ok`, `session`, `revoked` albo `sources` (niżej) |
+| `status` | stan optymalizatora ostatniej publikacji |
+| `retained` | ostatnia publikacja to zachowany plan (status `calculating`) |
+| `generation`, `valid_until`, `coverage_end`, `accepted_at` | zaakceptowany plan: `generated_at`, pierwotny termin, koniec ostatniego przedziału i czas akceptacji |
+| `revoked_generation`, `revoked_at`, `revoked_reason` | ostatnie unieważnienie |
+| `capacity_kwh`, `eta_charge`, `eta_discharge`, `charge_kw`, `discharge_kw` | parametry baterii zaakceptowanej generacji (bieżące ustawienia, gdy nic nie jest zaakceptowane) |
+| `device_id`, `program_prefix`, `tou_problem` | wybrane urządzenie Solarman, prefiks encji TOU i powód niepowodzenia (`tou_incomplete`, `tou_prefix`) |
+| `next_tou` | najbliższa lokalna granica programu TOU |
+| `accepted` | zaakceptowany plan (wiersze, polityka dyspozycji, bateria); nie jest zapisywany w historii |
+| `tou` | stany 30 encji TOU; zmiana uruchamia blueprint ponownie; nie jest zapisywany w historii |
 
-Pakiet zakłada domyślne nazwy encji TOU z Solarman (`number.inverter_deye_program_1_power` …
-`time.inverter_deye_program_6_time`). Przy innej nazwie urządzenia wygeneruj pakiet z własnym
-prefiksem w [generatorze YAML](builder.html) albo poleceniem
-`python tools/deye_controller/build.py --prefix my_inverter_program_`.
+Sensor stanu pracy ma zapisywane atrybuty `restore_pending`, `reason`, `state`, `requested_mode`,
+`confirmed_mode`, `since`, `warning`, `takeover_blocked` i `accepted_generation` oraz `runtime`
+i `updated_at`, które nie trafiają do historii. Jest zapisywany od razu, gdy zmieni się kod albo któryś
+z zapisywanych atrybutów, a inne zmiany najwyżej raz na minutę. Akceptacje, unieważnienia, porzucenia
+sesji, zmiany trybu, importy i zmiany urządzenia trafiają do historii 50 wpisów w magazynie i w
+diagnostyce integracji (`deye_controller`); zdarzenia nie są wysyłane.
+
+### Usługi
+
+| Usługa | Przeznaczenie |
+| --- | --- |
+| `energy_compass.controller_runtime` | odczytuje lub zastępuje zapisany stan pracy i flagę przywrócenia, odpowiada `runtime`, `restore_pending` i `session`. Używa jej blueprint; nieznane klucze, nie-obiekty i ponad 32 768 bajtów są odrzucane |
+| `energy_compass.controller_import_package` | tylko administrator; jednorazowo kopiuje tryb, sesję, zaakceptowany plan i stan pracy z pakietu 0.1.36 (zob. Migracja); odmawia z `package_import_refused` po pierwszym udanym imporcie, jeszcze zanim nowy blueprint cokolwiek zapisze, chyba że ustawiono `force` |
 
 ### Tryby
 
@@ -1101,23 +1151,38 @@ przywrócony i dopiero wtedy można ponownie wybrać Simulation.
 
 ### Akceptacja planu
 
-Plan zostaje zaakceptowany tylko wtedy, gdy spełnione są wszystkie warunki: powstał po początku sesji
-i po ostatnim unieważnieniu, jest nowszy od planu w pamięci, Poprawna prognoza ma stan `on`, Alert
-ma stan `off`, optymalizator jest `ready` (albo `calculating` z zachowanym pełnym planem), plan,
-optymalizator i prognoza podają ten sam `generated_at`, przedziały są ciągłe i obejmują bieżącą
-chwilę, a `valid_until` jest w przyszłości. Optymalizator poza `ready`/`calculating` albo Alert inny
-niż `off` unieważnia plan w pamięci; plany sprzed unieważnienia nigdy nie są akceptowane. Dopóki błąd trwa, każdy przebieg unieważnia
-ponownie, ale zachowuje czas pierwszego unieważnienia tego planu w pamięci, więc plan policzony po
-nim zostaje przyjęty także wtedy, gdy opublikowano go przy Alercie jeszcze `on` (encje zmieniają
-stan po kolei). Po
-restarcie Home Assistant sterownik trzyma więc profil bazowy do publikacji kolejnego obliczenia. Zapis opcji integracji jej nie
-przeładowuje, więc sterownik dalej wykonuje zachowany plan (optymalizator `calculating`) i przyjmuje
-następcę po publikacji; to samo oczekiwanie wraca tylko po zapisie, który przeładowuje wpis
-([Zapis opcji](#zapis-opcji)).
+Energy Compass akceptuje plan w tym samym wywołaniu, które go publikuje, więc plan, status, ważność
+i alert to jeden niepodzielny obraz i nie ma publikacji w częściach. Publikacja zostaje zaakceptowana
+tylko wtedy, gdy spełnione są wszystkie warunki: przedziały są ciągłe, każdy wiersz ma znany stan,
+logiczne `balance_hold` i skończone nieujemne energie (ceny mogą być ujemne), a jeden wiersz obejmuje
+bieżącą chwilę; jest polityka dyspozycji; powstała po początku sesji i nie później niż teraz, jest
+nowsza od zaakceptowanego planu i powstała po ostatnim unieważnieniu; Poprawna prognoza ma stan `on`;
+nie ma Alertu; status to `ready` bez trwającego odświeżania i zachowania albo `calculating` z
+zachowanym pełnym planem; a `valid_until` jest w przyszłości. Tryb nie ma znaczenia: akceptacja działa
+także w Off i Simulation.
+
+Status optymalizatora inny niż `ready`/`calculating` albo Alert unieważnia zaakceptowany plan w chwili
+publikacji, więc plan policzony przed unieważnieniem nigdy nie zostaje przyjęty. Dopóki błąd trwa,
+każda publikacja unieważnia ponownie, ale zachowuje czas pierwszego unieważnienia tego planu.
+Zatrzymanie lub przeładowanie wpisu nie jest błędem: zaakceptowany plan zostaje w magazynie integracji
+i jest wykonywany, gdy Energy Compass liczy ponownie. Po restarcie Home Assistant sterownik trzyma profil
+bazowy do pierwszego planu nowej sesji, bo plan zaakceptowany we wcześniejszym uruchomieniu jest
+porzucany przy zmianie sesji. Zapis opcji integracji zwykle nie przeładowuje wpisu
+([Zapis opcji](#zapis-opcji)), a gdy przeładowuje, zaakceptowany plan zostaje.
+
+`plan_reason` podsumowuje werdykt; blueprint zamienia go na swoje (polskie) powody w tej kolejności:
+
+| `plan_reason` | Znaczenie |
+| --- | --- |
+| `session` | w tej sesji nic jeszcze nie zaakceptowano (po restarcie albo przed pierwszym planem) |
+| `revoked` | zaakceptowana generacja została unieważniona po błędzie; potrzebny nowy plan |
+| `sources` | Alert jest włączony albo ostatnia publikacja nie jest ani zachowanym planem, ani zaakceptowanym planem `ready` |
+| `ok` | zaakceptowany plan wolno wykonać |
 
 Sterowanie wymaga też świeżej telemetrii: każda encja z `telemetry_entities` liczbowa i zgłoszona
 w ciągu 30 s, napięcie baterii 400–610 V i SOC 0–100 %. Każda automatyzacja z `old_writers` musi być
-wyłączona i nieuruchomiona.
+wyłączona i nieuruchomiona. Plan bez parametrów baterii blokuje sterowanie z powodem `plan: brak
+parametrów baterii (pojemność, sprawność) w planie`.
 
 ### Profile
 
@@ -1129,12 +1194,12 @@ wyłączona i nieuruchomiona.
 | `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, cel SOC = końcowy SOC planu zaokrąglony w dół |
 | bazowy (zwolnienie, nieważny plan) | `relinquish_current` / `relinquish_current` | 0 A | wszystkie Disabled, SOC 10 %, 49,6 (496 V), moc `max_power_w` |
 
-Limit to `min(max_current, max_power_w / V)` przy ładowaniu i `min(max_current, max_power_w × eta / V)`
+Limit to `min(max_current, max_power_w / V)` przy ładowaniu i `min(max_current, max_power_w × eta_discharge / V)`
 przy rozładowaniu. Limit ma histerezę: prąd już ustawiony w falowniku zostaje, dopóki mieści się
 w limicie mocy, a wyższy krok o 1 A wchodzi dopiero z 2 % zapasem napięcia (ok. 10 V przy 530 V), więc
 napięcie pakietu przechodzące przez granicę kroku nie przepisuje limitu przy każdym spadku i odbiciu.
 Limit mocy nigdy nie jest przekroczony. Przy SOC 100 % prąd ładowania spada do 0 A. Prądy z planu przeliczają kWh
-przedziału przez `eta` w pełnej długości przedziału. Cel SOC używa `capacity_kwh`; cel napięcia wynika
+przedziału przez `eta_charge` (ładowanie) lub `eta_discharge` (rozładowanie) w pełnej długości przedziału. Cel SOC używa `capacity_kwh` zaakceptowanego planu; cel napięcia wynika
 ze stałej krzywej wysokonapięciowej baterii LFP (496–536 V dla 10–90 %, przy 100 % 584 V przy
 ładowaniu albo 544 V przy rozładowaniu). Osiągnięty cel w `CHARGE_GRID`/`DISCHARGE_GRID` jest
 zatrzaskiwany dla danego przedziału planu. Po osiągnięciu celu `DISCHARGE_GRID` kierunek zmienia się na
@@ -1170,7 +1235,7 @@ BMS albo niżej.
 ### Zapis i potwierdzenie
 
 Każda zmiana zapisuje jedną encję przez `number.set_value` lub `select.select_option`, a potem
-odczytuje rejestry 108–177 z `solarman_device` i porównuje surową wartość. Rejestr bez potwierdzenia
+odczytuje rejestry 108–177 z urządzenia Solarman sterownika (`device_id`) i porównuje surową wartość. Rejestr bez potwierdzenia
 trafia do `runtime.uncertain` i jest ponawiany; zmiana kierunku lub celu najpierw zeruje prądy, potem
 ustawia progi, na końcu włącza kierunek.
 
@@ -1184,19 +1249,28 @@ ustawia progi, na końcu włącza kierunek.
 | `write_failed` | rejestr nie potwierdził się po ponowieniach; przywrócenie pozostaje wymagane |
 | `simulation_blocked` | Simulation odrzucone przy wymaganym przywróceniu |
 
-Teksty `runtime.reason` są w tej wersji po polsku.
+Teksty `runtime.reason` są w tej wersji po polsku. Każda zmiana stanu pracy przechodzi przez `energy_compass.controller_runtime`; gdy to wywołanie się nie powiedzie, przebieg zatrzymuje się przed zapisem kolejnego rejestru.
+
+### Gdy Energy Compass jest niedostępny
+
+Bez Energy Compass nie da się odczytać ani trybu, ani stanu pracy, więc żadnego zapisu nie można uznać
+za bezpieczny ani zarejestrować. Blueprint zatrzymuje się więc na pierwszym kroku, bez żadnego zapisu
+i wywołania usługi, gdy sensor sterownika nie istnieje lub jest niedostępny, ma inny `controller_schema`
+albo nie ma `mode_entity`: ślad mówi `Energy Compass niedostępny: sterowanie wstrzymane bez zapisów`.
+Falownik zachowuje ostatni profil; wymuszony kierunek TOU kończy się na najbliższej granicy programu TOU,
+a prądy baterii zostają. Jeśli Energy Compass zniknie w środku przebiegu, następne wywołanie stanu pracy
+się nie powiedzie i przebieg zatrzyma się przed kolejnym zapisem rejestru. Home Assistant zgłasza
+uszkodzony wpis; napraw go albo zwolnij falownik ręcznie.
 
 ### Wejścia
 
 | Wejście | Domyślnie | Znaczenie |
 | --- | --- | --- |
-| `plan_entity`, `optimizer_entity`, `valid_entity`, `alert_entity`, `compass_entity` | — | Plan, Stan optymalizatora, Poprawna prognoza, Alert i Kompas zużycia jednej instalacji Energy Compass |
-| `solarman_device` | — | urządzenie falownika w Solarman do odczytu rejestrów |
+| `controller_entity` | — | sensor *Sterownik Deye* jednej instalacji Energy Compass (Opcje → Sterownik Deye) |
 | `charge_entity`, `discharge_entity`, `grid_entity` | — | maks. prąd ładowania (108), rozładowania (109) i ładowania z sieci (128) |
 | `operation_entity` | — | select trybu pracy baterii (Capacity / Voltage) |
 | `soc_entity`, `voltage_entity` | — | SOC baterii (%) i napięcie pakietu (V) |
 | `telemetry_entities` | — | sensory, które muszą być świeże (zgłoszone w ciągu 30 s) |
-| `capacity_kwh` | 25 kWh | pojemność używana przez plan Energy Compass |
 | `max_power_w` | 8000 W | limit mocy baterii i moc programów TOU |
 | `max_current` | 18 A | limit prądu ładowania/rozładowania w stanach wymuszonych |
 | `max_grid_current` | 16 A | limit prądu ładowania z sieci |
@@ -1204,11 +1278,46 @@ Teksty `runtime.reason` są w tej wersji po polsku.
 | `balance_grid_current` | 2 A | minimalny prąd z sieci w wierszu balansowania LFP |
 | `reached_discharge_current` | 1 A | prąd rozładowania po osiągnięciu celu przedziału `DISCHARGE_GRID` (kierunek Disabled, bez sprzedaży) |
 | `relinquish_current` | 18 A | prąd ładowania/rozładowania profilu bazowego |
-| `eta` | 0,9747 | sprawność baterii w jedną stronę |
 | `commissioned_battery_modes` | Capacity | tryby baterii dopuszczone do sterowania fizycznego |
 | `discharge_energy_entity` | brak | licznik energii rozładowania baterii (kWh); w trybie Voltage kończy przedziały `DISCHARGE_GRID` po zaplanowanej energii |
 | `voltage_grid_charge_ceiling` | 55,2 V | napięcie TOU dla `CHARGE_GRID` w trybie Voltage (49,5–56,0 V); energię niesie planowany prąd z sieci |
 | `old_writers` | brak | automatyzacje, które muszą być wyłączone przed każdym zapisem |
+
+Pojemność i sprawności ładowania i rozładowania nie są już wejściami: blueprint używa wartości, z którymi
+policzono zaakceptowany plan (`capacity_kwh`, `eta_charge`, `eta_discharge`), więc zachowany plan nigdy
+nie działa z ustawieniami zapisanymi po nim. `max_power_w`, `max_current`, `max_grid_current` i
+`relinquish_current` zostają limitami sprzętowymi w blueprincie; utrzymuj `max_power_w` zgodne z mocą
+ładowania i rozładowania w Energy Compass, bo oba nie są powiązane.
+
+### Migracja z pakietu (0.1.36 i starsze)
+
+Wydanie 0.1.37 usuwa `packages/energy_compass_deye.yaml`. Energy Compass 0.1.36 i starsze ignorują opcje
+i magazyn sterownika, więc sterownik wymaga 0.1.37 razem z nowym blueprintem.
+
+1. **Zainstaluj 0.1.37 i zrestartuj.** Sterownik włącza się automatycznie, gdy istnieją pomocniki pakietu,
+   jest jeden wpis Energy Compass i jedno użyteczne urządzenie Solarman; w przeciwnym razie włącz go w
+   **Opcje → Sterownik Deye**. Stary blueprint i pakiet dalej sterują do czasu podmiany.
+2. **Opcjonalna kontrola w tle.** `generation` sensora sterownika powinno równać się stanowi sensora planu
+   pakietu po każdej akceptacji.
+3. **Najpierw porównaj sprawność i pojemność.** Stary blueprint używał własnych `eta` (domyślnie 0,9747) i `capacity_kwh` (domyślnie 25); nowy używa `eta_charge`, `eta_discharge` i `capacity_kwh` planu, pochodzących z ustawień baterii w Energy Compass (sprawność 1,0, jeśli nie ustawiono). Ustaw `eta_charge` i `eta_discharge` równe dawnemu `eta` przed podmianą, bo inaczej pierwszy przebieg przepisze prądy ładowania z sieci i rozładowania o ten stosunek; różnica pojemności przesuwa tylko progi SOC, jak niżej.
+4. **Podmiana w spokojnym oknie** (wiersz `CHARGE_PV` lub `SELF_CONSUME`, nie przy pełnej godzinie, bez
+   innych piszących). Wyłącz starą automatyzację bez zatrzymywania jej akcji, wywołaj
+   `energy_compass.controller_import_package` dla sensora sterownika i sprawdź odpowiedź (sesja pakietu,
+   zaakceptowana generacja, tryb i flaga przywrócenia). Usługa kopiuje stan, przejmuje sesję pakietu i
+   porzuca przestarzałe klucze stanu pracy. Potem wymień blueprint, wybierz w automatyzacji sensor
+   sterownika, usuń osiem wejść, których już nie ma (`plan_entity`, `optimizer_entity`, `valid_entity`,
+   `alert_entity`, `compass_entity`, `solarman_device`, `capacity_kwh`, `eta`) i włącz ją. Pierwszy
+   przebieg niczego nie zmienia na falowniku, jeśli pojemność jest ta sama; zmiana pojemności przesuwa
+   tylko próg SOC i napięcia aktywnego programu w wierszu `HOLD` lub z sieci.
+5. **Przepnij** dashboardy i własne automatyzacje: pomocnik trybu jest teraz `select`, flaga przywrócenia
+   i sesja to atrybuty, a role dashboardów to `deye_controller`, `deye_mode` i `deye_runtime`.
+6. **Usuń pakiet** z `configuration.yaml`. Działa to od następnego restartu; w międzyczasie nie przeładowuj
+   `template` ani pomocników `input_*`. Potem usuń dziesięć osieroconych wpisów rejestru.
+
+Bez importu i tak wymień blueprint i zaakceptuj jeden okres na profilu bazowym do następnego planu.
+Wycofanie przed usunięciem pakietu: wyłącz nową automatyzację, przywróć stary blueprint i wejścia i
+włącz ją; import nigdy nie zapisał pomocników pakietu. Powrót do 0.1.36 wymaga wcześniejszego
+przywrócenia starego blueprintu i pakietu.
 
 ### Przykładowe dashboardy
 
@@ -1223,6 +1332,12 @@ Generuje je `tools/dashboards/build.py` z zastępczymi identyfikatorami encji:
 
 Panel używa kart natywnych oraz ApexCharts Card do prognozy SOC; oba wykresy wymagają ApexCharts Card. [Generator YAML](builder.html) wypełnia każdą z nich Twoimi encjami, pojemnością
 i językiem. Opis: [przewodnik instalacji](installation.md#dashboard-examples) (EN).
+
+Przykłady sterownika używają trzech ról: `deye_controller`, `deye_mode` i `deye_runtime` (domyślnie
+`sensor.energy_compass_deye_controller`, `select.energy_compass_deye_mode` i
+`sensor.energy_compass_deye_controller_runtime`). Gdy Twoje identyfikatory są inne, przekaż generatorowi
+`--entity deye_mode=select.moj_tryb` albo wypełnij je w generatorze YAML; sesja, flaga przywrócenia, najbliższa
+zmiana TOU i prefiks TOU są czytane z atrybutów sterownika.
 
 ## Energy Atlas (opcjonalnie)
 

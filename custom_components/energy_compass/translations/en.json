@@ -785,7 +785,8 @@
           "energy_atlas_proof": "Energy Atlas: show ownership proof",
           "preview": "Preview and save",
           "show_expert": "Show expert settings",
-          "hide_expert": "Hide expert settings"
+          "hide_expert": "Hide expert settings",
+          "deye_controller": "Deye controller"
         }
       },
       "currency_review": {
@@ -924,6 +925,14 @@
           "config_entries": "Forecast integrations (added together)"
         },
         "description": "{detail}"
+      },
+      "deye_controller": {
+        "title": "Deye controller",
+        "description": "Energy Compass keeps the controller's mode, accepted plan, session and runtime; the Deye (Solarman) controller blueprint executes the plan and writes the inverter. Choose the Solarman inverter device; its six TOU programs are found automatically.\n\n{status}",
+        "data": {
+          "enabled": "Enable the Deye controller",
+          "device_id": "Solarman inverter device"
+        }
       }
     },
     "error": {
@@ -942,7 +951,12 @@
       "rate_limited": "Too many attempts; try again later.",
       "cannot_connect": "Could not reach the Energy Atlas collector.",
       "unknown": "Registration failed for an unknown reason.",
-      "schedule_currency": "The Polish tariff schedule requires currency PLN; change the buy source first."
+      "schedule_currency": "The Polish tariff schedule requires currency PLN; change the buy source first.",
+      "controller_device_required": "Choose the Solarman inverter device.",
+      "controller_tou_incomplete": "The device does not have all six TOU programs (time, power, voltage, SOC, charging).",
+      "controller_tou_prefix": "The TOU program entity IDs do not share one prefix; restore their default IDs.",
+      "controller_device_in_use": "Another Energy Compass entry already controls this device.",
+      "controller_not_released": "Select the Deye mode Off and wait until the base profile is restored (restore pending off) before disabling the controller or changing its device."
     },
     "abort": {
       "site_not_registered": "This site was forgotten in another window; re-enable Energy Atlas to register a new one."
@@ -1257,6 +1271,12 @@
           "holding": "Holding",
           "overdue": "Overdue"
         }
+      },
+      "deye_controller": {
+        "name": "Deye controller"
+      },
+      "deye_runtime": {
+        "name": "Deye controller runtime"
       }
     },
     "select": {
@@ -1270,6 +1290,9 @@
           "max_export": "Maximum export",
           "grid_friendly": "Grid friendly"
         }
+      },
+      "deye_mode": {
+        "name": "Deye mode"
       }
     },
     "binary_sensor": {
@@ -1326,11 +1349,67 @@
           "description": "How many days of history to send, counting back from now. Leave empty to send all available history."
         }
       }
+    },
+    "controller_runtime": {
+      "name": "Deye controller runtime",
+      "description": "Read or replace the Deye controller runtime. Used by the Deye controller blueprint.",
+      "fields": {
+        "controller": {
+          "name": "Controller",
+          "description": "The Deye controller sensor of the installation."
+        },
+        "runtime": {
+          "name": "Runtime",
+          "description": "The complete runtime to store. Leave empty to only read it."
+        },
+        "restore_pending": {
+          "name": "Restore pending",
+          "description": "Whether the base profile must still be restored."
+        }
+      }
+    },
+    "controller_import_package": {
+      "name": "Import Deye package state",
+      "description": "One-time migration from the 0.1.36 package: copies mode, session, accepted plan and runtime into Energy Compass.",
+      "fields": {
+        "controller": {
+          "name": "Controller",
+          "description": "The Deye controller sensor of the installation."
+        },
+        "force": {
+          "name": "Force",
+          "description": "Import again although the package state was already imported."
+        }
+      }
     }
   },
   "exceptions": {
     "atlas_backfill_not_enabled": {
       "message": "No Energy Compass entry has Energy Atlas enabled and registered; open Options → Energy Atlas first."
+    },
+    "controller_not_found": {
+      "message": "{entity} is not an enabled Energy Compass Deye controller."
+    },
+    "runtime_invalid_key": {
+      "message": "Unknown controller runtime key: {key}."
+    },
+    "runtime_invalid": {
+      "message": "Controller runtime must be a JSON object."
+    },
+    "runtime_too_large": {
+      "message": "Controller runtime exceeds 32768 bytes."
+    },
+    "package_missing": {
+      "message": "Package helper missing: {role}."
+    },
+    "package_session_inactive": {
+      "message": "The package session is not active in this Home Assistant run."
+    },
+    "package_mode_invalid": {
+      "message": "Package mode is not Off, Simulation or Auto."
+    },
+    "package_import_refused": {
+      "message": "The package state was already imported; set force to import again."
     }
   }
 }

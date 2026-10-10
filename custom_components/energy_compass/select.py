@@ -7,13 +7,17 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
 
+from .controller_entity import DeyeModeSelect
 from .entity import EnergyCompassEntity
 from .settings import STRATEGIES, merged_configuration
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Publish the strategy select entity."""
-    async_add_entities([EnergyCompassStrategySelect(entry.runtime_data, "strategy")])
+    entities = [EnergyCompassStrategySelect(entry.runtime_data, "strategy")]
+    if (controller := entry.runtime_data.controller) is not None:
+        entities.append(DeyeModeSelect(controller))
+    async_add_entities(entities)
 
 
 class EnergyCompassStrategySelect(EnergyCompassEntity, SelectEntity):

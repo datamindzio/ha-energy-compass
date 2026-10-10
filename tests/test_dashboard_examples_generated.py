@@ -1,6 +1,7 @@
 """The generated dashboard examples: current, placeholder-only, valid templates."""
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -57,3 +58,69 @@ async def test_markdown_cards_render(hass, path):
 def test_every_section_builds_in_every_language(lang):
     for name, section in build.SECTIONS.items():
         assert section(build.ENTITIES, lang)["cards"], name
+
+
+ROLE_IDS = {
+    "deye_controller": "sensor.energy_compass_deye_controller",
+    "deye_mode": "select.energy_compass_deye_mode",
+    "deye_runtime": "sensor.energy_compass_deye_controller_runtime",
+}
+CONTROLLER_EXAMPLES = [
+    ROOT / "examples/dashboards/controller_panel.yaml",
+    ROOT / "examples/dashboards/controller_diagnostics.yaml",
+]
+
+
+def test_the_controller_roles_default_to_the_integration_entities():
+    assert {role: build.ENTITIES[role] for role in ROLE_IDS} == ROLE_IDS
+
+
+@pytest.mark.parametrize("path", CONTROLLER_EXAMPLES, ids=lambda path: path.name)
+def test_controller_examples_use_only_the_three_roles(path):
+    text = path.read_text()
+    found = set(re.findall(r"[a-z_]+\.energy_compass_deye_[a-z_]+", text))
+    assert found <= set(ROLE_IDS.values())
+    for retired in (
+        "input_select.",
+        "input_boolean.energy_compass",
+        "energy_compass_deye_tou_settings",
+        "energy_compass_deye_next_tou",
+        "energy_compass_deye_session",
+    ):
+        assert retired not in text
+
+
+def test_controller_attributes_replace_the_package_helpers():
+    panel = (ROOT / "examples/dashboards/controller_panel.yaml").read_text()
+    diagnostics = (ROOT / "examples/dashboards/controller_diagnostics.yaml").read_text()
+    assert "''program_prefix''" in panel
+    assert "''session''" in diagnostics and "''restore_pending''" in diagnostics
+    assert "attribute: next_tou" in diagnostics
+
+
+def test_a_mode_entity_override_retargets_every_use():
+    entities = build.ENTITIES | {"deye_mode": "select.x_tryb"}
+    for name in ("panel", "diagnostics"):
+        text = build.dump(build.SECTIONS[name](entities, "pl"))
+        assert "select.x_tryb" in text or name == "diagnostics"
+        assert "select.energy_compass_deye_mode" not in text
+    panel = build.dump(build.SECTIONS["panel"](entities, "en"))
+    assert panel.count("select.x_tryb") >= 5
+
+
+def test_the_generators_hold_no_package_entity_ids():
+    for path in (
+        ROOT / "tools/dashboards/build.py",
+        ROOT / "tools/build_builder.py",
+    ):
+        lines = [
+            line
+            for line in path.read_text().splitlines()
+            if "energy_compass_deye_" in line
+        ]
+        assert all(
+            any(role_id in line for role_id in ROLE_IDS.values()) for line in lines
+        ), (path, lines)
+        assert all(
+            "input_" not in line and "tou_settings" not in line for line in lines
+        )

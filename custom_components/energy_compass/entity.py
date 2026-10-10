@@ -37,6 +37,16 @@ PLAN_ATTRIBUTES = frozenset(
 )
 
 
+def entry_device_info(entry):
+    """The one device every entity of an entry hangs on."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=entry.title,
+        manufacturer="Energy Compass",
+        model="Advisory",
+    )
+
+
 class EnergyCompassEntity(CoordinatorEntity):
     """Expose a single coherent generation without recording forecast arrays."""
 
@@ -49,12 +59,7 @@ class EnergyCompassEntity(CoordinatorEntity):
         self.key = key
         self._attr_unique_id = f"{coordinator.entry.entry_id}_{key}"
         self._attr_translation_key = key
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, coordinator.entry.entry_id)},
-            name=coordinator.entry.title,
-            manufacturer="Energy Compass",
-            model="Advisory",
-        )
+        self._attr_device_info = entry_device_info(coordinator.entry)
         if key in ("optimizer_status", "alert", "battery_balance"):
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
 

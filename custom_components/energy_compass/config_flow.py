@@ -14,6 +14,8 @@ from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 
 from .atlas_env import BASE_URLS, ENROLLMENT_SECRETS
+from .controller import controller_options_change
+from .controller_ha import default_device, device_in_use, device_resolution
 from .detect import (
     SKIP,
     Detection,
@@ -346,6 +348,7 @@ class Editor(SourceEditor):
         if isinstance(self, config_entries.OptionsFlow):
             # ADR-0019 §2: Atlas settings live in the options flow only, never in
             # setup or reconfigure.
+            menu_options.append("deye_controller")
             menu_options.append("energy_atlas")
             from .atlas.storage import is_registered
 
@@ -369,6 +372,82 @@ class Editor(SourceEditor):
     async def async_step_hide_expert(self, user_input=None):
         self._show_expert = False
         return await self.async_step_menu()
+
+    async def async_step_deye_controller(self, user_input=None):
+        """Enable the integration-owned Deye controller and pick its Solarman device.
+
+        Only the enabled flag needs an entry reload. Moving the controller to
+        another device applies live, like the Atlas step.
+        """
+        current = self.config_entry.options.get("controller") or {}
+        errors = {}
+        if user_input is not None:
+            enabled = user_input["enabled"]
+            device_id = user_input.get("device_id") or None
+            if enabled:
+                if not device_id:
+                    errors["device_id"] = "controller_device_required"
+                elif problem := device_resolution(self.hass, device_id).problem:
+                    errors["device_id"] = f"controller_{problem}"
+                elif device_in_use(self.hass, self.config_entry.entry_id, device_id):
+                    errors["device_id"] = "controller_device_in_use"
+            new = {"enabled": enabled, "device_id": device_id}
+            change = controller_options_change(current, new)
+            running = getattr(
+                getattr(self.config_entry, "runtime_data", None), "controller", None
+            )
+            if (
+                not errors
+                and change != "none"
+                and current.get("enabled")
+                and running is not None
+                and (running.state.restore_pending or running.state.mode != "Off")
+            ):
+                # Without the controller nothing could restore the base profile.
+                errors["base"] = "controller_not_released"
+            if not errors:
+                if self.config_entry.state is config_entries.ConfigEntryState.LOADED:
+                    if change != "reload":
+                        self.automatic_reload = False
+                    if change == "live":
+                        self.config_entry.runtime_data.controller.async_set_device(
+                            device_id
+                        )
+                return self.async_create_entry(
+                    title="", data={**self.config_entry.options, "controller": new}
+                )
+        runtime_data = getattr(self.config_entry, "runtime_data", None)
+        controller = getattr(runtime_data, "controller", None)
+        polish = self.hass.config.language.startswith("pl")
+        if controller is not None and controller.resolution.prefix:
+            status = (
+                f"Programy TOU: prefiks {controller.resolution.prefix}, 30 encji."
+                if polish
+                else f"TOU programs: prefix {controller.resolution.prefix}, 30 entities."
+            )
+        else:
+            status = "Nie skonfigurowano." if polish else "Not configured."
+        return self.async_show_form(
+            step_id="deye_controller",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "enabled", default=current.get("enabled", False)
+                    ): selector.BooleanSelector(),
+                    vol.Optional(
+                        "device_id",
+                        description={
+                            "suggested_value": current.get("device_id")
+                            or default_device(self.hass)
+                        },
+                    ): selector.DeviceSelector(
+                        selector.DeviceSelectorConfig(integration="solarman")
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={"status": status},
+        )
 
     async def async_step_energy_atlas(self, user_input=None):
         """Opt-in Atlas delivery settings (ADR-0019 §2/§4, amendment T-411 §B).
@@ -1158,12 +1237,17 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
         )
         stamp_strategy_change(self._draft, previous, dt_util.utcnow())
         if hasattr(self, "_entry"):
-            # ADR-0019 §2: reconfigure clears options, but atlas settings survive it.
-            atlas = self._entry.options.get("atlas")
+            # ADR-0019 §2: reconfigure clears options, but atlas and controller
+            # settings survive it.
+            kept = {
+                key: self._entry.options[key]
+                for key in ("atlas", "controller")
+                if self._entry.options.get(key)
+            }
             return self.async_update_reload_and_abort(
                 self._entry,
                 data=self._draft,
-                options={"atlas": atlas} if atlas else {},
+                options=kept,
                 title=self._draft["name"],
             )
         return self.async_create_entry(title=self._draft["name"], data=self._draft)

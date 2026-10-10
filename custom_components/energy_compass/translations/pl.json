@@ -793,7 +793,8 @@
           "energy_atlas_proof": "Energy Atlas: pokaż dowód własności",
           "preview": "Podgląd i zapis",
           "show_expert": "Pokaż ustawienia eksperckie",
-          "hide_expert": "Ukryj ustawienia eksperckie"
+          "hide_expert": "Ukryj ustawienia eksperckie",
+          "deye_controller": "Sterownik Deye"
         }
       },
       "currency_review": {
@@ -938,6 +939,14 @@
           "config_entries": "Integracje prognozy (sumowane)"
         },
         "description": "{detail}"
+      },
+      "deye_controller": {
+        "title": "Sterownik Deye",
+        "description": "Energy Compass przechowuje tryb sterownika, zaakceptowany plan, sesję i stan pracy; plan wykonuje blueprint sterownika Deye (Solarman), który zapisuje falownik. Wybierz urządzenie falownika Solarman; jego sześć programów TOU zostanie znalezionych automatycznie.\n\n{status}",
+        "data": {
+          "enabled": "Włącz sterownik Deye",
+          "device_id": "Urządzenie falownika Solarman"
+        }
       }
     },
     "error": {
@@ -956,7 +965,12 @@
       "rate_limited": "Zbyt wiele prób; spróbuj ponownie później.",
       "cannot_connect": "Nie udało się połączyć z kolektorem Energy Atlas.",
       "unknown": "Rejestracja nie powiodła się z nieznanego powodu.",
-      "schedule_currency": "Taryfa OSD wymaga waluty PLN; najpierw zmień źródło ceny zakupu."
+      "schedule_currency": "Taryfa OSD wymaga waluty PLN; najpierw zmień źródło ceny zakupu.",
+      "controller_device_required": "Wybierz urządzenie falownika Solarman.",
+      "controller_tou_incomplete": "Urządzenie nie ma wszystkich sześciu programów TOU (czas, moc, napięcie, SOC, ładowanie).",
+      "controller_tou_prefix": "Identyfikatory encji programów TOU nie mają wspólnego prefiksu; przywróć domyślne identyfikatory.",
+      "controller_device_in_use": "Inny wpis Energy Compass już steruje tym urządzeniem.",
+      "controller_not_released": "Wybierz tryb Deye Off i poczekaj na przywrócenie profilu bazowego (przywrócenie nie oczekuje), zanim wyłączysz sterownik lub zmienisz jego urządzenie."
     },
     "abort": {
       "site_not_registered": "Ta witryna została zapomniana w innym oknie; włącz ponownie Energy Atlas, aby zarejestrować nową."
@@ -1271,6 +1285,12 @@
           "holding": "Trwa trzymanie",
           "overdue": "Zaległe"
         }
+      },
+      "deye_controller": {
+        "name": "Sterownik Deye"
+      },
+      "deye_runtime": {
+        "name": "Stan pracy sterownika Deye"
       }
     },
     "select": {
@@ -1284,6 +1304,9 @@
           "max_export": "Maksymalny eksport",
           "grid_friendly": "Przyjazna dla sieci"
         }
+      },
+      "deye_mode": {
+        "name": "Tryb sterownika Deye"
       }
     },
     "binary_sensor": {
@@ -1340,11 +1363,67 @@
           "description": "Ile dni historii wysłać, licząc wstecz od teraz. Puste pole wysyła całą dostępną historię."
         }
       }
+    },
+    "controller_runtime": {
+      "name": "Stan pracy sterownika Deye",
+      "description": "Odczytuje lub zastępuje stan pracy sterownika Deye. Używane przez blueprint sterownika Deye.",
+      "fields": {
+        "controller": {
+          "name": "Sterownik",
+          "description": "Sensor sterownika Deye tej instalacji."
+        },
+        "runtime": {
+          "name": "Stan pracy",
+          "description": "Pełny stan pracy do zapisania. Pozostaw puste, aby go tylko odczytać."
+        },
+        "restore_pending": {
+          "name": "Oczekuje przywrócenie",
+          "description": "Czy profil bazowy nadal trzeba przywrócić."
+        }
+      }
+    },
+    "controller_import_package": {
+      "name": "Importuj stan pakietu Deye",
+      "description": "Jednorazowa migracja z pakietu 0.1.36: kopiuje tryb, sesję, zaakceptowany plan i stan pracy do Energy Compass.",
+      "fields": {
+        "controller": {
+          "name": "Sterownik",
+          "description": "Sensor sterownika Deye tej instalacji."
+        },
+        "force": {
+          "name": "Wymuś",
+          "description": "Importuj ponownie, mimo że stan pakietu został już zaimportowany."
+        }
+      }
     }
   },
   "exceptions": {
     "atlas_backfill_not_enabled": {
       "message": "Żaden wpis Energy Compass nie ma włączonego i zarejestrowanego Energy Atlas; najpierw otwórz Opcje → Energy Atlas."
+    },
+    "controller_not_found": {
+      "message": "{entity} nie jest włączonym sterownikiem Deye w Energy Compass."
+    },
+    "runtime_invalid_key": {
+      "message": "Nieznany klucz stanu pracy sterownika: {key}."
+    },
+    "runtime_invalid": {
+      "message": "Stan pracy sterownika musi być obiektem JSON."
+    },
+    "runtime_too_large": {
+      "message": "Stan pracy sterownika przekracza 32768 bajtów."
+    },
+    "package_missing": {
+      "message": "Brak pomocnika pakietu: {role}."
+    },
+    "package_session_inactive": {
+      "message": "Sesja pakietu nie jest aktywna w tym uruchomieniu Home Assistant."
+    },
+    "package_mode_invalid": {
+      "message": "Tryb pakietu nie jest Off, Simulation ani Auto."
+    },
+    "package_import_refused": {
+      "message": "Stan pakietu został już zaimportowany; ustaw force, aby zaimportować ponownie."
     }
   }
 }

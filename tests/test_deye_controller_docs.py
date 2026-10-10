@@ -1,7 +1,8 @@
-"""Fail when the Deye controller, its package or dashboard examples drift from the docs.
+"""Fail when the Deye controller or its dashboard examples drift from the docs.
 
 The guides are mirrors (AGENTS.md, Documentation sweep): every blueprint input,
-package entity, runtime code and dashboard example must be named in both.
+controller entity key and attribute, service, plan reason, runtime code and
+dashboard example must be named in both.
 """
 
 import re
@@ -12,7 +13,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 BLUEPRINT = ROOT / "blueprints/automation/energy_compass/deye_solarman_controller.yaml"
-PACKAGE = ROOT / "packages/energy_compass_deye.yaml"
+CONTROLLER = ROOT / "custom_components/energy_compass/controller.py"
+CONTROLLER_HA = ROOT / "custom_components/energy_compass/controller_ha.py"
+TRANSLATIONS = ROOT / "custom_components/energy_compass/strings.json"
 GENERATOR = ROOT / "tools/deye_controller/build.py"
 NOTIFICATIONS = ROOT / "blueprints/automation/energy_compass/notifications.yaml"
 COUNTER = ROOT / "blueprints/automation/energy_compass/export_value_counter.yaml"
@@ -38,21 +41,33 @@ def blueprint_inputs():
     )
 
 
-def package_entities():
-    package = yaml.safe_load(PACKAGE.read_text())
-    entities = [
-        f"{domain}.{key}"
-        for domain in ["input_select", "input_boolean", "input_datetime"]
-        for key in package[domain]
+def controller_surface():
+    """Entity translation keys, attribute names, services and plan reasons."""
+    import json
+
+    from custom_components.energy_compass import controller
+
+    strings = json.loads(TRANSLATIONS.read_text())
+    keys = [
+        key
+        for platform in ("sensor", "select")
+        for key in strings["entity"][platform]
+        if key.startswith("deye_")
     ]
-    for block in package["template"]:
-        entities += [f"sensor.{sensor['unique_id']}" for sensor in block["sensor"]]
-    return sorted(entities)
+    services = [name for name in strings["services"] if name.startswith("controller_")]
+    return sorted(
+        {
+            *keys,
+            *controller.CONTROLLER_ATTRIBUTES,
+            *controller.PLAN_REASONS,
+            *(f"energy_compass.{name}" for name in services),
+        }
+    )
 
 
 def runtime_codes():
     text = GENERATOR.read_text()
-    codes = set(re.findall(r'get\("code", "([a-z_]+)"\)', text))
+    codes = set(re.findall(r'or "([a-z_]+)"', CONTROLLER_HA.read_text()))
     for expression in re.findall(r"code=([^,]{0,120})", text):
         codes |= set(re.findall(r"'([a-z_]+)'", expression))
     return sorted(codes)
@@ -66,11 +81,22 @@ def examples():
 
 
 def test_extraction_finds_the_known_surface():
-    assert {"plan_entity", "solarman_device", "capacity_kwh", "old_writers"} <= set(
+    assert {"controller_entity", "max_power_w", "old_writers"} <= set(
         blueprint_inputs()
     )
-    assert "input_select.energy_compass_deye_mode" in package_entities()
-    assert "sensor.energy_compass_deye_tou_settings" in package_entities()
+    assert not {"plan_entity", "solarman_device", "capacity_kwh", "eta"} & set(
+        blueprint_inputs()
+    )
+    surface = controller_surface()
+    assert {"deye_controller", "deye_mode", "deye_runtime"} <= set(surface)
+    assert {"controller_schema", "plan_reason", "restore_pending", "tou"} <= set(
+        surface
+    )
+    assert {
+        "energy_compass.controller_runtime",
+        "energy_compass.controller_import_package",
+    } <= set(surface)
+    assert {"ok", "session", "revoked", "sources"} <= set(surface)
     assert {"ok", "blocked", "restored", "waiting", "write_failed"} <= set(
         runtime_codes()
     )
@@ -80,7 +106,7 @@ def test_extraction_finds_the_known_surface():
 @pytest.mark.parametrize("guide", GUIDES, ids=lambda path: path.name)
 @pytest.mark.parametrize(
     "identifier",
-    [*blueprint_inputs(), *package_entities(), *runtime_codes()],
+    [*blueprint_inputs(), *controller_surface(), *runtime_codes()],
 )
 def test_guides_document_controller_surface(guide, identifier):
     assert f"`{identifier}`" in guide.read_text(), (
