@@ -10,5 +10,5 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/datamindzio/ha-energy-compass/issues",
   "requirements": ["scipy==1.18.1"],
-  "version": "0.1.36"
+  "version": "0.1.37"
 }
