@@ -250,7 +250,8 @@ dystrybucji [modelu depozytu](#wartość-depozytu-w-net-billingu) (`buy_distribu
 `buy_distribution_off_peak_rate`); granice pasm stają się granicami interwałów dla planera, tak jak w
 harmonogramie. Nie zmieniają samego źródła ceny zakupu. Źródło-harmonogram zachowuje własne strefy,
 więc wybór harmonogramu taryfy usuwa zapisaną taryfę dystrybucyjną. Podgląd pokazuje obie części ceny
-zakupu pierwszego interwału: część energetyczną i część dystrybucyjną.
+zakupu pierwszego interwału: część energetyczną i część dystrybucyjną. Wiersz zakupu w **Źródła danych →
+Przeglądaj i edytuj źródła** pokazuje tryb dystrybucji, strefy i stawkę w każdej strefie.
 
 **Cena sprzedaży RCE.** **Taryfy → Źródło ceny sprzedaży → Cena rynkowa RCE (PSE)** zapisuje sensor
 integracji `rce_pse` (atrybut `prices`, wartość `rce_pln`, koniec `dtime`, PLN/MWh, 15 minut) jako
@@ -726,7 +727,7 @@ Ujemna cena energii zostaje rzeczywistą ceną i nie ma części energetycznej d
 | `deposit_refund_percent` | 30 | ρ, limit zwrotu jako udział wartości eksportu z miesiąca. 20 przy miesięcznym rozliczeniu RCEm. |
 | `export_value_factor` | 1,0 | Tylko `manual`: ile jest warta kolejna jednostka eksportu (0–1). |
 | `deposit_yearly_value` | 0 | `auto`: depozyt, który spodziewasz się zaksięgować w 12 miesięcy (wartość eksportu w cenie rozliczeniowej, razem z 1,23). 0 = nieznane. |
-| `deposit_yearly_energy_cost` | 0 | `auto`: opłaty, które depozyt może pokryć w 12 miesięcy: energetyczna część zakupów i stała opłata sprzedawcy, którą pokrywa. 0 = nieznane. |
+| `deposit_yearly_energy_cost` | 0 | `auto`: to, co depozyt może pokryć w 12 miesięcy: opłata za energię czynną (za kWh) z poboru, brutto. Opłata handlowa, inne opłaty stałe i dystrybucja do niej nie wchodzą. 0 = nieznane. |
 | `buy_distribution_mode` | `included` | `included` albo `added`, jak wyżej. |
 | `buy_distribution_rate`, `buy_distribution_off_peak_rate` | 0 | Wszystko, co dystrybutor nalicza za kWh (stawka sieciowa, opłata jakościowa, OZE i kogeneracyjna), wpisywane jak cena zakupu; pierwsza to strefa szczytowa albo jedyna, druga strefa poza szczytem. VAT obowiązuje, gdy `buy_apply_vat` jest włączone; `buy_multiplier`, `buy_addition` i próg prognozy dotyczą tylko źródła ceny zakupu. Strefy pochodzą z harmonogramu taryfy źródła zakupu albo z [taryfy dystrybucyjnej](#wbudowane-taryfy-osd); bez żadnej z nich albo przy G11 pierwsza stawka obowiązuje całą dobę. Przy dwóch strefach ustaw obie stawki albo żadną: dokładnie jedna stawka równa 0 kończy obliczenie błędem. Opłata miesięczna należy do `monthly_charge`. |
 
@@ -755,7 +756,9 @@ cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 - **Histereza (`auto`)**: π jest liczone raz na dobę lokalną (przy pierwszym przeliczeniu po lokalnej
   północy) i utrzymywane przez dobę w magazynie `settlement`, więc restart i przeładowanie nie liczą
   go od nowa. Nowa wartość zastępuje utrzymywaną tylko gdy różni się o co najmniej 0,10 albo wynosi
-  dokładnie 0 lub 1. Zmiana któregokolwiek z powyższych ustawień przelicza od razu.
+  dokładnie 0 lub 1. Zmiana któregokolwiek z pięciu ustawień depozytu (`deposit_model`,
+  `deposit_refund_percent`, `export_value_factor`, `deposit_yearly_value`,
+  `deposit_yearly_energy_cost`) przelicza od razu.
 - **Ujemne ceny sprzedaży** zostają w całości: współczynnik skaluje tylko część dodatnią, bo ujemna
   cena jest realną opłatą.
 - **Raportowane koszty się nie zmieniają.** Koszt netto, `Plan.grid_cost`, czujniki kosztów, poziomy

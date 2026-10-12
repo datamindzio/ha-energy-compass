@@ -463,7 +463,7 @@
           "deposit_refund_percent": "Default 30 (hourly RCE settlement; 20 for monthly RCEm); range 0-100 %. After 12 months an unused deposit is refunded up to this share of the month's exported energy value; the rest is void.",
           "export_value_factor": "Default 1 (invoice price); range 0-1. Manual model only: what one more unit of export is worth in planning, used as typed. The import-energy factor is derived from it and the refund cap (a value below the cap percentage devalues the energy part of imports fully).",
           "deposit_yearly_value": "Default 0 (unknown); range 0-1,000,000. Auto model: the export value booked on the deposit over 12 months, including the 1.23 coefficient.",
-          "deposit_yearly_energy_cost": "Default 0 (unknown); range 0-1,000,000. Auto model: everything the deposit can pay in a year - the energy part of purchases and any fixed seller fee it covers."
+          "deposit_yearly_energy_cost": "Default 0 (unknown); range 0-1,000,000. Auto model: what the deposit can pay in a year - the per-kWh energy charge of 12 months of import, gross. Leave out the trade fee, other fixed fees and distribution."
         }
       },
       "pv_solar_forecast": {
@@ -969,7 +969,7 @@
           "deposit_refund_percent": "Default 30 (hourly RCE settlement; 20 for monthly RCEm); range 0-100 %. After 12 months an unused deposit is refunded up to this share of the month's exported energy value; the rest is void.",
           "export_value_factor": "Default 1 (invoice price); range 0-1. Manual model only: what one more unit of export is worth in planning, used as typed. The import-energy factor is derived from it and the refund cap (a value below the cap percentage devalues the energy part of imports fully).",
           "deposit_yearly_value": "Default 0 (unknown); range 0-1,000,000. Auto model: the export value booked on the deposit over 12 months, including the 1.23 coefficient.",
-          "deposit_yearly_energy_cost": "Default 0 (unknown); range 0-1,000,000. Auto model: everything the deposit can pay in a year - the energy part of purchases and any fixed seller fee it covers."
+          "deposit_yearly_energy_cost": "Default 0 (unknown); range 0-1,000,000. Auto model: what the deposit can pay in a year - the per-kWh energy charge of 12 months of import, gross. Leave out the trade fee, other fixed fees and distribution."
         }
       },
       "energy_atlas": {

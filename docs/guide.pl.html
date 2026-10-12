@@ -532,7 +532,8 @@ dystrybucji <a href="#wartość-depozytu-w-net-billingu">modelu depozytu</a> (<c
 <code>buy_distribution_off_peak_rate</code>); granice pasm stają się granicami interwałów dla planera, tak jak w
 harmonogramie. Nie zmieniają samego źródła ceny zakupu. Źródło-harmonogram zachowuje własne strefy,
 więc wybór harmonogramu taryfy usuwa zapisaną taryfę dystrybucyjną. Podgląd pokazuje obie części ceny
-zakupu pierwszego interwału: część energetyczną i część dystrybucyjną.</p>
+zakupu pierwszego interwału: część energetyczną i część dystrybucyjną. Wiersz zakupu w <strong>Źródła danych →
+Przeglądaj i edytuj źródła</strong> pokazuje tryb dystrybucji, strefy i stawkę w każdej strefie.</p>
 <p><strong>Cena sprzedaży RCE.</strong> <strong>Taryfy → Źródło ceny sprzedaży → Cena rynkowa RCE (PSE)</strong> zapisuje sensor
 integracji <code>rce_pse</code> (atrybut <code>prices</code>, wartość <code>rce_pln</code>, koniec <code>dtime</code>, PLN/MWh, 15 minut) jako
 źródło prognozy z progiem ceny 0: surowa wartość jest ograniczona od dołu do 0 za kWh <strong>przed</strong>
@@ -1279,7 +1280,7 @@ Ujemna cena energii zostaje rzeczywistą ceną i nie ma części energetycznej d
 <tr>
 <td><code>deposit_yearly_energy_cost</code></td>
 <td>0</td>
-<td><code>auto</code>: opłaty, które depozyt może pokryć w 12 miesięcy: energetyczna część zakupów i stała opłata sprzedawcy, którą pokrywa. 0 = nieznane.</td>
+<td><code>auto</code>: to, co depozyt może pokryć w 12 miesięcy: opłata za energię czynną (za kWh) z poboru, brutto. Opłata handlowa, inne opłaty stałe i dystrybucja do niej nie wchodzą. 0 = nieznane.</td>
 </tr>
 <tr>
 <td><code>buy_distribution_mode</code></td>
@@ -1316,7 +1317,9 @@ cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 <li><strong>Histereza (<code>auto</code>)</strong>: π jest liczone raz na dobę lokalną (przy pierwszym przeliczeniu po lokalnej
   północy) i utrzymywane przez dobę w magazynie <code>settlement</code>, więc restart i przeładowanie nie liczą
   go od nowa. Nowa wartość zastępuje utrzymywaną tylko gdy różni się o co najmniej 0,10 albo wynosi
-  dokładnie 0 lub 1. Zmiana któregokolwiek z powyższych ustawień przelicza od razu.</li>
+  dokładnie 0 lub 1. Zmiana któregokolwiek z pięciu ustawień depozytu (<code>deposit_model</code>,
+  <code>deposit_refund_percent</code>, <code>export_value_factor</code>, <code>deposit_yearly_value</code>,
+  <code>deposit_yearly_energy_cost</code>) przelicza od razu.</li>
 <li><strong>Ujemne ceny sprzedaży</strong> zostają w całości: współczynnik skaluje tylko część dodatnią, bo ujemna
   cena jest realną opłatą.</li>
 <li><strong>Raportowane koszty się nie zmieniają.</strong> Koszt netto, <code>Plan.grid_cost</code>, czujniki kosztów, poziomy

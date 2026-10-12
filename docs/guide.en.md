@@ -244,7 +244,8 @@ rates of the [deposit model](#net-billing-deposit-value) (`buy_distribution_rate
 `buy_distribution_off_peak_rate`); their band edges become interval boundaries for the planner, as for
 a schedule. They do not change the buy source. A schedule source keeps its own zones, so choosing a
 tariff schedule drops a stored distribution tariff. Preview shows both parts of the first interval's
-buy price, the energy part and the distribution part.
+buy price, the energy part and the distribution part. The buy row of **Sources → Review and edit
+sources** shows the distribution mode, the zones and the rate per zone.
 
 **RCE sell price.** **Tariffs → Sell source → RCE market price (PSE)** saves the sensor of the `rce_pse`
 integration (attribute `prices`, value `rce_pln`, end `dtime`, PLN/MWh, 15 minutes) as a forecast source
@@ -715,7 +716,7 @@ negative energy price keeps its real price and has no energy part to waive.
 | `deposit_refund_percent` | 30 | ρ, the refund cap as a share of a month's export value. 20 for monthly RCEm settlement. |
 | `export_value_factor` | 1.0 | `manual` only: what one more unit of export is worth (0–1). |
 | `deposit_yearly_value` | 0 | `auto`: deposit you expect to be booked over 12 months (export value at the settlement price, 1.23 included). 0 = unknown. |
-| `deposit_yearly_energy_cost` | 0 | `auto`: charges the deposit can pay over 12 months: the energy part of imports and any fixed seller fee it covers. 0 = unknown. |
+| `deposit_yearly_energy_cost` | 0 | `auto`: what the deposit can pay over 12 months: the per-kWh energy charge of the imports, gross. The trade fee, other fixed fees and distribution are not part of it. 0 = unknown. |
 | `buy_distribution_mode` | `included` | `included` or `added`, as above. |
 | `buy_distribution_rate`, `buy_distribution_off_peak_rate` | 0 | Everything the distributor bills per kWh (network rate, quality, RES and cogeneration fees), typed like the buy rate; the first is the peak or single zone, the second the off-peak zone. VAT applies when `buy_apply_vat` is on; `buy_multiplier`, `buy_addition` and a forecast floor apply to the buy source only. The zones come from the tariff schedule of the buy source or from a [distribution tariff](#built-in-polish-tariffs); with neither, or with G11, the first rate applies all day. With two zones set both rates or neither: exactly one zero rate fails the calculation closed. The monthly fee belongs in `monthly_charge`. |
 
@@ -744,7 +745,8 @@ planning sell = φx × max(sell, 0) + min(sell, 0)
 - **Hysteresis (`auto`)**: π is evaluated once per local day (the first calculation after local
   midnight) and held for the day in the `settlement` Store, so restarts and reloads do not re-evaluate
   it. A new value replaces the held one only if it differs by at least 0.10, or reaches exactly 0 or 1.
-  Changing any of the settings above re-evaluates at once.
+  Changing any of the five deposit settings (`deposit_model`, `deposit_refund_percent`,
+  `export_value_factor`, `deposit_yearly_value`, `deposit_yearly_energy_cost`) re-evaluates at once.
 - **Negative sell prices** stay whole: the factor scales only the positive part, because a negative
   price is a real charge.
 - **Reported costs do not change.** Net cost, `Plan.grid_cost`, the cost sensors, consumption levels and

@@ -131,7 +131,7 @@ manual:  φx = export_value_factor (as typed, for ρ < 1)
          π  = clamp((1 - φx) / (1 - ρ), 0, 1), used for φe
 ```
 
-`D` is `deposit_yearly_value`, `E` is `deposit_yearly_energy_cost`. The ramp starts at ρ/2 because expiry is not spread over the year: the unused amount lands on the high-export months, which hold about half of the yearly deposit (an assumption, not measured), so their cap binds at about half the yearly share. `auto` evaluates π once per local day, keeps it in a Store, and replaces the held value only when the new one differs by at least 0.10 or is exactly 0 or 1; a change of any input setting re-evaluates at once. `D` or `E` equal to 0 gives π = 0 with `reason: inputs_missing`. When π > 0 and no slot has a distribution part (`dist` is 0 everywhere), the whole buy price would be energy and an import would look free: φe is forced to 1 and `reason` is `split_missing`, φx unchanged. The deposit balance is not an input: oldest-first use makes the 12-month sums decide the long-run state.
+`D` is `deposit_yearly_value`, `E` is `deposit_yearly_energy_cost`. The ramp starts at ρ/2 because expiry is not spread over the year: the unused amount lands on the high-export months, which hold about half of the yearly deposit (an assumption, not measured), so their cap binds at about half the yearly share. `auto` evaluates π once per local day, keeps it in a Store, and replaces the held value only when the new one differs by at least 0.10 or is exactly 0 or 1; a change of any of the five deposit settings re-evaluates at once. `D` or `E` equal to 0 gives π = 0 with `reason: inputs_missing`. When π > 0 and no slot has a distribution part (`dist` is 0 everywhere), the whole buy price would be energy and an import would look free: φe is forced to 1 and `reason` is `split_missing`, φx unchanged. The deposit balance is not an input: oldest-first use makes the 12-month sums decide the long-run state.
 
 Stays at invoice prices: `Plan.grid_cost`, `Plan.objective`, `plan_monetary_cost()` and the net cost in the plan attributes, the consumption probes' reported cost, the `maximum_grid_charge_price` comparison, the autonomy and peak-reserve rankings (`buy_plan ≤ buy`, so their dominance holds), the Atlas solve payload, the Deye controller, the cost card and the export value counter. The strategy weights, `import_penalty_per_kwh` and the episode hurdles act on top of the planning prices, unscaled.
 
@@ -139,7 +139,7 @@ Worked example (PGE G12 2026 gross: day 0.7018 energy + 0.540 distribution, nigh
 
 A dynamic energy price with a G12 distribution tariff (`added`; energy 0.25 midday, 0.95 in the evening peak, 0.45 at night; distribution 0.540 peak, 0.143 off-peak) gives buy 0.79, 1.49 and 0.593. At π = 1 the planning buy prices are the distribution parts alone: 0.540, 0.540 and 0.143.
 
-Diagnostics are published as `dispatch_policy.settlement` (`model`, `export_value_factor`, `import_energy_factor`, `cap_pressure`, `unused_share`, `refund_percent`, `yearly_deposit`, `yearly_energy_cost`, `evaluated_on`, `reason`).
+Diagnostics are published as `dispatch_policy.settlement` (`model`, `export_value_factor`, `import_energy_factor`, `cap_pressure`, `unused_share`, `refund_percent`, `yearly_deposit`, `yearly_energy_cost`, `distribution_mode`, `evaluated_on`, `reason`).
 
 ## Inverter standby loss
 

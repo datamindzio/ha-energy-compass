@@ -470,7 +470,7 @@
           "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada.",
           "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu całkowicie deprecjonuje część energetyczną importu).",
           "deposit_yearly_value": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wartość eksportu zaksięgowana na depozycie w 12 miesięcy, razem ze współczynnikiem 1,23.",
-          "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wszystko, co depozyt może zapłacić w roku - część energetyczna zakupów i stała opłata sprzedawcy, którą pokrywa."
+          "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: to, co depozyt może zapłacić w roku - opłata za energię czynną (za kWh) z 12 miesięcy poboru, brutto. Bez opłaty handlowej, innych opłat stałych i dystrybucji."
         }
       },
       "pv_solar_forecast": {
@@ -983,7 +983,7 @@
           "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada.",
           "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu całkowicie deprecjonuje część energetyczną importu).",
           "deposit_yearly_value": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wartość eksportu zaksięgowana na depozycie w 12 miesięcy, razem ze współczynnikiem 1,23.",
-          "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wszystko, co depozyt może zapłacić w roku - część energetyczna zakupów i stała opłata sprzedawcy, którą pokrywa."
+          "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: to, co depozyt może zapłacić w roku - opłata za energię czynną (za kWh) z 12 miesięcy poboru, brutto. Bez opłaty handlowej, innych opłat stałych i dystrybucji."
         }
       },
       "energy_atlas": {

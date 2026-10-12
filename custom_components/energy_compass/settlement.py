@@ -64,6 +64,7 @@ def resolve_settlement(
             and held.get("inputs") == inputs
             and isinstance(held.get("cap_pressure"), int | float)
             and not isinstance(held.get("cap_pressure"), bool)
+            and isinstance(held.get("evaluated_on"), str)
         )
         if kept and held["evaluated_on"] == today:
             pressure, reason = float(held["cap_pressure"]), "held"

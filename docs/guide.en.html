@@ -526,7 +526,8 @@ rates of the <a href="#net-billing-deposit-value">deposit model</a> (<code>buy_d
 <code>buy_distribution_off_peak_rate</code>); their band edges become interval boundaries for the planner, as for
 a schedule. They do not change the buy source. A schedule source keeps its own zones, so choosing a
 tariff schedule drops a stored distribution tariff. Preview shows both parts of the first interval's
-buy price, the energy part and the distribution part.</p>
+buy price, the energy part and the distribution part. The buy row of <strong>Sources → Review and edit
+sources</strong> shows the distribution mode, the zones and the rate per zone.</p>
 <p><strong>RCE sell price.</strong> <strong>Tariffs → Sell source → RCE market price (PSE)</strong> saves the sensor of the <code>rce_pse</code>
 integration (attribute <code>prices</code>, value <code>rce_pln</code>, end <code>dtime</code>, PLN/MWh, 15 minutes) as a forecast source
 with a price floor of 0: the raw value is floored at 0 per kWh <strong>before</strong> the multiplier, VAT and
@@ -1268,7 +1269,7 @@ negative energy price keeps its real price and has no energy part to waive.</p>
 <tr>
 <td><code>deposit_yearly_energy_cost</code></td>
 <td>0</td>
-<td><code>auto</code>: charges the deposit can pay over 12 months: the energy part of imports and any fixed seller fee it covers. 0 = unknown.</td>
+<td><code>auto</code>: what the deposit can pay over 12 months: the per-kWh energy charge of the imports, gross. The trade fee, other fixed fees and distribution are not part of it. 0 = unknown.</td>
 </tr>
 <tr>
 <td><code>buy_distribution_mode</code></td>
@@ -1305,7 +1306,8 @@ planning sell = φx × max(sell, 0) + min(sell, 0)
 <li><strong>Hysteresis (<code>auto</code>)</strong>: π is evaluated once per local day (the first calculation after local
   midnight) and held for the day in the <code>settlement</code> Store, so restarts and reloads do not re-evaluate
   it. A new value replaces the held one only if it differs by at least 0.10, or reaches exactly 0 or 1.
-  Changing any of the settings above re-evaluates at once.</li>
+  Changing any of the five deposit settings (<code>deposit_model</code>, <code>deposit_refund_percent</code>,
+  <code>export_value_factor</code>, <code>deposit_yearly_value</code>, <code>deposit_yearly_energy_cost</code>) re-evaluates at once.</li>
 <li><strong>Negative sell prices</strong> stay whole: the factor scales only the positive part, because a negative
   price is a real charge.</li>
 <li><strong>Reported costs do not change.</strong> Net cost, <code>Plan.grid_cost</code>, the cost sensors, consumption levels and

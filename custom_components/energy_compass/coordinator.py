@@ -113,6 +113,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         self._balance_persist = True
         self._balance_store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.balance")
         self._settlement = None
+        self._settlement_stored = False
         self._settlement_store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.settlement")
         self._calibration = calibration.empty_state()
         self._calibration_store = Store(
@@ -152,6 +153,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         self._settlement = (
             stored_settlement if isinstance(stored_settlement, dict) else None
         )
+        self._settlement_stored = stored_settlement is not None
         stored = await self._calibration_store.async_load()
         if stored is not None and not calibration.valid_state(stored):
             _LOGGER.warning("Invalid stored calibration state; starting empty")
@@ -1089,6 +1091,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                             self.atlas.add_solve(atlas_payload)
                         if settlement_state != self._settlement:
                             self._settlement = settlement_state
+                            self._settlement_stored = True
                             self._settlement_store.async_delay_save(
                                 lambda: self._settlement, 1
                             )
@@ -1229,5 +1232,6 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         await self._grid_charge_store.async_save(self._grid_charge_commitment)
         if self._balance is not None and self._balance_persist:
             await self._balance_store.async_save(self._balance)
-        await self._settlement_store.async_save(self._settlement)
+        if self._settlement is not None or self._settlement_stored:
+            await self._settlement_store.async_save(self._settlement)
         await self._calibration_store.async_save(self._calibration)

@@ -87,3 +87,15 @@ async def test_a_corrupt_store_is_ignored(
     coordinator = await _start(hass, entry)
 
     assert coordinator._settlement["cap_pressure"] == 1.0
+
+
+async def test_model_off_without_a_stored_state_writes_no_file(
+    recorder_mock, hass, hass_storage, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    entry, key = _entry(hass, "off")
+    coordinator = await _start(hass, entry)
+
+    assert coordinator._settlement is None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert key not in hass_storage

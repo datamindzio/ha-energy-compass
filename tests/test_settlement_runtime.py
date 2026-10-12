@@ -375,6 +375,21 @@ def test_a_malformed_held_state_is_ignored():
         assert result["reason"] == "ok"
 
 
+def test_a_held_state_without_its_day_is_ignored():
+    values = values_for(deposit_yearly_value=3300)
+    _, state = resolve_settlement(values, None, NOW, ZONE)
+    for evaluated_on in (None, 20261012):
+        held = {key: value for key, value in state.items() if key != "evaluated_on"}
+        if evaluated_on is not None:
+            held["evaluated_on"] = evaluated_on
+        held["cap_pressure"] = 0.4
+
+        result, _ = resolve_settlement(values, held, NOW, ZONE)
+
+        assert result["reason"] == "ok"
+        assert result["cap_pressure"] == 1.0
+
+
 def test_compute_publishes_the_settlement_diagnostics_and_state():
     config = fixed_config(**settings(deposit_yearly_value=3300))
     result = compute(config, {}, NOW)

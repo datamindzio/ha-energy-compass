@@ -1052,3 +1052,93 @@ async def test_pessimistic_pv_source_is_added_listed_and_removed(
     result = await manager.async_configure(fid, {"confirm": True})
     assert result["step_id"] == "sources"
     assert "pessimistic" not in flow._draft["sources"]["pv"]
+
+
+def _buy_label(config, language="en"):
+    from custom_components.energy_compass.source_management import source_inventory
+
+    return [
+        label
+        for ref, label in source_inventory(config, None, language)
+        if ref.role == "buy"
+    ]
+
+
+def test_buy_summary_shows_distribution_for_forecast_with_a_distribution_tariff():
+    config = default_configuration("PLN", "Europe/Warsaw")
+    binding = _forecast("sensor.prices", "prices")
+    config["sources"]["buy"].update(
+        mode="forecast",
+        fixed=None,
+        forecast=[binding, binding],
+        distribution_schedule={
+            "tariff": "pge_g12",
+            "meter_winter_clock": False,
+            "params": {},
+        },
+    )
+    config["settings"].update(
+        buy_distribution_mode="added",
+        buy_distribution_rate=0.4,
+        buy_distribution_off_peak_rate=0.1,
+        buy_apply_vat=True,
+        vat_percent=23,
+    )
+
+    first, second = _buy_label(config)
+
+    assert first.endswith(
+        " · distribution added · PGE Dystrybucja G12 · "
+        "peak 0.492, off-peak 0.123 PLN/kWh"
+    )
+    assert "distribution" not in second
+    assert _buy_label(config, "pl")[0].endswith(
+        " · dystrybucja doliczana · PGE Dystrybucja G12 · "
+        "szczyt 0.492, poza szczytem 0.123 PLN/kWh"
+    )
+
+
+def test_buy_summary_takes_distribution_zones_from_a_schedule_source():
+    config = default_configuration("PLN", "Europe/Warsaw")
+    config["sources"]["buy"].update(
+        mode="schedule",
+        fixed=None,
+        schedule={
+            "tariff": "pge_g12",
+            "meter_winter_clock": False,
+            "params": {},
+        },
+    )
+    config["settings"].update(
+        buy_distribution_rate=0.4, buy_distribution_off_peak_rate=0.1
+    )
+
+    assert _buy_label(config) == [
+        (
+            "Buy · Polish tariff schedule (G11/G12/G12w) · PGE Dystrybucja G12"
+            " · distribution inside the price · PGE Dystrybucja G12"
+            " · peak 0.4, off-peak 0.1 PLN/kWh"
+        )
+    ]
+    assert _buy_label(config, "pl")[0].endswith(
+        " · dystrybucja w cenie · PGE Dystrybucja G12"
+        " · szczyt 0.4, poza szczytem 0.1 PLN/kWh"
+    )
+
+
+def test_buy_summary_without_a_distribution_tariff_is_one_zone_or_silent():
+    config = default_configuration("PLN", "Europe/Warsaw")
+
+    assert _buy_label(config) == ["Buy · Fixed rate"]
+
+    config["settings"].update(buy_distribution_rate=0.3)
+    assert _buy_label(config) == [
+        "Buy · Fixed rate · distribution inside the price · single zone · 0.3 PLN/kWh"
+    ]
+    assert _buy_label(config, "pl") == [
+        "Zakup · Stała stawka · dystrybucja w cenie · jedna strefa · 0.3 PLN/kWh"
+    ]
+    config["settings"].update(buy_distribution_mode="added", buy_distribution_rate=0)
+    assert _buy_label(config) == [
+        "Buy · Fixed rate · distribution added · single zone · 0 PLN/kWh"
+    ]
