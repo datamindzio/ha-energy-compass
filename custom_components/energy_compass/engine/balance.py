@@ -6,6 +6,11 @@ from datetime import UTC, datetime, timedelta
 from .models import BalanceWindow, Battery, Plan, Problem, Slot
 
 DUE_LOOKAHEAD = timedelta(hours=24)
+# Share of the pessimistic shortfall cost that ranks otherwise equal windows,
+# and the share of the balance miss cost the dearest ranking may not exceed so
+# the ranking alone never makes the solver skip the balance.
+FALLBACK_WEIGHT = 0.05
+FALLBACK_MISS_SHARE = 0.5
 
 
 def _aligned(moment: datetime) -> bool:
@@ -30,6 +35,10 @@ def candidate_windows(
     With a pessimistic PV series (and the battery to simulate on it) a
     CHARGE_PV window is offered only if the pack still reaches the threshold by
     the window start and PV still covers load inside the window on that series.
+    A window offered as CHARGE_GRID on that series carries the pessimistic
+    shortfall cost the solver uses to rank it against the others: the energy
+    the pack still lacks at the window start plus the load PV leaves inside
+    the window, at the window's buy prices.
     """
     pessimistic = pessimistic_pv_kwh is not None and battery is not None
     reach = _best_case_energy(slots, battery, pessimistic_pv_kwh) if pessimistic else ()
@@ -66,8 +75,39 @@ def candidate_windows(
             mode = "CHARGE_GRID"
         else:
             continue
-        windows.append(BalanceWindow(members, mode))
+        fallback = 0.0
+        if pessimistic and mode == "CHARGE_GRID":
+            mean_buy = sum(slots[i].buy_per_kwh for i in members) / len(members)
+            missing = max(0.0, threshold_kwh - reach[first]) / battery.eta_charge
+            fallback = missing * mean_buy + sum(
+                max(0.0, slots[i].load_kwh - pessimistic_pv_kwh[i])
+                * slots[i].buy_per_kwh
+                for i in members
+            )
+        windows.append(BalanceWindow(members, mode, fallback))
     return tuple(windows)
+
+
+def fallback_costs(
+    windows: tuple[BalanceWindow, ...], miss_cost: float
+) -> tuple[float, ...]:
+    """Solver cost of choosing each window, relative to the cheapest one.
+
+    The solver prices a window on the median PV series, where a vetoed
+    CHARGE_GRID window can look free, so every start would tie. This weighted
+    excess over the cheapest window's pessimistic shortfall picks the start that
+    is cheapest if the pessimistic series comes true. The weight shrinks so the
+    dearest window never costs more than a share of the miss cost. Zero for a
+    single window (a pinned probe) and when no window carries a shortfall.
+    """
+    if not windows:
+        return ()
+    floor = min(window.fallback_cost for window in windows)
+    spread = max(window.fallback_cost for window in windows) - floor
+    if spread <= 0:
+        return (0.0,) * len(windows)
+    weight = min(FALLBACK_WEIGHT, FALLBACK_MISS_SHARE * max(0.0, miss_cost) / spread)
+    return tuple(weight * (window.fallback_cost - floor) for window in windows)
 
 
 def _best_case_energy(
