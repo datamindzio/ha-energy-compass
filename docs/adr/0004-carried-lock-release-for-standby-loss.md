@@ -71,24 +71,37 @@ The released rows are `HOLD` with full import, the mode the unlocked solver pick
 
 ## Follow-up (T-025): idle committed intervals and HOLD on a chargeable surplus
 
-1. **Idle interval.** A committed interval in which no PV-follow member can reach the minimum activity
-   (`_follow_open`: the bounds `constrain_modes` puts on both modes, taken from the problem) is `HOLD` by
-   classification. The one-hot row lets `HOLD` there without a release, and the duration rows give the interval its
-   neighbour's group indicators, so it starts no `HOLD` clock and does not interrupt the PV-follow one. The
-   validator accepts a `HOLD` row there only when `idle_slots` lists the interval (its bounds are never tighter than
-   the model's, also with a flexible-load probe, whose realised load is at most the largest probe the model allows).
-   The controller writes the `HOLD` registers for such a row, which is what the inverter does anyway with nothing to
-   follow. The coordinator keeps the persisted commitment (mode and start) on such a row, so the next calculation
-   still carries `SELF_CONSUME`/`CHARGE_PV`; `dispatch_policy.carried_idle_starts` lists the intervals.
+1. **Idle interval: bridge or HOLD run.** A committed interval in which no PV-follow member can reach the minimum
+   activity (`_follow_open`: the bounds `constrain_modes` puts on both modes, taken from the problem) is `HOLD` by
+   classification, and that alone is not leaving the commitment. The model gives each such interval a binary
+   `hold_run`. 0 is a *bridge*: the interval continues the commitment, needs no release, carries PV-follow in the
+   duration rows and starts no `HOLD` clock. 1 is a real `HOLD` run with its own minimum duration; it needs what any
+   `HOLD` needs (a release flag, a `HOLD` already under way, or in the first interval the observed pack already
+   spent). A first version had only the bridge, so an idle first interval lost the spent-pack release and the
+   problem was `infeasible`; the run reading is what keeps the sweep at zero newly infeasible problems.
+   The solver reports which rows it bridged (`Plan.carried_bridges`) and hands them to
+   `validate_modes(problem, flows, bridges)`. A bridge row must be `HOLD` in an interval `idle_slots` lists; every
+   other `HOLD` row, an idle one included, takes the normal release check. Without `bridges` every idle row reads as
+   a bridge. Flexible-load probes are out of scope of the bridge reading: the model takes the idle set with the
+   largest probe it may add, and the validator checks the bridges the solver reports against the problem it is
+   given. The controller writes the `HOLD` registers for a bridge row, which is what the inverter does anyway with
+   nothing to follow. The coordinator keeps the persisted commitment (mode and start) on a bridge row, so the next
+   calculation still carries `SELF_CONSUME`/`CHARGE_PV`, and the clock of a later real `HOLD` run starts at its own
+   first row, not at the bridges before it (`mode_run_start`); `dispatch_policy.carried_idle_starts` lists the bridge
+   rows.
 2. **HOLD never *starts* on a chargeable surplus inside the commitment.** The release (`lock_depleted`, or the
    observed SoC in the first interval) allows `HOLD` to start only in an interval where `_takes_surplus` is false;
    in the first interval that was already so. A `HOLD` run that began earlier goes on through a surplus, since it
-   holds its own minimum duration. The validator applies the same test at every committed interval.
+   holds its own minimum duration. The validator applies the same test at every committed interval. The full-pack
+   release of T-010 (`lock_full`) is not bound by it: a pack too full to charge has nothing to take.
 3. Only the carried commitment is covered. A PV-follow mode the solver starts itself still needs its next
    intervals to offer a member (no `HOLD` bridge); changing that is a separate decision.
 
-Evidence: 1500 seeded random committed problems (30 minutes to 5 hours, loads and PV around the minimum activity,
-both initial modes, 30/60/120 minute durations, with and without standby loss) against the previous code: no newly
-infeasible problem, 536 newly feasible, and `HOLD` started on a chargeable surplus inside a commitment in 0 plans
-(9 before). What stays `infeasible` there is `preserve_initial` that cannot be met (T-001) and the rare standby
-loss that only scattered PV could pay.
+Evidence: `tests/test_carried_commitment_sweep.py` keeps a seeded corpus of committed problems (2 to 16 quarter
+hours, loads and PV around the minimum activity, both initial modes, 30/60/120 minute durations, sites that cannot
+export, packs a hair above the reserve or below the ceiling, standby loss, a legacy direction guard, flexible-load
+probes). It fails on main and passes here: every problem is planned or `infeasible`, never rejected by the
+validator, and no plan starts `HOLD` on a chargeable surplus. Against main, seed 11 with 1200 problems in each of
+three variants (plain, with the legacy direction guard, with flexible-load probes) gave no newly infeasible
+problem. What stays `infeasible` there is `preserve_initial` that cannot be met (T-001) and the rare standby loss
+that only scattered PV could pay.

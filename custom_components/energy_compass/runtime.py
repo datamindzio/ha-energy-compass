@@ -39,7 +39,7 @@ from .engine.consumption import (
     serialize_opportunity,
 )
 from .engine.daily_energy import daily_export_rows
-from .engine.dispatch_policy import MODES, idle_slots, safety_exception
+from .engine.dispatch_policy import MODES, safety_exception
 from .engine.models import (
     Battery,
     CompassSettings,
@@ -1343,7 +1343,7 @@ def compute(
             and values["minimum_mode_minutes"] > 0,
             "safety_exception": safety_exception(problem),
             "carried_idle_starts": [
-                detailed[index]["start"] for index in sorted(idle_slots(problem))
+                detailed[index]["start"] for index in plan.carried_bridges
             ],
             "limit_export_to_pv": values["limit_export_to_pv"],
             "export_limit_scope": values["export_limit_scope"],
