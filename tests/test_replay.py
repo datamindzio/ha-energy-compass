@@ -159,6 +159,14 @@ def _bad_interval(index, **row):
         (_bad_interval(5, buy=float("nan")), "days[2][5]: buy must be finite"),
         (_bad_interval(6, sell=None), "days[2][6]: sell must be a number"),
         (_bad_interval(7, pv="x"), "days[2][7]: pv must be a number"),
+        (
+            _bad_interval(8, buy_energy=-0.1),
+            "days[2][8]: buy_energy must not be negative",
+        ),
+        (
+            _bad_interval(9, buy_energy=9.0),
+            "days[2][9]: buy_energy must not exceed buy",
+        ),
         (_document(interval_minutes="soon"), "interval_minutes must be a number"),
         (_document(interval_minutes=0), "interval_minutes must be positive"),
         (_document(timezone="Nowhere/Land"), "unknown timezone"),
@@ -373,3 +381,50 @@ def test_charge_grid_only_the_grid_share_follows_the_plan(
     assert flow.charge_kwh == pytest.approx(charge)
     assert flow.grid_import_kwh == pytest.approx(grid_import)
     assert flow.grid_export_kwh == 0
+
+
+_DEPOSIT = ("--set", "deposit_model=manual")
+
+
+def _total(days, key):
+    return sum(day[key] for day in days)
+
+
+def test_default_factor_leaves_the_replay_untouched(capsys):
+    _, baseline, _ = run(capsys)
+    _, manual, _ = run(capsys, *_DEPOSIT, "--set", "export_value_factor=1.0")
+
+    assert manual == baseline
+
+
+def test_low_export_factor_moves_the_plan_but_not_the_measuring_stick(capsys):
+    _, baseline, _ = run(capsys)
+    code, low, _ = run(capsys, *_DEPOSIT, "--set", "export_value_factor=0.3")
+
+    assert code == 0
+    assert _total(low, "self_use") == pytest.approx(_total(baseline, "self_use"))
+    assert _total(low, "plan") == pytest.approx(2.151, abs=1e-3)
+    assert _total(low, "hindsight") == pytest.approx(1.336, abs=1e-3)
+    assert _total(low, "plan") > _total(baseline, "plan")
+
+
+def test_buy_energy_is_read_from_csv(tmp_path, capsys):
+    path = tmp_path / "days.csv"
+    path.write_text(
+        "start,buy,sell,pv_forecast,load_forecast,pv,load,buy_energy\n"
+        + "".join(
+            f"2026-09-20T{hour:02d}:00:00+02:00,0.5,0.2,0,0.4,0,0.4,{energy}\n"
+            for hour, energy in ((0, "0.3"), (1, ""), (2, "0.9"))
+        )
+    )
+
+    code = replay.main([str(path), "--timezone", "Europe/Warsaw"])
+
+    assert code == 2
+    assert "line 4: buy_energy must not exceed buy" in capsys.readouterr().err
+
+
+def test_ignored_rate_settings_warn(capsys):
+    _, _, err = run(capsys, "--set", "buy_energy_rate=0.2")
+
+    assert "buy_energy" in err

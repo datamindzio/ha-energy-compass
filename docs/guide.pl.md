@@ -159,8 +159,10 @@ zapisie; Podgląd oznacza ten klucz jako zmieniony, podając pomocnika i jego ef
 
 Polskie profile rozliczenia i taryf wymagają waluty PLN; wybór takiego profilu z inną walutą jest
 odrzucany, przy polu, które go wywołało. Profile startowe nigdy nie ustawiają ceny taryfy
-(`buy_rate`, `buy_off_peak_rate`, `sell_rate`, `buy_addition`, `sell_addition`, `monthly_charge`) i
-nigdy nie dotykają ustawienia należącego do strategii.
+(`buy_rate`, `buy_off_peak_rate`, `buy_energy_rate`, `buy_off_peak_energy_rate`, `sell_rate`,
+`buy_addition`, `sell_addition`, `monthly_charge`) i nigdy nie dotykają ustawienia należącego do
+strategii. Nie włączają też [modelu depozytu](#wartość-depozytu-w-net-billingu): każda instalacja
+startuje z nim wyłączonym.
 
 **Sell only PV** (`limit_export_to_pv`, „sprzedawaj tylko PV”) pozostaje włączone przy każdym
 profilu rozliczenia — polski prosument może sprzedawać tylko energię z własnej instalacji PV — i
@@ -669,12 +671,84 @@ Zasady (domyślnie 60 min, 0,1 kW):
 | **Minimalna korzyść eksportu** (`minimum_export_episode_benefit`) | 1 jednostka waluty | Każdy dodatkowy okres eksportu z baterii musi poprawić koszt całego horyzontu co najmniej o tę kwotę. `0` wyłącza. |
 | **Minimalna korzyść epizodu ładowania z sieci** (`minimum_grid_charge_episode_benefit`) | 0 (wył.) | Ten sam próg dla nowych okresów ładowania z sieci; skupia ładowanie w mniej epizodów. |
 | **Kara za import** (`import_penalty_per_kwh`) | 0 | Planistyczna cena cienia za każdą importowaną kWh, w każdej strategii. |
+| **Model depozytu** (`deposit_model`) | `off` | Wycenia eksport i część energetyczną importu tym, ile depozyt prosumencki naprawdę zwróci. Zob. [Wartość depozytu w net-billingu](#wartość-depozytu-w-net-billingu). |
 | **Pobór czuwania falownika** (`idle_drain_kw`) | 0 (wył.) | Stały ubytek energii baterii modelowany w każdym przedziale. |
 | **Zapas baterii na drogie okresy** (`peak_reserve_margin_kwh`) | 0 (wył.) | Energia ponad prognozowaną potrzebę na start drogiego okresu. Zob. [Zapas na drogie okresy](#zapas-na-drogie-okresy). |
 | **Reguła końcowa** (`terminal_mode`) | `preserve_initial` | SOC na końcu ≥ SOC na starcie, albo `value`: energia na końcu wyceniana po `terminal_value_per_kwh`. |
 
 Profile startowe mogą wstępnie wypełnić karę za import, pobór czuwania i regułę końcową dla nowych
 instalacji; zob. [Profile startowe](#profile-startowe-nowe-instalacje).
+
+### Wartość depozytu w net-billingu
+
+W polskim net-billingu wartość wyeksportowanej energii jest księgowana na **depozycie prosumenckim**,
+a depozyt pokrywa tylko to, co należy się sprzedawcy za **energię**; opłaty dystrybucyjne płaci się
+gotówką. Po 12 miesiącach niewykorzystana część jest zwracana, ale zwrot za miesiąc nie może
+przekroczyć **ρ × wartość energii wyeksportowanej w tym miesiącu** (ρ = 30 % przy rozliczeniu
+godzinowym RCE, 20 % przy miesięcznym RCEm); reszta przepada. Dopóki depozytu brakuje albo jego
+niewykorzystana część mieści się pod limitem, jedna jednostka waluty eksportu lub energetycznej
+części importu jest warta dokładnie jedną jednostkę gotówki i planer niczego nie musi poprawiać. Gdy
+limit zaczyna wiązać, kolejna jednostka eksportu jest warta tylko ρ, a część energetyczna importu nic
+nie kosztuje w gotówce (płaci się nią pieniędzmi, które i tak by przepadły). Model depozytu pozwala
+planerowi to zobaczyć. Jest **domyślnie wyłączony** i wtedy plan jest identyczny bajt w bajt z
+wersją bez niego.
+
+| Ustawienie (Taryfy) | Domyślnie | Znaczenie |
+| --- | --- | --- |
+| `deposit_model` | `off` | `off`: pełne ceny. `manual`: sam podajesz `export_value_factor`. `auto`: Energy Compass wylicza go z dwóch rocznych sum poniżej. |
+| `deposit_refund_percent` | 30 | ρ, limit zwrotu jako udział wartości eksportu z miesiąca. 20 przy miesięcznym rozliczeniu RCEm. |
+| `export_value_factor` | 1,0 | Tylko `manual`: ile jest warta kolejna jednostka eksportu (0–1). |
+| `deposit_yearly_value` | 0 | `auto`: depozyt, który spodziewasz się zaksięgować w 12 miesięcy (wartość eksportu w cenie rozliczeniowej, razem z 1,23). 0 = nieznane. |
+| `deposit_yearly_energy_cost` | 0 | `auto`: opłaty, które depozyt może pokryć w 12 miesięcy: energetyczna część zakupów i stała opłata sprzedawcy, którą pokrywa. 0 = nieznane. |
+| `buy_energy_rate`, `buy_off_peak_energy_rate` | 0 | Część `buy_rate` / `buy_off_peak_rate`, którą może zapłacić depozyt, wpisywana jak sama stawka (mnożnik i VAT obowiązują, `buy_addition` nie). 0 = żadna część ceny zakupu nie jest pokrywana z depozytu. |
+
+Presja limitu π (0 = depozytu brakuje albo mieści się pod limitem, 1 = limit wiąże) daje dwa
+współczynniki, które istnieją tylko wewnątrz optymalizatora:
+
+```text
+współczynnik wartości eksportu φx = 1 − π × (1 − ρ)     1 → ρ
+współczynnik energii importu   φe = 1 − π               1 → 0
+cena zakupu w planie  = buy − (1 − φe) × część energetyczna buy
+cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
+```
+
+- **`auto`**: niewykorzystany udział rocznego depozytu to `s = 1 − E / D` (`D` =
+  `deposit_yearly_value`, `E` = `deposit_yearly_energy_cost`), a π rośnie od 0 przy `s = ρ/2` do 1
+  przy `s = ρ`. Gdy `D` lub `E` wynosi 0, model nie ma danych: π = 0, a `reason` to `inputs_missing`;
+  plan pozostaje ważny i nie ma Alertu. Saldo depozytu celowo nie jest wejściem — saldo z jednego dnia
+  nic nie mówi bez dat księgowania.
+- **`manual`**: π wynika z Twojego `export_value_factor`, a `φe = 1 − π` idzie za nim. Przy
+  `deposit_refund_percent` 100 oba współczynniki wynoszą 1.
+- **Histereza (`auto`)**: π jest liczone raz na dobę lokalną (przy pierwszym przeliczeniu po lokalnej
+  północy) i utrzymywane przez dobę w magazynie `settlement`, więc restart i przeładowanie nie liczą
+  go od nowa. Nowa wartość zastępuje utrzymywaną tylko gdy różni się o co najmniej 0,10 albo wynosi
+  dokładnie 0 lub 1. Zmiana któregokolwiek z powyższych ustawień przelicza od razu.
+- **Ujemne ceny sprzedaży** zostają w całości: współczynnik skaluje tylko część dodatnią, bo ujemna
+  cena jest realną opłatą.
+- **Raportowane koszty się nie zmieniają.** Koszt netto, `Plan.grid_cost`, czujniki kosztów, poziomy
+  zużycia i próg `maximum_grid_charge_price` zostają w cenach z faktury; współczynników używa tylko cel
+  planowania, przy każdej strategii i przed wagami strategii.
+- **Próg sprzedaży z baterii**, przykład (ceny brutto PGE G12 2026, sprawność cyklu 0,89, zużycie 0,05
+  za kWh, ρ = 30 %): sprzedaż z baterii i odkupienie energii w nocy opłaca się powyżej ok. 0,73
+  waluty/kWh, gdy limit nie wiąże, i powyżej ok. 0,71, gdy wiąże (tańszy nocny zakup równoważy niższą
+  wartość eksportu). Zmienia się za to wykorzystanie nadwyżki PV (warta 0,12 zamiast 0,40 przy cenie
+  sprzedaży 0,40, więc trafia najpierw do baterii i elastycznego odbioru) oraz nocne ładowanie z
+  sieci, które pozostaje opłacalne.
+
+Diagnostyka jest w atrybucie planu `dispatch_policy.settlement`:
+
+| Klucz | Znaczenie |
+| --- | --- |
+| `model` | `off`, `manual` lub `auto` |
+| `export_value_factor`, `import_energy_factor` | φx i φe użyte przez optymalizator |
+| `cap_pressure` | π |
+| `unused_share` | `s` dla `auto`, w innym przypadku `null` |
+| `refund_percent`, `yearly_deposit`, `yearly_energy_cost` | użyte wejścia |
+| `evaluated_on` | lokalna data ostatniego liczenia π |
+| `reason` | `ok`, `off`, `inputs_missing` albo `held` (π z dzisiaj było już policzone) |
+
+Odczyt `D` i `E` z długoterminowych statystyk zamiast wpisywania ich ręcznie nie wchodzi w skład tego
+wydania.
 
 ### Zapas na drogie okresy
 
@@ -1572,12 +1646,19 @@ wyprodukowane i zużyte). Sześć wartości musi być skończonych, a cztery ene
 drobne wartości ujemne, które zaokrąglenia w statystykach mogą zostawić, np. w `pobór + PV − eksport`);
 błąd wskazuje miejsce: `days[n][i]` (dzień `n` od 1, interwał `i` od 0) albo `line n` w CSV.
 
+Interwał może mieć też `buy_energy` (także kolumna CSV): część `buy`, którą może pokryć depozyt, w tych
+samych jednostkach, nie większą niż `buy`; puste lub brak oznacza 0. Ma znaczenie tylko z
+[modelem depozytu](#wartość-depozytu-w-net-billingu), który włączasz przez `--set
+deposit_model=manual --set export_value_factor=0.3` (albo `auto` z dwiema rocznymi wartościami).
+Stawki `buy_energy_rate` i `buy_off_peak_energy_rate` nie są czytane — ceny pochodzą z pliku — a
+ostrzeżenie o tym informuje. Koszty są raportowane w cenach z pliku niezależnie od współczynników.
+
 Dni są niezależne: każdy jest planowany i mierzony osobno i kończy się na ostatnim interwale, nawet
 gdy plik zawiera kolejne dni. Horyzont skraca się więc do końca dnia, więc `horizon_hours` poza dobę
 i przenoszenie energii przez północ nie są mierzone.
 
 CSV ma jeden wiersz na interwał z kolumnami `start`, `buy`, `sell`, `pv_forecast`, `load_forecast`,
-`pv`, `load` i opcjonalnie `initial_soc_percent` (czytaną z pierwszego wiersza dnia). Wiersze są
+`pv`, `load` i opcjonalnie `buy_energy` oraz `initial_soc_percent` (czytaną z pierwszego wiersza dnia). Wiersze są
 grupowane w dni według lokalnej daty `start`; ustawienia podaje się tylko przez `--set`.
 
 ### Jak czytać wynik

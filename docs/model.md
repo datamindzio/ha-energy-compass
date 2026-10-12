@@ -10,6 +10,8 @@ Nonnegative source allocations split solar among load, battery and export; grid 
 
 The reported physical objective is `sum(buy × import - sell × export + wear × (charge + discharge) ÷ 2) - terminal credit`. Wear is charged per kWh of average charge/discharge throughput, so a complete 1 kWh charge/discharge cycle incurs one wear unit. The default `preserve_initial` mode requires final stored energy at least the initial energy and has no terminal credit. The explicit `value` mode credits final stored energy at `terminal_value_per_kwh`; its `Plan.terminal_credit` and `Plan.objective` expose this choice to diagnostics. A battery-free plan has no terminal credit or throughput charge. For a new installation, the PL net-billing setup profile pre-fills `terminal_mode` `value` and `terminal_value_per_kwh` 0.60, backtested on one site; see [Setup profiles](guide.en.md#setup-profiles-new-installations).
 
+The planner minimises the same expression with **planning prices** when the [net-billing deposit model](#net-billing-deposit-value) is on; `Plan.grid_cost`, `Plan.objective` and every reported cost stay at invoice prices. With the model off (the default) the two coincide exactly.
+
 `remaining_daily_throughput_kwh` contains raw remaining charge-plus-discharge energy budgets by local date, keyed by canonical `YYYY-MM-DD` strings. A limit of `2 × capacity` kWh corresponds to one equivalent full cycle, including throughput already observed before planning. The caller subtracts observed throughput before supplying the remaining budget. Slot order and duration use UTC instants, so a repeated local hour remains valid. Slots crossing local midnight contribute to each date in proportion to actual elapsed overlap; a daylight-saving day can have 23 or 25 hours. Dates absent from the mapping have no solver throughput bound.
 
 The model uses AC-equivalent PV and battery flows. This approximation must be checked against measured energy, battery energy changes, and inverter behavior before any control work. The solver is advisory: it never writes device controls. SciPy HiGHS normally reports a proven optimum within the time limit. For the base plan only, a time limit reached with a feasible incumbent publishes that incumbent after the same independent validation, marked `Plan.time_limited` with the solver's final relative gap in `Plan.mip_gap` (both exposed as plan attributes); the incumbent is often already optimal and only the proof is unfinished. A time limit without an incumbent, and every probe, flexible-load and configuration-check solve, still raise `SolveError("timeout")`; infeasibility, unboundedness and solver failure raise `SolveError` as before. The returned variables are independently checked against every interval balance, capability, direction and bound within an absolute 1e-6 kWh tolerance.
@@ -100,6 +102,33 @@ Let `C = grid_cost + wear_cost - terminal_credit`, `P = minimum_grid_charge_epis
 `Plan.objective` remains physical `C`. `Plan.new_grid_charge_episodes` and `Plan.grid_charge_episode_reserve` are separate diagnostics, both zero when the hurdle is disabled or no battery exists — the reserve is a decision preference, not an electricity charge, and is excluded from `grid_cost`, `wear_cost`, `terminal_credit`, `plan_monetary_cost()` and consumption-probe cost differences, exactly as the export reserve is excluded. Runtime exposes them with `minimum_grid_charge_episode_benefit`, `new_grid_charge_episodes`, `grid_charge_episode_reserve` and `grid_charge_benefit_scope: grid_fed_battery_charge_period` under `dispatch_policy`.
 
 A separate HA Store, `energy_compass.<entry_id>.grid_charge`, persists only `{generated_at, until}` for a published current grid-charge period, with the same continuity, expiry and restart semantics as the export store — without it, an hourly refresh mid-episode would see no prior episode and re-charge the hurdle, biasing against continuing an in-progress charge.
+
+## Net-billing deposit value
+
+Under net billing the export value is booked on the prosumer deposit, the deposit pays only the energy part of what is owed to the seller, and after 12 months a month's refund is capped at `ρ × export value of that month` (ρ = 30 % with hourly RCE, 20 % with RCEm). For one monthly vintage with exported value `G` and unused amount `U`, `refund = min(U, ρ × G)` and the rest is void. At the margin one more currency unit of export, and one more unit of energy-part import, is worth 1 while the deposit is short or `U ≤ ρ × G`; once `U > ρ × G` export is worth ρ and the energy part of import costs 0 in cash. The planner's full-price valuation is exact until the cap binds and wrong on both sides after it. The decision record is [ADR-0001](adr/0001-net-billing-settlement-model.md).
+
+`Slot.buy_energy_per_kwh` is the part of `buy_per_kwh` the deposit can pay, clipped to `max(buy, 0)`; it comes from `buy_energy_rate` and `buy_off_peak_energy_rate`, which are typed and transformed like the buy rates (multiplier and VAT apply, `buy_addition` does not) and follow the tariff schedule's bands. `Problem.export_value_factor` (φx) and `Problem.import_energy_factor` (φe) default to 1.0 and enter only the import and export variable costs of the optimizer:
+
+```text
+buy_plan  = buy - (1 - φe) × energy
+sell_plan = φx × max(sell, 0) + min(sell, 0)
+```
+
+With both factors 1.0 the expressions are short-circuited to `buy` and `sell`, so the model is byte-identical. A negative sell price is a real charge and is never scaled. The factors derive from one cap pressure `π ∈ [0, 1]`:
+
+```text
+φx = 1 - π × (1 - ρ)          φe = 1 - π
+auto:    s = clamp(1 - E / D, 0, 1)     π = clamp((s - ρ/2) / (ρ/2), 0, 1)
+manual:  π = clamp((1 - export_value_factor) / (1 - ρ), 0, 1)
+```
+
+`D` is `deposit_yearly_value`, `E` is `deposit_yearly_energy_cost`. The ramp starts at ρ/2 because expiry is not spread over the year: the unused amount lands on the high-export months, which hold about half of the yearly deposit (an assumption, not measured), so their cap binds at about half the yearly share. `auto` evaluates π once per local day, keeps it in a Store, and replaces the held value only when the new one differs by at least 0.10 or is exactly 0 or 1; a change of any input setting re-evaluates at once. `D` or `E` equal to 0 gives π = 0 with `reason: inputs_missing`. The deposit balance is not an input: oldest-first use makes the 12-month sums decide the long-run state.
+
+Stays at invoice prices: `Plan.grid_cost`, `Plan.objective`, `plan_monetary_cost()` and the net cost in the plan attributes, the consumption probes' reported cost, the `maximum_grid_charge_price` comparison, the autonomy and peak-reserve rankings (`buy_plan ≤ buy`, so their dominance holds), the Atlas solve payload, the Deye controller, the cost card and the export value counter. The strategy weights, `import_penalty_per_kwh` and the episode hurdles act on top of the planning prices, unscaled.
+
+Worked example (PGE G12 2026 gross: day 0.7018 energy + 0.540 distribution, night 0.4635 + 0.143 PLN/kWh; round trip 0.89, wear 0.05 per kWh, ρ = 30 %): selling from the battery and buying the energy back at night needs a sell price of `1.1236 × 0.6065 + 0.0531 = 0.73` with the cap not binding and `(1.1236 × 0.143 + 0.0531) / 0.30 = 0.71` when it binds. Surplus PV at a sell price of 0.40 is worth 0.12 instead of 0.40 when it binds.
+
+Diagnostics are published as `dispatch_policy.settlement` (`model`, `export_value_factor`, `import_energy_factor`, `cap_pressure`, `unused_share`, `refund_percent`, `yearly_deposit`, `yearly_energy_cost`, `evaluated_on`, `reason`).
 
 ## Inverter standby loss
 

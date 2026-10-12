@@ -334,10 +334,14 @@
           "balance_value": "Wartość balansowania po terminie",
           "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
           "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
+          "buy_energy_rate": "Część energetyczna ceny zakupu (to, co pokrywa depozyt)",
+          "buy_off_peak_energy_rate": "Część energetyczna ceny zakupu poza szczytem",
           "sell_rate": "Stała cena sprzedaży",
           "buy_addition": "Dodatek do ceny zakupu",
           "sell_addition": "Dodatek do ceny sprzedaży",
           "monthly_charge": "Stała opłata miesięczna",
+          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
+          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
           "terminal_value_per_kwh": "Wartość energii na końcu planu",
           "boost_ceiling": "Próg zwiększania zużycia",
           "limit_floor": "Próg ograniczenia",
@@ -423,6 +427,8 @@
         "data": {
           "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
           "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
+          "buy_energy_rate": "Część energetyczna ceny zakupu (to, co pokrywa depozyt)",
+          "buy_off_peak_energy_rate": "Część energetyczna ceny zakupu poza szczytem",
           "sell_rate": "Stała cena sprzedaży",
           "buy_multiplier": "Mnożnik ceny zakupu",
           "sell_multiplier": "Mnożnik ceny sprzedaży",
@@ -430,11 +436,25 @@
           "sell_addition": "Dodatek do ceny sprzedaży",
           "vat_percent": "Stawka VAT",
           "monthly_charge": "Stała opłata miesięczna",
+          "deposit_model": "Model depozytu prosumenckiego",
+          "deposit_refund_percent": "Limit zwrotu z depozytu (% wartości eksportu z miesiąca)",
+          "export_value_factor": "Współczynnik wartości eksportu (model ręczny depozytu)",
+          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
+          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
           "buy_apply_vat": "Dolicz VAT przy zakupie",
           "sell_apply_vat": "Dolicz VAT przy sprzedaży",
           "calibration": "Kalibracja taryfy"
         },
-        "description": "Edytuj stałe stawki oraz oddzielne mnożniki, VAT i dodatki. {detail}"
+        "description": "Edytuj stałe stawki oraz oddzielne mnożniki, VAT i dodatki. {detail}",
+        "data_description": {
+          "buy_energy_rate": "Domyślnie 0 (żadna część ceny nie jest pokrywana z depozytu); zakres 0-1000 za kWh. Część energetyczna ceny zakupu, wpisywana jak cena zakupu (przed mnożnikiem i VAT). Używa jej tylko model depozytu.",
+          "buy_off_peak_energy_rate": "Domyślnie 0; zakres 0-1000 za kWh. Część energetyczna ceny zakupu poza szczytem (harmonogram taryfy G12/G12w). Harmonogram G11, stała cena i prognoza używają pierwszej stawki energii w każdym przedziale.",
+          "deposit_model": "Domyślnie off. manual: sam podajesz współczynnik wartości eksportu. auto: planer wylicza go z oczekiwanego rocznego depozytu i opłat, raz dziennie. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
+          "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada.",
+          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu. Wartości poniżej limitu zwrotu działają jak ten limit.",
+          "deposit_yearly_value": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wartość eksportu zaksięgowana na depozycie w 12 miesięcy, razem ze współczynnikiem 1,23.",
+          "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wszystko, co depozyt może zapłacić w roku - część energetyczna zakupów i stała opłata sprzedawcy, którą pokrywa."
+        }
       },
       "pv_solar_forecast": {
         "title": "Prognoza PV z panelu Energia",
@@ -810,10 +830,14 @@
           "balance_value": "Wartość balansowania po terminie",
           "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
           "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
+          "buy_energy_rate": "Część energetyczna ceny zakupu (to, co pokrywa depozyt)",
+          "buy_off_peak_energy_rate": "Część energetyczna ceny zakupu poza szczytem",
           "sell_rate": "Stała cena sprzedaży",
           "buy_addition": "Dodatek do ceny zakupu",
           "sell_addition": "Dodatek do ceny sprzedaży",
           "monthly_charge": "Stała opłata miesięczna",
+          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
+          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
           "terminal_value_per_kwh": "Wartość energii na końcu planu",
           "boost_ceiling": "Próg zwiększania zużycia",
           "limit_floor": "Próg ograniczenia",
@@ -899,6 +923,8 @@
         "data": {
           "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
           "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
+          "buy_energy_rate": "Część energetyczna ceny zakupu (to, co pokrywa depozyt)",
+          "buy_off_peak_energy_rate": "Część energetyczna ceny zakupu poza szczytem",
           "sell_rate": "Stała cena sprzedaży",
           "buy_multiplier": "Mnożnik ceny zakupu",
           "sell_multiplier": "Mnożnik ceny sprzedaży",
@@ -906,11 +932,25 @@
           "sell_addition": "Dodatek do ceny sprzedaży",
           "vat_percent": "Stawka VAT",
           "monthly_charge": "Stała opłata miesięczna",
+          "deposit_model": "Model depozytu prosumenckiego",
+          "deposit_refund_percent": "Limit zwrotu z depozytu (% wartości eksportu z miesiąca)",
+          "export_value_factor": "Współczynnik wartości eksportu (model ręczny depozytu)",
+          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
+          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
           "buy_apply_vat": "Dolicz VAT przy zakupie",
           "sell_apply_vat": "Dolicz VAT przy sprzedaży",
           "calibration": "Kalibracja taryfy"
         },
-        "description": "Edytuj stałe stawki oraz oddzielne mnożniki, VAT i dodatki. {detail}"
+        "description": "Edytuj stałe stawki oraz oddzielne mnożniki, VAT i dodatki. {detail}",
+        "data_description": {
+          "buy_energy_rate": "Domyślnie 0 (żadna część ceny nie jest pokrywana z depozytu); zakres 0-1000 za kWh. Część energetyczna ceny zakupu, wpisywana jak cena zakupu (przed mnożnikiem i VAT). Używa jej tylko model depozytu.",
+          "buy_off_peak_energy_rate": "Domyślnie 0; zakres 0-1000 za kWh. Część energetyczna ceny zakupu poza szczytem (harmonogram taryfy G12/G12w). Harmonogram G11, stała cena i prognoza używają pierwszej stawki energii w każdym przedziale.",
+          "deposit_model": "Domyślnie off. manual: sam podajesz współczynnik wartości eksportu. auto: planer wylicza go z oczekiwanego rocznego depozytu i opłat, raz dziennie. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
+          "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada.",
+          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu. Wartości poniżej limitu zwrotu działają jak ten limit.",
+          "deposit_yearly_value": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wartość eksportu zaksięgowana na depozycie w 12 miesięcy, razem ze współczynnikiem 1,23.",
+          "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wszystko, co depozyt może zapłacić w roku - część energetyczna zakupów i stała opłata sprzedawcy, którą pokrywa."
+        }
       },
       "energy_atlas": {
         "title": "Energy Atlas",

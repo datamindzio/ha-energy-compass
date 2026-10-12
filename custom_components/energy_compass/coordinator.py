@@ -112,6 +112,8 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         # so the next start retries the recorder.
         self._balance_persist = True
         self._balance_store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.balance")
+        self._settlement = None
+        self._settlement_store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.settlement")
         self._calibration = calibration.empty_state()
         self._calibration_store = Store(
             hass, 1, f"{DOMAIN}.{entry.entry_id}.calibration"
@@ -146,6 +148,10 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             self._balance = None
         if self._balance is None:
             self._balance = await self._seed_balance()
+        stored_settlement = await self._settlement_store.async_load()
+        self._settlement = (
+            stored_settlement if isinstance(stored_settlement, dict) else None
+        )
         stored = await self._calibration_store.async_load()
         if stored is not None and not calibration.valid_state(stored):
             _LOGGER.warning("Invalid stored calibration state; starting empty")
@@ -1038,6 +1044,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                                 self._grid_charge_commitment
                             ),
                             balance_state=deepcopy(self._balance),
+                            settlement_state=deepcopy(self._settlement),
                             **history,
                         )
                     )
@@ -1065,6 +1072,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                         if atlas_payload_present
                         else None
                     )
+                    settlement_state = result.pop("settlement_state", None)
                     # A result superseded only by newer inputs is still fresher
                     # than the retained plan. Publishing it before recalculating
                     # guarantees progress: at 8 kW the SOC crosses the trigger
@@ -1079,6 +1087,11 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                         # never published, so Atlas must not receive it either.
                         if self.atlas is not None and atlas_payload_present:
                             self.atlas.add_solve(atlas_payload)
+                        if settlement_state != self._settlement:
+                            self._settlement = settlement_state
+                            self._settlement_store.async_delay_save(
+                                lambda: self._settlement, 1
+                            )
                         self._previous_soc = result["quality"].pop(
                             "soc_observation", None
                         )
@@ -1216,4 +1229,5 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         await self._grid_charge_store.async_save(self._grid_charge_commitment)
         if self._balance is not None and self._balance_persist:
             await self._balance_store.async_save(self._balance)
+        await self._settlement_store.async_save(self._settlement)
         await self._calibration_store.async_save(self._calibration)

@@ -327,10 +327,14 @@
           "wear_per_kwh": "Wear per kwh",
           "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
           "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
+          "buy_energy_rate": "Energy part of the buy rate (what the prosumer deposit can pay)",
+          "buy_off_peak_energy_rate": "Energy part of the off-peak buy rate",
           "sell_rate": "Sell rate",
           "buy_addition": "Buy addition",
           "sell_addition": "Sell addition",
           "monthly_charge": "Monthly charge",
+          "deposit_yearly_value": "Expected deposit booked over 12 months (auto deposit model)",
+          "deposit_yearly_energy_cost": "Charges the deposit can pay over 12 months (auto deposit model)",
           "terminal_value_per_kwh": "Terminal value per kwh",
           "boost_ceiling": "Boost ceiling",
           "limit_floor": "Limit floor",
@@ -416,6 +420,8 @@
         "data": {
           "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
           "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
+          "buy_energy_rate": "Energy part of the buy rate (what the prosumer deposit can pay)",
+          "buy_off_peak_energy_rate": "Energy part of the off-peak buy rate",
           "sell_rate": "Sell rate",
           "buy_multiplier": "Buy multiplier",
           "sell_multiplier": "Sell multiplier",
@@ -423,11 +429,25 @@
           "sell_addition": "Sell addition",
           "vat_percent": "Vat percent",
           "monthly_charge": "Monthly charge",
+          "deposit_model": "Prosumer deposit model",
+          "deposit_refund_percent": "Deposit refund cap (% of the month's export value)",
+          "export_value_factor": "Export value factor (manual deposit model)",
+          "deposit_yearly_value": "Expected deposit booked over 12 months (auto deposit model)",
+          "deposit_yearly_energy_cost": "Charges the deposit can pay over 12 months (auto deposit model)",
           "buy_apply_vat": "Buy apply vat",
           "sell_apply_vat": "Sell apply vat",
           "calibration": "Calibration"
         },
-        "description": "Edit fixed rates and separate multipliers, VAT and additions. {detail}"
+        "description": "Edit fixed rates and separate multipliers, VAT and additions. {detail}",
+        "data_description": {
+          "buy_energy_rate": "Default 0 (no part of the price is paid from the deposit); range 0-1000 per kWh. The energy-charge part of the buy rate, typed like the buy rate (before multiplier and VAT). Only the deposit model uses it.",
+          "buy_off_peak_energy_rate": "Default 0; range 0-1000 per kWh. Energy-charge part of the off-peak buy rate (G12/G12w tariff schedule). A G11 schedule, a fixed price and a forecast use the first energy rate for every slot.",
+          "deposit_model": "Default off. manual: you state the export value factor. auto: the planner derives it from the expected yearly deposit and charges, re-evaluated once a day. Planning only; reported costs stay at invoice prices.",
+          "deposit_refund_percent": "Default 30 (hourly RCE settlement; 20 for monthly RCEm); range 0-100 %. After 12 months an unused deposit is refunded up to this share of the month's exported energy value; the rest is void.",
+          "export_value_factor": "Default 1 (invoice price); range 0-1. Manual model only: what one more unit of export is worth in planning. Values below the refund cap percentage act as the cap.",
+          "deposit_yearly_value": "Default 0 (unknown); range 0-1,000,000. Auto model: the export value booked on the deposit over 12 months, including the 1.23 coefficient.",
+          "deposit_yearly_energy_cost": "Default 0 (unknown); range 0-1,000,000. Auto model: everything the deposit can pay in a year - the energy part of purchases and any fixed seller fee it covers."
+        }
       },
       "pv_solar_forecast": {
         "title": "Energy dashboard solar forecast",
@@ -796,10 +816,14 @@
           "wear_per_kwh": "Wear per kwh",
           "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
           "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
+          "buy_energy_rate": "Energy part of the buy rate (what the prosumer deposit can pay)",
+          "buy_off_peak_energy_rate": "Energy part of the off-peak buy rate",
           "sell_rate": "Sell rate",
           "buy_addition": "Buy addition",
           "sell_addition": "Sell addition",
           "monthly_charge": "Monthly charge",
+          "deposit_yearly_value": "Expected deposit booked over 12 months (auto deposit model)",
+          "deposit_yearly_energy_cost": "Charges the deposit can pay over 12 months (auto deposit model)",
           "terminal_value_per_kwh": "Terminal value per kwh",
           "boost_ceiling": "Boost ceiling",
           "limit_floor": "Limit floor",
@@ -885,6 +909,8 @@
         "data": {
           "buy_rate": "Buy rate (fixed, or G11/peak rate of a tariff schedule)",
           "buy_off_peak_rate": "Off-peak buy rate (G12/G12w tariff schedule)",
+          "buy_energy_rate": "Energy part of the buy rate (what the prosumer deposit can pay)",
+          "buy_off_peak_energy_rate": "Energy part of the off-peak buy rate",
           "sell_rate": "Sell rate",
           "buy_multiplier": "Buy multiplier",
           "sell_multiplier": "Sell multiplier",
@@ -892,11 +918,25 @@
           "sell_addition": "Sell addition",
           "vat_percent": "Vat percent",
           "monthly_charge": "Monthly charge",
+          "deposit_model": "Prosumer deposit model",
+          "deposit_refund_percent": "Deposit refund cap (% of the month's export value)",
+          "export_value_factor": "Export value factor (manual deposit model)",
+          "deposit_yearly_value": "Expected deposit booked over 12 months (auto deposit model)",
+          "deposit_yearly_energy_cost": "Charges the deposit can pay over 12 months (auto deposit model)",
           "buy_apply_vat": "Buy apply vat",
           "sell_apply_vat": "Sell apply vat",
           "calibration": "Calibration"
         },
-        "description": "Edit fixed rates and separate multipliers, VAT and additions. {detail}"
+        "description": "Edit fixed rates and separate multipliers, VAT and additions. {detail}",
+        "data_description": {
+          "buy_energy_rate": "Default 0 (no part of the price is paid from the deposit); range 0-1000 per kWh. The energy-charge part of the buy rate, typed like the buy rate (before multiplier and VAT). Only the deposit model uses it.",
+          "buy_off_peak_energy_rate": "Default 0; range 0-1000 per kWh. Energy-charge part of the off-peak buy rate (G12/G12w tariff schedule). A G11 schedule, a fixed price and a forecast use the first energy rate for every slot.",
+          "deposit_model": "Default off. manual: you state the export value factor. auto: the planner derives it from the expected yearly deposit and charges, re-evaluated once a day. Planning only; reported costs stay at invoice prices.",
+          "deposit_refund_percent": "Default 30 (hourly RCE settlement; 20 for monthly RCEm); range 0-100 %. After 12 months an unused deposit is refunded up to this share of the month's exported energy value; the rest is void.",
+          "export_value_factor": "Default 1 (invoice price); range 0-1. Manual model only: what one more unit of export is worth in planning. Values below the refund cap percentage act as the cap.",
+          "deposit_yearly_value": "Default 0 (unknown); range 0-1,000,000. Auto model: the export value booked on the deposit over 12 months, including the 1.23 coefficient.",
+          "deposit_yearly_energy_cost": "Default 0 (unknown); range 0-1,000,000. Auto model: everything the deposit can pay in a year - the energy part of purchases and any fixed seller fee it covers."
+        }
       },
       "energy_atlas": {
         "title": "Energy Atlas",

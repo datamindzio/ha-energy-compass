@@ -374,8 +374,9 @@ overrides the pre-fill at save time; the Preview lists that key as edited, namin
 effective value.</p>
 <p>Polish settlement and tariff profiles require currency PLN; choosing one with another currency is
 rejected, on the field that caused it. Setup profiles never set a tariff price (<code>buy_rate</code>,
-<code>buy_off_peak_rate</code>, <code>sell_rate</code>, <code>buy_addition</code>, <code>sell_addition</code>, <code>monthly_charge</code>) and never touch a
-strategy-owned setting.</p>
+<code>buy_off_peak_rate</code>, <code>buy_energy_rate</code>, <code>buy_off_peak_energy_rate</code>, <code>sell_rate</code>, <code>buy_addition</code>,
+<code>sell_addition</code>, <code>monthly_charge</code>) and never touch a strategy-owned setting. They never enable the
+<a href="#net-billing-deposit-value">deposit model</a> either: every installation starts with it off.</p>
 <p><strong>Sell only PV</strong> (<code>limit_export_to_pv</code>) stays on with every settlement profile — a Polish prosumer may
 only sell energy produced by their own PV — and is turned off either by switching to the <code>max_export</code>
 strategy or by setting <code>limit_export_to_pv</code> to off directly; the explicit setting persists across
@@ -1179,6 +1180,11 @@ directly by any other available mode.</p>
 <td>Planning-only shadow price per imported kWh, under every strategy.</td>
 </tr>
 <tr>
+<td><strong>Deposit model</strong> (<code>deposit_model</code>)</td>
+<td><code>off</code></td>
+<td>Values exported energy and the deposit-payable part of imports by what the prosumer deposit will really pay back. See <a href="#net-billing-deposit-value">Net-billing deposit value</a>.</td>
+</tr>
+<tr>
 <td><strong>Inverter standby loss</strong> (<code>idle_drain_kw</code>)</td>
 <td>0 (off)</td>
 <td>Constant battery drain modelled per interval.</td>
@@ -1197,6 +1203,129 @@ directly by any other available mode.</p>
 </table></section>
 <p>Setup profiles can pre-fill the import penalty, standby loss and terminal rule for new installations;
 see <a href="#setup-profiles-new-installations">Setup profiles</a>.</p>
+<h3 id="net-billing-deposit-value">Net-billing deposit value</h3>
+<p>Under Polish net billing the value of exported energy is booked on the <strong>prosumer deposit</strong>, and the
+deposit pays only what you owe the seller for <strong>energy</strong>; distribution charges are paid in cash.
+After 12 months the unused part is refunded, but a month's refund cannot exceed
+<strong>ρ × the value exported in that month</strong> (ρ = 30 % with hourly RCE settlement, 20 % with monthly
+RCEm); the rest is void. While the deposit is short, or its unused part still fits under the cap,
+one currency unit of export or of energy-part import is worth exactly one unit of cash and the
+planner needs no correction. Once the cap binds, one more unit of export is worth only ρ and the
+energy part of an import costs nothing in cash (it is paid from money that would expire). The
+deposit model lets the planner see that. It is <strong>off by default</strong> and then the plan is
+byte-identical to a build without it.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Setting (Tariffs)</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deposit_model</code></td>
+<td><code>off</code></td>
+<td><code>off</code>: full prices. <code>manual</code>: you state <code>export_value_factor</code>. <code>auto</code>: Energy Compass derives it from the two yearly sums below.</td>
+</tr>
+<tr>
+<td><code>deposit_refund_percent</code></td>
+<td>30</td>
+<td>ρ, the refund cap as a share of a month's export value. 20 for monthly RCEm settlement.</td>
+</tr>
+<tr>
+<td><code>export_value_factor</code></td>
+<td>1.0</td>
+<td><code>manual</code> only: what one more unit of export is worth (0–1).</td>
+</tr>
+<tr>
+<td><code>deposit_yearly_value</code></td>
+<td>0</td>
+<td><code>auto</code>: deposit you expect to be booked over 12 months (export value at the settlement price, 1.23 included). 0 = unknown.</td>
+</tr>
+<tr>
+<td><code>deposit_yearly_energy_cost</code></td>
+<td>0</td>
+<td><code>auto</code>: charges the deposit can pay over 12 months: the energy part of imports and any fixed seller fee it covers. 0 = unknown.</td>
+</tr>
+<tr>
+<td><code>buy_energy_rate</code>, <code>buy_off_peak_energy_rate</code></td>
+<td>0</td>
+<td>The part of <code>buy_rate</code> / <code>buy_off_peak_rate</code> the deposit can pay, typed like the rate itself (multiplier and VAT apply, <code>buy_addition</code> does not). 0 = no part of the buy price is payable by the deposit.</td>
+</tr>
+</tbody>
+</table></section>
+<p>The cap pressure π (0 = deposit short or within the cap, 1 = cap binding) gives two factors that
+exist only inside the optimizer:</p>
+<pre><code class="language-text">export value factor  φx = 1 − π × (1 − ρ)     1 → ρ
+import energy factor φe = 1 − π               1 → 0
+planning buy  = buy − (1 − φe) × energy part of buy
+planning sell = φx × max(sell, 0) + min(sell, 0)
+</code></pre>
+<ul>
+<li><strong><code>auto</code></strong>: the unused share of the yearly deposit is <code>s = 1 − E / D</code> (<code>D</code> = <code>deposit_yearly_value</code>,
+  <code>E</code> = <code>deposit_yearly_energy_cost</code>), and π ramps from 0 at <code>s = ρ/2</code> to 1 at <code>s = ρ</code>. If <code>D</code> or <code>E</code>
+  is 0 the model has no input: π = 0 and <code>reason</code> is <code>inputs_missing</code>; the plan stays valid and no
+  Alert is raised. The balance of the deposit is deliberately not an input — one day's balance says
+  nothing without the booking dates behind it.</li>
+<li><strong><code>manual</code></strong>: π is derived from your <code>export_value_factor</code>, so <code>φe = 1 − π</code> follows it. With
+  <code>deposit_refund_percent</code> 100 both factors are 1.</li>
+<li><strong>Hysteresis (<code>auto</code>)</strong>: π is evaluated once per local day (the first calculation after local
+  midnight) and held for the day in the <code>settlement</code> Store, so restarts and reloads do not re-evaluate
+  it. A new value replaces the held one only if it differs by at least 0.10, or reaches exactly 0 or 1.
+  Changing any of the settings above re-evaluates at once.</li>
+<li><strong>Negative sell prices</strong> stay whole: the factor scales only the positive part, because a negative
+  price is a real charge.</li>
+<li><strong>Reported costs do not change.</strong> Net cost, <code>Plan.grid_cost</code>, the cost sensors, consumption levels and
+  the <code>maximum_grid_charge_price</code> ceiling all stay at invoice prices; only the planning objective uses
+  the factors, under every strategy and before the strategy weights.</li>
+<li><strong>Battery sale threshold</strong>, worked example (PGE G12 2026 gross prices, round trip 0.89, wear
+  0.05 per kWh, ρ = 30 %): selling from the battery and buying the energy back at night pays above
+  about 0.73 currency/kWh while the cap is not binding and above about 0.71 when it binds (the cheaper
+  night re-buy offsets the lower export value). What changes with the cap binding is the use of
+  surplus PV (worth 0.12 instead of 0.40 at a sell price of 0.40, so it goes to the battery and
+  flexible load first) and night grid charging, which stays profitable.</li>
+</ul>
+<p>Diagnostics are in the plan attribute <code>dispatch_policy.settlement</code>:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model</code></td>
+<td><code>off</code>, <code>manual</code> or <code>auto</code></td>
+</tr>
+<tr>
+<td><code>export_value_factor</code>, <code>import_energy_factor</code></td>
+<td>φx and φe the optimizer used</td>
+</tr>
+<tr>
+<td><code>cap_pressure</code></td>
+<td>π</td>
+</tr>
+<tr>
+<td><code>unused_share</code></td>
+<td><code>s</code> for <code>auto</code>, else <code>null</code></td>
+</tr>
+<tr>
+<td><code>refund_percent</code>, <code>yearly_deposit</code>, <code>yearly_energy_cost</code></td>
+<td>the inputs used</td>
+</tr>
+<tr>
+<td><code>evaluated_on</code></td>
+<td>local date π was last evaluated</td>
+</tr>
+<tr>
+<td><code>reason</code></td>
+<td><code>ok</code>, <code>off</code>, <code>inputs_missing</code> or <code>held</code> (today's π was already evaluated)</td>
+</tr>
+</tbody>
+</table></section>
+<p>Reading <code>D</code> and <code>E</code> from long-term statistics instead of typing them is not part of this release.</p>
 <h3 id="peak-period-reserve">Peak-period reserve</h3>
 <p>The load forecast is a mean, so a plan that drains the battery exactly to the reserve by the end of an
 expensive period falls short on roughly every second day. <code>peak_reserve_margin_kwh</code> asks the solver to
@@ -2525,11 +2654,17 @@ and <code>load_forecast</code> (kWh in the interval, <strong>as known at plan ti
 produced and consumed). The six values must be finite and the four energies not negative (clip the
 small negative values that rounding in statistics can leave, e.g. in <code>import + PV − export</code>); an error
 names the place, <code>days[n][i]</code> (day <code>n</code> from 1, interval <code>i</code> from 0) or <code>line n</code> of a CSV.</p>
+<p>An interval may also carry <code>buy_energy</code> (CSV column too): the part of <code>buy</code> the deposit can pay, in
+the same units, not above <code>buy</code> and empty or missing meaning 0. It matters only with the
+<a href="#net-billing-deposit-value">deposit model</a>, which you switch on with <code>--set deposit_model=manual
+--set export_value_factor=0.3</code> (or <code>auto</code> with the two yearly values). The rates
+<code>buy_energy_rate</code> and <code>buy_off_peak_energy_rate</code> are not read — prices come from the file — and a
+warning says so. Costs are reported at the file's prices whatever the factors are.</p>
 <p>Days are independent: each is planned and measured on its own and ends at its last interval, even
 when the file holds consecutive days. The horizon therefore shrinks to the end of the day, so
 <code>horizon_hours</code> beyond the day and the carry of energy over midnight are not measured.</p>
 <p>CSV has one row per interval with the columns <code>start</code>, <code>buy</code>, <code>sell</code>, <code>pv_forecast</code>, <code>load_forecast</code>,
-<code>pv</code>, <code>load</code> and optionally <code>initial_soc_percent</code> (read on the first row of a day). Rows are grouped
+<code>pv</code>, <code>load</code> and optionally <code>buy_energy</code> and <code>initial_soc_percent</code> (read on the first row of a day). Rows are grouped
 into days by the local date of <code>start</code>; settings come only from <code>--set</code>.</p>
 <h3 id="reading-the-result">Reading the result</h3>
 <ul>

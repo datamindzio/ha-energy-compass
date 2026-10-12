@@ -15,6 +15,8 @@ TARIFF_PRICE_KEYS: frozenset[str] = frozenset(
     {
         "buy_rate",
         "buy_off_peak_rate",
+        "buy_energy_rate",
+        "buy_off_peak_energy_rate",
         "sell_rate",
         "buy_addition",
         "sell_addition",
