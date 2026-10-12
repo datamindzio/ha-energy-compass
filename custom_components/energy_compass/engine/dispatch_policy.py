@@ -1,6 +1,7 @@
 """Physical operating modes and elapsed-time advice commitments."""
 
 import math
+from dataclasses import replace
 from datetime import UTC, timedelta
 
 import numpy as np
@@ -703,7 +704,13 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 run = runs[i] = v["hold_run"] = model.variable(binary=True)
                 top = model.upper[v["flex_load"]]
                 room = probe_room(problem, slot) - _PROBE_MARGIN
-                if room < 0:
+                if not _follow_open(
+                    problem, replace(slot, load_kwh=slot.load_kwh + top)
+                ):
+                    # Idle with the largest probe too, by the reading the plan is
+                    # certified against: a bridge whatever the probe, without a margin.
+                    pass
+                elif room < 0:
                     # Idle by less than solver noise: whether the realised load leaves
                     # it idle is not decided, so it cannot be a bridge.
                     model.constrain({run: 1}, 1, 1)

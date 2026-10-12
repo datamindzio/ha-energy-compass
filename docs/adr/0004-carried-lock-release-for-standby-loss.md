@@ -114,7 +114,12 @@ flexible-load probe was held to the tightening without the bridge reading.
    is asked about. Instead the validator receives the realised problem (the slot load plus the probe) and the model
    reads it the same way: a row idle without the probe is a bridge only while the probe it takes stays below
    `probe_room` (the load at which `SELF_CONSUME` would open, less `_PROBE_MARGIN = 1e-5` kWh, which keeps HiGHS
-   away from tiny coefficients); otherwise it is an ordinary committed row. A surplus the probe takes below the
+   away from tiny coefficients); otherwise it is an ordinary committed row. The cap and its margin apply only where
+   the probe can open the row. A row that is still idle with the largest probe the model may add (`_follow_open` on
+   the slot load plus the probe's upper bound, the validator's own reading) is a bridge for every probe: with the
+   margin taken there too, a probe pinned within 1e-5 kWh of `probe_room` was neither a bridge nor `SELF_CONSUME`,
+   and a problem planned on main had no plan (review round 2, flex seed 3001 #856: 1.0 kWh at 0.5 kW pinned at
+   0.125 kWh per quarter on a slot with 0.1 kWh of PV; pinned with PV 0.100005 kWh as well). A surplus the probe takes below the
    minimum activity is not chargeable as realised (`open_surplus`, with `release`), so `HOLD` may start on it.
    The realised probe is never below zero: the solver returns noise such as -3e-17 kWh, which lifts a slot sitting
    exactly at the minimum activity (`0.03 - 0.005` is `0.024999999999999998` kWh against `0.025`) from idle without
@@ -146,7 +151,11 @@ interval, 0.05/0.1/0.2 kW minimum activity, packs that charge or discharge below
 problems each, seeds 1001, 1002, 2001 and 2002; plain and flexible-load probes, with and without the guard, 16 corpora)
 and compares head with main (6db538f) and with 34d6e1f. Against main: no problem that was planned is `infeasible`,
 no `solver_failure`, and 57 to 186 problems per guard or probe corpus planned that main could not (none in the
-plain corpora without a guard, where the engine is main's). Against 34d6e1f: 2 newly `infeasible` problems in 24000
+plain corpora without a guard, where the engine is main's). That held for those four seeds only: review round 2
+found one more on seed 3001 (flex #856, the same problem as flex-nl #853; point 2 above). With the fix, seeds 3001,
+3002, 4001 and 4002 (16 corpora, 24000 problems) against main: no planned problem `infeasible`, no `solver_failure`,
+no `HOLD` started on a chargeable surplus, 77 to 196 problems per guard or probe corpus planned that main could not,
+and the plain corpora without a guard identical to main. Against 34d6e1f: 2 newly `infeasible` problems in 24000
 (flex-nl seed 1001 #1420, flex seed 2002 #1033), both `preserve_initial` terminals whose old plan had started `HOLD`
 on a chargeable surplus, the class under point 3. No plan starts `HOLD` on a chargeable surplus with a pack
 that is not full, except slots exactly at the activity read by float arithmetic, in plans main makes too (flex-nl and

@@ -317,10 +317,9 @@ def test_a_probe_that_puts_load_into_every_committed_interval_plans_what_a_small
     # while the commitment carries SELF_CONSUME through a net load of 0.4 kWh. Neither
     # has the probe of this size, which stays infeasible until the commitment ends
     # (docs/model.md). A larger one leaves the later intervals load to follow.
-    for request in (FlexibleLoadRequest(0.1, 0.5),):
-        with pytest.raises(SolveError) as error:
-            solve_flexible_load(PROBE_44, request)
-        assert error.value.reason == "infeasible"
+    with pytest.raises(SolveError) as error:
+        solve_flexible_load(PROBE_44, FlexibleLoadRequest(0.1, 0.5))
+    assert error.value.reason == "infeasible"
     for request in (FlexibleLoadRequest(0.3, 2.0), FlexibleLoadRequest(1.0, 2.0)):
         solve_flexible_load(PROBE_44, request)
 
@@ -599,3 +598,47 @@ def test_a_throughput_budget_that_cannot_pay_the_commitment_has_no_plan():
     assert error.value.reason == "infeasible"
     solve(replace(problem, remaining_daily_throughput_kwh=()))
     solve(replace(problem, initial_dispatch_mode_since=START - timedelta(minutes=300)))
+
+
+# T-038 review, round 2 (sweep seed 3001, flex #856 and flex-nl #853): planned on main
+# 6db538f, `infeasible` on f611802. 1.0 kWh at 0.5 kW over eight quarters pins the probe
+# at 0.125 kWh in every slot; interval 2 (PV 0.1 kWh, charge limit below the activity)
+# then has a net load of 0.024999999999999994 kWh against an activity of 0.025 kWh.
+PINNED_856 = replace(
+    committed(
+        quarter(
+            [
+                (0.96, 0.76, 0.026, 0),
+                (1.28, 0.73, 0.026, 0),
+                (1.45, 0.19, 0.1, 0),
+                (1.08, 0.48, 0, 0),
+                (1.28, 0.77, 0.025, 0.026),
+                (0.73, 0.43, 0.02, 0.05),
+                (0.95, 0.05, 0.026, 0),
+                (1.43, 0.73, 0.03, 0),
+            ]
+        ),
+        Battery(5, 0.2, 1, 4.196, 0.08, 1, 0.95, 0.95, 0.01, False, False, 0.02),
+        "SELF_CONSUME",
+        60,
+        15,
+        start=datetime(2026, 12, 18, 11, tzinfo=UTC),
+    ),
+    site=SiteLimits(8, 8, 0, True),
+)
+
+
+@pytest.mark.parametrize("pv", [0.1, 0.100005, 0.10002, 0.09999])
+def test_a_row_idle_under_the_largest_probe_is_a_bridge_without_a_margin(pv):
+    # 0.1 is the float tie and 0.100005 sits inside `_PROBE_MARGIN` of `probe_room`:
+    # the slot is idle for every probe the model may add, so no probe opens it and
+    # the margin has nothing to guard. The other two are outside the band.
+    slots = list(PINNED_856.slots)
+    slots[2] = replace(slots[2], pv_kwh=pv)
+    problem = replace(PINNED_856, slots=tuple(slots))
+    result = solve_flexible_load(problem, FlexibleLoadRequest(1.0, 0.5))
+    assert result.schedule_kwh == pytest.approx([0.125] * 8)
+    if pv >= 0.1:
+        assert 2 in result.plan.carried_bridges
+        assert result.plan.flows[2].dispatch_mode == "HOLD"
+    assert result.plan.flows[0].dispatch_mode == "SELF_CONSUME"
