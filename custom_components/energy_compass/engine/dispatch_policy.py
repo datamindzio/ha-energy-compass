@@ -609,9 +609,12 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         depleted = {}
         full = {}
         # A full pack takes no more PV, and the inverter curtails what the site cannot
-        # pass: once an interval has started at the ceiling the commitment may end in
-        # CURTAIL as well (`seen_full`, the `lock_full` of every earlier interval).
+        # pass: an interval that starts at the ceiling may be CURTAIL as well (`full`).
+        # So may the one after a released HOLD, in a commitment whose pack has been full
+        # (`seen_full`, the `lock_full` of every earlier interval), and a CURTAIL under
+        # way goes on (`curtailing`). A pack with room again does not curtail.
         seen_full = {}
+        curtailing = {}
         # The HOLD or the HOLD run released from the commitment, in the previous interval.
         released = {}
         for i, (slot, start, v) in enumerate(
@@ -636,6 +639,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 if follows_pv:
                     free_hold.add(i)
                     released = {run: 1}
+                curtailing = {}
             else:
                 # HOLD starts only on a release, and not on a PV surplus the pack
                 # could take, but a run that began earlier goes on through it.
@@ -649,7 +653,18 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     kept[v["mode_HOLD"]] = 1
                 if seen_full:
                     model.constrain({v["mode_CURTAIL"]: 1, **seen_full}, -np.inf, 0)
+                    model.constrain(
+                        {
+                            v["mode_CURTAIL"]: 1,
+                            **full,
+                            **curtailing,
+                            **{key: -1 for key in released},
+                        },
+                        -np.inf,
+                        0,
+                    )
                     kept[v["mode_CURTAIL"]] = 1
+                    curtailing = {v["mode_CURTAIL"]: -1}
                 model.constrain(kept, 1, 1)
                 if follows_pv:
                     # A released HOLD does not go back to the commitment (a released
@@ -875,8 +890,12 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
             if previous is not None and start < since.astimezone(UTC) + dwell:
                 # A carried PV-follow commitment ends once the battery cannot go on:
                 # too empty to discharge, and not where CHARGE_PV could take a PV
-                # surplus, or too full to charge. It ends in HOLD; a pack seen full may
-                # also curtail what the site cannot pass.
+                # surplus, or too full to charge. It ends in HOLD; a full pack may also
+                # curtail what the site cannot pass, and so may the HOLD released from a
+                # commitment whose pack has been full.
+                full = bool(index) and (
+                    left >= _lock_ceiling(problem, drains, index) - _EMPTY_TOLERANCE
+                )
                 ends = (
                     carried
                     and mode == "HOLD"
@@ -884,12 +903,12 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
                         not _takes_surplus(problem, slot)
                         and left
                         <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
-                        or index
-                        and left
-                        >= _lock_ceiling(problem, drains, index) - _EMPTY_TOLERANCE
+                        or full
                     )
                 )
-                curtails = (carried or released) and mode == "CURTAIL" and full_seen
+                curtails = mode == "CURTAIL" and (
+                    carried and full or released and full_seen
+                )
                 if not (ends or curtails):
                     raise SolveError(
                         "solver_failure", "invalid solver result: minimum mode duration"

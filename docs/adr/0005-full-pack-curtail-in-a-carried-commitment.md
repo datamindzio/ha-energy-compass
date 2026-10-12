@@ -17,14 +17,20 @@ the inverter).
 
 ## Decision
 
-1. The full-pack release also opens `CURTAIL`, once an interval has started at the ceiling test of
-   `lock_full` (cumulative over the commitment; never from the empty-battery release).
+1. The full-pack release also opens `CURTAIL`, in an interval that itself starts at the ceiling test of
+   `lock_full` (the previous interval's, as for `HOLD`). A `CURTAIL` under way goes on: it has its own clock,
+   and with standby loss the pack drops below the ceiling while it runs. A pack that was full and has room
+   again does not curtail from the commitment: `CURTAIL` would then be a label to leave the minimum duration
+   with (the HOLD-on-a-chargeable-surplus of T-019/T-025 under another name; 3 of 2100 problems in the review
+   sweep used it, none needed it). Never from the empty-battery release.
 2. A `HOLD` released from a carried PV-follow commitment starts **no clock of its own**: the commitment's
    deadline stays the only one. It may turn to `CURTAIL` (a normal mode with its own clock) inside the
-   commitment, and is free after the deadline. It does not go back to `CHARGE_PV`/`SELF_CONSUME` (an explicit
+   commitment if the pack was at the ceiling in an earlier committed interval (cumulative, so not after an
+   empty-battery release alone), and is free after the deadline. It does not go back to `CHARGE_PV`/`SELF_CONSUME` (an explicit
    row; before, the `HOLD` clock forbade it). This applies to the empty-battery release as well.
 3. `validate_modes` mirrors it: a released `HOLD` keeps the commitment's clock, `CURTAIL` is accepted from
-   the commitment or the released `HOLD` once the pack was seen at the ceiling, nothing else is.
+   the commitment in an interval that starts at the ceiling, or from the released `HOLD` once the pack was
+   seen at the ceiling, nothing else is.
 4. Idle committed intervals (T-025, [ADR-0004](0004-carried-lock-release-for-standby-loss.md)): a real `HOLD`
    run there (`hold_run` = 1) is a release like any other and starts no clock either, so a spent pack whose
    idle first interval is a bridge may start its `HOLD` in the next one; a bridge never follows a released
