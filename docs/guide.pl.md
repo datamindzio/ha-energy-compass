@@ -676,7 +676,9 @@ Zasady (domyślnie 60 min, 0,1 kW):
   (`dispatch_policy.carried_idle_starts` wymienia przemostkowane przedziały). Plan jest
   `infeasible` (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
   (`preserve_initial` bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
-  dom; sonda obciążenia elastycznego tego nie zmienia) albo gdy dzienny budżet przepustowości nie
+  dom; sonda obciążenia elastycznego daje plan tylko wtedy, gdy jej obciążenie zostawia każdemu
+  przedziałowi zobowiązania coś do naśladowania albo sprowadza nadwyżkę poniżej minimalnej
+  aktywności) albo gdy dzienny budżet przepustowości nie
   pokryje minimalnej aktywności, której wymaga zobowiązanie; rzadkie pozostałe przypadki opisuje
   [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget) (EN). Kierunek
   zablokowany przez dawną blokadę kierunku (`initial_battery_mode`) nie jest otwarty: bateria,

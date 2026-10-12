@@ -82,8 +82,10 @@ The released rows are `HOLD` with full import, the mode the unlocked solver pick
    problem was `infeasible`; the run reading is what keeps the sweep at zero newly infeasible problems.
    The solver reports which rows it bridged (`Plan.carried_bridges`) and hands them to
    `validate_modes(problem, flows, bridges)`. A bridge row must be `HOLD` in an interval `idle_slots` lists; every
-   other `HOLD` row, an idle one included, takes the normal release check. Without `bridges` the validator accepts
-   either reading of an idle `HOLD` row (T-038; T-025 read every idle row as a bridge).
+   other `HOLD` row, an idle one included, takes the normal release check. Without `bridges` the validator tries every
+   idle row as a bridge (the T-025 reading), then the idle `HOLD` rows before each row in turn (the first row that is
+   not a bridge ends the commitment, so the bridges are a prefix) and accepts the plan if one reading passes (T-038;
+   the T-025 reading alone rejected a valid plan whose `HOLD` run started on an idle row).
    The controller writes the `HOLD` registers for a bridge row, which is what the inverter does anyway with
    nothing to follow. The coordinator keeps the persisted commitment (mode and start) on a bridge row, so the next
    calculation still carries `SELF_CONSUME`/`CHARGE_PV`, and the clock of a later real `HOLD` run starts at its own
@@ -114,14 +116,22 @@ flexible-load probe was held to the tightening without the bridge reading.
    `probe_room` (the load at which `SELF_CONSUME` would open, less `_PROBE_MARGIN = 1e-5` kWh, which keeps HiGHS
    away from tiny coefficients); otherwise it is an ordinary committed row. A surplus the probe takes below the
    minimum activity is not chargeable as realised (`open_surplus`, with `release`), so `HOLD` may start on it.
-   Slots exactly at the minimum activity differ between the base and the realised load by rounding, so a flow within
-   `_OPEN_TOLERANCE = 1e-9` kWh of it counts as reaching it in the availability, `_follow_open` and `_takes_surplus`.
+   The realised probe is never below zero: the solver returns noise such as -3e-17 kWh, which lifts a slot sitting
+   exactly at the minimum activity (`0.03 - 0.005` is `0.024999999999999998` kWh against `0.025`) from idle without
+   the probe to open as realised, and the plan, which bridged it, failed `validate_modes` (`solver_failure`, seed 202
+   #105, pinned). `_solve` clamps the probe at zero for the certificate and for `schedule_kwh`. A first version read a
+   flow within `_OPEN_TOLERANCE = 1e-9` kWh of the activity as reaching it, which fixed that but also changed the
+   plain path: four problems of the T-038 review (plain-nl seeds 1001 #313, #1478, 1002 #761, plain 1002 #312) were
+   planned on main by bridging a slot at exactly the activity and were `infeasible`. The tolerance is gone; a slot
+   exactly at the activity reads by float arithmetic on every path, as on main, and #761 is pinned.
 3. **What stays infeasible until the commitment ends.** The commitment forbids a plan that started `HOLD` on a
    surplus the pack could take, and some problems had no other plan: a `preserve_initial` terminal the commitment
-   leaves no way to meet (pinned problem #44, infeasible without a probe as well, so a probe does not change it), a
+   leaves no way to meet (pinned problem #44, which has no plan without a probe and none with 0.1 kWh at 0.5 kW; a
+   probe that puts load into every committed interval, 0.3 kWh at 2 kW, or one that takes a chargeable surplus
+   below the activity, #917, does give a plan, so the probe is not a constant of the problem), a
    daily throughput budget smaller than the minimum activity the commitment asks for, and the standby loss case
    above. `docs/model.md` lists them; the optimizer reports `infeasible` and the last plan is retained.
-4. `validate_modes(problem, flows, bridges=None)` means *either reading*, and a test covers `_publish_current`
+4. `validate_modes(problem, flows, bridges=None)` tries the readings above, and a test covers `_publish_current`
    deriving `carried_idle` and `mode_start` from `carried_idle_starts`.
 
 Evidence (corrected in T-038): `tests/test_carried_commitment_sweep.py` keeps a seeded corpus of committed problems
@@ -131,8 +141,15 @@ flexible-load probes). It fails on main and passes here: every problem is planne
 the validator, and no plan starts `HOLD` on a chargeable surplus. T-025 stated that seed 11 gave no newly infeasible
 problem against main; it did not: the review found problems with the legacy guard and with probes that were planned
 on 34d6e1f and `infeasible` after T-025 (repros E and F, probes #44, #62, #917, #1424). The T-038 sweep
-(`tests/test_carried_commitment_guard_probes.py` pins them) compares eight seeded corpora of 1500 problems each
-(plain, flexible-load probes, with and without the guard; seeds 211 to 233) against 34d6e1f: no newly
-`solver_failure`, no `HOLD` started on a chargeable surplus with a pack that is not full, and three newly
-`infeasible` problems in 12000, all of them plans that had started `HOLD` on a chargeable surplus (a
-`preserve_initial` terminal in one, a daily throughput budget in two), the class under point 3.
+(`tests/test_carried_commitment_guard_probes.py` pins them) generates the corpora of the T-025 review (short first
+interval, 0.05/0.1/0.2 kW minimum activity, packs that charge or discharge below it, a daily throughput budget; 1500
+problems each, seeds 1001, 1002, 2001 and 2002; plain and flexible-load probes, with and without the guard, 16 corpora)
+and compares head with main (6db538f) and with 34d6e1f. Against main: no problem that was planned is `infeasible`,
+no `solver_failure`, and 57 to 186 problems per guard or probe corpus planned that main could not (none in the
+plain corpora without a guard, where the engine is main's). Against 34d6e1f: 2 newly `infeasible` problems in 24000
+(flex-nl seed 1001 #1420, flex seed 2002 #1033), both `preserve_initial` terminals whose old plan had started `HOLD`
+on a chargeable surplus, the class under point 3. No plan starts `HOLD` on a chargeable surplus with a pack
+that is not full, except slots exactly at the activity read by float arithmetic, in plans main makes too (flex-nl and
+plain-nl seed 2002 #520, #715: `0.03 - 0.005` against `0.025`). The T-038 review found a
+head-versus-main difference this sweep had not been run against (the tolerance above): measure against main as well as
+against the base of the rule being tightened.

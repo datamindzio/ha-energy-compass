@@ -1154,7 +1154,8 @@ directly by any other available mode.</p>
   (<code>dispatch_policy.carried_idle_starts</code> lists the bridged intervals). The plan is
   <code>infeasible</code> until the commitment ends when the
   terminal rule cannot be met afterwards (<code>preserve_initial</code> with no later PV or grid charge to
-  refill what the house drew; a flexible-load probe does not change that) or when the daily
+  refill what the house drew; a flexible-load probe plans it only if its load leaves every
+  committed interval something to follow or takes a surplus below the minimum activity) or when the daily
   throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
   cases are listed in
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>. A direction the

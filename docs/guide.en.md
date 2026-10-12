@@ -667,7 +667,8 @@ Rules (defaults: 60 min, 0.1 kW):
   (`dispatch_policy.carried_idle_starts` lists the bridged intervals). The plan is
   `infeasible` until the commitment ends when the
   terminal rule cannot be met afterwards (`preserve_initial` with no later PV or grid charge to
-  refill what the house drew; a flexible-load probe does not change that) or when the daily
+  refill what the house drew; a flexible-load probe plans it only if its load leaves every
+  committed interval something to follow or takes a surplus below the minimum activity) or when the daily
   throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
   cases are listed in
   [model and limitations](model.md#operating-mode-duration-and-pv-export-budget). A direction the

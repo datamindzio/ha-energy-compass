@@ -25,11 +25,6 @@ _IMPORT_TOLERANCE = 1e-5
 _EMPTY_TOLERANCE = 1e-4
 # A bridge's realised probe stays this far below the activity that would open the slot.
 _PROBE_MARGIN = 1e-5
-# A flow within this of the minimum activity counts as reaching it, wherever the model,
-# `idle_slots` and `validate_modes` decide whether SELF_CONSUME or CHARGE_PV is open: the
-# realised load of a probe differs from the base by noise, and a slot exactly at the
-# activity must read the same on every side.
-_OPEN_TOLERANCE = 1e-9
 
 
 # CHARGE_PV and SELF_CONSUME both let the inverter follow PV: surplus charges
@@ -218,7 +213,7 @@ def _takes_surplus(problem, slot) -> bool:
         activity > 2e-6
         and _guarded(problem, slot) != "bc"
         and min(problem.battery.charge_kw * hours, slot.pv_kwh - slot.load_kwh)
-        >= activity - _OPEN_TOLERANCE
+        >= activity
     )
 
 
@@ -258,8 +253,9 @@ def _follow_open(problem, slot) -> bool:
             ),
         )
     )
-    reach = activity - _OPEN_TOLERANCE
-    return min(charge_max, surplus) >= reach or min(discharge_max, net_load) >= reach
+    return (
+        min(charge_max, surplus) >= activity or min(discharge_max, net_load) >= activity
+    )
 
 
 def probe_room(problem, slot) -> float:
@@ -514,11 +510,11 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             "CHARGE_GRID": battery.allow_grid_charge
             and price_allows_grid_charge(problem, slot)
             and charge_max >= surplus + activity,
-            "CHARGE_PV": pv_max >= activity - _OPEN_TOLERANCE,
+            "CHARGE_PV": pv_max >= activity,
             "DISCHARGE_GRID": battery.allow_battery_export
             and discharge_max >= activity
             and model.upper[v["gout"]] >= activity,
-            "SELF_CONSUME": self_max >= activity - _OPEN_TOLERANCE,
+            "SELF_CONSUME": self_max >= activity,
             "HOLD": True,
             "CURTAIL": curt_max >= activity,
         }
@@ -922,10 +918,37 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
 
     `bridges` lists the committed idle rows the plan reads as a bridge, the rest
     of the HOLD rows start or continue a HOLD run (the solver says which, since
-    both have the same flows). None accepts either reading: an idle HOLD row is a
-    bridge while the carried commitment is still on, and an ordinary HOLD row once it
-    has ended.
+    both have the same flows). None accepts any reading of the idle HOLD rows: every
+    one a bridge, or only those before some row, from which a HOLD run goes on.
     """
+    if bridges is None and problem.battery and problem.minimum_mode_minutes:
+        previous, _ = _initial(problem)
+        idle = idle_slots(problem) if dwell_group(previous) == "PV_FOLLOW" else ()
+        resting = [
+            i
+            for i, (slot, flow) in enumerate(zip(problem.slots, flows, strict=False))
+            if i in idle and machine_state(slot, flow) == "HOLD"
+        ]
+        # The first row that is not a bridge ends the commitment, so the bridges are the
+        # idle HOLD rows before it.
+        readings = dict.fromkeys(
+            (
+                frozenset(idle),
+                *(frozenset(resting[:count]) for count in range(len(resting), -1, -1)),
+            )
+        )
+        failure = None
+        for reading in readings:
+            try:
+                return _certify_modes(problem, flows, reading)
+            except SolveError as error:
+                failure = failure or error
+        raise failure
+    _certify_modes(problem, flows, frozenset(bridges or ()))
+
+
+def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
+    """Certify the flows of a plan that reads the committed idle rows in `bridges` as bridges."""
     if not problem.battery:
         return
     if not problem.minimum_mode_minutes:
@@ -940,8 +963,6 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
     released = full_seen = False
     owed = _owed(problem, drains, since.astimezone(UTC) + dwell) if carried else ()
     idle = idle_slots(problem) if carried else frozenset()
-    either = bridges is None
-    bridges = frozenset(bridges or ())
     left = problem.battery.initial_kwh
     for index, (slot, flow) in enumerate(zip(problem.slots, flows, strict=True)):
         start = slot.start.astimezone(UTC)
@@ -992,9 +1013,7 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
                 )
         if (carried or released) and index and not full_seen:
             full_seen = left >= _lock_ceiling(problem, drains, index) - _EMPTY_TOLERANCE
-        if index in bridges or (
-            either and carried and mode == "HOLD" and index in idle
-        ):
+        if index in bridges:
             if not (carried and mode == "HOLD" and index in idle):
                 raise SolveError(
                     "solver_failure", "invalid solver result: minimum mode duration"

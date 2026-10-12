@@ -311,14 +311,18 @@ def test_the_pinned_problems_without_a_probe_keep_their_status():
             assert error.value.reason == "infeasible"
 
 
-def test_a_probe_cannot_make_a_plan_the_problem_itself_does_not_have():
-    # Base 34d6e1f planned this probe by HOLD on a chargeable surplus, which the
-    # problem without the probe cannot: its pack must end at its initial energy while
-    # the commitment carries SELF_CONSUME through a net load of 0.4 kWh. It stays
-    # infeasible until the commitment ends (docs/model.md).
-    with pytest.raises(SolveError) as error:
-        solve_flexible_load(PROBE_44, FlexibleLoadRequest(0.1, 0.5))
-    assert error.value.reason == "infeasible"
+def test_a_probe_that_puts_load_into_every_committed_interval_plans_what_a_small_one_cannot():
+    # Base 34d6e1f planned the 0.1 kWh probe by HOLD on a chargeable surplus. The
+    # problem without a probe has no other plan: its pack must end at its initial energy
+    # while the commitment carries SELF_CONSUME through a net load of 0.4 kWh. Neither
+    # has the probe of this size, which stays infeasible until the commitment ends
+    # (docs/model.md). A larger one leaves the later intervals load to follow.
+    for request in (FlexibleLoadRequest(0.1, 0.5),):
+        with pytest.raises(SolveError) as error:
+            solve_flexible_load(PROBE_44, request)
+        assert error.value.reason == "infeasible"
+    for request in (FlexibleLoadRequest(0.3, 2.0), FlexibleLoadRequest(1.0, 2.0)):
+        solve_flexible_load(PROBE_44, request)
 
 
 def test_a_probe_that_takes_a_surplus_below_the_activity_lets_hold_start():
@@ -402,10 +406,8 @@ def test_a_publish_derives_the_bridge_clock_from_the_plan():
     # Interval 2 is a bridge: the HOLD run it neighbours began at interval 3 at the
     # earliest, so the clock starts after the bridge rows (`mode_run_start`).
     EnergyCompassCoordinator._publish_current(coordinator, result, None, {}, now)
-    first = (start + 2 * Q).isoformat()
-    assert committed_rows == [(first, first, True)] or committed_rows == [
-        (rows[2]["start"], rows[2]["start"], True)
-    ]
+    first = rows[2]["start"]
+    assert committed_rows == [(first, first, True)]
     # Interval 3 is a HOLD run, not a bridge: it is not carried and starts its own clock.
     committed_rows.clear()
     EnergyCompassCoordinator._publish_current(
@@ -413,6 +415,118 @@ def test_a_publish_derives_the_bridge_clock_from_the_plan():
     )
     assert committed_rows[0][2] is False
     assert committed_rows[0][1] == rows[3]["start"]
+
+
+def ten_minute_first(problem):
+    """Cut the first interval to ten minutes, as the sweep does, and keep the rest quarters."""
+    start = problem.slots[0].start
+    edges = [start, start + timedelta(minutes=10)]
+    for _ in problem.slots[1:]:
+        edges.append(edges[-1] + Q)
+    return replace(
+        problem,
+        slots=tuple(
+            replace(slot, start=begin, end=end)
+            for slot, begin, end in zip(problem.slots, edges, edges[1:], strict=False)
+        ),
+    )
+
+
+# A slot exactly at the minimum activity reads by float arithmetic: 0.03 - 0.005 is
+# 0.024999999999999998, below 0.025, so interval 2 is idle and HOLD may bridge it. T-025
+# (main) planned this problem; reading it as open (a 1e-9 tolerance) left it infeasible
+# (T-038 review, plain-nl seed 1002 #761).
+TIE_761 = ten_minute_first(
+    committed(
+        [
+            (0.01733, 0.0, 0.61, 0.14),
+            (0.03, 0.01, 1.06, 0.15),
+            (0.005, 0.03, 1.22, 0.44),
+        ],
+        Battery(5, 0, 1, 4.95, 0.08, 0.5, 0.95, 0.95, 0.01, False, False, 0),
+        "SELF_CONSUME",
+        120,
+        29,
+        start=datetime(2026, 12, 18, 11, 5, tzinfo=UTC),
+        terminal_mode="preserve_initial",
+    )
+)
+
+
+def test_a_slot_exactly_at_the_activity_reads_by_float_arithmetic():
+    assert 0.03 - 0.005 < 0.025
+    assert policy.idle_slots(TIE_761) == {0, 1, 2}
+    plan = solve(TIE_761)
+    assert modes(plan) == ["HOLD", "HOLD", "HOLD"]
+    assert plan.carried_bridges == (0, 1, 2)
+
+
+# Flexible-load seed 202 #105: the solver returns a probe of -3e-17 kWh in interval 0,
+# whose surplus is 0.03 - 0.005, a hair under the 0.025 kWh activity. Realised, that
+# surplus is a hair above it and the plan, which bridges interval 0, was rejected as
+# `solver_failure` (minimum mode duration). The realised probe never goes below zero.
+NOISE_105 = committed(
+    [
+        (0.03, 0.005, 1.28, 0.53),
+        (0.5, 0.005, 0.23, 0.35),
+        (0.005, 0.03, 1.47, 0.19),
+        (0.1, 0.005, 0.6, 0.15),
+        (0.1, 0.03, 0.33, 0.44),
+        (0.005, 0.03, 1.23, 0.29),
+    ],
+    Battery(5, 0, 1, 4.99, 0.5, 0.08, 0.95, 0.95, 0.01, False, False, 0),
+    "CHARGE_PV",
+    60,
+    0,
+    start=datetime(2026, 12, 18, 11, tzinfo=UTC),
+    terminal_value_per_kwh=0.3,
+    remaining_daily_throughput_kwh=(("2026-12-18", 0),),
+)
+
+
+def test_solver_noise_below_zero_is_not_a_negative_probe():
+    result = solve_flexible_load(NOISE_105, FlexibleLoadRequest(1.0, 2.0))
+    assert modes(result.plan)[0] == "HOLD"
+    assert 0 in result.plan.carried_bridges
+    assert min(result.schedule_kwh) >= 0.0
+
+
+# Plain seed 1001 #367: the guard blocks charging, the pack rests at its floor and
+# interval 0, which is idle, starts the HOLD run the rest goes on with. Read as a
+# bridge it would be a carried commitment past the end of the pack's ability.
+HOLD_RUN_367 = ten_minute_first(
+    committed(
+        [
+            (0.00333, 0.00667, 1.15, 0.26),
+            (0.5, 0.0, 1.23, 0.67),
+            (0.026, 0.03, 1.37, 0.19),
+            (0.02, 0.0, 0.9, 0.51),
+            (0.005, 0.05, 0.52, 0.2),
+            (0.0, 0.026, 1.11, 0.19),
+        ],
+        Battery(5, 0.1, 1, 0.505, 1, 0.08, 0.95, 0.95, 0, True, False, 0),
+        "SELF_CONSUME",
+        120,
+        0,
+        "charge",
+        0,
+        start=datetime(2026, 12, 18, 11, 5, tzinfo=UTC),
+        terminal_mode="preserve_initial",
+        terminal_value_per_kwh=0.3,
+    )
+)
+
+
+def test_validate_modes_without_bridges_accepts_a_hold_run_that_starts_on_an_idle_row():
+    plan = solve(HOLD_RUN_367)
+    assert modes(plan) == ["HOLD"] * 6
+    assert plan.carried_bridges == ()
+    idle = policy.idle_slots(HOLD_RUN_367)
+    assert 0 in idle
+    policy.validate_modes(HOLD_RUN_367, plan.flows, plan.carried_bridges)
+    policy.validate_modes(HOLD_RUN_367, plan.flows)
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        policy.validate_modes(HOLD_RUN_367, plan.flows, idle)
 
 
 def test_the_guard_and_probe_corpus_has_no_rejected_plan():
