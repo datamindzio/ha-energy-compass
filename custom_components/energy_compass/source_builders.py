@@ -3,6 +3,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .calibration import BATTERY_COUNTER_MEASUREMENTS
 from .config_models import NumericSetting, SolarForecastBinding
 from .daily_export import DAILY_EXPORT_MEASUREMENTS
 from .engine.models import InputError
@@ -177,7 +178,9 @@ def measurement_setting(
         unit="kW" if "power" in row else "kWh",
         source_unit=source_unit,
         multiplier=sign * (0.001 if scaled else 1),
-        minimum=0 if row in DAILY_EXPORT_MEASUREMENTS else None,
+        minimum=0
+        if row in (*BATTERY_COUNTER_MEASUREMENTS, *DAILY_EXPORT_MEASUREMENTS)
+        else None,
         maximum=None,
         max_age_seconds=max_age_seconds,
     ).to_dict()

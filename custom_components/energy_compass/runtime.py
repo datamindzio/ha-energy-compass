@@ -15,6 +15,7 @@ from homeassistant.config_entries import ConfigEntryState
 
 from .balance_tracker import balance_settings, empty_state, soc_percent
 from .balance_tracker import status as balance_status
+from .calibration import forecast_hours
 from .config_models import (
     NumericSetting,
     SolarForecastBinding,
@@ -1241,6 +1242,9 @@ def compute(
             "daily_balances": daily_export_rows(problem, plan.flows),
         },
         "measurements": measurement_diagnostics(config, states, now),
+        "pv_forecast_hours": forecast_hours(problem.slots, now)
+        if config["sources"]["pv"]["enabled"]
+        else [],
         "presentation": {
             key: values[key]
             for key in (

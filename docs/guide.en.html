@@ -632,11 +632,13 @@ dashboard's two grid meters resolve to the inverter's counter.</p>
   <code>pv_energy</code> rows; with the battery off no <code>soc</code>, <code>bms_soc</code> or <code>battery_power</code> rows. The two daily
   counters are never gated.</li>
 <li><strong>Stored age limits</strong> of the measurements: 3600 s for <code>battery_power</code>, <code>grid_import_power</code> and
-  <code>grid_export_power</code>; 86400 s for <code>pv_power</code>, the lifetime counters and the daily counters (a
-  constant 0 W at night never updates the state).</li>
+  <code>grid_export_power</code>; 86400 s for <code>pv_power</code>, the lifetime counters, the battery charge and discharge
+  energy counters and the daily counters (a constant 0 W at night never updates the state).</li>
 <li><strong>Never detected:</strong> <code>buy</code>; <code>throughput_today</code> (to use <code>daily_cycles</code> provide one entity with the
   AC-side charge plus discharge since midnight, see <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/source-requirements.md#daily-battery-throughput">source requirements</a>);
-  <code>battery_energy</code>, <code>battery_charge_power</code> and <code>battery_discharge_power</code>; and helpers.</li>
+  <code>battery_energy</code>, <code>battery_charge_power</code>, <code>battery_discharge_power</code>, <code>battery_charge_energy</code> and
+  <code>battery_discharge_energy</code> (the optional <a href="#measured-calibration-optional">measured calibration</a>
+  counters); and helpers.</li>
 </ul>
 <p>Preview then shows the usual acknowledgements for a new entry. Its <strong>Back to the main menu</strong>
 checkbox leaves Preview without validating or saving anything. The matching reference tables are in
@@ -881,8 +883,91 @@ attributes carry <code>last_completed</code>, <code>next_due</code>, <code>days_
 </tbody>
 </table></section>
 <p>Attributes: <code>last_calculation_started_at</code>, <code>calculations_since_load</code>,
-<code>expired_previous_generated_at</code>. Diagnostics add <code>calculations_last_hour</code> and
-<code>calculations_last_24h</code>.</p>
+<code>expired_previous_generated_at</code>, and <code>measured_calibration</code> when calibration counters are bound
+(see <a href="#measured-calibration-optional">Measured calibration</a>). Diagnostics add
+<code>calculations_last_hour</code> and <code>calculations_last_24h</code>.</p>
+<h3 id="measured-calibration-optional">Measured calibration (optional)</h3>
+<p>Plans carry <code>calibration</code> and <code>capacity_calibration</code>, which stay <code>unvalidated</code> until you set them and
+say nothing about how far the configured values are from reality. Two read-only diagnostics compare
+them with your own counters. They never change a plan. A block appears only while its sources are
+bound; with none bound, <code>measured_calibration</code> is absent from the Optimizer status attributes
+(excluded from the recorder) and from the integration diagnostics.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Block</th>
+<th>Sources (Sources → Add source → Measurement)</th>
+<th>Reports</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>battery_round_trip</code></td>
+<td><code>battery_charge_energy</code> and <code>battery_discharge_energy</code>: lifetime counters of the energy that passed the battery terminals, kWh or Wh, battery enabled</td>
+<td>discharge ÷ charge energy over the last 30 days, next to the configured <code>eta_charge × eta_discharge</code></td>
+</tr>
+<tr>
+<td><code>pv_forecast_accuracy</code></td>
+<td><code>pv_energy</code>: the lifetime PV counter, PV enabled, an entity (not a recorder statistic)</td>
+<td>real ÷ forecast PV energy over the last 14 days, in total and per local hour of the day</td>
+</tr>
+</tbody>
+</table></section>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>status</code></td>
+<td><code>ok</code>, or <code>insufficient_data</code> while the window is too short</td>
+</tr>
+<tr>
+<td><code>window_days</code>, <code>covered_hours</code></td>
+<td>Rolling window (30 / 14 days) and the full hours that had every value they need</td>
+</tr>
+<tr>
+<td><code>minimum_hours</code></td>
+<td>Round trip only: 168 covered hours and at least 1 kWh charged before <code>measured</code> is shown</td>
+</tr>
+<tr>
+<td><code>charge_kwh</code>, <code>discharge_kwh</code></td>
+<td>Round trip: summed counter deltas over the covered hours</td>
+</tr>
+<tr>
+<td><code>measured</code>, <code>configured</code>, <code>difference</code></td>
+<td>Round trip: measured ratio (null until <code>ok</code>), <code>eta_charge × eta_discharge</code> and the first minus the second</td>
+</tr>
+<tr>
+<td><code>forecast_kwh</code>, <code>measured_kwh</code>, <code>ratio</code></td>
+<td>PV: sums over covered hours and their quotient; <code>ratio</code> is null when the forecast sum is below 0.05 kWh</td>
+</tr>
+<tr>
+<td><code>by_local_hour</code></td>
+<td>PV: keys <code>"00"</code>–<code>"23"</code> (hour of the day in the installation timezone), each with <code>ratio</code>, <code>hours</code>, <code>forecast_kwh</code> and <code>measured_kwh</code></td>
+</tr>
+</tbody>
+</table></section>
+<p>How it is measured:</p>
+<ul>
+<li><strong>Hour boundaries.</strong> Each counter reading is stamped with the source's own report time and reduced
+  to its value at every full UTC hour by interpolating between consecutive readings. An unchanged
+  counter is exact however long the gap; a moving one across a gap longer than 2 hours gives no
+  value. Energy of an hour is the difference of its two boundaries.</li>
+<li><strong>Missing hours and resets.</strong> An hour without both boundaries is skipped, never filled. A counter
+  that goes down is a reset: no boundary is derived across it and the hour that spans it is dropped
+  from both ratios.</li>
+<li><strong>Forecast as used.</strong> Each published plan records its PV forecast for the current hour (scaled up
+  from the remainder when the plan was solved mid-hour). The fullest plan of the hour is kept; a plan
+  that covers less than half of the hour is not recorded. The current, unfinished hour is not
+  compared.</li>
+<li><strong>Storage.</strong> One small row per hour: about 31 days of counter values and 15 days of forecasts, kept
+  in the integration's own store (<code>energy_compass.&lt;entry_id&gt;.calibration</code>), saved at each new hour and
+  on unload, restored on start. An invalid store is dropped with a warning.</li>
+</ul>
 <h3 id="superseded-results">Superseded results</h3>
 <p>If inputs change while a solve runs, the finished result is still published when only inputs (not
 configuration) changed — it is fresher than the retained plan — and a new solve follows.
