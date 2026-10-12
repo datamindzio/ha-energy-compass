@@ -6,11 +6,14 @@ from itertools import pairwise
 
 import pytest
 
+from custom_components.energy_compass.engine.dispatch_policy import validate_modes
 from custom_components.energy_compass.engine.models import (
     Battery,
+    Flow,
     Problem,
     SiteLimits,
     Slot,
+    SolveError,
 )
 from custom_components.energy_compass.engine.optimize import solve
 from custom_components.energy_compass.runtime import build_problem
@@ -256,6 +259,20 @@ def test_legacy_charge_guard_can_publish_hold_at_soc_ceiling():
         and abs(f.discharge_kwh) < 1e-6
         for f in result.flows
     )
+
+
+@pytest.mark.parametrize("noise", [-5e-7, 5e-7])
+def test_solver_noise_below_the_classifier_threshold_keeps_hold_valid(noise):
+    problem = dispatch(((0, 0, 0, 1),))
+    idle = Flow(0, 1, 0, noise, 0, 0, None, "HOLD")
+    validate_modes(problem, (idle,))
+
+
+def test_flow_above_the_classifier_threshold_is_not_hold():
+    problem = dispatch(((0, 0, 0, 1),))
+    flow = Flow(0, 1, 0, 2e-6, 0, 0, None, "HOLD")
+    with pytest.raises(SolveError, match="physical dispatch mode"):
+        validate_modes(problem, (flow,))
 
 
 async def test_direction_commitment_survives_recalculate_and_reload(
