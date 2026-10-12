@@ -20,21 +20,31 @@ The tiny mixed-integer program maximizes a binary variable under bounds 0–1 wi
 
 ## Advisory optimizer benchmark
 
-The deterministic `benchmarks.optimizer` workload varies buy and sell prices, solar generation and household load across quarter-hour slots, with a 13.5 kWh battery and finite grid and inverter limits. These measurements used the matched aarch64 image on a Mac host. They measure that container and host combination, not Raspberry Pi 5 hardware. Peak RSS is the process high-water mark, including Python and SciPy startup.
+The deterministic `benchmarks.optimizer` workload varies buy and sell prices, solar generation and household load across quarter-hour slots, with a 13.5 kWh battery and finite grid and inverter limits. `--strategy all` solves it once per dispatch strategy, in one process. These measurements used the matched aarch64 image on a Mac host (one run each; the solver is deterministic but wall time varies by about ±15 %). They measure that container and host combination, not Raspberry Pi 5 hardware. Peak RSS is the process high-water mark, including Python and SciPy startup and every strategy solved before it.
 
 ```sh
-docker run --rm -v "$PWD":/workspace:ro ha-energy-compass-test:2026.9.1 -m benchmarks.optimizer --slots 192 --time-limit 10
-docker run --rm -v "$PWD":/workspace:ro ha-energy-compass-test:2026.9.1 -m benchmarks.optimizer --slots 384 --time-limit 10
-docker run --rm -v "$PWD":/workspace:ro ha-energy-compass-test:2026.9.1 -m benchmarks.optimizer --slots 384 --time-limit 0.000001
+docker run --rm -v "$PWD":/workspace:ro ha-energy-compass-test:2026.9.1 -m benchmarks.optimizer --slots 192 --time-limit 10 --strategy all
+docker run --rm -v "$PWD":/workspace:ro ha-energy-compass-test:2026.9.1 -m benchmarks.optimizer --slots 384 --time-limit 10 --strategy all
+docker run --rm -v "$PWD":/workspace:ro ha-energy-compass-test:2026.9.1 -m benchmarks.optimizer --slots 384 --time-limit 0.000001 --strategy all
 ```
 
-| Slots | Time limit | Result | Solve call elapsed | Peak RSS |
-| ---: | ---: | --- | ---: | ---: |
-| 192 | 10 s | Optimal, 192 flows | 0.0346 s | 99,628 KiB |
-| 384 | 10 s | Optimal, 384 flows | 0.0726 s | 107,052 KiB |
-| 384 | 0.000001 s | `SolveError(reason="timeout")` | 0.0149 s | 100,764 KiB |
+| Slots | Time limit | Strategy | Result | Variables / rows | Solve call elapsed | Peak RSS |
+| ---: | ---: | --- | --- | ---: | ---: | ---: |
+| 192 | 10 s | `cost_min` | Optimal | 5,300 / 7,663 | 0.42 s | 264,232 KiB |
+| 192 | 10 s | `self_sufficiency` | Optimal | 5,301 / 7,855 | 5.28 s | 284,848 KiB |
+| 192 | 10 s | `backup_ready` | Optimal | 5,301 / 7,855 | 7.30 s | 284,848 KiB |
+| 192 | 10 s | `pv_swap` | Optimal | 5,301 / 7,855 | 0.33 s | 284,848 KiB |
+| 192 | 10 s | `max_export` | Optimal | 5,108 / 7,084 | 0.36 s | 284,848 KiB |
+| 192 | 10 s | `grid_friendly` | Optimal | 5,685 / 8,239 | 0.77 s | 284,848 KiB |
+| 384 | 10 s | `cost_min` | Optimal | 10,606 / 15,327 | 1.68 s | 301,720 KiB |
+| 384 | 10 s | `self_sufficiency` | Optimal | 10,607 / 15,711 | 8.77 s | 313,008 KiB |
+| 384 | 10 s | `backup_ready` | Optimal | 10,607 / 15,711 | 6.25 s | 316,664 KiB |
+| 384 | 10 s | `pv_swap` | Optimal | 10,607 / 15,711 | 0.71 s | 316,664 KiB |
+| 384 | 10 s | `max_export` | Optimal | 10,222 / 14,170 | 2.99 s | 319,404 KiB |
+| 384 | 10 s | `grid_friendly` | Optimal | 11,375 / 16,479 | 1.28 s | 319,404 KiB |
+| 384 | 0.000001 s | each of the six | `SolveError(reason="timeout")` | as above | 0.05-0.10 s | 261,716-263,532 KiB |
 
-The timeout case shows version 0.1 rejects a time-limited incumbent instead of returning an unproven plan. All three commands exited successfully; the script reports typed solver outcomes as JSON. The 192-slot case is the two-day quarter-hour representative horizon, and 384 slots stress a four-day horizon. These results should be repeated on actual Raspberry Pi 5 hardware before setting operational time and memory limits.
+`self_sufficiency` and `backup_ready` are the slow strategies because they make SELF_CONSUME worth using all night: the load-following rule (see `docs/model.md`) then leaves a 0.1 % gap that HiGHS needs a few hundred branch-and-bound nodes to close (the plan itself is found after 2-3 s, the rest is the proof). On a 192-slot horizon they use 50-70 % of the 10 s base-solve limit even on this fast host, so a Raspberry Pi 5 is expected to end `time_limited`; the base plan then publishes its best validated incumbent (`Plan.time_limited`, `Plan.mip_gap`). The other four strategies stay well under a second at 192 slots. The benchmark itself does not pass `accept_incumbent`, so its 0.000001 s rows show the strict solve that probes, flexible-load and configuration checks use: a limit without a proof raises `SolveError("timeout")`. All commands exited successfully; the script reports typed solver outcomes as JSON. The 192-slot case is the two-day quarter-hour representative horizon, and 384 slots stress a four-day horizon. These results should be repeated on actual Raspberry Pi 5 hardware before setting operational time and memory limits.
 
 ## Incremental consumption benchmark
 
