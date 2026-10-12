@@ -117,8 +117,8 @@ MONETARY_VALUES = {
     "minimum_grid_charge_episode_benefit": 3.0,
     "import_penalty_per_kwh": 0.12,
     "balance_value": 8.0,
-    "buy_energy_rate": 0.7,
-    "buy_off_peak_energy_rate": 0.46,
+    "buy_distribution_rate": 0.7,
+    "buy_distribution_off_peak_rate": 0.46,
     "deposit_yearly_value": 2800,
     "deposit_yearly_energy_cost": 2150,
 }

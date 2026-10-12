@@ -34,19 +34,27 @@ def resolve_settlement(
     held: Mapping[str, object] | None,
     now: datetime,
     timezone: str,
+    *,
+    split_known: bool = True,
 ) -> tuple[dict, dict | None]:
-    """Return (diagnostics for `dispatch_policy.settlement`, state to persist or None)."""
+    """Return (diagnostics for `dispatch_policy.settlement`, state to persist or None).
+
+    `split_known` is False when no slot carries a distribution part: the whole buy
+    price would then count as deposit-paid, so φe is forced to 1 (`split_missing`).
+    """
     today = now.astimezone(ZoneInfo(timezone)).date().isoformat()
     inputs = _inputs(values)
     rho = inputs["refund_percent"] / 100
     deposit, energy = inputs["yearly_deposit"], inputs["yearly_energy_cost"]
     unused = None
     pressure = 0.0
+    manual_export = None
     reason = "ok"
     if inputs["model"] == "off":
         reason = "off"
     elif inputs["model"] == "manual":
         pressure = manual_pressure(inputs["manual_factor"], rho)
+        manual_export = inputs["manual_factor"] if rho < 1 else 1.0
     elif deposit <= 0 or energy <= 0:
         reason = "inputs_missing"
     else:
@@ -65,6 +73,12 @@ def resolve_settlement(
         else:
             pressure = candidate
     export_factor, energy_factor = factors(pressure, rho)
+    if manual_export is not None:
+        # φx is the setting itself; only π (and so φe) is clamped to [0, 1].
+        export_factor = manual_export
+    evaluated_on = held["evaluated_on"] if reason == "held" else today
+    if pressure > 0 and not split_known:
+        energy_factor, reason = 1.0, "split_missing"
     result = {
         "model": inputs["model"],
         "export_value_factor": export_factor,
@@ -74,7 +88,8 @@ def resolve_settlement(
         "refund_percent": inputs["refund_percent"],
         "yearly_deposit": deposit,
         "yearly_energy_cost": energy,
-        "evaluated_on": held["evaluated_on"] if reason == "held" else today,
+        "distribution_mode": values["buy_distribution_mode"],
+        "evaluated_on": evaluated_on,
         "reason": reason,
     }
     if inputs["model"] != "auto" or reason == "inputs_missing":
@@ -83,5 +98,5 @@ def resolve_settlement(
         "inputs": inputs,
         "cap_pressure": pressure,
         "unused_share": unused,
-        "evaluated_on": result["evaluated_on"],
+        "evaluated_on": evaluated_on,
     }

@@ -377,7 +377,7 @@ rynkowa RCE (PSE)” zapisanym w międzyczasie), chyba że został już ręcznie
 zapisie; Podgląd oznacza ten klucz jako zmieniony, podając pomocnika i jego efektywną wartość.</p>
 <p>Polskie profile rozliczenia i taryf wymagają waluty PLN; wybór takiego profilu z inną walutą jest
 odrzucany, przy polu, które go wywołało. Profile startowe nigdy nie ustawiają ceny taryfy
-(<code>buy_rate</code>, <code>buy_off_peak_rate</code>, <code>buy_energy_rate</code>, <code>buy_off_peak_energy_rate</code>, <code>sell_rate</code>,
+(<code>buy_rate</code>, <code>buy_off_peak_rate</code>, <code>buy_distribution_rate</code>, <code>buy_distribution_off_peak_rate</code>, <code>sell_rate</code>,
 <code>buy_addition</code>, <code>sell_addition</code>, <code>monthly_charge</code>) i nigdy nie dotykają ustawienia należącego do
 strategii. Nie włączają też <a href="#wartość-depozytu-w-net-billingu">modelu depozytu</a>: każda instalacja
 startuje z nim wyłączonym.</p>
@@ -524,6 +524,15 @@ dla G12w, święta ustawowe w horyzoncie.</p>
 <p><strong>Enea G12.</strong> Enea ustala godziny dla licznika: 8 godzin w przedziale 22–7 (start 22 lub 23) i 2
 godziny w przedziale 13–17 (start 13, 14 lub 15). Domyślnie 22 i 13 (FAQ Enea); dodatkowy formularz
 pyta o obie, więc sprawdź licznik lub fakturę.</p>
+<p><strong>Taryfa dystrybucyjna.</strong> Źródło ceny zakupu, które nie jest harmonogramem taryfy (stała stawka,
+encja albo dynamiczna cena energii z prognozy), też może dostać strefy dystrybutora: <strong>Taryfy →
+Źródło ceny zakupu → Taryfa dystrybucyjna (strefy stawek dystrybucji)</strong> (waluta PLN) oferuje ten sam
+katalog, flagę zegara zimowego i godziny Enea albo <em>Brak (jedna strefa)</em>. Strefy dotyczą dwóch stawek
+dystrybucji <a href="#wartość-depozytu-w-net-billingu">modelu depozytu</a> (<code>buy_distribution_rate</code>,
+<code>buy_distribution_off_peak_rate</code>); granice pasm stają się granicami interwałów dla planera, tak jak w
+harmonogramie. Nie zmieniają samego źródła ceny zakupu. Źródło-harmonogram zachowuje własne strefy,
+więc wybór harmonogramu taryfy usuwa zapisaną taryfę dystrybucyjną. Podgląd pokazuje obie części ceny
+zakupu pierwszego interwału: część energetyczną i część dystrybucyjną.</p>
 <p><strong>Cena sprzedaży RCE.</strong> <strong>Taryfy → Źródło ceny sprzedaży → Cena rynkowa RCE (PSE)</strong> zapisuje sensor
 integracji <code>rce_pse</code> (atrybut <code>prices</code>, wartość <code>rce_pln</code>, koniec <code>dtime</code>, PLN/MWh, 15 minut) jako
 źródło prognozy z progiem ceny 0: surowa wartość jest ograniczona od dołu do 0 za kWh <strong>przed</strong>
@@ -1192,7 +1201,7 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <tr>
 <td><strong>Model depozytu</strong> (<code>deposit_model</code>)</td>
 <td><code>off</code></td>
-<td>Wycenia eksport i część energetyczną importu tym, ile depozyt prosumencki naprawdę zwróci. Zob. <a href="#wartość-depozytu-w-net-billingu">Wartość depozytu w net-billingu</a>.</td>
+<td>Wycenia eksport i część energetyczną importu tym, ile depozyt prosumencki naprawdę zwróci. Wymaga części dystrybucyjnej ceny zakupu. Zob. <a href="#wartość-depozytu-w-net-billingu">Wartość depozytu w net-billingu</a>.</td>
 </tr>
 <tr>
 <td><strong>Pobór czuwania falownika</strong> (<code>idle_drain_kw</code>)</td>
@@ -1225,6 +1234,19 @@ limit zaczyna wiązać, kolejna jednostka eksportu jest warta tylko ρ, a częś
 nie kosztuje w gotówce (płaci się nią pieniędzmi, które i tak by przepadły). Model depozytu pozwala
 planerowi to zobaczyć. Jest <strong>domyślnie wyłączony</strong> i wtedy plan jest identyczny bajt w bajt z
 wersją bez niego.</p>
+<p><strong>Dwie części ceny zakupu.</strong> Model musi wiedzieć, która część ceny zakupu to energia (pokrywana z
+depozytu), a która dystrybucja (płacona gotówką). Cena zakupu interwału jest sumą obu, a podajesz
+stawki części dystrybucyjnej, nigdy energetycznej:</p>
+<pre><code class="language-text">included:  buy = cena źródła zakupu                  (źródło to cena all-in, np. harmonogram taryfy)
+added:     buy = cena źródła zakupu + dystrybucja    (źródło to sama cena energii)
+część energetyczna = clamp(buy − dystrybucja, 0, max(buy, 0))
+</code></pre>
+<p><code>added</code> stosuj przy dynamicznej cenie energii (prognoza, np. taryfa oparta na RCE) albo cenniku
+wpisanym tak jak na fakturze. Zmienia samą cenę zakupu, dla planera <strong>i</strong> dla raportowanych kosztów, i
+działa przy wyłączonym modelu depozytu. Przykład: dynamiczna cena energii 0,25 w południe i 0,95 w
+wieczornym szczycie plus stawka dystrybucji G12 0,540 dają ceny zakupu 0,79 i 1,49; w nocy 0,45 +
+0,143 daje 0,593. Gdy limit wiąże, planer widzi tylko część dystrybucyjną: 0,540, 0,540 i 0,143.
+Ujemna cena energii zostaje rzeczywistą ceną i nie ma części energetycznej do darowania.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -1260,9 +1282,14 @@ wersją bez niego.</p>
 <td><code>auto</code>: opłaty, które depozyt może pokryć w 12 miesięcy: energetyczna część zakupów i stała opłata sprzedawcy, którą pokrywa. 0 = nieznane.</td>
 </tr>
 <tr>
-<td><code>buy_energy_rate</code>, <code>buy_off_peak_energy_rate</code></td>
+<td><code>buy_distribution_mode</code></td>
+<td><code>included</code></td>
+<td><code>included</code> albo <code>added</code>, jak wyżej.</td>
+</tr>
+<tr>
+<td><code>buy_distribution_rate</code>, <code>buy_distribution_off_peak_rate</code></td>
 <td>0</td>
-<td>Część <code>buy_rate</code> / <code>buy_off_peak_rate</code>, którą może zapłacić depozyt, wpisywana jak sama stawka (mnożnik i VAT obowiązują, <code>buy_addition</code> nie). 0 = żadna część ceny zakupu nie jest pokrywana z depozytu.</td>
+<td>Wszystko, co dystrybutor nalicza za kWh (stawka sieciowa, opłata jakościowa, OZE i kogeneracyjna), wpisywane jak cena zakupu; pierwsza to strefa szczytowa albo jedyna, druga strefa poza szczytem. VAT obowiązuje, gdy <code>buy_apply_vat</code> jest włączone; <code>buy_multiplier</code>, <code>buy_addition</code> i próg prognozy dotyczą tylko źródła ceny zakupu. Strefy pochodzą z harmonogramu taryfy źródła zakupu albo z <a href="#wbudowane-taryfy-osd">taryfy dystrybucyjnej</a>; bez żadnej z nich albo przy G11 pierwsza stawka obowiązuje całą dobę. Przy dwóch strefach ustaw obie stawki albo żadną: dokładnie jedna stawka równa 0 kończy obliczenie błędem. Opłata miesięczna należy do <code>monthly_charge</code>.</td>
 </tr>
 </tbody>
 </table></section>
@@ -1279,8 +1306,13 @@ cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
   przy <code>s = ρ</code>. Gdy <code>D</code> lub <code>E</code> wynosi 0, model nie ma danych: π = 0, a <code>reason</code> to <code>inputs_missing</code>;
   plan pozostaje ważny i nie ma Alertu. Saldo depozytu celowo nie jest wejściem — saldo z jednego dnia
   nic nie mówi bez dat księgowania.</li>
-<li><strong><code>manual</code></strong>: π wynika z Twojego <code>export_value_factor</code>, a <code>φe = 1 − π</code> idzie za nim. Przy
-  <code>deposit_refund_percent</code> 100 oba współczynniki wynoszą 1.</li>
+<li><strong><code>manual</code></strong>: <code>φx</code> to Twój <code>export_value_factor</code> dokładnie tak, jak go wpisano, także poniżej ρ.
+  Z niego wynika tylko π, <code>π = clamp((1 − φx) / (1 − ρ), 0, 1)</code>, a <code>φe = 1 − π</code> idzie za nim (wartość
+  równa ρ lub niższa w pełni wyzerowuje część energetyczną importu). Przy <code>deposit_refund_percent</code> 100
+  oba współczynniki wynoszą 1.</li>
+<li><strong>Brak części dystrybucyjnej</strong> (stawki dystrybucji równe 0): cała cena zakupu byłaby liczona jako
+  pokrywana z depozytu i import wyglądałby na darmowy. Przy π powyżej 0 <code>φe</code> jest więc wymuszone na 1,
+  a <code>reason</code> to <code>split_missing</code>; <code>φx</code> nadal działa. Aby użyć modelu, ustaw stawki dystrybucji.</li>
 <li><strong>Histereza (<code>auto</code>)</strong>: π jest liczone raz na dobę lokalną (przy pierwszym przeliczeniu po lokalnej
   północy) i utrzymywane przez dobę w magazynie <code>settlement</code>, więc restart i przeładowanie nie liczą
   go od nowa. Nowa wartość zastępuje utrzymywaną tylko gdy różni się o co najmniej 0,10 albo wynosi
@@ -1293,7 +1325,7 @@ cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 <li><strong>Próg sprzedaży z baterii</strong>, przykład (ceny brutto PGE G12 2026, sprawność cyklu 0,89, zużycie 0,05
   za kWh, ρ = 30 %): sprzedaż z baterii i odkupienie energii w nocy opłaca się powyżej ok. 0,73
   waluty/kWh, gdy limit nie wiąże, i powyżej ok. 0,71, gdy wiąże (tańszy nocny zakup równoważy niższą
-  wartość eksportu). Zmienia się za to wykorzystanie nadwyżki PV (warta 0,12 zamiast 0,40 przy cenie
+  wartość eksportu); przy ρ = 20 % próg rośnie do ok. 1,07. Zmienia się za to wykorzystanie nadwyżki PV (warta 0,12 zamiast 0,40 przy cenie
   sprzedaży 0,40, więc trafia najpierw do baterii i elastycznego odbioru) oraz nocne ładowanie z
   sieci, które pozostaje opłacalne.</li>
 </ul>
@@ -1327,12 +1359,16 @@ cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 <td>użyte wejścia</td>
 </tr>
 <tr>
+<td><code>distribution_mode</code></td>
+<td><code>included</code> albo <code>added</code></td>
+</tr>
+<tr>
 <td><code>evaluated_on</code></td>
 <td>lokalna data ostatniego liczenia π</td>
 </tr>
 <tr>
 <td><code>reason</code></td>
-<td><code>ok</code>, <code>off</code>, <code>inputs_missing</code> albo <code>held</code> (π z dzisiaj było już policzone)</td>
+<td><code>ok</code>, <code>off</code>, <code>inputs_missing</code>, <code>split_missing</code> (π powyżej 0, ale brak części dystrybucyjnej, <code>φe</code> wymuszone na 1) albo <code>held</code> (π z dzisiaj było już policzone)</td>
 </tr>
 </tbody>
 </table></section>
@@ -2678,12 +2714,14 @@ syntetyczny.</p>
 wyprodukowane i zużyte). Sześć wartości musi być skończonych, a cztery energie nieujemne (obetnij
 drobne wartości ujemne, które zaokrąglenia w statystykach mogą zostawić, np. w <code>pobór + PV − eksport</code>);
 błąd wskazuje miejsce: <code>days[n][i]</code> (dzień <code>n</code> od 1, interwał <code>i</code> od 0) albo <code>line n</code> w CSV.</p>
-<p>Interwał może mieć też <code>buy_energy</code> (także kolumna CSV): część <code>buy</code>, którą może pokryć depozyt, w tych
-samych jednostkach, nie większą niż <code>buy</code>; puste lub brak oznacza 0. Ma znaczenie tylko z
+<p>Interwał może mieć też <code>buy_energy</code> (także kolumna CSV): część energetyczna <code>buy</code>, czyli ta, którą może
+pokryć depozyt (reszta <code>buy</code> to dystrybucja), w tych samych jednostkach, nie większa niż <code>buy</code>; puste
+lub brak oznacza 0. Ma znaczenie tylko z
 <a href="#wartość-depozytu-w-net-billingu">modelem depozytu</a>, który włączasz przez <code>--set
 deposit_model=manual --set export_value_factor=0.3</code> (albo <code>auto</code> z dwiema rocznymi wartościami).
-Stawki <code>buy_energy_rate</code> i <code>buy_off_peak_energy_rate</code> nie są czytane — ceny pochodzą z pliku — a
-ostrzeżenie o tym informuje. Koszty są raportowane w cenach z pliku niezależnie od współczynników.</p>
+<code>buy</code> zostaje ceną z faktury, więc <code>buy_distribution_mode</code>, <code>buy_distribution_rate</code> i
+<code>buy_distribution_off_peak_rate</code> nie są czytane — ceny pochodzą z pliku — a ostrzeżenie o tym
+informuje. Koszty są raportowane w cenach z pliku niezależnie od współczynników.</p>
 <p>Dni są niezależne: każdy jest planowany i mierzony osobno i kończy się na ostatnim interwale, nawet
 gdy plik zawiera kolejne dni. Horyzont skraca się więc do końca dnia, więc <code>horizon_hours</code> poza dobę
 i przenoszenie energii przez północ nie są mierzone.</p>

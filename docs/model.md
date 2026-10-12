@@ -107,7 +107,15 @@ A separate HA Store, `energy_compass.<entry_id>.grid_charge`, persists only `{ge
 
 Under net billing the export value is booked on the prosumer deposit, the deposit pays only the energy part of what is owed to the seller, and after 12 months a month's refund is capped at `ρ × export value of that month` (ρ = 30 % with hourly RCE, 20 % with RCEm). For one monthly vintage with exported value `G` and unused amount `U`, `refund = min(U, ρ × G)` and the rest is void. At the margin one more currency unit of export, and one more unit of energy-part import, is worth 1 while the deposit is short or `U ≤ ρ × G`; once `U > ρ × G` export is worth ρ and the energy part of import costs 0 in cash. The planner's full-price valuation is exact until the cap binds and wrong on both sides after it. The decision record is [ADR-0001](adr/0001-net-billing-settlement-model.md).
 
-`Slot.buy_energy_per_kwh` is the part of `buy_per_kwh` the deposit can pay, clipped to `max(buy, 0)`; it comes from `buy_energy_rate` and `buy_off_peak_energy_rate`, which are typed and transformed like the buy rates (multiplier and VAT apply, `buy_addition` does not) and follow the tariff schedule's bands. `Problem.export_value_factor` (φx) and `Problem.import_energy_factor` (φe) default to 1.0 and enter only the import and export variable costs of the optimizer:
+`Slot.buy_energy_per_kwh` is the part of `buy_per_kwh` the deposit can pay. The buy price of a slot has two parts, the buy source price and the distribution `dist` (`buy_distribution_rate`, `buy_distribution_off_peak_rate`; VAT applies when `buy_apply_vat` is on, the multiplier, the addition and a forecast floor do not):
+
+```text
+buy_distribution_mode = included:  buy = source
+buy_distribution_mode = added:     buy = source + dist
+energy = clamp(buy - dist, 0, max(buy, 0))
+```
+
+`added` changes `buy_per_kwh` itself, for the planner and for every reported cost, and works with `deposit_model` off. The zones of `dist` are the bands of a tariff schedule buy source, or of `PriceSource.distribution_schedule` (buy only, PLN only, serialized only when set, not allowed beside a schedule source, which has its own zones), or one zone when there is neither or the tariff is G11. Band edges are slot boundaries. With two zones, exactly one of the two rates equal to 0 is an `InputError`. `Problem.export_value_factor` (φx) and `Problem.import_energy_factor` (φe) default to 1.0 and enter only the import and export variable costs of the optimizer:
 
 ```text
 buy_plan  = buy - (1 - φe) × energy
@@ -119,14 +127,17 @@ With both factors 1.0 the expressions are short-circuited to `buy` and `sell`, s
 ```text
 φx = 1 - π × (1 - ρ)          φe = 1 - π
 auto:    s = clamp(1 - E / D, 0, 1)     π = clamp((s - ρ/2) / (ρ/2), 0, 1)
-manual:  π = clamp((1 - export_value_factor) / (1 - ρ), 0, 1)
+manual:  φx = export_value_factor (as typed, for ρ < 1)
+         π  = clamp((1 - φx) / (1 - ρ), 0, 1), used for φe
 ```
 
-`D` is `deposit_yearly_value`, `E` is `deposit_yearly_energy_cost`. The ramp starts at ρ/2 because expiry is not spread over the year: the unused amount lands on the high-export months, which hold about half of the yearly deposit (an assumption, not measured), so their cap binds at about half the yearly share. `auto` evaluates π once per local day, keeps it in a Store, and replaces the held value only when the new one differs by at least 0.10 or is exactly 0 or 1; a change of any input setting re-evaluates at once. `D` or `E` equal to 0 gives π = 0 with `reason: inputs_missing`. The deposit balance is not an input: oldest-first use makes the 12-month sums decide the long-run state.
+`D` is `deposit_yearly_value`, `E` is `deposit_yearly_energy_cost`. The ramp starts at ρ/2 because expiry is not spread over the year: the unused amount lands on the high-export months, which hold about half of the yearly deposit (an assumption, not measured), so their cap binds at about half the yearly share. `auto` evaluates π once per local day, keeps it in a Store, and replaces the held value only when the new one differs by at least 0.10 or is exactly 0 or 1; a change of any input setting re-evaluates at once. `D` or `E` equal to 0 gives π = 0 with `reason: inputs_missing`. When π > 0 and no slot has a distribution part (`dist` is 0 everywhere), the whole buy price would be energy and an import would look free: φe is forced to 1 and `reason` is `split_missing`, φx unchanged. The deposit balance is not an input: oldest-first use makes the 12-month sums decide the long-run state.
 
 Stays at invoice prices: `Plan.grid_cost`, `Plan.objective`, `plan_monetary_cost()` and the net cost in the plan attributes, the consumption probes' reported cost, the `maximum_grid_charge_price` comparison, the autonomy and peak-reserve rankings (`buy_plan ≤ buy`, so their dominance holds), the Atlas solve payload, the Deye controller, the cost card and the export value counter. The strategy weights, `import_penalty_per_kwh` and the episode hurdles act on top of the planning prices, unscaled.
 
-Worked example (PGE G12 2026 gross: day 0.7018 energy + 0.540 distribution, night 0.4635 + 0.143 PLN/kWh; round trip 0.89, wear 0.05 per kWh, ρ = 30 %): selling from the battery and buying the energy back at night needs a sell price of `1.1236 × 0.6065 + 0.0531 = 0.73` with the cap not binding and `(1.1236 × 0.143 + 0.0531) / 0.30 = 0.71` when it binds. Surplus PV at a sell price of 0.40 is worth 0.12 instead of 0.40 when it binds.
+Worked example (PGE G12 2026 gross: day 0.7018 energy + 0.540 distribution, night 0.4635 + 0.143 PLN/kWh; round trip 0.89, wear 0.05 per kWh, ρ = 30 %): selling from the battery and buying the energy back at night needs a sell price of `1.1236 × 0.6065 + 0.0531 = 0.73` with the cap not binding and `(1.1236 × 0.143 + 0.0531) / 0.30 = 0.71` when it binds. At ρ = 20 % the same sale pays above about 1.07. Surplus PV at a sell price of 0.40 is worth 0.12 instead of 0.40 when it binds.
+
+A dynamic energy price with a G12 distribution tariff (`added`; energy 0.25 midday, 0.95 in the evening peak, 0.45 at night; distribution 0.540 peak, 0.143 off-peak) gives buy 0.79, 1.49 and 0.593. At π = 1 the planning buy prices are the distribution parts alone: 0.540, 0.540 and 0.143.
 
 Diagnostics are published as `dispatch_policy.settlement` (`model`, `export_value_factor`, `import_energy_factor`, `cap_pressure`, `unused_share`, `refund_percent`, `yearly_deposit`, `yearly_energy_cost`, `evaluated_on`, `reason`).
 

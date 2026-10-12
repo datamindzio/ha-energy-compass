@@ -14,6 +14,8 @@ def _config(model):
         deposit_model=model,
         deposit_yearly_value=3300,
         deposit_yearly_energy_cost=2150,
+        # Without a distribution part the cap would report split_missing, not held.
+        buy_distribution_rate=0.1,
         horizon_hours=2,
         display_horizon_hours=2,
         reference_horizon_hours=2,

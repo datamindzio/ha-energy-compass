@@ -50,8 +50,8 @@ NUMBERS = {
     "grid_export_kw": ("hardware", 0, 0, 1000, "kW"),
     "buy_rate": ("tariffs", 0, -1000, 1000, "currency/kWh"),
     "buy_off_peak_rate": ("tariffs", 0, -1000, 1000, "currency/kWh"),
-    "buy_energy_rate": ("tariffs", 0, 0, 1000, "currency/kWh"),
-    "buy_off_peak_energy_rate": ("tariffs", 0, 0, 1000, "currency/kWh"),
+    "buy_distribution_rate": ("tariffs", 0, 0, 1000, "currency/kWh"),
+    "buy_distribution_off_peak_rate": ("tariffs", 0, 0, 1000, "currency/kWh"),
     "sell_rate": ("tariffs", 0, -1000, 1000, "currency/kWh"),
     "buy_multiplier": ("tariffs", 1, 0, 1000, ""),
     "sell_multiplier": ("tariffs", 1, 0, 1000, ""),
@@ -151,6 +151,7 @@ BOOLEANS = {
 CHOICES = {
     "calibration": ("tariffs", ["unvalidated", "verified"]),
     "capacity_calibration": ("battery", ["unvalidated", "verified"]),
+    "buy_distribution_mode": ("tariffs", ["included", "added"]),
     "deposit_model": ("tariffs", ["off", "manual", "auto"]),
     "terminal_mode": ("planning", ["preserve_initial", "value"]),
     "export_limit_scope": ("planning", ["local_day", "produced"]),

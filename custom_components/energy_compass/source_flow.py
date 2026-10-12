@@ -546,6 +546,122 @@ class SourceEditor:
             errors=errors,
         )
 
+    def _stored_distribution(self):
+        stored = self._draft["sources"]["buy"].get("distribution_schedule")
+        return TariffSchedule.from_dict(stored) if stored else None
+
+    def _distribution_unavailable(self, step_id):
+        """The distribution tariff is a PLN buy option for sources without zones of their own."""
+        buy = self._draft["sources"]["buy"]
+        if (
+            self._source["target"] != "buy"
+            or self._source.get("mode") != "distribution"
+            or self._draft["currency"] != "PLN"
+            or buy["mode"] == "schedule"
+        ):
+            return self.async_show_form(
+                step_id=step_id,
+                data_schema=vol.Schema({}),
+                errors={"base": "invalid_input"},
+            )
+        return None
+
+    async def async_step_tariff_distribution(self, user_input=None):
+        if blocked := self._distribution_unavailable("tariff_distribution"):
+            return blocked
+        stored = self._stored_distribution()
+        errors = {}
+        if user_input is not None:
+            tariff = user_input["tariff"]
+            winter = user_input["meter_winter_clock"]
+            if tariff == "none":
+                return await self._save_distribution(None)
+            if tariff not in CATALOG or not isinstance(winter, bool):
+                errors["base"] = "invalid_input"
+            else:
+                self._schedule_choice = (tariff, winter)
+                if CATALOG[tariff].choices:
+                    return await self.async_step_tariff_distribution_hours()
+                return await self._save_distribution(TariffSchedule(tariff, winter, {}))
+        default_tariff = stored.tariff if stored else "none"
+        default_winter = stored.meter_winter_clock if stored else False
+        if user_input is not None:
+            default_tariff = user_input.get("tariff", default_tariff)
+            default_winter = user_input.get("meter_winter_clock", default_winter)
+        return self.async_show_form(
+            step_id="tariff_distribution",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("tariff", default=default_tariff): select(
+                        [
+                            *source_mode_options(["none"], self.hass.config.language),
+                            *tariff_options(self.hass.config.language),
+                        ]
+                    ),
+                    vol.Required(
+                        "meter_winter_clock", default=default_winter
+                    ): selector.BooleanSelector(),
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_tariff_distribution_hours(self, user_input=None):
+        if blocked := self._distribution_unavailable("tariff_distribution_hours"):
+            return blocked
+        if self._schedule_choice is None:
+            return await self.async_step_tariff_distribution()
+        tariff, winter = self._schedule_choice
+        spec = CATALOG[tariff]
+        stored = self._stored_distribution()
+        defaults = (
+            dict(stored.params)
+            if stored and stored.tariff == tariff
+            else dict(TariffSchedule.default(tariff).params)
+        )
+        errors = {}
+        if user_input is not None:
+            try:
+                schedule = TariffSchedule(
+                    tariff,
+                    winter,
+                    {name: int(user_input[name]) for name in spec.choices},
+                )
+                validate_schedule(schedule)
+            except InputError, KeyError, TypeError, ValueError:
+                errors["base"] = "invalid_input"
+            else:
+                return await self._save_distribution(schedule)
+            defaults.update(
+                {
+                    name: user_input[name]
+                    for name in spec.choices
+                    if str(user_input.get(name, "")).isdigit()
+                }
+            )
+        return self.async_show_form(
+            step_id="tariff_distribution_hours",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(name, default=str(defaults[name])): select(
+                        [str(hour) for hour in hours]
+                    )
+                    for name, hours in spec.choices.items()
+                }
+            ),
+            errors=errors,
+        )
+
+    async def _save_distribution(self, schedule):
+        candidate = deepcopy(self._draft)
+        price = candidate["sources"]["buy"]
+        if schedule is None:
+            price.pop("distribution_schedule", None)
+        else:
+            price["distribution_schedule"] = schedule.to_dict()
+        self._draft = candidate
+        return await self._after_source_save()
+
     async def async_step_tariff_rce(self, user_input=None):
         if blocked := self._tariff_step_unavailable("tariff_rce", "sell"):
             return blocked
@@ -684,6 +800,8 @@ class SourceEditor:
             mode="schedule", forecast=[], fixed=None, schedule=schedule.to_dict()
         )
         price.pop("floor_per_kwh", None)
+        # A schedule source carries the distribution zones itself (ADR-0001).
+        price.pop("distribution_schedule", None)
         if previous_mode != "schedule":
             candidate["helpers"].pop("buy_rate", None)
         if self._source_ref:

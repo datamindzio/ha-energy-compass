@@ -452,7 +452,13 @@ def test_buy_energy_is_read_from_csv(tmp_path, capsys):
     assert "line 4: buy_energy must not exceed buy" in capsys.readouterr().err
 
 
-def test_ignored_rate_settings_warn(capsys):
-    _, _, err = run(capsys, "--set", "buy_energy_rate=0.2")
+def test_ignored_distribution_settings_warn(capsys):
+    for override in (
+        "buy_distribution_rate=0.2",
+        "buy_distribution_off_peak_rate=0.1",
+        "buy_distribution_mode=added",
+    ):
+        _, _, err = run(capsys, "--set", override)
 
-    assert "buy_energy" in err
+        assert "buy_energy" in err
+        assert "buy_distribution_rate" in err

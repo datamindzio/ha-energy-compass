@@ -13,7 +13,7 @@ installation's currency:
 Use `--set key=value` (repeatable) to override a planner setting, so two runs can
 be compared; the net-billing deposit settings (`deposit_model`,
 `export_value_factor`, ...) work the same way and need the optional `buy_energy`
-per interval (the energy part of `buy`). The input format is described in docs/guide.en.md#offline-replay-tool.
+per interval (the energy part of `buy`; the rest of `buy` is the distribution). The input format is described in docs/guide.en.md#offline-replay-tool.
 
     python tools/replay.py tools/replay_sample.json
     python tools/replay.py tools/replay_sample.json --set allow_grid_charge=false
@@ -88,7 +88,7 @@ class Interval:
     load_forecast: float
     pv: float
     load: float
-    # Part of `buy` the prosumer deposit can pay (final price units); 0 = none.
+    # Part of the invoice `buy` the prosumer deposit can pay (energy, no distribution).
     buy_energy: float = 0.0
 
 
@@ -395,7 +395,13 @@ def build_problem(
     )
     targets, windows, target_weight = _autonomy(values, slots, battery, zone_name)
     peak_kwh, peak_window, peak_weight = _peak_reserve(values, slots, battery)
-    settlement, _ = resolve_settlement(values, None, slots[0].start, zone_name)
+    settlement, _ = resolve_settlement(
+        values,
+        None,
+        slots[0].start,
+        zone_name,
+        split_known=any(slot.buy_per_kwh > slot.buy_energy_per_kwh for slot in slots),
+    )
     return Problem(
         slots,
         SiteLimits(
@@ -798,10 +804,16 @@ def main(argv=None) -> int:
         for key, label in _UNSUPPORTED:
             if values[key]:
                 print(f"warning: {label} is not replayed ({key})", file=sys.stderr)
-        if values["buy_energy_rate"] or values["buy_off_peak_energy_rate"]:
+        if (
+            values["buy_distribution_rate"]
+            or values["buy_distribution_off_peak_rate"]
+            or values["buy_distribution_mode"] != "included"
+        ):
             print(
-                "warning: prices come from the file; set the per-interval buy_energy "
-                "instead of buy_energy_rate / buy_off_peak_energy_rate",
+                "warning: prices come from the file; set the per-interval buy "
+                "(invoice price) and buy_energy (its energy part) instead of "
+                "buy_distribution_mode / buy_distribution_rate / "
+                "buy_distribution_off_peak_rate",
                 file=sys.stderr,
             )
         if (

@@ -156,7 +156,7 @@ effective value.
 
 Polish settlement and tariff profiles require currency PLN; choosing one with another currency is
 rejected, on the field that caused it. Setup profiles never set a tariff price (`buy_rate`,
-`buy_off_peak_rate`, `buy_energy_rate`, `buy_off_peak_energy_rate`, `sell_rate`, `buy_addition`,
+`buy_off_peak_rate`, `buy_distribution_rate`, `buy_distribution_off_peak_rate`, `sell_rate`, `buy_addition`,
 `sell_addition`, `monthly_charge`) and never touch a strategy-owned setting. They never enable the
 [deposit model](#net-billing-deposit-value) either: every installation starts with it off.
 
@@ -235,6 +235,16 @@ for G12w, the statutory holidays in the horizon.
 **Enea G12.** Enea sets the hours per meter: 8 hours within 22–7 (start 22 or 23) and 2 hours within
 13–17 (start 13, 14 or 15). The default is 22 and 13 (Enea FAQ); the extra form asks for both, so check
 your meter or bill.
+
+**Distribution tariff.** A buy source that is not a tariff schedule (a fixed rate, an entity, or a
+dynamic energy price from a forecast) can still take the distributor's zones: **Tariffs → Buy source →
+Distribution tariff (zones for the distribution rates)** (currency PLN) offers the same catalog,
+winter-clock flag and Enea hours, or *None (single zone)*. The zones apply to the two distribution
+rates of the [deposit model](#net-billing-deposit-value) (`buy_distribution_rate`,
+`buy_distribution_off_peak_rate`); their band edges become interval boundaries for the planner, as for
+a schedule. They do not change the buy source. A schedule source keeps its own zones, so choosing a
+tariff schedule drops a stored distribution tariff. Preview shows both parts of the first interval's
+buy price, the energy part and the distribution part.
 
 **RCE sell price.** **Tariffs → Sell source → RCE market price (PSE)** saves the sensor of the `rce_pse`
 integration (attribute `prices`, value `rce_pln`, end `dtime`, PLN/MWh, 15 minutes) as a forecast source
@@ -661,7 +671,7 @@ Rules (defaults: 60 min, 0.1 kW):
 | **Minimum export benefit** (`minimum_export_episode_benefit`) | 1 currency unit | Each additional battery-export period must improve full-horizon cost by at least this amount. `0` disables. |
 | **Minimum grid-charge episode benefit** (`minimum_grid_charge_episode_benefit`) | 0 (off) | Same hurdle for new grid-charge periods; consolidates charging into fewer episodes. |
 | **Import penalty** (`import_penalty_per_kwh`) | 0 | Planning-only shadow price per imported kWh, under every strategy. |
-| **Deposit model** (`deposit_model`) | `off` | Values exported energy and the deposit-payable part of imports by what the prosumer deposit will really pay back. See [Net-billing deposit value](#net-billing-deposit-value). |
+| **Deposit model** (`deposit_model`) | `off` | Values exported energy and the deposit-payable part of imports by what the prosumer deposit will really pay back. Needs the distribution part of the buy price. See [Net-billing deposit value](#net-billing-deposit-value). |
 | **Inverter standby loss** (`idle_drain_kw`) | 0 (off) | Constant battery drain modelled per interval. |
 | **Battery buffer for expensive periods** (`peak_reserve_margin_kwh`) | 0 (off) | Energy kept above the forecast need when an expensive period starts. See [Peak-period reserve](#peak-period-reserve). |
 | **Terminal rule** (`terminal_mode`) | `preserve_initial` | End SOC ≥ start SOC, or `value`: stored energy at the end is credited at `terminal_value_per_kwh`. |
@@ -682,6 +692,23 @@ energy part of an import costs nothing in cash (it is paid from money that would
 deposit model lets the planner see that. It is **off by default** and then the plan is
 byte-identical to a build without it.
 
+**Two parts of the buy price.** The model must know which part of a buy price is energy (payable by
+the deposit) and which is distribution (paid in cash). The buy price of an interval is the sum of the
+two, and you give the distribution part as rates, never the energy part:
+
+```text
+included:  buy = buy source price                  (the source is an all-in price, e.g. a tariff schedule)
+added:     buy = buy source price + distribution   (the source is the energy price only)
+energy part = clamp(buy − distribution, 0, max(buy, 0))
+```
+
+Use `added` for a dynamic energy price (a forecast such as RCE-based tariffs) or a price list typed
+as on the invoice. It changes the buy price itself, for the planner **and** for reported costs, and
+works with the deposit model off. Example: dynamic energy price 0.25 at midday and 0.95 in the evening
+peak plus the G12 distribution rate 0.540 give buy prices 0.79 and 1.49; at night 0.45 + 0.143 give
+0.593. When the cap binds the planner sees only the distribution part: 0.540, 0.540 and 0.143. A
+negative energy price keeps its real price and has no energy part to waive.
+
 | Setting (Tariffs) | Default | Meaning |
 | --- | --- | --- |
 | `deposit_model` | `off` | `off`: full prices. `manual`: you state `export_value_factor`. `auto`: Energy Compass derives it from the two yearly sums below. |
@@ -689,7 +716,8 @@ byte-identical to a build without it.
 | `export_value_factor` | 1.0 | `manual` only: what one more unit of export is worth (0–1). |
 | `deposit_yearly_value` | 0 | `auto`: deposit you expect to be booked over 12 months (export value at the settlement price, 1.23 included). 0 = unknown. |
 | `deposit_yearly_energy_cost` | 0 | `auto`: charges the deposit can pay over 12 months: the energy part of imports and any fixed seller fee it covers. 0 = unknown. |
-| `buy_energy_rate`, `buy_off_peak_energy_rate` | 0 | The part of `buy_rate` / `buy_off_peak_rate` the deposit can pay, typed like the rate itself (multiplier and VAT apply, `buy_addition` does not). 0 = no part of the buy price is payable by the deposit. |
+| `buy_distribution_mode` | `included` | `included` or `added`, as above. |
+| `buy_distribution_rate`, `buy_distribution_off_peak_rate` | 0 | Everything the distributor bills per kWh (network rate, quality, RES and cogeneration fees), typed like the buy rate; the first is the peak or single zone, the second the off-peak zone. VAT applies when `buy_apply_vat` is on; `buy_multiplier`, `buy_addition` and a forecast floor apply to the buy source only. The zones come from the tariff schedule of the buy source or from a [distribution tariff](#built-in-polish-tariffs); with neither, or with G11, the first rate applies all day. With two zones set both rates or neither: exactly one zero rate fails the calculation closed. The monthly fee belongs in `monthly_charge`. |
 
 The cap pressure π (0 = deposit short or within the cap, 1 = cap binding) gives two factors that
 exist only inside the optimizer:
@@ -706,8 +734,13 @@ planning sell = φx × max(sell, 0) + min(sell, 0)
   is 0 the model has no input: π = 0 and `reason` is `inputs_missing`; the plan stays valid and no
   Alert is raised. The balance of the deposit is deliberately not an input — one day's balance says
   nothing without the booking dates behind it.
-- **`manual`**: π is derived from your `export_value_factor`, so `φe = 1 − π` follows it. With
-  `deposit_refund_percent` 100 both factors are 1.
+- **`manual`**: `φx` is your `export_value_factor` as typed, even below ρ. Only π is derived from it,
+  `π = clamp((1 − φx) / (1 − ρ), 0, 1)`, so `φe = 1 − π` follows (a value at or below ρ devalues the
+  energy part of imports fully). With `deposit_refund_percent` 100 both factors are 1.
+- **No distribution part** (the distribution rates are 0): the whole buy
+  price would count as deposit-payable and an import would look free. With π above 0 `φe` is
+  therefore forced to 1 and `reason` is `split_missing`; `φx` still applies. Set the distribution
+  rates to use the model.
 - **Hysteresis (`auto`)**: π is evaluated once per local day (the first calculation after local
   midnight) and held for the day in the `settlement` Store, so restarts and reloads do not re-evaluate
   it. A new value replaces the held one only if it differs by at least 0.10, or reaches exactly 0 or 1.
@@ -720,7 +753,7 @@ planning sell = φx × max(sell, 0) + min(sell, 0)
 - **Battery sale threshold**, worked example (PGE G12 2026 gross prices, round trip 0.89, wear
   0.05 per kWh, ρ = 30 %): selling from the battery and buying the energy back at night pays above
   about 0.73 currency/kWh while the cap is not binding and above about 0.71 when it binds (the cheaper
-  night re-buy offsets the lower export value). What changes with the cap binding is the use of
+  night re-buy offsets the lower export value); at ρ = 20 % the threshold rises to about 1.07. What changes with the cap binding is the use of
   surplus PV (worth 0.12 instead of 0.40 at a sell price of 0.40, so it goes to the battery and
   flexible load first) and night grid charging, which stays profitable.
 
@@ -733,8 +766,9 @@ Diagnostics are in the plan attribute `dispatch_policy.settlement`:
 | `cap_pressure` | π |
 | `unused_share` | `s` for `auto`, else `null` |
 | `refund_percent`, `yearly_deposit`, `yearly_energy_cost` | the inputs used |
+| `distribution_mode` | `included` or `added` |
 | `evaluated_on` | local date π was last evaluated |
-| `reason` | `ok`, `off`, `inputs_missing` or `held` (today's π was already evaluated) |
+| `reason` | `ok`, `off`, `inputs_missing`, `split_missing` (π above 0 but no distribution part, `φe` forced to 1) or `held` (today's π was already evaluated) |
 
 Reading `D` and `E` from long-term statistics instead of typing them is not part of this release.
 
@@ -1622,12 +1656,14 @@ produced and consumed). The six values must be finite and the four energies not 
 small negative values that rounding in statistics can leave, e.g. in `import + PV − export`); an error
 names the place, `days[n][i]` (day `n` from 1, interval `i` from 0) or `line n` of a CSV.
 
-An interval may also carry `buy_energy` (CSV column too): the part of `buy` the deposit can pay, in
-the same units, not above `buy` and empty or missing meaning 0. It matters only with the
+An interval may also carry `buy_energy` (CSV column too): the energy part of `buy`, the part the
+deposit can pay (the rest of `buy` is distribution), in the same units, not above `buy` and empty or
+missing meaning 0. It matters only with the
 [deposit model](#net-billing-deposit-value), which you switch on with `--set deposit_model=manual
---set export_value_factor=0.3` (or `auto` with the two yearly values). The rates
-`buy_energy_rate` and `buy_off_peak_energy_rate` are not read — prices come from the file — and a
-warning says so. Costs are reported at the file's prices whatever the factors are.
+--set export_value_factor=0.3` (or `auto` with the two yearly values). `buy` stays the invoice
+price, so `buy_distribution_mode`, `buy_distribution_rate` and `buy_distribution_off_peak_rate` are
+not read — prices come from the file — and a warning says so. Costs are reported at the file's prices
+whatever the factors are.
 
 Days are independent: each is planned and measured on its own and ends at its last interval, even
 when the file holds consecutive days. The horizon therefore shrinks to the end of the day, so

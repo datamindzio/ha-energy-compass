@@ -334,8 +334,9 @@
           "balance_value": "Wartość balansowania po terminie",
           "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
           "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
-          "buy_energy_rate": "Część energetyczna ceny zakupu (to, co pokrywa depozyt)",
-          "buy_off_peak_energy_rate": "Część energetyczna ceny zakupu poza szczytem",
+          "buy_distribution_mode": "Dystrybucja w cenie zakupu (zawarta w źródle albo doliczana)",
+          "buy_distribution_rate": "Stawka dystrybucji (strefa szczytowa lub jedna strefa)",
+          "buy_distribution_off_peak_rate": "Stawka dystrybucji poza szczytem",
           "sell_rate": "Stała cena sprzedaży",
           "buy_addition": "Dodatek do ceny zakupu",
           "sell_addition": "Dodatek do ceny sprzedaży",
@@ -415,6 +416,20 @@
           "afternoon_start": "Początek strefy popołudniowej (2 h w przedziale 13-17)"
         }
       },
+      "tariff_distribution": {
+        "title": "Taryfa dystrybucyjna",
+        "data": {
+          "tariff": "Taryfa (operator i grupa) albo brak dla jednej strefy",
+          "meter_winter_clock": "Stary licznik bez odczytu zdalnego na czasie zimowym (stałe UTC+1)"
+        }
+      },
+      "tariff_distribution_hours": {
+        "title": "Godziny ustalone przez Enea Operator",
+        "data": {
+          "night_start": "Początek strefy nocnej (8 h w przedziale 22-7)",
+          "afternoon_start": "Początek strefy popołudniowej (2 h w przedziale 13-17)"
+        }
+      },
       "tariff_rce": {
         "title": "Cena rynkowa RCE (PSE)",
         "data": {
@@ -427,8 +442,9 @@
         "data": {
           "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
           "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
-          "buy_energy_rate": "Część energetyczna ceny zakupu (to, co pokrywa depozyt)",
-          "buy_off_peak_energy_rate": "Część energetyczna ceny zakupu poza szczytem",
+          "buy_distribution_mode": "Dystrybucja w cenie zakupu (zawarta w źródle albo doliczana)",
+          "buy_distribution_rate": "Stawka dystrybucji (strefa szczytowa lub jedna strefa)",
+          "buy_distribution_off_peak_rate": "Stawka dystrybucji poza szczytem",
           "sell_rate": "Stała cena sprzedaży",
           "buy_multiplier": "Mnożnik ceny zakupu",
           "sell_multiplier": "Mnożnik ceny sprzedaży",
@@ -447,11 +463,12 @@
         },
         "description": "Edytuj stałe stawki oraz oddzielne mnożniki, VAT i dodatki. {detail}",
         "data_description": {
-          "buy_energy_rate": "Domyślnie 0 (żadna część ceny nie jest pokrywana z depozytu); zakres 0-1000 za kWh. Część energetyczna ceny zakupu, wpisywana jak cena zakupu (przed mnożnikiem i VAT). Używa jej tylko model depozytu.",
-          "buy_off_peak_energy_rate": "Domyślnie 0; zakres 0-1000 za kWh. Część energetyczna ceny zakupu poza szczytem (harmonogram taryfy G12/G12w). Harmonogram G11, stała cena i prognoza używają pierwszej stawki energii w każdym przedziale.",
+          "buy_distribution_mode": "Domyślnie included. included: cena ze źródła zakupu już zawiera dystrybucję (cena all-in). added: stawki dystrybucji są doliczane do ceny ze źródła zakupu - dla ceny dynamicznej energii albo cennika wpisanego jak na fakturze. Zmienia cenę zakupu dla planera i dla raportowanych kosztów.",
+          "buy_distribution_rate": "Domyślnie 0; zakres 0-1000 za kWh. Wszystko, co operator rozlicza za kWh (stawka sieciowa, opłata jakościowa, OZE, kogeneracyjna), wpisane jak cena zakupu; VAT dolicza się, gdy włączone jest naliczanie VAT od zakupu, mnożnik i dopłata nie dotyczą. Opłata miesięczna należy do opłaty miesięcznej.",
+          "buy_distribution_off_peak_rate": "Domyślnie 0; zakres 0-1000 za kWh. To samo dla strefy poza szczytem dwustrefowej taryfy (źródło albo taryfa dystrybucyjna). Przy dwóch strefach ustaw obie stawki albo żadnej; przy jednej strefie jest pomijana.",
           "deposit_model": "Domyślnie off. manual: sam podajesz współczynnik wartości eksportu. auto: planer wylicza go z oczekiwanego rocznego depozytu i opłat, raz dziennie. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
           "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada.",
-          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu. Wartości poniżej limitu zwrotu działają jak ten limit.",
+          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu całkowicie deprecjonuje część energetyczną importu).",
           "deposit_yearly_value": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wartość eksportu zaksięgowana na depozycie w 12 miesięcy, razem ze współczynnikiem 1,23.",
           "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wszystko, co depozyt może zapłacić w roku - część energetyczna zakupów i stała opłata sprzedawcy, którą pokrywa."
         }
@@ -495,7 +512,7 @@
       "optimizer_error": "Optymalizator nie mógł zweryfikować planu bazowego.",
       "settlement_currency": "Polskie profile rozliczenia wymagają waluty PLN.",
       "buy_tariff_currency": "Wybrana polska taryfa wymaga waluty PLN.",
-      "schedule_currency": "Taryfa OSD wymaga waluty PLN; najpierw zmień źródło ceny zakupu."
+      "schedule_currency": "Taryfa OSD i taryfa dystrybucyjna wymagają waluty PLN; najpierw zmień źródło ceny zakupu albo usuń taryfę dystrybucyjną."
     },
     "abort": {
       "reconfigure_successful": "Zapisano konfigurację."
@@ -830,8 +847,9 @@
           "balance_value": "Wartość balansowania po terminie",
           "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
           "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
-          "buy_energy_rate": "Część energetyczna ceny zakupu (to, co pokrywa depozyt)",
-          "buy_off_peak_energy_rate": "Część energetyczna ceny zakupu poza szczytem",
+          "buy_distribution_mode": "Dystrybucja w cenie zakupu (zawarta w źródle albo doliczana)",
+          "buy_distribution_rate": "Stawka dystrybucji (strefa szczytowa lub jedna strefa)",
+          "buy_distribution_off_peak_rate": "Stawka dystrybucji poza szczytem",
           "sell_rate": "Stała cena sprzedaży",
           "buy_addition": "Dodatek do ceny zakupu",
           "sell_addition": "Dodatek do ceny sprzedaży",
@@ -911,6 +929,20 @@
           "afternoon_start": "Początek strefy popołudniowej (2 h w przedziale 13-17)"
         }
       },
+      "tariff_distribution": {
+        "title": "Taryfa dystrybucyjna",
+        "data": {
+          "tariff": "Taryfa (operator i grupa) albo brak dla jednej strefy",
+          "meter_winter_clock": "Stary licznik bez odczytu zdalnego na czasie zimowym (stałe UTC+1)"
+        }
+      },
+      "tariff_distribution_hours": {
+        "title": "Godziny ustalone przez Enea Operator",
+        "data": {
+          "night_start": "Początek strefy nocnej (8 h w przedziale 22-7)",
+          "afternoon_start": "Początek strefy popołudniowej (2 h w przedziale 13-17)"
+        }
+      },
       "tariff_rce": {
         "title": "Cena rynkowa RCE (PSE)",
         "data": {
@@ -923,8 +955,9 @@
         "data": {
           "buy_rate": "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)",
           "buy_off_peak_rate": "Cena zakupu poza szczytem (taryfa OSD G12/G12w)",
-          "buy_energy_rate": "Część energetyczna ceny zakupu (to, co pokrywa depozyt)",
-          "buy_off_peak_energy_rate": "Część energetyczna ceny zakupu poza szczytem",
+          "buy_distribution_mode": "Dystrybucja w cenie zakupu (zawarta w źródle albo doliczana)",
+          "buy_distribution_rate": "Stawka dystrybucji (strefa szczytowa lub jedna strefa)",
+          "buy_distribution_off_peak_rate": "Stawka dystrybucji poza szczytem",
           "sell_rate": "Stała cena sprzedaży",
           "buy_multiplier": "Mnożnik ceny zakupu",
           "sell_multiplier": "Mnożnik ceny sprzedaży",
@@ -943,11 +976,12 @@
         },
         "description": "Edytuj stałe stawki oraz oddzielne mnożniki, VAT i dodatki. {detail}",
         "data_description": {
-          "buy_energy_rate": "Domyślnie 0 (żadna część ceny nie jest pokrywana z depozytu); zakres 0-1000 za kWh. Część energetyczna ceny zakupu, wpisywana jak cena zakupu (przed mnożnikiem i VAT). Używa jej tylko model depozytu.",
-          "buy_off_peak_energy_rate": "Domyślnie 0; zakres 0-1000 za kWh. Część energetyczna ceny zakupu poza szczytem (harmonogram taryfy G12/G12w). Harmonogram G11, stała cena i prognoza używają pierwszej stawki energii w każdym przedziale.",
+          "buy_distribution_mode": "Domyślnie included. included: cena ze źródła zakupu już zawiera dystrybucję (cena all-in). added: stawki dystrybucji są doliczane do ceny ze źródła zakupu - dla ceny dynamicznej energii albo cennika wpisanego jak na fakturze. Zmienia cenę zakupu dla planera i dla raportowanych kosztów.",
+          "buy_distribution_rate": "Domyślnie 0; zakres 0-1000 za kWh. Wszystko, co operator rozlicza za kWh (stawka sieciowa, opłata jakościowa, OZE, kogeneracyjna), wpisane jak cena zakupu; VAT dolicza się, gdy włączone jest naliczanie VAT od zakupu, mnożnik i dopłata nie dotyczą. Opłata miesięczna należy do opłaty miesięcznej.",
+          "buy_distribution_off_peak_rate": "Domyślnie 0; zakres 0-1000 za kWh. To samo dla strefy poza szczytem dwustrefowej taryfy (źródło albo taryfa dystrybucyjna). Przy dwóch strefach ustaw obie stawki albo żadnej; przy jednej strefie jest pomijana.",
           "deposit_model": "Domyślnie off. manual: sam podajesz współczynnik wartości eksportu. auto: planer wylicza go z oczekiwanego rocznego depozytu i opłat, raz dziennie. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
           "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada.",
-          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu. Wartości poniżej limitu zwrotu działają jak ten limit.",
+          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu całkowicie deprecjonuje część energetyczną importu).",
           "deposit_yearly_value": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wartość eksportu zaksięgowana na depozycie w 12 miesięcy, razem ze współczynnikiem 1,23.",
           "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wszystko, co depozyt może zapłacić w roku - część energetyczna zakupów i stała opłata sprzedawcy, którą pokrywa."
         }
@@ -1005,7 +1039,7 @@
       "rate_limited": "Zbyt wiele prób; spróbuj ponownie później.",
       "cannot_connect": "Nie udało się połączyć z kolektorem Energy Atlas.",
       "unknown": "Rejestracja nie powiodła się z nieznanego powodu.",
-      "schedule_currency": "Taryfa OSD wymaga waluty PLN; najpierw zmień źródło ceny zakupu.",
+      "schedule_currency": "Taryfa OSD i taryfa dystrybucyjna wymagają waluty PLN; najpierw zmień źródło ceny zakupu albo usuń taryfę dystrybucyjną.",
       "controller_device_required": "Wybierz urządzenie falownika Solarman.",
       "controller_tou_incomplete": "Urządzenie nie ma wszystkich sześciu programów TOU (czas, moc, napięcie, SOC, ładowanie).",
       "controller_tou_prefix": "Identyfikatory encji programów TOU nie mają wspólnego prefiksu; przywróć domyślne identyfikatory.",

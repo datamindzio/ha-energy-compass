@@ -91,7 +91,15 @@ async def test_pln_offers_schedule_and_rce_everywhere(
     freezer.move_to(NOW)
     _, fid = await start(hass, pln_config())
     buy = await to_tariff(hass, fid, "buy")
-    assert mode_values(buy) == ["fixed", "entity", "forecast", "schedule", "back"]
+    # A buy source without zones of its own may take the distributor's zones.
+    assert mode_values(buy) == [
+        "fixed",
+        "entity",
+        "forecast",
+        "schedule",
+        "distribution",
+        "back",
+    ]
     await configure(hass, fid, {"mode": "back"})
     sell = await configure(hass, fid, {"next_step_id": "tariff_sell"})
     assert mode_values(sell) == ["fixed", "entity", "forecast", "rce", "back"]
@@ -408,6 +416,16 @@ STEP_KEYS = {
         ("data", "afternoon_start"),
     ),
     "tariff_rce": ("title", ("data", "entity"), "description"),
+    "tariff_distribution": (
+        "title",
+        ("data", "tariff"),
+        ("data", "meter_winter_clock"),
+    ),
+    "tariff_distribution_hours": (
+        "title",
+        ("data", "night_start"),
+        ("data", "afternoon_start"),
+    ),
 }
 
 
@@ -433,11 +451,128 @@ def test_new_steps_and_rate_labels_exist_in_every_translation_file(file):
             if english
             else "Cena zakupu (stała albo G11/szczytowa w taryfie OSD)"
         )
+        for key in (
+            "buy_distribution_mode",
+            "buy_distribution_rate",
+            "buy_distribution_off_peak_rate",
+        ):
+            assert data[key]
+        assert "buy_energy_rate" not in data
         assert data["buy_off_peak_rate"] == (
             "Off-peak buy rate (G12/G12w tariff schedule)"
             if english
             else "Cena zakupu poza szczytem (taryfa OSD G12/G12w)"
         )
+
+
+async def save_distribution(hass, fid, tariff="pge_g12", winter=False):
+    await to_tariff(hass, fid, "buy")
+    result = await configure(hass, fid, {"mode": "distribution"})
+    assert result["step_id"] == "tariff_distribution"
+    return await configure(hass, fid, {"tariff": tariff, "meter_winter_clock": winter})
+
+
+async def test_distribution_tariff_is_stored_beside_the_buy_source(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    _, fid = await start(hass, config)
+    result = await save_distribution(hass, fid)
+    assert result["step_id"] == "tariffs"
+    buy = draft(hass, fid)["sources"]["buy"]
+    # The buy source itself is untouched; only the zones are added.
+    assert buy["mode"] == config["sources"]["buy"]["mode"]
+    assert buy["fixed"] == config["sources"]["buy"]["fixed"]
+    assert buy["distribution_schedule"] == SCHEDULE_PGE
+    assert "schedule" not in buy
+    # The select defaults to the stored tariff, and "none" drops it again.
+    await configure(hass, fid, {"next_step_id": "tariff_buy"})
+    form = await configure(hass, fid, {"mode": "distribution"})
+    assert default_of(form, "tariff") == "pge_g12"
+    result = await configure(hass, fid, {"tariff": "none", "meter_winter_clock": False})
+    assert result["step_id"] == "tariffs"
+    assert "distribution_schedule" not in draft(hass, fid)["sources"]["buy"]
+
+
+async def test_enea_distribution_routes_through_hours(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    result = await save_distribution(hass, fid, "enea_g12", winter=True)
+    assert result["step_id"] == "tariff_distribution_hours"
+    assert default_of(result, "night_start") == "22"
+    result = await configure(hass, fid, {"night_start": "23", "afternoon_start": "15"})
+    assert result["step_id"] == "tariffs"
+    assert draft(hass, fid)["sources"]["buy"]["distribution_schedule"] == {
+        "tariff": "enea_g12",
+        "meter_winter_clock": True,
+        "params": {"night_start": 23, "afternoon_start": 15},
+    }
+
+
+async def test_distribution_is_not_offered_with_a_schedule_source_or_in_euro(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    await save_schedule(hass, fid)
+    result = await configure(hass, fid, {"next_step_id": "tariff_buy"})
+    assert "distribution" not in mode_values(result)
+    with pytest.raises(InvalidData):
+        await configure(hass, fid, {"mode": "distribution"})
+    _, fid = await start(hass, default_configuration("EUR", "UTC"))
+    result = await to_tariff(hass, fid, "buy")
+    assert "distribution" not in mode_values(result)
+    await configure(hass, fid, {"mode": "back"})
+    sell = await configure(hass, fid, {"next_step_id": "tariff_sell"})
+    assert "distribution" not in mode_values(sell)
+
+
+async def test_switching_the_buy_source_to_a_schedule_drops_the_distribution(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    await save_distribution(hass, fid)
+    await configure(hass, fid, {"next_step_id": "tariff_buy"})
+    result = await configure(hass, fid, {"mode": "schedule"})
+    assert result["step_id"] == "tariff_schedule"
+    await configure(hass, fid, {"tariff": "pge_g12", "meter_winter_clock": False})
+    buy = draft(hass, fid)["sources"]["buy"]
+    assert buy["schedule"] == SCHEDULE_PGE
+    assert "distribution_schedule" not in buy
+
+
+def _distribution_config(**settings):
+    config = pln_config()
+    config["sources"]["buy"]["distribution_schedule"] = dict(SCHEDULE_PGE)
+    config["settings"].update(
+        buy_rate=0.8,
+        buy_distribution_rate=0.3,
+        buy_distribution_off_peak_rate=0.1,
+        **settings,
+    )
+    return config
+
+
+def test_preview_shows_both_parts_of_the_buy_price():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    text = _preview(_distribution_config(buy_distribution_mode="added"), now)
+    assert "Distribution: added on top of the buy source" in text
+    assert "zones of the distribution tariff PGE Dystrybucja G12" in text
+    assert "peak 0.3, off-peak 0.1 PLN/kWh" in text
+    assert "VAT not applied" in text
+    assert "energy part 0.8 + distribution part 0.3 = buy 1.1 PLN/kWh" in text
+    included = _preview(_distribution_config(), now)
+    assert "already inside the buy source price" in included
+    assert "energy part 0.5 + distribution part 0.3 = buy 0.8 PLN/kWh" in included
+
+
+def test_preview_is_silent_about_distribution_by_default():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    assert "Distribution" not in _preview(pln_config(), now)
 
 
 def test_catalog_has_a_label_in_both_languages():

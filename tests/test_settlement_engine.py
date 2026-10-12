@@ -197,6 +197,11 @@ def test_cap_binding_moves_the_battery_export_threshold_as_in_the_adr():
     assert sells(between, **cap_binding())
 
 
+def test_a_lower_refund_cap_raises_the_battery_export_threshold():
+    # ADR worked example: at rho = 20 % the sale-and-re-buy break-even rises to 1.07.
+    assert threshold(**cap_binding(0.20)) == pytest.approx(1.07, abs=0.03)
+
+
 def test_surplus_pv_is_worth_less_when_the_cap_binds():
     # 1 kWh of PV surplus at 0.30 sell, night load 1 kWh at the night price.
     rows = [
