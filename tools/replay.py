@@ -441,9 +441,11 @@ def realize(
     CHARGE_PV and SELF_CONSUME (and every unplanned interval) follow the load: all
     PV surplus charges the battery, a deficit is covered from it. CHARGE_GRID
     follows the plan only for the grid share (planned charge minus the surplus
-    the forecast `(pv, load)` promised); the realized surplus charges on top, so
-    PV above forecast charges more and PV below forecast charges less, never a
-    shortfall bought from the grid. DISCHARGE_GRID discharges the planned energy
+    the forecast `(pv, load)` promised) and stops at the planned end SOC; the
+    realized surplus charges on top, so PV above forecast charges more (the grid
+    share shrinks, the SOC may end above plan) and PV below forecast charges less,
+    never a shortfall bought from the grid or caught up beyond the planned
+    share. DISCHARGE_GRID discharges the planned energy
     to the load and grid; HOLD parks the battery; CURTAIL curtails the planned PV
     energy. Site limits are applied last: export beyond the grid limit is
     curtailed, charge beyond the inverter or grid import limit is dropped.
@@ -470,7 +472,12 @@ def realize(
         planned_curtail = flow.curtail_kwh if flow else 0.0
         forecast_surplus = max(0.0, forecast_pv - planned_curtail - forecast_load)
         grid_share = max(0.0, plan_charge - forecast_surplus)
-        charge = min(max(net, 0.0) + grid_share, max_charge)
+        pv_charge = max(net, 0.0)
+        if flow:
+            # The controller stops the grid at the row's target SOC; only PV keeps charging.
+            room = max(0.0, (flow.end_soc_kwh - soc + drain) / eta_c - pv_charge)
+            grid_share = min(grid_share, room)
+        charge = min(pv_charge + grid_share, max_charge)
     elif mode == "DISCHARGE_GRID":
         discharge = min(plan_discharge, max_discharge)
     elif mode != "HOLD":
