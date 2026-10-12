@@ -209,6 +209,46 @@ def _schedule_preview(config, problem, values):
     )
 
 
+def _distribution_preview(config, problem, values):
+    """Both parts of the buy price per zone, or '' when distribution is not configured."""
+    buy = config["sources"]["buy"]
+    rates = (values["buy_distribution_rate"], values["buy_distribution_off_peak_rate"])
+    mode = values["buy_distribution_mode"]
+    if mode == "included" and not any(rates) and not buy.get("distribution_schedule"):
+        return ""
+    currency = config["currency"]
+    vat = 1 + values["vat_percent"] / 100 if values["buy_apply_vat"] else 1
+    zones = (
+        buy["schedule"]
+        if buy["mode"] == "schedule"
+        else buy.get("distribution_schedule")
+    )
+    if zones is None or zones["tariff"] == "g11":
+        where = "single zone"
+        rate_text = f"{rates[0] * vat:g}"
+    else:
+        label = CATALOG[zones["tariff"]].labels["en"]
+        origin = (
+            "the buy tariff" if buy["mode"] == "schedule" else "the distribution tariff"
+        )
+        where = f"zones of {origin} {label}"
+        rate_text = f"peak {rates[0] * vat:g}, off-peak {rates[1] * vat:g}"
+    slot = problem.slots[0]
+    meaning = (
+        "added on top of the buy source"
+        if mode == "added"
+        else "already inside the buy source price"
+    )
+    return (
+        f" Distribution: {meaning}; {where}; {rate_text} {currency}/kWh "
+        f"(VAT {'applied' if values['buy_apply_vat'] else 'not applied'}, "
+        "multiplier and addition not applied); first interval energy part "
+        f"{slot.buy_energy_per_kwh:g} + distribution part "
+        f"{max(slot.buy_per_kwh - slot.buy_energy_per_kwh, 0):g} = buy "
+        f"{slot.buy_per_kwh:g} {currency}/kWh."
+    )
+
+
 def _price_preview(config, problem, values, role):
     price = config["sources"][role]
     currency = config["currency"]
@@ -269,6 +309,8 @@ def _price_preview(config, problem, values, role):
         f"{'applied' if values[f'{role}_apply_vat'] else 'not applied'} "
         f"at {values['vat_percent']:g}%."
     )
+    if role == "buy":
+        source += _distribution_preview(config, problem, values)
     return source
 
 
@@ -638,7 +680,10 @@ class Editor(SourceEditor):
             if (
                 currency_changed
                 and candidate["currency"] != "PLN"
-                and candidate["sources"]["buy"]["mode"] == "schedule"
+                and (
+                    candidate["sources"]["buy"]["mode"] == "schedule"
+                    or candidate["sources"]["buy"].get("distribution_schedule")
+                )
             ):
                 return self.async_show_form(
                     step_id="installation",
@@ -833,12 +878,31 @@ class Editor(SourceEditor):
     async def async_step_tariff_sell(self, user_input=None):
         return await self._tariff_source("sell", user_input)
 
+    def _distribution_offered(self, role):
+        """Distribution zones are picked here only when the buy source has none of its own."""
+        return (
+            role == "buy"
+            and self._draft["currency"] == "PLN"
+            and self._draft["sources"]["buy"]["mode"] != "schedule"
+        )
+
     async def _tariff_source(self, role, user_input):
         errors = {}
         if user_input is not None:
             mode = user_input["mode"]
             if mode == "back":
                 return await self.async_step_tariffs()
+            if mode == "distribution" and self._distribution_offered(role):
+                self._source = {
+                    "target": role,
+                    "mode": mode,
+                    "operation": "replace",
+                    "return_to": "tariffs",
+                }
+                self._source_ref = None
+                self._source_original = None
+                self._schedule_choice = None
+                return await self.async_step_tariff_distribution()
             if mode not in self._source_modes(role):
                 errors["base"] = "invalid_input"
             else:
@@ -896,7 +960,15 @@ class Editor(SourceEditor):
                 {
                     vol.Required("mode", default=default): select(
                         source_mode_options(
-                            [*modes, "back"],
+                            [
+                                *modes,
+                                *(
+                                    ["distribution"]
+                                    if self._distribution_offered(role)
+                                    else []
+                                ),
+                                "back",
+                            ],
                             self.hass.config.language,
                         )
                     )
@@ -935,6 +1007,8 @@ class Editor(SourceEditor):
             now = dt_util.utcnow()
             states = snapshot(self.hass, candidate)
             history, _ = await async_history(self.hass, candidate, states, now)
+            # No settlement_state: the Preview is not part of the daily hold, so in
+            # `auto` it shows the un-held candidate factors.
             problem, values, quality = await self.hass.async_add_executor_job(
                 lambda: build_problem(candidate, states, now, **history)
             )

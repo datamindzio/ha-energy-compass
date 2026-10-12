@@ -11,7 +11,9 @@ installation's currency:
     hindsight    one solve of the same objective on the realized PV and load
 
 Use `--set key=value` (repeatable) to override a planner setting, so two runs can
-be compared. The input format is described in docs/guide.en.md#offline-replay-tool.
+be compared; the net-billing deposit settings (`deposit_model`,
+`export_value_factor`, ...) work the same way and need the optional `buy_energy`
+per interval (the energy part of `buy`; the rest of `buy` is the distribution). The input format is described in docs/guide.en.md#offline-replay-tool.
 
     python tools/replay.py tools/replay_sample.json
     python tools/replay.py tools/replay_sample.json --set allow_grid_charge=false
@@ -64,6 +66,7 @@ from custom_components.energy_compass.settings import (
     CHOICES,
     NUMBERS,
 )
+from custom_components.energy_compass.settlement import resolve_settlement
 
 _TOL = 1e-9
 _HINDSIGHT_TIME_LIMIT_S = 60.0
@@ -85,6 +88,8 @@ class Interval:
     load_forecast: float
     pv: float
     load: float
+    # Part of the invoice `buy` the prosumer deposit can pay (energy, no distribution).
+    buy_energy: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -179,13 +184,19 @@ def _number(raw, where: str, name: str, *, non_negative: bool = False) -> float:
 def _interval(start: datetime, row, where: str) -> Interval:
     if not isinstance(row, dict):
         raise ReplayError(f"{where}: expected an object with {', '.join(_VALUES)}")
-    return Interval(
-        start,
-        *(
-            _number(row.get(name), where, name, non_negative=name in _NON_NEGATIVE)
-            for name in _VALUES
-        ),
+    values = [
+        _number(row.get(name), where, name, non_negative=name in _NON_NEGATIVE)
+        for name in _VALUES
+    ]
+    raw = row.get("buy_energy")
+    energy = (
+        0.0
+        if raw is None or raw == ""
+        else _number(raw, where, "buy_energy", non_negative=True)
     )
+    if energy > max(values[0], 0.0) + 1e-9:
+        raise ReplayError(f"{where}: buy_energy must not exceed buy, got {raw!r}")
+    return Interval(start, *values, energy)
 
 
 def _aware(text: str, zone: ZoneInfo, where: str) -> datetime:
@@ -384,6 +395,13 @@ def build_problem(
     )
     targets, windows, target_weight = _autonomy(values, slots, battery, zone_name)
     peak_kwh, peak_window, peak_weight = _peak_reserve(values, slots, battery)
+    settlement, _ = resolve_settlement(
+        values,
+        None,
+        slots[0].start,
+        zone_name,
+        split_known=any(slot.buy_per_kwh > slot.buy_energy_per_kwh for slot in slots),
+    )
     return Problem(
         slots,
         SiteLimits(
@@ -419,6 +437,8 @@ def build_problem(
         peak_reserve_kwh=peak_kwh,
         peak_reserve_window=peak_window,
         peak_reserve_weight=peak_weight,
+        export_value_factor=settlement["export_value_factor"],
+        import_energy_factor=settlement["import_energy_factor"],
         **weights,
     )
 
@@ -572,6 +592,7 @@ def _slots(day: Day, begin: int, count: int, realized: bool) -> tuple[Slot, ...]
             interval.sell,
             interval.pv if realized else interval.pv_forecast,
             interval.load if realized else interval.load_forecast,
+            interval.buy_energy,
         )
         for interval in day.intervals[begin : begin + count]
     )
@@ -786,6 +807,18 @@ def main(argv=None) -> int:
         for key, label in _UNSUPPORTED:
             if values[key]:
                 print(f"warning: {label} is not replayed ({key})", file=sys.stderr)
+        if (
+            values["buy_distribution_rate"]
+            or values["buy_distribution_off_peak_rate"]
+            or values["buy_distribution_mode"] != "included"
+        ):
+            print(
+                "warning: prices come from the file; set the per-interval buy "
+                "(invoice price) and buy_energy (its energy part) instead of "
+                "buy_distribution_mode / buy_distribution_rate / "
+                "buy_distribution_off_peak_rate",
+                file=sys.stderr,
+            )
         if (
             values["peak_reserve_margin_kwh"] > 0
             and not values["limit_grid_charge_price"]

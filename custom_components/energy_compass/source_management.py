@@ -35,6 +35,13 @@ _LABELS = {
         "forecast": "Interval forecast",
         "schedule": "Polish tariff schedule (G11/G12/G12w)",
         "rce": "RCE market price (PSE)",
+        "distribution": "Distribution tariff (zones for the distribution rates)",
+        "none": "None (single zone)",
+        "distribution_included": "distribution inside the price",
+        "distribution_added": "distribution added",
+        "single_zone": "single zone",
+        "peak": "peak",
+        "off_peak": "off-peak",
         "measurement": "Measurement",
         "statistic": "Recorder statistic",
         "power_history": "Power history",
@@ -79,6 +86,13 @@ _LABELS = {
         "forecast": "Prognoza przedziałowa",
         "schedule": "Taryfa OSD (G11/G12/G12w)",
         "rce": "Cena rynkowa RCE (PSE)",
+        "distribution": "Taryfa dystrybucyjna (strefy stawek dystrybucji)",
+        "none": "Brak (jedna strefa)",
+        "distribution_included": "dystrybucja w cenie",
+        "distribution_added": "dystrybucja doliczana",
+        "single_zone": "jedna strefa",
+        "peak": "szczyt",
+        "off_peak": "poza szczytem",
         "measurement": "Pomiar",
         "statistic": "Statystyka rejestratora",
         "power_history": "Historia mocy",
@@ -180,28 +194,63 @@ def _binding_label(binding, registry, labels):
     return label
 
 
+def _distribution_label(config, labels, language_key):
+    """Distribution part of the buy price per zone, or '' when it is not configured."""
+    buy = config["sources"]["buy"]
+    values = config.get("settings", {})
+    rates = (
+        values.get("buy_distribution_rate", 0),
+        values.get("buy_distribution_off_peak_rate", 0),
+    )
+    mode = values.get("buy_distribution_mode", "included")
+    stored = buy.get("distribution_schedule")
+    if mode == "included" and not any(rates) and not stored:
+        return ""
+    vat = 1 + values.get("vat_percent", 0) / 100 if values.get("buy_apply_vat") else 1
+    zones = buy.get("schedule") if buy["mode"] == "schedule" else stored
+    tariff = CATALOG.get(zones["tariff"]) if zones else None
+    if zones is None or zones["tariff"] == "g11":
+        where = labels["single_zone"]
+        rate_text = f"{rates[0] * vat:g}"
+    else:
+        where = tariff.labels[language_key] if tariff else zones["tariff"]
+        rate_text = (
+            f"{labels['peak']} {rates[0] * vat:g}, "
+            f"{labels['off_peak']} {rates[1] * vat:g}"
+        )
+    return (
+        f" · {labels[f'distribution_{mode}']} · {where} · "
+        f"{rate_text} {config['currency']}/kWh"
+    )
+
+
 def source_inventory(config, registry=None, language="en"):
     """List every editable location, including unpublished and legacy selections."""
     result = []
     sources = config["sources"]
     labels = _labels(language)
+    language_key = "pl" if language and language.startswith("pl") else "en"
 
     def describe(binding):
         return _binding_label(binding, registry, labels)
 
     for role in ("buy", "sell"):
         price = sources[role]
+        # Both parts of the buy price show on its first row (ADR-0001).
+        distribution = (
+            _distribution_label(config, labels, language_key) if role == "buy" else ""
+        )
         if price["mode"] == "forecast":
             for index, binding in enumerate(price["forecast"]):
                 result.append(
                     (
                         SourceRef(role, "interval", binding_index=index),
-                        f"{labels[role]} · {labels['continuation']} {index + 1} · {describe(binding)}",
+                        f"{labels[role]} · {labels['continuation']} {index + 1} · {describe(binding)}"
+                        + (distribution if index == 0 else ""),
                     )
                 )
         elif price["mode"] == "schedule":
             tariff = CATALOG.get(price.get("schedule", {}).get("tariff"))
-            language_key = "pl" if language and language.startswith("pl") else "en"
             name = (
                 tariff.labels[language_key]
                 if tariff
@@ -210,13 +259,15 @@ def source_inventory(config, registry=None, language="en"):
             result.append(
                 (
                     SourceRef(role, "scalar"),
-                    f"{labels[role]} · {labels['schedule']} · {name}",
+                    f"{labels[role]} · {labels['schedule']} · {name}{distribution}",
                 )
             )
         else:
             helper = config.get("helpers", {}).get(f"{role}_rate")
             origin = describe(helper) if helper else labels["fixed"]
-            result.append((SourceRef(role, "scalar"), f"{labels[role]} · {origin}"))
+            result.append(
+                (SourceRef(role, "scalar"), f"{labels[role]} · {origin}{distribution}")
+            )
     for group_index, group in enumerate(sources["pv"]["arrays"]):
         result.append(
             (

@@ -18,6 +18,7 @@ from .balance_tracker import status as balance_status
 from .calibration import forecast_hours
 from .config_models import (
     NumericSetting,
+    PriceSource,
     SolarForecastBinding,
     SourceConfig,
     resolve_numeric,
@@ -54,6 +55,7 @@ from .engine.optimize import solve
 from .engine.peak_reserve import peak_reserve_targets, peak_reserve_weight
 from .engine.strategy import resolve_flags, strategy_weights
 from .settings import validate_configuration
+from .settlement import resolve_settlement
 from .sources.battery import SocSettings, validate_soc
 from .sources.bindings import (
     field,
@@ -404,6 +406,55 @@ def _load_quality(source_mode, result):
     }
 
 
+def _vat_factor(values, name):
+    return 1 + values["vat_percent"] / 100 if values[f"{name}_apply_vat"] else 1
+
+
+def _buy_zones(price):
+    """Tariff whose bands carry the buy price: the schedule source or the distribution tariff."""
+    return price.schedule if price.mode == "schedule" else price.distribution_schedule
+
+
+def _buy_composition(price, values, config, states, now, intervals, source_prices):
+    """Per slot: the invoice buy price, the part the deposit can pay, and whether a split is known.
+
+    `source_prices` is what the buy source gives. Distribution is added on top in
+    `added` mode and already inside it in `included` mode (ADR-0001 §1).
+    """
+    vat = _vat_factor(values, "buy")
+    peak = values["buy_distribution_rate"] * vat
+    off_peak = values["buy_distribution_off_peak_rate"] * vat
+    zones = _buy_zones(price)
+    if zones is None or zones.tariff == "g11":
+        distribution = (peak,) * len(intervals)
+    else:
+        if (values["buy_distribution_rate"] == 0) != (
+            values["buy_distribution_off_peak_rate"] == 0
+        ):
+            raise InputError(
+                "distribution with two zones needs both rates or neither: "
+                "set Distribution rate and Off-peak distribution rate in Tariffs → Values"
+            )
+        distribution = price_for_slots(
+            PriceSource("schedule", schedule=zones),
+            states,
+            now,
+            intervals,
+            config["currency"],
+            timezone=config["timezone"],
+            schedule_rates={"peak": peak, "off_peak": off_peak},
+        )
+    if values["buy_distribution_mode"] == "added":
+        buy = tuple(source + part for source, part in zip(source_prices, distribution))
+    else:
+        buy = tuple(source_prices)
+    energy = tuple(
+        min(max(total - part, 0.0), max(total, 0.0))
+        for total, part in zip(buy, distribution)
+    )
+    return buy, energy, any(part > 0 for part in distribution)
+
+
 def build_problem(
     config: dict,
     states: dict,
@@ -417,6 +468,7 @@ def build_problem(
     grid_charge_commitment=None,
     balance_state=None,
     solar_forecasts=None,
+    settlement_state=None,
 ):
     """Preserve native boundaries and stop at actual contiguous source coverage."""
     values = effective_settings(config, states, now)
@@ -470,10 +522,11 @@ def build_problem(
         for edge in (row.start, row.end)
         if now < edge < end
     )
-    if source.buy.mode == "schedule":
+    zones = _buy_zones(source.buy)
+    if zones is not None:
         boundaries.update(
             row.start
-            for row in band_rows(source.buy.schedule, now, end, config["timezone"])
+            for row in band_rows(zones, now, end, config["timezone"])
             if now < row.start < end
         )
     edges = sorted(boundaries)
@@ -484,9 +537,7 @@ def build_problem(
         )
     tariffs = []
     for name, price in (("buy", source.buy), ("sell", source.sell)):
-        factor = values[f"{name}_multiplier"] * (
-            1 + values["vat_percent"] / 100 if values[f"{name}_apply_vat"] else 1
-        )
+        factor = values[f"{name}_multiplier"] * _vat_factor(values, name)
         addition = values[f"{name}_addition"]
         schedule_rates = None
         if price.mode == "fixed":
@@ -527,6 +578,9 @@ def build_problem(
                 schedule_rates=schedule_rates,
             )
         )
+    buy_prices, energy_part, split_known = _buy_composition(
+        source.buy, values, config, states, now, intervals, tariffs[0]
+    )
     if any(row.value < 0 for rows in pv_groups for row in rows):
         raise InputError("PV energy must be nonnegative")
     pv = (
@@ -563,9 +617,18 @@ def build_problem(
     loads = load_result.values
     slots = tuple(
         Slot(
-            start, finish, tariffs[0][index], tariffs[1][index], pv[index], loads[index]
+            start,
+            finish,
+            buy_prices[index],
+            tariffs[1][index],
+            pv[index],
+            loads[index],
+            energy_part[index],
         )
         for index, (start, finish) in enumerate(intervals)
+    )
+    settlement, settlement_next = resolve_settlement(
+        values, settlement_state, now, config["timezone"], split_known=split_known
     )
     battery = None
     soc_observation = None
@@ -797,6 +860,8 @@ def build_problem(
         peak_reserve_kwh=peak_reserve_kwh,
         peak_reserve_window=peak_reserve_window,
         peak_reserve_weight=peak_reserve_weight_value,
+        export_value_factor=settlement["export_value_factor"],
+        import_energy_factor=settlement["import_energy_factor"],
         **weights,
     )
     balance_phase = None
@@ -860,6 +925,9 @@ def build_problem(
         "soc_observation": soc_observation,
         "balance_phase": balance_phase,
         "balance_pv_series": balance_series,
+        # Consumed by `compute`; never published.
+        "settlement": settlement,
+        "settlement_state": settlement_next,
         "warnings": ["unvalidated_tariff"]
         if values["calibration"] != "verified"
         else [],
@@ -1090,6 +1158,9 @@ def compute(
     """
     started = perf_counter()
     problem, values, quality = build_problem(config, states, now, **history)
+    settlement = quality.pop("settlement")
+    settlement_state = quality.pop("settlement_state")
+    settlement_held = history.get("settlement_state")
     plan = solve(
         problem,
         time_limit_s=min(values["solve_time_limit_s"], values["total_time_limit_s"]),
@@ -1275,6 +1346,15 @@ def compute(
             "export_limit_scope": values["export_limit_scope"],
             "timezone": config["timezone"],
             "daily_balances": daily_export_rows(problem, plan.flows),
+            "settlement": {
+                **settlement,
+                "export_value_factor": round(settlement["export_value_factor"], 4),
+                "import_energy_factor": round(settlement["import_energy_factor"], 4),
+                "cap_pressure": round(settlement["cap_pressure"], 4),
+                "unused_share": None
+                if settlement["unused_share"] is None
+                else round(settlement["unused_share"], 4),
+            },
         },
         "measurements": measurement_diagnostics(config, states, now),
         "pv_forecast_hours": forecast_hours(problem.slots, now)
@@ -1310,6 +1390,9 @@ def compute(
             "actions_configured": bool(values["notify_actions"]),
         },
     }
+    if settlement_state is not None or settlement_held is not None:
+        # Popped by the coordinator; never a published attribute.
+        result["settlement_state"] = settlement_state
     if atlas_solve_builder is not None:
         result["atlas_solve_payload"] = atlas_payload
     return result

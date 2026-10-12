@@ -140,6 +140,11 @@ def validate_problem(problem: Problem) -> None:
             value = finite(getattr(slot, name), name)
             if name in ("pv_kwh", "load_kwh") and value < 0:
                 raise InputError(f"{name} must be nonnegative")
+        energy = finite(slot.buy_energy_per_kwh, "buy_energy_per_kwh")
+        if energy < 0:
+            raise InputError("buy_energy_per_kwh must be nonnegative")
+        if energy > max(slot.buy_per_kwh, 0.0) + 1e-9:
+            raise InputError("buy_energy_per_kwh must not exceed the buy price")
     if problem.terminal_mode not in ("preserve_initial", "value"):
         raise InputError("invalid terminal mode")
     finite(problem.terminal_value_per_kwh, "terminal value")
@@ -183,6 +188,9 @@ def validate_problem(problem: Problem) -> None:
     ):
         if finite(getattr(problem, name), name) < 0:
             raise InputError(f"{name} must be nonnegative")
+    for name in ("export_value_factor", "import_energy_factor"):
+        if not 0 <= finite(getattr(problem, name), name) <= 1:
+            raise InputError(f"{name} must be in [0, 1]")
     if finite(problem.pv_export_margin, "pv_export_margin") < 0:
         raise InputError("pv_export_margin must be nonnegative")
     for name in ("soft_import_cap_kw", "soft_export_cap_kw"):
