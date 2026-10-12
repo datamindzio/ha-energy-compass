@@ -1619,7 +1619,7 @@ Use `interval_minutes: 60` for hourly statistics.
 | `reference_probe_failed` | At least one reference probe failed or timed out. |
 | `short_source_coverage` | Price/forecast coverage ends before the requested planning horizon. |
 | `current_guidance_unavailable` | Current interval probe unknown; later windows may still be valid. |
-| `missing_forecast_continuation` | A configured source has not yet published data for part of the requested horizon (e.g. tomorrow's prices before ~14:00). |
+| `missing_forecast_continuation` | A configured source (except the optional pessimistic PV source) has not yet published data for part of the requested horizon (e.g. tomorrow's prices before ~14:00). |
 | `load_history_fallback` | Part of the load forecast uses the fallback daily load because history is insufficient. |
 | `unvalidated_tariff` | Tariff calibration marked `unvalidated`. |
 | `unvalidated_capacity` | Battery capacity calibration marked `unvalidated`. |
@@ -1650,5 +1650,5 @@ These are raw codes, not translated.
 | Code | Meaning |
 | --- | --- |
 | `balance_overdue` | The balance phase is `due` but no hold window could be fit into the plan; a balance was missed this horizon. |
-| `balance_pessimistic_pv_unavailable` | A pessimistic PV source is configured but unavailable, stale or does not cover the horizon; the balance windows were chosen on the median PV series. |
+| `balance_pessimistic_pv_unavailable` | A pessimistic PV source is configured but unavailable, stale, malformed or negative, or does not cover the horizon; the balance windows were chosen on the median PV series. |
 | `balance_no_window_in_horizon` | The balance phase is `eligible` or `due` but no candidate hold window exists in the horizon at all (no aligned start satisfies PV/grid-charge feasibility). |

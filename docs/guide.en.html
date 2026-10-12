@@ -2613,7 +2613,7 @@ Use <code>interval_minutes: 60</code> for hourly statistics.</p>
 </tr>
 <tr>
 <td><code>missing_forecast_continuation</code></td>
-<td>A configured source has not yet published data for part of the requested horizon (e.g. tomorrow's prices before ~14:00).</td>
+<td>A configured source (except the optional pessimistic PV source) has not yet published data for part of the requested horizon (e.g. tomorrow's prices before ~14:00).</td>
 </tr>
 <tr>
 <td><code>load_history_fallback</code></td>
@@ -2703,7 +2703,7 @@ Use <code>interval_minutes: 60</code> for hourly statistics.</p>
 </tr>
 <tr>
 <td><code>balance_pessimistic_pv_unavailable</code></td>
-<td>A pessimistic PV source is configured but unavailable, stale or does not cover the horizon; the balance windows were chosen on the median PV series.</td>
+<td>A pessimistic PV source is configured but unavailable, stale, malformed or negative, or does not cover the horizon; the balance windows were chosen on the median PV series.</td>
 </tr>
 <tr>
 <td><code>balance_no_window_in_horizon</code></td>
