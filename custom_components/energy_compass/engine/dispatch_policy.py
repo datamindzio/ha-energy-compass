@@ -417,7 +417,7 @@ def validate_modes(problem: Problem, flows) -> None:
         valid = {
             "CHARGE_GRID": charge >= surplus + activity - tolerance
             and max(abs(discharge), abs(curt)) <= noise,
-            "CHARGE_PV": activity - tolerance <= charge <= surplus + tolerance
+            "CHARGE_PV": activity - tolerance <= charge <= surplus + noise
             and max(abs(discharge), abs(curt)) <= noise,
             "DISCHARGE_GRID": min(discharge, export) >= activity - tolerance
             and max(abs(charge), abs(curt)) <= noise,
@@ -453,7 +453,7 @@ def validate_modes(problem: Problem, flows) -> None:
             and start < problem.initial_battery_mode_since.astimezone(UTC) + dwell
         ):
             blocked = discharge if problem.initial_battery_mode == "charge" else charge
-            if abs(blocked) > tolerance:
+            if abs(blocked) > noise:
                 raise SolveError(
                     "solver_failure", "invalid solver result: legacy direction guard"
                 )
