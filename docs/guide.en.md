@@ -27,7 +27,8 @@ inverters through Solarman: see [Deye inverter controller](#deye-inverter-contro
 11. [Cost card](#cost-card)
 12. [Deye inverter controller (Solarman)](#deye-inverter-controller-solarman)
 13. [Energy Atlas (optional)](#energy-atlas-optional)
-14. [Reason code reference](#reason-code-reference)
+14. [Offline replay tool](#offline-replay-tool)
+15. [Reason code reference](#reason-code-reference)
 
 ## How it works
 
@@ -1408,6 +1409,105 @@ sends past telemetry from Home Assistant's own recorder history for every entity
 5-minute statistics where the recorder still keeps them, hourly statistics for older history — to
 every entry that currently has sending enabled and a registered site, using the same value
 corrections as live delivery. It fails with an error if no entry currently qualifies.
+
+## Offline replay tool
+
+`tools/replay.py` answers "what does this setting change do to the real cost?" without Home
+Assistant. It imports the optimizer from `custom_components/energy_compass/engine` and replays
+recorded days; it needs the same Python and SciPy as the integration (run it in the test image or
+any environment where `import scipy` works) and plots nothing. For every day and in total it prints,
+in the installation's currency:
+
+| Column | Cost of |
+| --- | --- |
+| `plan` | the Energy Compass plan **as executed**: re-solved every `refresh_minutes` on the forecast known at plan time, the planned mode and energies applied to the realized PV and load |
+| `self_use` | plain self-consumption: the battery follows the load, no grid charging, no battery export |
+| `hindsight` | one solve of the same objective on the **realized** PV and load — the best the same settings could have done |
+
+```
+python tools/replay.py tools/replay_sample.json --currency PLN
+python tools/replay.py tools/replay_sample.json --set allow_grid_charge=false
+```
+
+`--set key=value` (repeatable) overrides any planner setting by its key (the keys of Options, as in
+`settings.py`; strategy-owned flags set this way are treated as explicit). Run twice and compare the
+`plan` column to measure a change. `--json` prints the numbers (with `solve_failures`, the number of
+failed plan solves of the day) instead of the table; `--timezone` and `--initial-soc` apply to CSV
+input only. A bad file, value or override ends with `error: …` naming the place and exit code 2.
+
+### Input format
+
+One JSON file (or a CSV, below). `tools/replay_sample.json` is a complete two-day synthetic example.
+
+| Key | Meaning |
+| --- | --- |
+| `timezone` | IANA name, e.g. `Europe/Warsaw` (default `UTC`) |
+| `interval_minutes` | interval length, default `15`; all days of a file share it |
+| `settings` | optional planner settings (`capacity_kwh`, `charge_kw`, `grid_export_kw`, `strategy`, `refresh_minutes`, …); unset keys take the shipped defaults, so set at least the battery and site limits |
+| `days[].start` | ISO timestamp of the first interval (with offset, or local to `timezone`) |
+| `days[].date` | label for the table, default the local date of `start` |
+| `days[].initial_soc_percent` | battery SOC at `start` (default `initial_soc_percent` of the file, else 50) |
+| `days[].intervals[]` | one object per interval, in order and without gaps (below) |
+
+Each interval has six numbers: `buy` and `sell` (currency/kWh, the final tariff prices), `pv_forecast`
+and `load_forecast` (kWh in the interval, **as known at plan time**) and `pv` and `load` (kWh actually
+produced and consumed). The six values must be finite and the four energies not negative (clip the
+small negative values that rounding in statistics can leave, e.g. in `import + PV − export`); an error
+names the place, `days[n][i]` (day `n` from 1, interval `i` from 0) or `line n` of a CSV.
+
+Days are independent: each is planned and measured on its own and ends at its last interval, even
+when the file holds consecutive days. The horizon therefore shrinks to the end of the day, so
+`horizon_hours` beyond the day and the carry of energy over midnight are not measured.
+
+CSV has one row per interval with the columns `start`, `buy`, `sell`, `pv_forecast`, `load_forecast`,
+`pv`, `load` and optionally `initial_soc_percent` (read on the first row of a day). Rows are grouped
+into days by the local date of `start`; settings come only from `--set`.
+
+### Reading the result
+
+- **Day-end energy is valued**, because a day boundary is arbitrary for a battery. Every solve values
+  the final SOC at `terminal_value_per_kwh` when `terminal_mode` is `value`, else at the day's mean buy
+  price, so the plan may end a day below its initial SOC. The **reported** cost prices the difference
+  between the final and the initial SOC at the day's mean buy price whatever the settings are, so
+  `terminal_mode` and `terminal_value_per_kwh` change the plan but not the measuring stick: `self_use`
+  is identical in every run, and two runs differing in the terminal value are comparable.
+- `wear_per_kwh` is part of the reported cost (half of the charged plus discharged energy), so runs
+  with different `wear_per_kwh` are not comparable.
+- `hindsight` is the optimum of the **shaped objective** (strategy weights, import penalty and the
+  terminal value of the solves included) priced in real currency. For `cost_min` with no import
+  penalty and a terminal value equal to the day's mean buy price it is a lower bound of `plan`; for
+  other strategies it is the best that strategy could do. With `terminal_mode` `value` and a lower
+  value than the mean buy price, `hindsight` may drain the battery and report more than `plan`, which
+  is a sign that the terminal value undervalues stored energy.
+- The executed plan follows the controller (`tools/deye_controller/build.py`) against realized data.
+  `SELF_CONSUME` and `CHARGE_PV` follow the load: all PV surplus charges the battery and a deficit is
+  covered from it. In `CHARGE_GRID` only the grid share follows the plan — the planned charge minus the
+  surplus the forecast promised — and the realized PV surplus charges on top, so PV above the forecast
+  charges more and PV below it charges less, never a shortfall bought from the grid. `DISCHARGE_GRID`
+  discharges the planned energy, `HOLD` parks the battery. Grid export beyond `grid_export_kw` is
+  curtailed, and stored energy is not exported beyond the PV produced so far when **Sell only PV**
+  (`limit_export_to_pv`) is on.
+- The [peak-period reserve](#peak-period-reserve) (`peak_reserve_margin_kwh`) is replayed as in the integration: it needs
+  `limit_grid_charge_price` (its ceiling is the cheap price), else a warning says it has no effect.
+- Not replayed: LFP balance windows, the autonomy tail beyond the data, and carried export or
+  grid-charge commitments. A warning names the enabled ones. A failed plan solve runs that step as
+  self-consumption and is reported under the table and as `solve_failures`; a failed `hindsight`
+  solve or inconsistent settings stop the run with `error: <date>: …`.
+
+### Exporting the data from Home Assistant
+
+`buy` and `sell` are the final prices the planner sees: from your tariff, or from the history of the
+price entities Energy Compass reads. The realized energy comes from long-term statistics: the
+**Energy** dashboard's menu offers **Download data** (CSV, hourly). The same hourly `change` values
+the replay needs are returned by the `recorder/statistics_during_period` WebSocket command with
+`"period": "hour"` and `"types": ["change"]`
+([`tools/export_value_backfill.py`](../tools/export_value_backfill.py) shows the call). Take
+`pv` from the PV production statistic and `load` from the home consumption statistic
+(energy in = grid import + PV − grid export, when no consumption sensor exists).
+`pv_forecast` and `load_forecast` are what your forecast entities said **before** the interval — the
+Compass plan attribute `intervals` (or the Solcast/forecast history) recorded at plan time; using
+the realized value as the forecast gives an idealised plan with no forecast error.
+Use `interval_minutes: 60` for hourly statistics.
 
 ## Reason code reference
 
