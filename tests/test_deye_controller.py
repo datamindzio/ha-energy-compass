@@ -1212,6 +1212,83 @@ def test_self_consume_stops_charging_at_full_battery(h):
     assert values[h.ctx["charge_entity"]] == 0 and values[h.ctx["discharge_entity"]] > 0
 
 
+def voltage_full(state, soc="100", **row):
+    """Voltage mode with a pack the SOC source already reads as full."""
+    h = Harness(INPUTS | {"commissioned_battery_modes": ["Capacity", "Voltage"]})
+    h.data[h.ctx["operation_entity"]]["state"] = "Voltage"
+    h.data[P]["attributes"]["intervals"][0].update(
+        state=state, charge_kwh=0, discharge_kwh=0, end_soc_kwh=25, **row
+    )
+    h.data[h.ctx["soc_entity"]]["state"] = soc
+    h.accept()
+    return h
+
+
+@pytest.mark.parametrize("state", ["HOLD", "CHARGE_PV", "SELF_CONSUME"])
+def test_voltage_full_soc_keeps_charging_from_pv(state):
+    h = voltage_full(state)
+    d = h.decision()
+    values = d["desired"]
+    assert d["valid"] and d["state"] == state and not d["target_reached"]
+    assert values[h.ctx["charge_entity"]] == 14
+    assert values[h.ctx["grid_entity"]] == 0
+    discharge = values[h.ctx["discharge_entity"]]
+    assert (discharge == 0) if state == "HOLD" else (discharge > 0)
+    assert d["target_soc"] == 10 and d["target_voltage"] == 49.6
+    for i in range(1, 7):
+        assert values[f"number.inverter_deye_program_{i}_soc"] == 10
+        assert values[f"number.inverter_deye_program_{i}_voltage"] == 49.6
+        assert values[f"select.inverter_deye_program_{i}_charging"] == "Disabled"
+
+
+@pytest.mark.parametrize("state", ["HOLD", "CHARGE_PV", "SELF_CONSUME"])
+def test_voltage_full_soc_current_ceiling_has_no_zero_rewrite(state):
+    """Held charge current inside the ceiling hysteresis band is kept, never 0 A."""
+    h = voltage_full(state)
+    h.data[h.ctx["charge_entity"]]["state"] = "14"
+    for voltage in ["535.0", "533.0"]:
+        h.data[h.ctx["voltage_entity"]]["state"] = voltage
+        assert h.decision()["desired"][h.ctx["charge_entity"]] == 14
+
+
+@pytest.mark.parametrize("state", ["HOLD", "CHARGE_PV", "SELF_CONSUME"])
+def test_voltage_below_full_soc_unchanged(state):
+    h = voltage_full(state, soc="99")
+    values = h.decision()["desired"]
+    if state == "HOLD":
+        assert values[h.ctx["charge_entity"]] == h.ctx["hold_grid_current"]
+        assert values[h.ctx["grid_entity"]] == h.ctx["hold_grid_current"]
+    else:
+        assert values[h.ctx["charge_entity"]] == 14
+
+
+@pytest.mark.parametrize("state", ["HOLD", "CHARGE_PV", "SELF_CONSUME"])
+def test_capacity_full_soc_unchanged(state):
+    h = Harness(INPUTS)
+    h.data[P]["attributes"]["intervals"][0].update(
+        state=state, charge_kwh=0, discharge_kwh=0, end_soc_kwh=25
+    )
+    h.data[h.ctx["soc_entity"]]["state"] = "100"
+    h.accept()
+    values = h.decision()["desired"]
+    if state == "HOLD":
+        assert values[h.ctx["charge_entity"]] == h.ctx["hold_grid_current"]
+        assert values[h.ctx["grid_entity"]] == h.ctx["hold_grid_current"]
+    else:
+        assert values[h.ctx["charge_entity"]] == 0
+
+
+def test_voltage_full_soc_grid_charge_unchanged():
+    h = voltage_grid_charge("530.0")
+    h.data[h.ctx["soc_entity"]]["state"] = "100"
+    h.accept()
+    values = h.decision()["desired"]
+    # CHARGE_GRID keeps its ceiling rule and the 100 % charge stop (not covered here).
+    assert values[h.ctx["charge_entity"]] == 0
+    assert values[h.ctx["grid_entity"]] == 15
+    assert values["select.inverter_deye_program_3_charging"] == "Grid"
+
+
 @pytest.mark.parametrize(
     "gate", ["stale_soc", "stale_voltage", "stale_heartbeat", "Voltage"]
 )

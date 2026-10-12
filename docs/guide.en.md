@@ -1178,6 +1178,7 @@ baterii (pojemność, sprawność) w planie`.
 | Plan state | Charge / discharge current | Grid charge current | TOU direction, target |
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | cap / cap | 0 A | all Disabled, SOC 10 % |
+| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` at SOC ≥ 100 % in Voltage mode | cap / 0 A in `HOLD`, cap otherwise | 0 A | all Disabled, SOC 10 % |
 | `CHARGE_GRID` | cap / 0 A | planned grid share, ≤ `max_grid_current` | Grid on the active program, target SOC from the plan; in Voltage mode TOU voltage `voltage_grid_charge_ceiling` |
 | `DISCHARGE_GRID` | 0 A / planned, ≤ cap; after the target is reached `reached_discharge_current`, ≤ cap | 0 A | Sell on the active program, target SOC from the plan, power = planned, ≤ `max_power_w`; Disabled after the target is reached |
 | `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, target SOC = planned end SOC rounded down |
@@ -1187,7 +1188,7 @@ The cap is `min(max_current, max_power_w / V)` for charging and `min(max_current
 for discharging. The cap has hysteresis: the current already on the inverter is kept while it still fits
 the power cap, and the next ampere step is taken only with 2 % voltage headroom (about 10 V at 530 V), so
 a pack voltage crossing a step boundary does not rewrite the ceiling on every sag and rebound. The
-power cap is never exceeded. At 100 % SOC the charge current becomes 0 A. Planned currents convert interval kWh with
+power cap is never exceeded. At 100 % SOC the charge current becomes 0 A, except in battery operation mode `Voltage` (next paragraph). Planned currents convert interval kWh with
 `eta_charge` (charging) or `eta_discharge` (discharging) over the full interval. Target SOC uses the accepted plan's `capacity_kwh`; target voltage follows a fixed
 high-voltage LFP curve (496–536 V for 10–90 %, 584 V charging or 544 V discharging at 100 %). A reached
 target in `CHARGE_GRID`/`DISCHARGE_GRID` is latched for that plan interval. A reached `DISCHARGE_GRID`
@@ -1197,7 +1198,13 @@ larger loads come from the grid; 0 A would send the whole house load to the grid
 interval whose planned `discharge_kwh` is below the 0.05 kWh tolerance (export planned from PV) is reached
 at once. In an LFP balance row
 (`balance_hold: true`) the charge current stays on at 100 %, `CHARGE_GRID` targets 100 % and the grid
-current is at least `balance_grid_current`. `CURTAIL` runs the `HOLD` profile with a warning, because the
+current is at least `balance_grid_current`. In `Voltage` mode the inverter ends charging on pack voltage, and a
+counter-based SOC source can read 100 % before the pack is full. So at SOC ≥ 100 % in `HOLD`, `CHARGE_PV` and
+`SELF_CONSUME` the controller keeps the normal charge current cap (with the same hysteresis, so there are no 0 A
+rewrites around the ceiling) instead of 0 A (or the `hold_grid_current` of `HOLD`). The grid current is 0 A,
+so PV is the only source, discharge follows the plan row (0 A in `HOLD`), and no SOC target is written and
+no "reached" state is latched. `CHARGE_GRID` (it keeps `voltage_grid_charge_ceiling`), `CURTAIL`, the
+balance hold and `Capacity` mode behave as before. `CURTAIL` runs the `HOLD` profile with a warning, because the
 controller cannot limit PV.
 
 Only battery modes listed in `commissioned_battery_modes` are controlled; any other mode (for example
