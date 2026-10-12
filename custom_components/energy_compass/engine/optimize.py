@@ -97,6 +97,10 @@ class _Model:
             raise SolveError(
                 reasons.get(result.status, "solver_failure"), result.message
             )
+        # A proven solve stops at HiGHS's relative gap (default 1e-4 unless the
+        # model asked for 0); report it instead of a constant 0.
+        gap = getattr(result, "mip_gap", None)
+        self.mip_gap = float(gap) if gap is not None and isfinite(gap) else 0.0
         return np.asarray(result.x)
 
 
