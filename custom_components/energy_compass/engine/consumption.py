@@ -30,6 +30,10 @@ _TOL = 1e-6
 _PRICE_REL_TOL = 1e-12
 _PRICE_ABS_TOL = 1e-12
 _MAX_PROBES = 96
+# Intervals either side of a probe whose operating mode may change, tried in
+# turn: the extra load moves the battery's state of charge, and a schedule
+# that cannot absorb it (a terminal rule, a reserve) needs room to recover.
+_UNPIN_MARGINS = (0, 4, 16)
 _FLEXIBLE_LOAD_TARGETS = (3.0, 5.0, 10.0, 15.0, 20.0)
 
 
@@ -338,6 +342,7 @@ def _probe(
     end: datetime,
     amount: float,
     deadline: float,
+    pinned_baseline: Plan | None = None,
 ) -> float | None:
     """Marginal PLN/kWh cost of adding `amount` kWh of load over [start, end).
 
@@ -346,6 +351,13 @@ def _probe(
     solved from `replace(problem, slots=...)`, which carries every other field
     of `problem` — including `strategy_changed` — unchanged, so baseline and
     candidate always see the same (released or carried) mode-lock state.
+
+    With `pinned_baseline` both sides keep the base plan's operating modes
+    except around the probed intervals (widened step by step when the extra
+    load cannot be absorbed) and re-optimise the flows. That is exact for the
+    schedule and leaves little integer search; the full solve does not finish
+    at 96+ intervals with load following. When no window works the full solve
+    runs, differenced against the base plan.
     """
     elapsed = (end - start).total_seconds()
     additions = []
@@ -366,13 +378,42 @@ def _probe(
     remaining = deadline - perf_counter()
     if remaining <= 0:
         return None
-    try:
-        candidate = solve(replace(problem, slots=slots), time_limit_s=remaining)
-    except SolveError:
-        return None
+    changed = [index for index, extra in enumerate(additions) if extra > 0]
+    candidate = None
+    reference = baseline
+    if pinned_baseline is not None:
+        for margin in _UNPIN_MARGINS:
+            remaining = deadline - perf_counter()
+            if remaining <= 0:
+                return None
+            free = frozenset(
+                range(
+                    max(0, changed[0] - margin),
+                    min(len(slots), changed[-1] + 1 + margin),
+                )
+            )
+            try:
+                candidate = solve(
+                    replace(problem, slots=slots),
+                    time_limit_s=remaining,
+                    pinned_to=baseline,
+                    unpinned_slots=free,
+                )
+            except SolveError:
+                continue
+            reference = pinned_baseline
+            break
+    if candidate is None:
+        remaining = deadline - perf_counter()
+        if remaining <= 0:
+            return None
+        try:
+            candidate = solve(replace(problem, slots=slots), time_limit_s=remaining)
+        except SolveError:
+            return None
     if perf_counter() >= deadline:
         return None
-    cost = (plan_monetary_cost(candidate) - plan_monetary_cost(baseline)) / actual
+    cost = (plan_monetary_cost(candidate) - plan_monetary_cost(reference)) / actual
     return cost if isfinite(cost) and perf_counter() < deadline else None
 
 
@@ -418,6 +459,16 @@ def analyze_consumption(
     zone = ZoneInfo(problem.timezone)
     costs: dict[tuple[datetime, datetime], float | None] = {}
     deadline = perf_counter() + budget
+    pinned_baseline = None
+    if budget > 0:
+        try:
+            pinned_baseline = solve(
+                problem,
+                time_limit_s=min(budget, settings.probe_time_limit_s),
+                pinned_to=plan,
+            )
+        except SolveError:
+            pass
     for interval_start, interval_end in requested:
         probe_start = perf_counter()
         remaining = deadline - probe_start
@@ -432,6 +483,7 @@ def analyze_consumption(
             interval_end,
             settings.probe_kwh,
             probe_deadline,
+            pinned_baseline,
         )
     reference_results = tuple((item, probe, costs[probe]) for item, probe in reference)
     known = tuple(cost for _, _, cost in reference_results if cost is not None)

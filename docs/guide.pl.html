@@ -195,7 +195,7 @@ Solarman: zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika 
    oznaczone <code>time_limited</code> razem z jego <code>mip_gap</code>.</li>
 <li><strong>Próby zużycia.</strong> Dla każdego przedziału wyświetlania solver liczy plan jeszcze raz z
    dodatkowym 1 kWh obciążenia; różnica kosztu to <em>koszt krańcowy jednej kWh więcej</em>, klasyfikowany
-   na poziom zużycia.</li>
+   na poziom zużycia. Próby zachowują tryby pracy planu bazowego (patrz <em>Poziomy zużycia</em>).</li>
 <li><strong>Profile elastycznego zużycia.</strong> Osobne rozwiązania dla bloków 3, 5, 10, 15 i 20 kWh mierzą, ile
    elastycznej energii można zaplanować, zanim cena się pogorszy.</li>
 <li><strong>Publikacja.</strong> Jedna spójna generacja aktualizuje wszystkie encje; niezmienione encje nie są
@@ -1420,6 +1420,12 @@ liczy plan z dodatkowym obciążeniem <code>probe_kwh</code> (domyślnie 1 kWh).
 z próbą − koszt planu bazowego) ÷ dodana energia. Bateria i sieć są przy tym optymalizowane od
 nowa, więc to prawdziwy koszt krańcowy — może różnić się od ceny taryfowej (np. energia z PV,
 którą inaczej by sprzedano, kosztuje utraconą wartość eksportu).</p>
+<p>Aby próby były szybkie przy 96–192 przedziałach z regułą podążania SELF_CONSUME za obciążeniem,
+oba plany w różnicy zachowują tryby pracy planu bazowego i optymalizują od nowa tylko przepływy;
+tryby sondowanych przedziałów są wolne, a gdy dodatkowe obciążenie nie mieści się w planie, uwalniane
+są kolejne przedziały (najpierw 4, potem 16 z każdej strony). Dopiero gdy to zawiedzie, próba liczy pełne
+rozwiązanie. Próba nigdy więc nie podaje kosztu niższego niż pełne rozwiązanie i może podać nieco
+wyższy koszt krańcowy tam, gdzie dla dodatkowego obciążenia tańszy byłby inny tryb.</p>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-510177a65394-dark.svg"><img src="assets/diagrams/diagram-510177a65394.svg" alt="Diagram 8" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>

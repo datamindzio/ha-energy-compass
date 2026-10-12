@@ -46,6 +46,19 @@ docker run --rm -v "$PWD":/workspace:ro ha-energy-compass-test:2026.9.1 -m bench
 
 `self_sufficiency` and `backup_ready` are the slow strategies because they make SELF_CONSUME worth using all night: the load-following rule (see `docs/model.md`) then leaves a 0.1 % gap that HiGHS needs a few hundred branch-and-bound nodes to close (the plan itself is found after 2-3 s, the rest is the proof). On a 192-slot horizon they use 50-70 % of the 10 s base-solve limit even on this fast host, so a Raspberry Pi 5 is expected to end `time_limited`; the base plan then publishes its best validated incumbent (`Plan.time_limited`, `Plan.mip_gap`). The other four strategies stay well under a second at 192 slots. The benchmark itself does not pass `accept_incumbent`, so its 0.000001 s rows show the strict solve that probes, flexible-load and configuration checks use: a limit without a proof raises `SolveError("timeout")`. All commands exited successfully; the script reports typed solver outcomes as JSON. The 192-slot case is the two-day quarter-hour representative horizon, and 384 slots stress a four-day horizon. These results should be repeated on actual Raspberry Pi 5 hardware before setting operational time and memory limits.
 
+## Consumption probes at 96 and 192 intervals
+
+`benchmarks.optimizer --probes 96` solves the base plan and then the consumption probes of one 24 h hourly display/reference horizon (`--probes N` is the number of quarter-hour probes, a multiple of 4) and applies the acceptance rule: result `optimal`, every probe complete, base plus probes within 60 s. Probes keep the base plan's operating modes (`docs/model.md`, *Probe operating modes*). Before that every probe of `self_sufficiency` and `backup_ready` timed out at 96 and 192 intervals (0/96 at 192 for both minimum durations) and the levels fell back to `absolute_fallback`. These runs used a native macOS arm64 Python 3.13 with SciPy 1.18.1 and 10 s base limit, one run each, with `minimum_mode_minutes` at the default 60 and at 0 (a wrapper passing `minimum_mode_minutes=0` to the problem):
+
+| Intervals | Strategy | Minimum mode | Probes complete | Base solve | Probes |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 192 | `self_sufficiency` | 60 min | 96/96 | 3.6 s | 7.4 s |
+| 192 | `self_sufficiency` | 0 | 96/96 | 2.6 s | 8.3 s |
+| 192 | `backup_ready` | 60 min | 96/96 | 6.9 s | 4.1 s |
+| 192 | `backup_ready` | 0 | 96/96 | 4.5 s | 4.1 s |
+
+`--strategy all` completes 96/96 for all six strategies at 96 intervals (probes 1.9-2.3 s) and at 192 intervals (probes 4.3-6.5 s). `tests/test_consumption_pinned.py` asserts the 96-interval case for both strategies and both durations. Repeat on Raspberry Pi 5 hardware before setting limits.
+
 ## Incremental consumption benchmark
 
 `benchmarks.consumption` solves a base plan and then makes serial full-horizon finite-difference probes. The default case uses 96 quarter-hour source slots, a 24-hour display/reference horizon, hourly display intervals, and a 1 kWh probe. The nondefault case uses 144 quarter-hour source slots, a 12-hour display horizon, 36-hour reference horizon, half-hour display intervals, a 0.5 kWh probe, and 20th/80th percentile thresholds. Both use the default 2-second per-probe cap and give the outlook the remainder of a 60-second pipeline allowance after the base solve.

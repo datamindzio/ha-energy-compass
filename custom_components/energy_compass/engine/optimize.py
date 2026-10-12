@@ -465,20 +465,52 @@ def _validate_solution(
         )
 
 
+def _pin_operating_state(
+    model: _Model, vectors, plan: Plan, unpinned: frozenset[int]
+) -> None:
+    """Fix each interval's dispatch mode (or discharging flag) to `plan`'s."""
+    for index, (v, flow) in enumerate(zip(vectors, plan.flows, strict=True)):
+        if index in unpinned:
+            continue
+        for mode in MODES:
+            key = f"mode_{mode}"
+            if key in v:
+                chosen = float(flow.dispatch_mode == mode)
+                model.lower[v[key]] = chosen
+                model.upper[v[key]] = chosen
+        if "discharging" in v:
+            chosen = float(flow.discharge_kwh > _TOL)
+            model.lower[v["discharging"]] = chosen
+            model.upper[v["discharging"]] = chosen
+
+
 def solve(
-    problem: Problem, *, time_limit_s: float = 10.0, accept_incumbent: bool = False
+    problem: Problem,
+    *,
+    time_limit_s: float = 10.0,
+    accept_incumbent: bool = False,
+    pinned_to: Plan | None = None,
+    unpinned_slots: frozenset[int] = frozenset(),
 ) -> Plan:
     """Find a bounded least-cost advisory plan or raise a typed solver error.
 
     `accept_incumbent` returns the best validated solution found before the
     time limit instead of raising `timeout`; the plan is then marked
     `time_limited` with the solver's final relative MIP gap.
+
+    `pinned_to` fixes the discrete operating state (dispatch mode per interval,
+    or the discharging flag when there is no minimum duration) to that plan's
+    and leaves the flows free. The solve is then nearly a linear program, so
+    the least cost of the same state under a changed problem is exact and fast.
+    `unpinned_slots` (interval indexes) leaves those intervals' state free.
     """
     return _solve(
         problem,
         flexible_load=None,
         time_limit_s=time_limit_s,
         accept_incumbent=accept_incumbent,
+        pinned_to=pinned_to,
+        unpinned_slots=unpinned_slots,
     ).plan
 
 
@@ -514,8 +546,12 @@ def _solve(
     flexible_load: FlexibleLoadRequest | None,
     time_limit_s: float,
     accept_incumbent: bool = False,
+    pinned_to: Plan | None = None,
+    unpinned_slots: frozenset[int] = frozenset(),
 ) -> FlexibleLoadPlan:
     validate_problem(problem)
+    if pinned_to is not None and len(pinned_to.flows) != len(problem.slots):
+        raise InputError("pinned plan does not match problem")
     try:
         time_limit = float(time_limit_s)
     except (TypeError, ValueError) as err:
@@ -881,6 +917,8 @@ def _solve(
 
     constrain_export_benefit(model, problem, vectors)
     constrain_charge_benefit(model, problem, vectors)
+    if pinned_to is not None:
+        _pin_operating_state(model, vectors, pinned_to, unpinned_slots)
     values = model.solve(time_limit)
     _validate_solution(problem, vectors, values, daily_fractions, budgets)
     balance_start = _validate_balance(

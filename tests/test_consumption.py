@@ -481,6 +481,8 @@ def test_minimum_purchase_tariff_is_bounded_to_available_reference(monkeypatch):
     costs = (0.80, 0.20, 0.60)
 
     def controlled_probe(problem, **kwargs):
+        if problem is source:  # the pinned reference solve of the base plan
+            return baseline
         changed = next(
             index
             for index, (slot, original) in enumerate(
@@ -589,7 +591,9 @@ def test_probe_completed_after_deadline_stays_unknown(
     clock = [0.0]
     calls = []
 
-    def late_solve(problem, *, time_limit_s):
+    def late_solve(problem, *, time_limit_s, **kwargs):
+        if problem is source:  # the pinned reference solve of the base plan
+            return baseline
         calls.append(time_limit_s)
         clock[0] += elapsed_s
         return replace(baseline, grid_cost=baseline.grid_cost + 0.40)
@@ -625,6 +629,8 @@ def test_probe_spreads_load_by_utc_overlap_and_uses_actual_probe_size(monkeypatc
     observed = []
 
     def record(problem, **kwargs):
+        if problem is source:  # the pinned reference solve of the base plan
+            return original(problem, **kwargs)
         assert problem.battery == source.battery
         assert problem.terminal_mode == source.terminal_mode
         assert problem.terminal_value_per_kwh == source.terminal_value_per_kwh

@@ -73,7 +73,7 @@ Each calculation proceeds as follows:
    solution found so far is published instead and marked `time_limited` with its `mip_gap`.
 4. **Probe consumption.** For each display interval, the solver is rerun with 1 kWh of extra load;
    the cost difference is the *incremental cost of one more kWh*, which is classified into a
-   consumption level.
+   consumption level. Probes keep the base plan's operating modes (see *Consumption levels*).
 5. **Profile flexible loads.** Separate solves for 3, 5, 10, 15 and 20 kWh blocks measure how much
    flexible energy can be scheduled before the price degrades.
 6. **Publish.** One coherent generation updates all entities; unchanged entities are not rewritten.
@@ -821,6 +821,13 @@ each display interval (default 60 min over 24 h) the solver reruns with `probe_k
 1 kWh) of extra load. **Consumption cost** = (probe plan cost − base plan cost) ÷ added kWh. Because
 the battery and grid are re-optimized, this is the true marginal cost — it can differ from the
 tariff price (e.g. solar that would otherwise be exported costs its lost export value).
+
+To keep the probes fast at 96–192 intervals with the SELF_CONSUME load-following rule, both
+plans in the difference keep the operating modes of the base plan and re-optimize only the
+flows; the modes of the probed intervals are left free, and are freed further (4, then 16
+intervals each side) when the extra load cannot be absorbed otherwise. Only if that fails does the probe run the full solve. A probe
+therefore never reports a cost below the full solve's and can report a slightly higher
+marginal cost where another mode would be cheaper for the extra load.
 
 ```mermaid
 flowchart TD

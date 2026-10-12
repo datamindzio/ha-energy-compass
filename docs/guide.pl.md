@@ -75,7 +75,7 @@ Każde obliczenie przebiega tak:
    oznaczone `time_limited` razem z jego `mip_gap`.
 4. **Próby zużycia.** Dla każdego przedziału wyświetlania solver liczy plan jeszcze raz z
    dodatkowym 1 kWh obciążenia; różnica kosztu to *koszt krańcowy jednej kWh więcej*, klasyfikowany
-   na poziom zużycia.
+   na poziom zużycia. Próby zachowują tryby pracy planu bazowego (patrz *Poziomy zużycia*).
 5. **Profile elastycznego zużycia.** Osobne rozwiązania dla bloków 3, 5, 10, 15 i 20 kWh mierzą, ile
    elastycznej energii można zaplanować, zanim cena się pogorszy.
 6. **Publikacja.** Jedna spójna generacja aktualizuje wszystkie encje; niezmienione encje nie są
@@ -837,6 +837,13 @@ liczy plan z dodatkowym obciążeniem `probe_kwh` (domyślnie 1 kWh). **Koszt zu
 z próbą − koszt planu bazowego) ÷ dodana energia. Bateria i sieć są przy tym optymalizowane od
 nowa, więc to prawdziwy koszt krańcowy — może różnić się od ceny taryfowej (np. energia z PV,
 którą inaczej by sprzedano, kosztuje utraconą wartość eksportu).
+
+Aby próby były szybkie przy 96–192 przedziałach z regułą podążania SELF_CONSUME za obciążeniem,
+oba plany w różnicy zachowują tryby pracy planu bazowego i optymalizują od nowa tylko przepływy;
+tryby sondowanych przedziałów są wolne, a gdy dodatkowe obciążenie nie mieści się w planie, uwalniane
+są kolejne przedziały (najpierw 4, potem 16 z każdej strony). Dopiero gdy to zawiedzie, próba liczy pełne
+rozwiązanie. Próba nigdy więc nie podaje kosztu niższego niż pełne rozwiązanie i może podać nieco
+wyższy koszt krańcowy tam, gdzie dla dodatkowego obciążenia tańszy byłby inny tryb.
 
 ```mermaid
 flowchart TD
