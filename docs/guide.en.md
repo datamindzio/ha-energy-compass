@@ -653,7 +653,8 @@ Rules (defaults: 60 min, 0.1 kW):
   import. The rule also holds with `minimum_mode_minutes = 0`: there are no modes then, and the
   discharge in any interval the flows label `SELF_CONSUME` is bound the same way. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is executed the same way. If the battery runs out before
-  it ends, the rest of the commitment is `HOLD` with full import (a new `HOLD` clock starts). The
+  it ends, the rest of the commitment is `HOLD` with full import (it starts no clock of its own: the
+  commitment's deadline stays the only one). The
   same happens — from the first interval if need be — when the battery cannot cover the house
   and still keep the inverter standby loss (`idle_drain_kw`) of the later intervals, with no PV
   or grid charge to pay it in time. `HOLD` starts only in an interval without a PV surplus the
@@ -675,9 +676,12 @@ Rules (defaults: 60 min, 0.1 kW):
   `CHARGE_PV`. Applies while `minimum_mode_minutes` is above 0. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is held to the same rule. If the battery is full before it
   ends (the next interval could not take even the minimum activity above the upper bound), the
-  rest of the commitment is `HOLD` with the surplus exported (a new `HOLD` clock starts). A first
-  committed interval that already has less room than the minimum activity is not covered: the
-  plan is `infeasible` until the commitment ends.
+  rest of the commitment is `HOLD` with the surplus exported, or `CURTAIL` where the site cannot
+  pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
+  pack. The released `HOLD` starts no clock of its own — the commitment's deadline stays the only
+  one — so it may turn to `CURTAIL` (which starts its own clock) before then; it does not go back
+  to `CHARGE_PV`/`SELF_CONSUME`. A first committed interval that already has less room than the
+  minimum activity is not covered: the plan is `infeasible` until the commitment ends.
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.

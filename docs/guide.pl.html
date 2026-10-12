@@ -1150,7 +1150,7 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   a rozładowanie w każdym przedziale, który przepływy oznaczają jako <code>SELF_CONSUME</code>, jest związane
   tak samo. Przeniesione zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> jest wykonywane tak samo. Jeśli
   bateria wyczerpie się przed jego końcem, reszta zobowiązania to <code>HOLD</code> z pełnym importem
-  (startuje nowy zegar <code>HOLD</code>). Tak samo — w razie potrzeby już od pierwszego przedziału — gdy
+  (bez własnego zegara: jedynym zegarem jest termin zobowiązania). Tak samo — w razie potrzeby już od pierwszego przedziału — gdy
   bateria nie może pokryć domu i zarazem zachować poboru czuwania falownika (<code>idle_drain_kw</code>)
   z późniejszych przedziałów, a PV ani ładowanie z sieci nie uzupełnią go na czas. <code>HOLD</code> zaczyna
   się tylko w przedziale bez nadwyżki PV, którą bateria mogłaby przyjąć, w każdym przedziale
@@ -1172,9 +1172,13 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   <code>CHARGE_PV</code>. Dotyczy przypadku, gdy <code>minimum_mode_minutes</code> jest większe od 0. Przeniesione
   zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli bateria zapełni się przed
   jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
-  granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki (startuje nowy zegar <code>HOLD</code>).
-  Nie obejmuje to pierwszego przedziału zobowiązania, który ma już mniej miejsca niż minimalna
-  aktywność: plan jest <code>infeasible</code> (niewykonalny) do końca zobowiązania.</li>
+  granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki albo <code>CURTAIL</code> tam, gdzie
+  instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
+  falownik przy pełnej baterii. Zwolniony <code>HOLD</code> nie ma własnego zegara — jedynym zegarem jest
+  termin zobowiązania — więc może przejść w <code>CURTAIL</code> (który startuje własny zegar) przed tym
+  terminem; nie wraca do <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>. Nie obejmuje to pierwszego przedziału
+  zobowiązania, który ma już mniej miejsca niż minimalna aktywność: plan jest <code>infeasible</code>
+  (niewykonalny) do końca zobowiązania.</li>
 <li><strong>Grupa podążania za PV:</strong> <code>CHARGE_PV</code> i <code>SELF_CONSUME</code> dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.</li>

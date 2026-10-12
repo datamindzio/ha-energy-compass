@@ -584,6 +584,8 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
     )
     # Per idle committed interval, the binary that tells a real HOLD run from a bridge.
     runs = {}
+    # Intervals whose HOLD started from a carried PV-follow commitment: no clock of its own.
+    free_hold = set()
     if previous is not None:
         held_until = since.astimezone(UTC) + dwell
         members = _members(dwell_group(previous))
@@ -606,6 +608,12 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         held = {}
         depleted = {}
         full = {}
+        # A full pack takes no more PV, and the inverter curtails what the site cannot
+        # pass: once an interval has started at the ceiling the commitment may end in
+        # CURTAIL as well (`seen_full`, the `lock_full` of every earlier interval).
+        seen_full = {}
+        # The HOLD or the HOLD run released from the commitment, in the previous interval.
+        released = {}
         for i, (slot, start, v) in enumerate(
             zip(problem.slots, starts, vectors, strict=True)
         ):
@@ -625,6 +633,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     model.constrain({run: 1, **held, **releases}, -np.inf, 0)
                 held = {run: -1}
                 model.constrain({v["mode_HOLD"]: 1}, 1, 1)
+                if follows_pv:
+                    free_hold.add(i)
+                    released = {run: 1}
             else:
                 # HOLD starts only on a release, and not on a PV surplus the pack
                 # could take, but a run that began earlier goes on through it.
@@ -636,7 +647,22 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                         )
                     held = {v["mode_HOLD"]: -1}
                     kept[v["mode_HOLD"]] = 1
+                if seen_full:
+                    model.constrain({v["mode_CURTAIL"]: 1, **seen_full}, -np.inf, 0)
+                    kept[v["mode_CURTAIL"]] = 1
                 model.constrain(kept, 1, 1)
+                if follows_pv:
+                    # A released HOLD does not go back to the commitment, and starts no
+                    # clock of its own: the commitment's deadline is the only one, so it
+                    # may end in CURTAIL at once.
+                    if released:
+                        model.constrain(
+                            {**{v[f"mode_{mode}"]: 1 for mode in members}, **released},
+                            -np.inf,
+                            1,
+                        )
+                    free_hold.add(i)
+                    released = {v["mode_HOLD"]: 1}
             depleted = {}
             full = {}
             if follows_pv and i + 1 < len(vectors):
@@ -663,6 +689,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                         np.inf,
                     )
                 full[filled] = -1
+                seen_full[filled] = -1
     # A committed idle interval that is a bridge carries its neighbour's state: it
     # continues the PV-follow commitment and starts no HOLD clock.
     indicators = {group: [] for group in GROUPS}
@@ -709,7 +736,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 model.constrain(rise, -np.inf, bound)
             started = v[f"start_{group}"] = model.variable(upper=1.0)
             starts_here.append(started)
-            if rise:
+            if rise and not (group == "HOLD" and i in free_hold):
                 model.constrain({started: -1, **rise}, -np.inf, bound)
         for i, v in enumerate(vectors):
             current, current_const = indicators[group][i]
@@ -780,6 +807,7 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
     coverage_end = problem.slots[-1].end.astimezone(UTC)
     drains = drain_schedule(problem)
     carried = dwell_group(previous) == "PV_FOLLOW"
+    released = full_seen = False
     owed = _owed(problem, drains, since.astimezone(UTC) + dwell) if carried else ()
     idle = idle_slots(problem) if carried else frozenset()
     bridges = idle if bridges is None else frozenset(bridges)
@@ -831,6 +859,8 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
                 raise SolveError(
                     "solver_failure", "invalid solver result: legacy direction guard"
                 )
+        if (carried or released) and index and not full_seen:
+            full_seen = left >= _lock_ceiling(problem, drains, index) - _EMPTY_TOLERANCE
         if index in bridges:
             if not (carried and mode == "HOLD" and index in idle):
                 raise SolveError(
@@ -839,14 +869,14 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
             # Nothing to follow: HOLD by classification, the commitment goes on.
             left = flow.end_soc_kwh
             continue
+        ends = False
         if dwell_group(mode) != dwell_group(previous):
-            if (
-                previous is not None
-                and start < since.astimezone(UTC) + dwell
+            if previous is not None and start < since.astimezone(UTC) + dwell:
                 # A carried PV-follow commitment ends once the battery cannot go on:
                 # too empty to discharge, and not where CHARGE_PV could take a PV
-                # surplus, or too full to charge.
-                and not (
+                # surplus, or too full to charge. It ends in HOLD; a pack seen full may
+                # also curtail what the site cannot pass.
+                ends = (
                     carried
                     and mode == "HOLD"
                     and (
@@ -858,16 +888,20 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
                         >= _lock_ceiling(problem, drains, index) - _EMPTY_TOLERANCE
                     )
                 )
-            ):
-                raise SolveError(
-                    "solver_failure", "invalid solver result: minimum mode duration"
-                )
+                curtails = (carried or released) and mode == "CURTAIL" and full_seen
+                if not (ends or curtails):
+                    raise SolveError(
+                        "solver_failure", "invalid solver result: minimum mode duration"
+                    )
             if mode in ACTIVE and coverage_end < start + dwell:
                 raise SolveError(
                     "solver_failure",
                     "invalid solver result: active mode beyond coverage",
                 )
-            since = start
-            carried = False
+            # A HOLD released from the commitment starts no clock of its own: the
+            # commitment's deadline stays the only one.
+            carried, released = False, ends
+            if not ends:
+                since = start
         previous = mode
         left = flow.end_soc_kwh
