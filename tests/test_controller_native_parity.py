@@ -4,6 +4,11 @@ Decision parity runs a seeded corpus of plan, telemetry, runtime and settings
 variations through the blueprint's DECISION and BASE_DECISION templates (the oracle)
 and through `controller_profile.decide`, and requires every field of the decision
 dict to be equal. Reasons are compared as the Polish text of the native reason code.
+
+One deliberate divergence: a plan row with missing or non-numeric values where the
+blueprint's templates raise (`|float` or `as_timestamp` without a default) is an
+invalid decision (`plan_malformed`) natively. The corpus never produces such a row,
+so nothing is excluded from the comparison; `test_controller_run.py` pins the rule.
 """
 
 import itertools
@@ -91,6 +96,7 @@ def oracle():
     EnergyCompassSim.__init__(h, h.ctx["old_writers"])
     h.env.globals["states"] = States(h.data)
     h.set(COUNTER, "5600.0")
+    h.focus_runtime = None
     return h
 
 
@@ -120,6 +126,86 @@ LIMIT_OPTIONS = {
 
 def limit_choices(rng):
     return {key: rng.choice(options) for key, options in LIMIT_OPTIONS.items()}
+
+
+FOCI = [
+    "valid",
+    "valid",
+    "charge_grid_voltage_reached",
+    "charge_grid_voltage_open",
+    "discharge_energy_reached",
+    "discharge_energy_open",
+    "latch",
+    "full_held",
+    "balance",
+]
+
+
+def focus_sample(h, rng, focus, apply_limits):
+    """Steer a sample onto a branch that uniform draws almost never reach.
+
+    Everything the branch needs is set, so the sample is a valid plan under an
+    approved mode; the remaining random draws of `scenario` are skipped.
+    """
+    row = h.data[P]["attributes"]["intervals"][0]
+    h.data[MODE]["state"] = "Auto"
+    h.data["sensor.inverter_deye_battery"]["state"] = rng.choice(
+        ["27", "48", "80", "100"]
+    )
+    h.data["sensor.inverter_deye_battery_voltage"]["state"] = rng.choice(
+        ["512.2", "520", "531.3"]
+    )
+    h.data[h.ctx["operation_entity"]]["state"] = rng.choice(["Capacity", "Voltage"])
+    row.update(balance_hold=False, pv_kwh=0, load_kwh=0, curtail_kwh=0, end_soc_kwh=20)
+    if apply_limits:
+        h.ctx.update(
+            commissioned_battery_modes=["Capacity", "Voltage"],
+            voltage_grid_charge_ceiling=rng.choice([55.2, 54.1]),
+            discharge_energy_entity=COUNTER,
+            max_current=18,
+            max_power_w=8000,
+            relinquish_current=18,
+            max_grid_current=rng.choice([16, 3]),
+        )
+    h.focus_runtime = None
+    if focus.startswith("charge_grid_voltage"):
+        ceiling = h.ctx["voltage_grid_charge_ceiling"]
+        reached = focus.endswith("reached")
+        row.update(state="CHARGE_GRID", charge_kwh=rng.choice([0.5, 2, 100]))
+        h.data[h.ctx["operation_entity"]]["state"] = "Voltage"
+        h.data["sensor.inverter_deye_battery_voltage"]["state"] = (
+            str(ceiling * 10 + rng.choice([0, 3, 40])) if reached else "520"
+        )
+    elif focus.startswith("discharge_energy"):
+        reached = focus.endswith("reached")
+        row.update(state="DISCHARGE_GRID", discharge_kwh=0.5 if reached else 2)
+        h.data[h.ctx["operation_entity"]]["state"] = "Voltage"
+        h.set(COUNTER, "5601.0" if reached else "5600.5")
+        h.focus_runtime = "slot"
+    elif focus == "latch":
+        row.update(
+            state=rng.choice(["CHARGE_GRID", "DISCHARGE_GRID"]),
+            charge_kwh=2,
+            discharge_kwh=2,
+        )
+        h.focus_runtime = "latch"
+    elif focus == "full_held":
+        row.update(state="HOLD")
+        h.data[h.ctx["operation_entity"]]["state"] = "Voltage"
+        h.data["sensor.inverter_deye_battery"]["state"] = rng.choice(["99.01", "99.9"])
+        h.focus_runtime = "full_held"
+    elif focus == "balance":
+        row.update(
+            state=rng.choice(["CHARGE_PV", "CHARGE_GRID"]),
+            balance_hold=True,
+            charge_kwh=rng.choice([0, 0.5]),
+        )
+    else:
+        row.update(
+            state=rng.choice(ROW_STATES),
+            charge_kwh=rng.choice(KWH[1:]),
+            discharge_kwh=rng.choice(KWH[1:]),
+        )
 
 
 def scenario(h, rng: random.Random, apply_limits=True):
@@ -159,28 +245,36 @@ def scenario(h, rng: random.Random, apply_limits=True):
     )
     for entity in (h.ctx["charge_entity"], h.ctx["discharge_entity"]):
         h.data[entity]["state"] = rng.choice(HELD)
-    if rng.random() < 0.08:
+    focus = rng.choice(FOCI) if rng.random() < 0.5 else None
+    h.focus_runtime = None
+    if focus:
+        focus_sample(h, rng, focus, apply_limits)
+
+    def chance(p):
+        return rng.random() < p and focus is None
+
+    if chance(0.08):
         h.data[rng.choice(TELEMETRY)]["last_reported"] = (
             h.now.replace(second=0).isoformat()
             if rng.random() < 0.5
             else "2026-09-19T09:00:00+00:00"
         )
-    if rng.random() < 0.1:
+    if chance(0.1):
         h.data[h.ctx["old_writers"][0]]["state"] = "on"
-    if rng.random() < 0.1:
+    if chance(0.1):
         h.data[h.ctx["old_writers"][1]]["attributes"]["current"] = 1
-    if rng.random() < 0.08:
+    if chance(0.08):
         h.data[A]["state"] = "on"
-    if rng.random() < 0.08:
+    if chance(0.08):
         h.data[O]["state"] = "error"
-    if rng.random() < 0.08:
+    if chance(0.08):
         h.battery[rng.choice(["capacity_kwh", "eta_charge", "eta_discharge"])] = (
             rng.choice([0, 1.2, -1])
         )
-    if rng.random() < 0.08:
+    if chance(0.08):
         e = f"time.inverter_deye_program_{rng.randint(1, 6)}_time"
         h.data[e]["state"] = rng.choice(["unknown", "25:00:00", "10:00", "03:00:00"])
-    if rng.random() < 0.1:
+    if chance(0.1):
         e = rng.choice(
             [
                 "number.inverter_deye_program_3_soc",
@@ -195,16 +289,16 @@ def scenario(h, rng: random.Random, apply_limits=True):
             attributes["max"] = 5
         else:
             attributes.pop(change, None)
-    if rng.random() < 0.1:
+    if chance(0.1):
         h.data["select.inverter_deye_program_3_charging"]["attributes"]["options"] = [
             "Disabled"
         ]
-    shift = rng.choice([0, 0, 0, 3, 14, 31, 70])
+    shift = rng.choice([0, 0, 0, 3, 14, 31, 70]) if focus is None else 0
     if shift:
         h.now = h.now.replace(minute=(h.now.minute + shift) % 60)
         for x in h.data.values():
             x["last_reported"] = h.now.isoformat()
-    if rng.random() < 0.05:
+    if chance(0.05):
         h.now = h.now.replace(hour=rng.randint(0, 23))
         for x in h.data.values():
             x["last_reported"] = h.now.isoformat()
@@ -215,13 +309,14 @@ def scenario(h, rng: random.Random, apply_limits=True):
             h.now.isoformat(),
             "error: x",
         )
-    if rng.random() < 0.08:
+    if chance(0.08):
         h.session += 60
 
 
 def runtime_variant(h, rng, first):
     """Optionally seed the stored runtime with a latch or the previous decision."""
     choice = rng.choice(["none", "none", "latch", "hold", "slot", "slot", "slot_old"])
+    choice = getattr(h, "focus_runtime", None) or choice
     runtime = {}
     if choice == "latch":
         runtime = {"reached_key": first["reached_key"]}
@@ -230,11 +325,18 @@ def runtime_variant(h, rng, first):
             "state": rng.choice(["HOLD", "CHARGE_PV"]),
             "desired": first["desired"],
         }
+    elif choice == "full_held":
+        soc = h.data["sensor.inverter_deye_battery"]
+        shown, soc["state"] = soc["state"], "100"
+        runtime = {"state": "HOLD", "desired": native(h)["desired"]}
+        soc["state"] = shown
     elif choice == "slot":
         runtime = {
             "slot_energy": {
                 "key": first["reached_key"],
-                "discharge": rng.choice([5590.0, 5600.0, 5600.0]),
+                "discharge": 5600.0
+                if h.focus_runtime
+                else rng.choice([5590.0, 5600.0, 5600.0]),
             }
         }
     elif choice == "slot_old":
@@ -302,6 +404,78 @@ def test_corpus_covers_every_state_reason_and_branch():
     assert warnings == {"", "CURTAIL nieobsługiwany: zastosowano HOLD"}
 
 
+def branch_counts(cases, seed=11):
+    """How often the decision corpus reaches each branch the parity claim rests on."""
+    rng = random.Random(seed)
+    counts = dict.fromkeys(BRANCHES, 0)
+    for _ in range(cases):
+        h = oracle()
+        scenario(h, rng)
+        runtime_variant(h, rng, native(h))
+        d = native(h)
+        base = native(h, base=True)
+        rt = h.data[RT]["attributes"].get("runtime", {})
+        row = h.data[P]["attributes"]["intervals"][0]
+        if not d["valid"] or d["row_start"] != row["start"]:
+            continue
+        state, grid = d["state"], d["desired"][h.ctx["grid_entity"]]
+        balance = bool(row.get("balance_hold")) and state in (
+            "CHARGE_PV",
+            "CHARGE_GRID",
+        )
+        latched = rt.get("reached_key") == d["reached_key"]
+        grid_row = state in ("CHARGE_GRID", "DISCHARGE_GRID")
+        found = {
+            "charge_grid_voltage_reached": state == "CHARGE_GRID"
+            and d["operation"] == "Voltage"
+            and not balance
+            and d["target_reached"]
+            and not latched,
+            "charge_grid_voltage_open": state == "CHARGE_GRID"
+            and d["operation"] == "Voltage"
+            and not balance
+            and not d["target_reached"]
+            and grid > 0,
+            "discharge_energy_reached": state == "DISCHARGE_GRID"
+            and d["energy_mode"]
+            and d["target_reached"]
+            and not latched,
+            "discharge_energy_open": state == "DISCHARGE_GRID"
+            and d["energy_mode"]
+            and not d["target_reached"],
+            "latch_hit": grid_row and not balance and latched,
+            "full_held": state == "HOLD"
+            and d["operation"] == "Voltage"
+            and rt.get("state") == "HOLD"
+            and 99 < d["soc"] < 100
+            and bool(rt.get("desired"))
+            and "Grid" not in rt["desired"].values()
+            and d["target_voltage"] == 49.6,
+            "balance_row": balance,
+            "cleanup": state != "BASE" and base["state"] == "BASE" and base["valid"],
+        }
+        for name, hit in found.items():
+            counts[name] += bool(hit)
+    return counts
+
+
+BRANCHES = (
+    "charge_grid_voltage_reached",
+    "charge_grid_voltage_open",
+    "discharge_energy_reached",
+    "discharge_energy_open",
+    "latch_hit",
+    "full_held",
+    "balance_row",
+    "cleanup",
+)
+
+
+def test_the_decision_corpus_reaches_every_branch_often():
+    counts = branch_counts(1200)
+    assert all(count >= 40 for count in counts.values()), counts
+
+
 def decide_now(h, *, base=False, ceiling=None):
     runtime = h.data[RT]["attributes"].get("runtime", {})
     return profile.decide(
@@ -333,7 +507,7 @@ def command_tuples(commands):
 def random_runtime(rng, desired):
     entities = list(desired)
     runtime = {}
-    if rng.random() < 0.4:
+    if rng.random() < 0.2:
         runtime["uncertain"] = rng.sample(entities, rng.randint(1, 3))
     if rng.random() < 0.5:
         runtime["confirmed"] = {
@@ -368,6 +542,9 @@ def mutate_after_target(h, rng):
         [
             "none",
             "none",
+            "cap",
+            "cap",
+            "cap",
             "mode",
             "writer",
             "stale",
@@ -388,6 +565,13 @@ def mutate_after_target(h, rng):
         h.data[rng.choice(TELEMETRY)]["last_reported"] = "2026-09-19T09:00:00+00:00"
     elif kind == "voltage":
         h.data[h.ctx["voltage_entity"]]["state"] = rng.choice(["516.6", "521.1", "560"])
+    elif kind == "cap":
+        # A voltage step that crosses a whole ampere moves only the current ceilings: the cap-only replan case.
+        entity = h.data[h.ctx["voltage_entity"]]
+        if profile._is_number(entity["state"]):
+            entity["state"] = str(
+                float(entity["state"]) + rng.choice([-45, -30, 30, 45])
+            )
     elif kind == "soc":
         h.data[h.ctx["soc_entity"]]["state"] = rng.choice(["20", "100", "50"])
     elif kind == "row":
@@ -467,8 +651,8 @@ def test_guard_and_cap_only_replan_parity_on_the_scenario_corpus(seed):
 
 def test_guard_and_cap_only_replan_corpus_reaches_both_outcomes():
     rng = random.Random(77)
-    outcomes = {"guard": set(), "replan": set()}
-    for _ in range(400):
+    outcomes = {"guard": [0, 0], "replan": [0, 0]}
+    for _ in range(1200):
         h = oracle()
         scenario(h, rng)
         ceiling = ceilings(h, rng)
@@ -488,23 +672,21 @@ def test_guard_and_cap_only_replan_corpus_reaches_both_outcomes():
             )
         )
         cleanup = rng.random() < 0.3
-        outcomes["guard"].add(
-            profile.guard(
-                snapshot,
-                command,
-                target=target,
-                fresh=fresh,
-                baseline=baseline,
-                cleanup=cleanup,
-                failed=False,
-            )
+        allowed = profile.guard(
+            snapshot,
+            command,
+            target=target,
+            fresh=fresh,
+            baseline=baseline,
+            cleanup=cleanup,
+            failed=False,
         )
-        outcomes["replan"].add(
-            profile.cap_only_replan(
-                snapshot, target, fresh, cleanup=cleanup, transaction_attempt=1
-            )
+        replan = profile.cap_only_replan(
+            snapshot, target, fresh, cleanup=cleanup, transaction_attempt=1
         )
-    assert outcomes == {"guard": {True, False}, "replan": {True, False}}
+        outcomes["guard"][allowed] += 1
+        outcomes["replan"][replan] += 1
+    assert min(outcomes["guard"]) >= 100 and min(outcomes["replan"]) >= 25, outcomes
 
 
 def raw_bank(h, rng):
@@ -690,14 +872,20 @@ def test_fuzzed_run_parity_with_the_frozen_blueprint(seed):
 
 
 def test_fuzzed_runs_write_abort_and_restore():
-    writes = restored = 0
+    found = dict.fromkeys(("writes", "restored", "lost_write"), 0)
     for seed in range(60):
         trace = fuzzed_run("native", 5000 + seed)
         for entry in trace:
             if entry[0] == "run":
-                writes += len(entry[1])
-                restored += entry[4].get("code") == "restored"
-    assert writes > 200 and restored > 5, (writes, restored)
+                found["writes"] += len(entry[1])
+                runtime = entry[4]
+                found["restored"] += runtime.get("code") == "restored"
+                found["lost_write"] += runtime.get("code") in (
+                    "write_failed",
+                    "verification_required",
+                )
+    assert found["writes"] > 1000, found
+    assert found["restored"] >= 20 and found["lost_write"] >= 20, found
 
 
 @pytest.mark.parametrize("planned", [2.0, 0.025, 0.3])

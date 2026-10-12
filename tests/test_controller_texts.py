@@ -10,7 +10,7 @@ from custom_components.energy_compass import controller as core
 from custom_components.energy_compass import controller_texts as texts
 
 # Texts of this release that the blueprint never had.
-NEW = {"layout_mismatch", "paused"}
+NEW = {"layout_mismatch", "paused", "plan_malformed"}
 CODES = (*texts.REASONS, *texts.STOPS, *texts.WARNINGS)
 
 
@@ -34,6 +34,7 @@ def test_the_reason_codes_are_the_documented_ones():
         "battery_params",
         "plan_expired",
         "operation_mode",
+        "plan_malformed",
         "voltage_range",
         "mode_not_commissioned",
         "settings_range",

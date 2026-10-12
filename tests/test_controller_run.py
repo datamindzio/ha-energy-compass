@@ -4,8 +4,16 @@ Behaviour on the inverter is covered by the scenario tests (`test_deye_controlle
 and the parity tests; this file pins what only the executor promises.
 """
 
+import asyncio
+import copy
+
 import deye_native_harness as native
-from deye_oracle_v0137 import MODE, P
+import pytest
+from deye_oracle_v0137 import MODE, RT, P
+from homeassistant.exceptions import ServiceValidationError
+
+from custom_components.energy_compass import controller_run as run_module
+from custom_components.energy_compass import controller_texts as texts
 
 CHARGE_GRID = {
     "state": "CHARGE_GRID",
@@ -75,3 +83,160 @@ def test_outcome_codes_explain_why_a_run_ended():
         "run_finished",
         "controller_unavailable",
     ]
+
+
+class Failing(native.SimPort):
+    """Raises from the service calls the way a failing Home Assistant call does."""
+
+    def __init__(self, runner, *, write=None, read=None):
+        super().__init__(runner)
+        self.fail_write, self.fail_read = write, read
+        self.calls = {"write": 0, "read": 0}
+
+    async def write(self, command):
+        self.calls["write"] += 1
+        if self.fail_write:
+            raise self.fail_write
+        await super().write(command)
+
+    async def read_registers(self, address, count):
+        self.calls["read"] += 1
+        if self.fail_read:
+            raise self.fail_read
+        return await super().read_registers(address, count)
+
+
+def failing_runner(**failures):
+    h = native.Harness()
+    h.data[P]["attributes"]["intervals"][0].update(CHARGE_GRID)
+    runner = native.Runner(h)
+    runner.executor.port = port = Failing(runner, **failures)
+    return h, runner, port
+
+
+@pytest.mark.parametrize(
+    "failures",
+    [
+        {"write": RuntimeError("service failed")},
+        {"read": RuntimeError("no answer")},
+        {"write": ServiceValidationError("x"), "read": TimeoutError()},
+    ],
+)
+def test_failing_service_calls_are_unconfirmed_and_the_transactions_carry_on(failures):
+    h, runner, port = failing_runner(**failures)
+    runner.run()
+    assert runner.outcomes == ["write_failed"]
+    runtime = h.stored_runtime()
+    assert runtime["code"] == "write_failed"
+    assert runtime["confirmed_mode"] == "unconfirmed"
+    assert h.restore_pending is True
+    # Three transactions, each command tried three times: nothing gave up early.
+    assert port.calls["write"] >= 3 * 3
+    assert port.calls["read"] >= 3 * 3
+
+
+def test_a_failed_read_leaves_no_observation_and_a_failed_write_still_reads():
+    h, runner, port = failing_runner(read=RuntimeError("no answer"))
+    runner.run()
+    assert "confirmed" not in h.stored_runtime() or not any(
+        h.stored_runtime()["confirmed"]
+    )
+    h, runner, port = failing_runner(write=RuntimeError("service failed"))
+    runner.run()
+    assert port.calls["read"] == port.calls["write"] > 0
+
+
+@pytest.mark.parametrize("where", ["write", "read"])
+def test_cancellation_is_never_taken_for_a_failed_call(where):
+    h, runner, port = failing_runner(**{where: asyncio.CancelledError()})
+    with pytest.raises(asyncio.CancelledError):
+        runner.run()
+    assert port.calls["write"] == 1
+    assert h.stored_runtime()["uncertain"]
+    assert h.restore_pending is True
+
+
+def test_the_profile_reads_the_runtime_the_executor_stored(monkeypatch):
+    h = native.Harness()
+    h.data[P]["attributes"]["intervals"][0].update(CHARGE_GRID)
+    runner = native.Runner(h)
+    store = h.data[RT]["attributes"]
+    h.stored_runtime = dict  # a port whose snapshot never sees the store
+    seen = []
+
+    def spy(function):
+        def wrapped(snapshot, *args, **kwargs):
+            seen.append((snapshot.runtime, copy.deepcopy(store.get("runtime", {}))))
+            return function(snapshot, *args, **kwargs)
+
+        return wrapped
+
+    for name in ("diff", "guard", "cap_only_replan"):
+        monkeypatch.setattr(
+            run_module.profile, name, spy(getattr(run_module.profile, name))
+        )
+    runner.run()
+    assert seen and any(actual for _, actual in seen)
+    assert all(used == actual for used, actual in seen)
+
+
+def test_a_malformed_row_is_an_invalid_plan_and_nothing_is_forced():
+    h = native.Harness()
+    h.data[P]["attributes"]["intervals"][0].update(CHARGE_GRID)
+    # Plan acceptance rejects such rows; this is the second line of defence.
+    h.accept()["intervals"][0]["charge_kwh"] = "n/a"
+    decision = h.decision()
+    assert decision["valid"] is False
+    assert decision["state"] == "BASE"
+    assert "przedział" in decision["reason"]
+    runner = native.Runner(h)
+    runner.run()
+    assert not [value for _, value in runner.writes if value in ("Grid", "Sell")]
+    assert h.stored_runtime()["state"] == "BASE"
+
+
+def malformed(state, key, value):
+    h = native.Harness()
+    h.data[P]["attributes"]["intervals"][0].update(
+        {"state": state, "charge_kwh": 0.5, "discharge_kwh": 0.5, "end_soc_kwh": 20}
+    )
+    row = h.accept()["intervals"][0]
+    if value == "missing":
+        row.pop(key, None)
+    else:
+        row[key] = value
+    return h.decision()
+
+
+@pytest.mark.parametrize(
+    ("state", "key", "value"),
+    [
+        ("CHARGE_GRID", "charge_kwh", "missing"),
+        ("CHARGE_GRID", "pv_kwh", "x"),
+        ("CHARGE_GRID", "load_kwh", None),
+        ("CHARGE_GRID", "end_soc_kwh", "missing"),
+        ("CHARGE_GRID", "start", "missing"),
+        ("DISCHARGE_GRID", "discharge_kwh", None),
+        ("DISCHARGE_GRID", "start", "yesterday"),
+        ("HOLD", "end_soc_kwh", "missing"),
+        ("CURTAIL", "end_soc_kwh", "n/a"),
+    ],
+)
+def test_rows_the_blueprint_cannot_process_are_invalid(state, key, value):
+    decision = malformed(state, key, value)
+    assert decision["valid"] is False
+    assert decision["state"] == "BASE"
+    assert decision["reason"] == texts.PL["plan_malformed"]
+
+
+@pytest.mark.parametrize(
+    ("state", "key", "value"),
+    [
+        ("CHARGE_GRID", "discharge_kwh", "missing"),
+        ("DISCHARGE_GRID", "charge_kwh", "x"),
+        ("CHARGE_PV", "end_soc_kwh", "missing"),
+        ("SELF_CONSUME", "charge_kwh", None),
+    ],
+)
+def test_fields_the_blueprint_never_reads_do_not_invalidate_a_row(state, key, value):
+    assert malformed(state, key, value)["valid"] is True

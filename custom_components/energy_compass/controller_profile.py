@@ -212,6 +212,25 @@ def register_map(entities: Entities) -> dict[str, Register]:
     return registers
 
 
+def _row_malformed(row: Mapping[str, Any], state: str) -> bool:
+    """Whether the blueprint would raise on this row (Jinja `|float` or `as_timestamp`
+    without a default), so the native controller must not act on it."""
+    if state in ("HOLD", "CURTAIL"):
+        required: tuple[str, ...] = ("end_soc_kwh",)
+    elif state == "CHARGE_GRID":
+        required = ("end_soc_kwh", "charge_kwh", "pv_kwh", "curtail_kwh", "load_kwh")
+    elif state == "DISCHARGE_GRID":
+        required = ("end_soc_kwh", "discharge_kwh")
+    else:
+        return False
+    if not all(_is_number(row.get(key)) for key in required):
+        return True
+    if state in ("HOLD", "CURTAIL"):
+        return False
+    start, end = (_timestamp(row.get(key), None) for key in ("start", "end"))
+    return start is None or end is None or end <= start
+
+
 def _knot_voltage(target_soc: float, knots: Sequence[int], method: str) -> float:
     lo = min(8, _int(target_soc / 10) - 1)
     physical = knots[lo] + (target_soc - (lo + 1) * 10) / 10 * (
@@ -228,6 +247,8 @@ def decide(
 ) -> Decision:
     """DECISION, or BASE_DECISION when `base`; `ceiling` is the transaction's current cap."""
     e = snapshot.entities
+    if snapshot.now.tzinfo is None:
+        raise ValueError("Snapshot.now must be timezone-aware local time")
     t = snapshot.now.timestamp()
     c = snapshot.controller or {}
     cache = c.get("accepted") or {}
@@ -324,6 +345,12 @@ def decide(
     valid = reason == "ok"
     state = row.get("state", "BASE") if valid else "BASE"
     if base or snapshot.mode == "Off":
+        state = "BASE"
+    # Deliberate divergence from the 0.1.37 blueprint, whose template raises on such a
+    # row: the native controller holds BASE instead of acting on invented zeros.
+    if valid and _row_malformed(row, state):
+        valid = False
+        reason = "plan_malformed"
         state = "BASE"
     balance = row.get("balance_hold", False) is True and state in (
         "CHARGE_PV",

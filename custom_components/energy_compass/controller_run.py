@@ -15,14 +15,16 @@ Not here yet: the run lock with its re-run flag, triggers, the pause switch and 
 layout probe. Their seams are marked in `run`.
 """
 
+import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Protocol
 
 from . import controller_profile as profile
 from . import controller_texts as texts
 
+_LOGGER = logging.getLogger(__name__)
 TRANSACTIONS = 3
 WRITE_ATTEMPTS = 3
 
@@ -38,7 +40,11 @@ class ExecutorPort(Protocol):
         """The local time, as the templates' `now()`."""
 
     def snapshot(self, stage: str) -> profile.Snapshot:
-        """The current states; `stage` names the render point for test hooks."""
+        """The current states; `stage` names the render point for test hooks.
+
+        `Snapshot.now` must be timezone-aware local time. The executor replaces
+        `Snapshot.runtime` with the runtime it last stored.
+        """
 
     async def persist(
         self,
@@ -82,6 +88,15 @@ class DeyeExecutor:
         self.port = port
         self._limits = limits
         self.language = language
+
+    def _snapshot(self, run: _Run, stage: str) -> profile.Snapshot:
+        """A fresh snapshot carrying the runtime this executor last stored.
+
+        The profile's diff, guard and replan read `snapshot.runtime`, while every
+        write updates `run.runtime`; overlaying it here leaves one source of truth
+        whatever the port's own runtime view is.
+        """
+        return replace(self.port.snapshot(stage), runtime=run.runtime)
 
     def _text(self, code: str, args: Mapping[str, Any] | None = None) -> str:
         return texts.text(code, self.language, args)
@@ -158,13 +173,13 @@ class DeyeExecutor:
             ceiling={},
         )
         await self._persist(run)
-        snapshot = port.snapshot("decision")
+        snapshot = self._snapshot(run, "decision")
         decision = profile.decide(snapshot, run.limits, run.ceiling)
         await self._persist(
             run, self._decision_runtime(run, decision, port.now().isoformat())
         )
 
-        snapshot = port.snapshot("mode")
+        snapshot = self._snapshot(run, "mode")
         if snapshot.mode == "Simulation" and run.pending:
             await port.select_mode("Off")
             await self._persist(run, self._outcome_runtime(run, "simulation_blocked"))
@@ -185,15 +200,14 @@ class DeyeExecutor:
         return await self._transactions(run, cleanup)
 
     async def _transactions(self, run: _Run, cleanup: bool) -> str:
-        port = self.port
         aborted = False
         for attempt in range(1, TRANSACTIONS + 1):
-            snapshot = port.snapshot("target")
+            snapshot = self._snapshot(run, "target")
             target = profile.decide(snapshot, run.limits, run.ceiling)
             replan: bool = False
             if cleanup or aborted:
                 cleanup = True
-                snapshot = port.snapshot("target_base")
+                snapshot = self._snapshot(run, "target_base")
                 target = profile.decide(snapshot, run.limits, run.ceiling, base=True)
             if not cleanup:
                 entities = snapshot.entities
@@ -223,7 +237,7 @@ class DeyeExecutor:
                 )
                 if not confirmed:
                     if not failed and not aborted and not allowed:
-                        snapshot = port.snapshot("replan")
+                        snapshot = self._snapshot(run, "replan")
                         replan = profile.cap_only_replan(
                             snapshot,
                             target,
@@ -234,7 +248,7 @@ class DeyeExecutor:
                     failed = True
                     aborted = True
 
-            snapshot = port.snapshot("fresh")
+            snapshot = self._snapshot(run, "fresh")
             fresh, baseline = self._decisions(snapshot, run)
             confirmed_profile = profile.profile_confirmed(run.runtime, target)
             if replan:
@@ -339,7 +353,7 @@ class DeyeExecutor:
         allowed = False
         register = run.registers[command.entity]
         for _ in range(WRITE_ATTEMPTS):
-            snapshot = port.snapshot("write_fresh")
+            snapshot = self._snapshot(run, "write_fresh")
             fresh, baseline = self._decisions(snapshot, run)
             allowed = self._allowed(
                 snapshot, command, target, fresh, baseline, cleanup, failed
@@ -348,19 +362,29 @@ class DeyeExecutor:
                 await self._persist(
                     run, profile.mark_dirty(run.runtime, command.entity), durable=True
                 )
-                snapshot = port.snapshot("write_recheck")
+                snapshot = self._snapshot(run, "write_recheck")
                 fresh, baseline = self._decisions(snapshot, run)
                 allowed = self._allowed(
                     snapshot, command, target, fresh, baseline, cleanup, failed
                 )
                 if allowed:
-                    await port.write(command)
-                    response = await port.read_registers(
-                        profile.READ_ADDRESS, profile.READ_COUNT
-                    )
+                    # Like the blueprint's continue_on_error: a failed call is not
+                    # confirmed, the attempts and transactions carry on. Cancellation
+                    # is not an Exception and must never be swallowed here.
+                    try:
+                        await port.write(command)
+                    except Exception:
+                        _LOGGER.debug("Deye write failed", exc_info=True)
+                    try:
+                        response = await port.read_registers(
+                            profile.READ_ADDRESS, profile.READ_COUNT
+                        )
+                    except Exception:
+                        _LOGGER.debug("Deye register read failed", exc_info=True)
+                        response = {}
                     if not isinstance(response, Mapping):
                         response = {}
-                    snapshot = port.snapshot("observe")
+                    snapshot = self._snapshot(run, "observe")
                     observed = profile.observe(response, run.registers)
                     await self._persist(
                         run, profile.record_observation(run.runtime, observed, snapshot)
