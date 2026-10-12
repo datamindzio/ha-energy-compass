@@ -206,7 +206,14 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         }
         for mode in MODES:
             key = f"mode_{mode}"
-            v[key] = model.variable(binary=True)
+            # HOLD is the remainder of the one-hot row below, so it is integral whenever
+            # the other modes are; leaving it continuous spares the solver a branching
+            # variable without changing the feasible set.
+            v[key] = (
+                model.variable(upper=1.0)
+                if mode == "HOLD"
+                else model.variable(binary=True)
+            )
             # Below classifier resolution a named material state cannot be certified.
             if not available[mode] or (mode != "HOLD" and activity <= 2e-6):
                 model.upper[v[key]] = 0
