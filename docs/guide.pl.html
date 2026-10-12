@@ -156,10 +156,10 @@
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
 <strong>0.1.37</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
 instalację i dashboardy — <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">przewodnik instalacji</a> (EN).</p>
-<p>Energy Compass jest <strong>doradczy</strong>. Liczy plan i publikuje go jako encje Home Assistant. Nigdy nie
-zapisuje rejestrów falownika i sam nie wysyła powiadomień; o wykonaniu planu decydują sterowniki
-i blueprinty powiadomień. Repozytorium zawiera jeden taki sterownik, dla falowników Deye przez
-Solarman: zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika Deye</a>.</p>
+<p>Energy Compass jest <strong>doradczy</strong>. Liczy plan i publikuje go jako encje Home Assistant. Sam nie wysyła
+powiadomień, a ustawienia falownika zapisuje tylko wtedy, gdy włączysz opcjonalny sterownik Deye
+(domyślnie wyłączony), i robi to przez integrację Solarman; blueprinty powiadomień i inne sterowniki same
+decydują, czy wykonać plan. Zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika Deye</a>.</p>
 <h2 id="spis-treści">Spis treści</h2>
 <ol>
 <li><a href="#jak-to-działa">Jak to działa</a></li>
@@ -833,6 +833,12 @@ witryny), bez restartu jego kolejki wysyłki. <strong>Rekonfiguracja</strong> za
 <td>Deye controller runtime</td>
 <td>Stan pracy sterownika Deye</td>
 <td>kod przebiegu; tylko przy włączonym sterowniku</td>
+</tr>
+<tr>
+<td><code>switch.&lt;name&gt;_deye_pause</code></td>
+<td>Pause inverter writes</td>
+<td>Wstrzymaj zapisy do falownika</td>
+<td><code>on</code> / <code>off</code>; tylko przy silniku natywnym</td>
 </tr>
 </tbody>
 </table></section>
@@ -2064,20 +2070,23 @@ i pełny opis: <a href="https://github.com/datamindzio/ha-energy-compass/blob/ma
 dodaje każdy przyrost licznika eksportu (<code>export_energy</code>), wyceniony według prognozy ceny
 (<code>export_prices</code>), do pomocnika liczbowego (<code>counter</code>); skoki powyżej <code>max_step_kwh</code> są pomijane.</p>
 <h2 id="sterownik-falownika-deye-solarman">Sterownik falownika Deye (Solarman)</h2>
-<p>Sam Energy Compass nigdy nie zapisuje do falownika. Robi to opcjonalny blueprint
-<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml"><code>deye_solarman_controller.yaml</code></a>:
-wykonuje plan na hybrydowym falowniku Deye przez
-<a href="https://github.com/davidrapan/ha-solarman">integrację Solarman</a>, zapisuje trzy prądy baterii i sześć
-programów czasowych (TOU), a każdy zapis sprawdza odczytem rejestrów.
-Stan sterownika przechowuje integracja. Przy włączonym <strong>Opcje → Sterownik Deye</strong> Energy Compass
-prowadzi tryb, zaakceptowany plan, sesję i unieważnienia, wyznacza czas kolejnego przebiegu i
-przechowuje stan pracy; blueprint zachowuje rachunek profilu, porównanie, bramki bezpieczeństwa i
-zapisy rejestrów. Nie trzeba pakietu, pomocników ani zmian w <code>configuration.yaml</code>, a zaakceptowany plan
-przeżywa przeładowanie wpisu. Wymaga Energy Compass 0.1.37 lub nowszego. Instalację opisuje
-<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">przewodnik instalacji</a> (EN). Blueprint generuje
-<code>tools/deye_controller/build.py</code>; zmienia się generator, nie YAML. Profil startowy
+<p>Energy Compass jest domyślnie doradczy i zapisuje do falownika tylko wtedy, gdy włączysz opcjonalny sterownik
+Deye (<strong>Opcje → Sterownik Deye</strong>, domyślnie wyłączony). Sterownik wykonuje plan na hybrydowym falowniku Deye przez
+<a href="https://github.com/davidrapan/ha-solarman">integrację Solarman</a>: zapisuje trzy prądy baterii i sześć programów
+czasowych (TOU), a każdy zapis sprawdza odczytem rejestrów. <strong>Silnik natywny</strong> działa wewnątrz integracji: nie
+trzeba blueprintu, automatyzacji, pakietu, pomocników ani zmian w <code>configuration.yaml</code>, zaakceptowany plan
+przeżywa przeładowanie wpisu, a Energy Compass prowadzi tryb, zaakceptowany plan, sesję i unieważnienia,
+wyznacza czas kolejnego przebiegu i przechowuje stan pracy. Wymaga Energy Compass 0.1.38 lub nowszego. Instalację opisuje
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">przewodnik instalacji</a> (EN). Profil startowy
 <code>deye_hybrid</code> wypełnia <code>idle_drain_kw</code> 0,13 i <code>refresh_minutes</code> 60 dla nowej instalacji; zob.
 <a href="#profile-startowe-nowe-instalacje">Profile startowe</a>.</p>
+<p>Dotychczasowy wykonawca, blueprint
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml"><code>deye_solarman_controller.yaml</code></a>, jest
+<strong>przestarzały</strong>. W tym wydaniu nadal działa jako silnik <code>blueprint</code> (wartość każdego wpisu utworzonego przed
+0.1.38), a zostanie usunięty w wydaniu po następnym, razem ze swoim generatorem <code>tools/deye_controller/build.py</code>,
+usługami <code>energy_compass.controller_runtime</code> i <code>energy_compass.controller_import_package</code> oraz opisującymi go
+sekcjami poniżej. Przejdź na silnik natywny według sekcji
+<a href="#migracja-z-blueprintu-na-silnik-natywny">Migracja z blueprintu na silnik natywny</a>.</p>
 <h3 id="włączenie-sterownika">Włączenie sterownika</h3>
 <p>Otwórz <strong>Opcje → Sterownik Deye</strong>, włącz <strong>Włącz sterownik Deye</strong> i wybierz urządzenie falownika
 Solarman (gdy jest tylko jedno, jest wstępnie wybrane). Energy Compass znajduje na tym urządzeniu
@@ -2087,13 +2096,73 @@ Odrzuca urządzenie, gdy brakuje programu lub jest wyłączony, gdy identyfikato
 wspólnego prefiksu albo gdy inny wpis Energy Compass już steruje tym urządzeniem. Włączenie przeładowuje
 wpis raz; przeniesienie sterownika na inne urządzenie działa na żywo. Oba są odrzucane, gdy tryb nie jest <code>Off</code> albo oczekuje przywrócenie: najpierw wybierz <code>Off</code> i poczekaj, aż <code>restore_pending</code> wygaśnie, bo inaczej nic nie przywróci profilu bazowego. Krok jest widoczny bez przełącznika
 ustawień eksperckich.</p>
+<p><strong>Silnik.</strong> Krok ma pole <strong>Silnik</strong>. <code>native</code> (domyślny przy nowym włączeniu) pozwala Energy Compass samemu
+wykonywać plan i zapisywać falownik przez encje Solarman oraz usługę <code>solarman.read_holding_registers</code>; blueprint ani
+automatyzacja nie są potrzebne. <code>blueprint</code> (przestarzały; wartość każdego wpisu utworzonego przed 0.1.38) zostawia
+wykonanie blueprintowi sterownika Deye. Zmiana silnika przeładowuje wpis i jest odrzucana, gdy tryb nie jest <code>Off</code> albo
+oczekuje przywrócenie. Silnik natywny znajduje prądy baterii, tryb pracy, SOC, napięcie i licznik rozładowania na tym samym
+urządzeniu po kluczach Solarman <code>battery_max_charging_current</code>, <code>battery_max_discharging_current</code>,
+<code>battery_grid_charging_current</code>, <code>battery_operation_mode</code>, <code>battery</code>, <code>battery_voltage</code> i <code>total_battery_discharge</code> oraz
+wskazuje, czego brakuje. Obsługiwane są tylko pakiety wysokonapięciowe (400–610 V): pakiet zmierzony poniżej 400 V jest odrzucany.</p>
+<p><strong>Limity i przejęcie</strong> (ustawienia eksperckie). Maksymalna moc baterii domyślnie to mniejsza z mocy ładowania
+i rozładowania z ustawień Energy Compass; prądy domyślnie wynoszą maksimum encji, ograniczone tą mocą podzieloną przez 400 V.
+Można ustawić prądy HOLD, po osiągnięciu celu rozładowania i balansowania, sufit napięcia ładowania z sieci, zatwierdzone tryby
+baterii, dawne automatyzacje, na które sterownik czeka, encje telemetrii, licznik rozładowania i nadpisanie każdej encji; puste
+pole zachowuje wartość domyślną. Limity działają od następnego przebiegu bez przeładowania. Gdy istnieje jedna automatyzacja
+blueprintu, jej wejścia są wczytywane do tych pól do sprawdzenia przed zapisem.</p>
 <p>Instalacja, która używała pakietu 0.1.36, ma jeden wpis Energy Compass i dokładnie jedno urządzenie Solarman
 ze wszystkimi sześcioma programami, dostaje sterownik włączony automatycznie przy pierwszym starcie
 0.1.37. Tryb zaczyna od <code>Off</code>, więc nic się nie zapisuje, dopóki go nie wybierzesz; zob.
 <a href="#migracja-z-pakietu-0136-i-starsze">Migracja z pakietu</a>.</p>
+<h3 id="obsługiwany-sprzęt">Obsługiwany sprzęt</h3>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Co</th>
+<th>Zweryfikowane</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Falownik</td>
+<td>trójfazowe hybrydowe falowniki wysokonapięciowe Deye <code>SG0*HP3</code>; sensor <code>device</code> Solarman podaje typ „HV 3-Phase Hybrid Inverter”</td>
+</tr>
+<tr>
+<td>Wersja protokołu</td>
+<td>1.4 (atrybut <code>Protocol Version</code> tego sensora)</td>
+</tr>
+<tr>
+<td>Pakiet baterii</td>
+<td>wysokonapięciowy pakiet litowy (LFP), 400–610 V</td>
+</tr>
+<tr>
+<td>Integracja</td>
+<td><a href="https://github.com/davidrapan/ha-solarman">ha-solarman</a> 25.08.16; encje są znajdowane po kluczach tłumaczeń, a rejestry czytane usługą <code>solarman.read_holding_registers</code></td>
+</tr>
+<tr>
+<td>Modele Deye 48 V (niskonapięciowe)</td>
+<td><strong>jeszcze nieobsługiwane</strong>: krok opcji odmawia włączenia silnika natywnego poniżej 400 V, a przebieg poza 400–610 V niczego nie zapisuje</td>
+</tr>
+</tbody>
+</table></section>
+<p>Przetestowany egzemplarz to <code>SG0*HP3</code> z oprogramowaniem płyty sterującej <code>3002-1095-11408</code>. Wersje oprogramowania
+są zapisywane w atrybucie <code>hardware</code>, ale nie są porównywane: o różnicach między wersjami nic nie wiadomo.
+Urządzenie, którego typ i protokół nie są na liście, nie jest blokowane. Zgłasza problem „Falownik Deye
+niezweryfikowany” (ostrzeżenie, które można zamknąć) i ustawia <code>hardware.verified</code> na <code>false</code>; użyj najpierw
+Simulation, jak przy każdej instalacji.</p>
+<p><strong>Kontrola układu rejestrów.</strong> Przed pierwszym zapisem wymuszającym profil w sesji silnik natywny czyta rejestry
+108–177 i porównuje je ze stanami 27 encji, które zapisuje (trzy prądy i 24 wartości TOU). Liczby i selecty muszą się
+zgadzać; select, którego rejestr ma wartość spoza znanej mapy (<code>Disabled</code>, <code>Grid</code>, <code>Sell</code>), nic nie mówi o układzie
+i jest pomijany, bo sterownik i tak go nadpisuje. Każda inna różnica, brakujący rejestr lub niedostępna encja
+zatrzymuje przebieg z kodem <code>blocked</code> i powodem <code>layout_mismatch</code>, który wymienia encje; nic nie jest zapisywane,
+a kontrola powtarza się w kolejnym przebiegu, bo encje mogą o jeden odczyt Solarman opóźniać się za ręczną zmianą.
+Kontrola działa też w Simulation, więc zły układ widać przed Auto. Zaliczona kontrola obowiązuje dla sesji,
+urządzenia i zestawu odczytywanych encji: zmiana urządzenia lub nadpisanie encji uruchamia ją od nowa. Przywrócenie
+profilu bazowego nie czeka na kontrolę, bo zapisuje przez własne encje Solarman, a od układu zależy tylko odczyt
+potwierdzający; wymuszenie profilu czeka.</p>
 <h3 id="encje-sterownika">Encje sterownika</h3>
-<p>Trzy encje istnieją tylko przy włączonym sterowniku; należą do urządzenia Energy Compass.
-<code>&lt;name&gt;</code> to tytuł wpisu.</p>
+<p>Trzy encje istnieją tylko przy włączonym sterowniku, czwarta przy silniku natywnym; należą do urządzenia
+Energy Compass. <code>&lt;name&gt;</code> to tytuł wpisu.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2106,7 +2175,7 @@ ze wszystkimi sześcioma programami, dostaje sterownik włączony automatycznie 
 <tr>
 <td><code>deye_controller</code></td>
 <td><code>sensor.&lt;name&gt;_deye_controller</code> (znacznik czasu)</td>
-<td>stan to najbliższa chwila, w której blueprint musi działać (najwcześniejszy koniec wiersza, <code>valid_until</code>, <code>coverage_end</code> albo granica programu TOU); atrybuty to poniższy kontrakt</td>
+<td>stan to najbliższa chwila, w której wykonawca musi działać (najwcześniejszy koniec wiersza, <code>valid_until</code>, <code>coverage_end</code> albo granica programu TOU); atrybuty to poniższy kontrakt</td>
 </tr>
 <tr>
 <td><code>deye_mode</code></td>
@@ -2118,10 +2187,15 @@ ze wszystkimi sześcioma programami, dostaje sterownik włączony automatycznie 
 <td><code>sensor.&lt;name&gt;_deye_controller_runtime</code></td>
 <td>kod przebiegu (niżej); atrybut <code>runtime</code> zawiera stan, powód, potwierdzone wartości i niepewne rejestry</td>
 </tr>
+<tr>
+<td><code>deye_pause</code></td>
+<td><code>switch.&lt;name&gt;_pause_inverter_writes</code></td>
+<td><strong>Wstrzymaj zapisy do falownika</strong>; tylko przy silniku natywnym. Gdy włączony, sterownik liczy i publikuje decyzję, ale nie wysyła żadnego zapisu; <code>restore_pending</code> i niepewne rejestry pozostają bez zmian, a kod stanu to <code>paused</code>. Przebieg w toku zatrzymuje się przed kolejnym zapisem; wyłączenie przełącznika zleca przebieg. Tryb <code>Off</code> zachowuje znaczenie: gdy nie ma czego przywracać, przebieg zgłasza zwolnienie także przy pauzie, a gdy przywrócenie oczekuje, pauza wygrywa i przywrócenie czeka. Flaga jest zapisywana od razu, przeżywa przeładowanie i jest zerowana po przełączeniu silnika na <code>blueprint</code></td>
+</tr>
 </tbody>
 </table></section>
 <p>Identyfikatory zależą od nazwy wpisu i języka, w którym encje utworzono (instalacja polska dostaje nazwy
-w rodzaju <code>…_sterownik_deye</code>); odczytaj je ze strony urządzenia. Blueprint potrzebuje tylko sensora
+w rodzaju <code>…_sterownik_deye</code>); odczytaj je ze strony urządzenia. Silnik blueprintowy potrzebuje tylko sensora
 sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.</p>
 <section class="table-scroll"><table>
 <thead>
@@ -2187,6 +2261,10 @@ sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.</p>
 <td><code>tou</code></td>
 <td>stany 30 encji TOU; zmiana uruchamia blueprint ponownie; nie jest zapisywany w historii</td>
 </tr>
+<tr>
+<td><code>hardware</code></td>
+<td>falownik według sensora <code>device</code> Solarman: typ urządzenia, protokół, oprogramowanie płyty sterującej i komunikacyjnej, moc znamionowa, model z rejestru urządzeń oraz <code>verified</code> (para typ i protokół jest na <a href="#obsługiwany-sprzęt">liście przetestowanych</a>); bez numeru seryjnego</td>
+</tr>
 </tbody>
 </table></section>
 <p>Sensor stanu pracy ma zapisywane atrybuty <code>restore_pending</code>, <code>reason</code>, <code>state</code>, <code>requested_mode</code>,
@@ -2195,6 +2273,10 @@ i <code>updated_at</code>, które nie trafiają do historii. Jest zapisywany od 
 z zapisywanych atrybutów, a inne zmiany najwyżej raz na minutę. Akceptacje, unieważnienia, porzucenia
 sesji, zmiany trybu, importy i zmiany urządzenia trafiają do historii 50 wpisów w magazynie i w
 diagnostyce integracji (<code>deye_controller</code>); zdarzenia nie są wysyłane.</p>
+<p>Przy silniku natywnym sensor stanu pracy ma też <code>last_run</code> (nie jest zapisywany w historii): co uruchomiło ostatni
+przebieg, decyzję, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony lub zablokowany) i jak
+przebieg się zakończył. Ostatnie 50 przebiegów jest przechowywane w pamięci, nie w magazynie, i widnieje w diagnostyce
+jako <code>run_history</code>. Wpis w dzienniku zdarzeń podaje stary i nowy kod stanu pracy oraz potwierdzony tryb, gdy któryś się zmieni.</p>
 <h3 id="usługi">Usługi</h3>
 <section class="table-scroll"><table>
 <thead>
@@ -2388,7 +2470,7 @@ ustawia progi, na końcu włącza kierunek.</p>
 </tr>
 <tr>
 <td><code>blocked</code></td>
-<td>brak ważnego planu albo niespełniony warunek; <code>runtime.reason</code> mówi który</td>
+<td>brak ważnego planu albo niespełniony warunek; <code>reason</code> i <code>reason_code</code> mówią który</td>
 </tr>
 <tr>
 <td><code>restored</code></td>
@@ -2406,19 +2488,198 @@ ustawia progi, na końcu włącza kierunek.</p>
 <td><code>simulation_blocked</code></td>
 <td>Simulation odrzucone przy wymaganym przywróceniu</td>
 </tr>
+<tr>
+<td><code>paused</code></td>
+<td>przełącznik wstrzymania jest włączony (silnik natywny): decyzja jest liczona, nic nie jest zapisywane</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>sam przebieg się nie powiódł (silnik natywny): wyjątek albo nie dało się odczytać Energy Compass lub encji Solarman; <code>reason_code</code> to <code>run_failed</code> albo <code>controller_unavailable</code>. Po trzech nieudanych przebiegach z rzędu pojawia się problem „Przebiegi sterownika Deye kończą się błędem”; następny udany przebieg usuwa oba</td>
+</tr>
 </tbody>
 </table></section>
-<p>Teksty <code>runtime.reason</code> są w tej wersji po polsku. Każda zmiana stanu pracy przechodzi przez <code>energy_compass.controller_runtime</code>; gdy to wywołanie się nie powiedzie, przebieg zatrzymuje się przed zapisem kolejnego rejestru.</p>
+<p><code>runtime.reason_code</code> to stały kod, a <code>runtime.reason</code> jego tekst. Silnik natywny zapisuje tekst w języku Home
+Assistant (po polsku dla <code>pl</code>, w pozostałych przypadkach po angielsku); teksty silnika blueprintowego są po polsku.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th><code>reason_code</code></th>
+<th>Znaczenie</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ok</code></td>
+<td>nic nie blokuje planu</td>
+</tr>
+<tr>
+<td><code>telemetry_stale</code></td>
+<td>encje telemetrii nie są liczbami lub są starsze niż 30 s, napięcie poza 400–610 V albo SOC poza 0–100 %</td>
+</tr>
+<tr>
+<td><code>tou_times</code></td>
+<td>sześć godzin startu TOU nie jest różnych i rosnących</td>
+</tr>
+<tr>
+<td><code>session_wait</code></td>
+<td>w tej sesji nie zaakceptowano jeszcze planu</td>
+</tr>
+<tr>
+<td><code>plan_revoked</code></td>
+<td>zaakceptowana generacja została unieważniona po błędzie</td>
+</tr>
+<tr>
+<td><code>plan_sources</code></td>
+<td>Alert jest włączony albo publikacja nie jest gotowa</td>
+</tr>
+<tr>
+<td><code>battery_params</code></td>
+<td>zaakceptowany plan nie ma parametrów baterii</td>
+</tr>
+<tr>
+<td><code>plan_expired</code></td>
+<td>pierwotny termin ważności minął albo żaden przedział nie obejmuje teraz</td>
+</tr>
+<tr>
+<td><code>plan_malformed</code></td>
+<td>przedział z brakującymi lub błędnymi wartościami; wymagany nowy plan</td>
+</tr>
+<tr>
+<td><code>operation_mode</code></td>
+<td>tryb baterii falownika to nie Capacity ani Voltage</td>
+</tr>
+<tr>
+<td><code>mode_not_commissioned</code></td>
+<td>tryb baterii nie jest w <code>commissioned_battery_modes</code></td>
+</tr>
+<tr>
+<td><code>voltage_range</code></td>
+<td>cel w trybie Voltage poza 495–560 V</td>
+</tr>
+<tr>
+<td><code>settings_range</code></td>
+<td>brak zakresu lub kroku encji albo cel poza zakresem</td>
+</tr>
+<tr>
+<td><code>takeover_blocked</code></td>
+<td>automatyzacja z <code>old_writers</code> jest włączona lub działa</td>
+</tr>
+<tr>
+<td><code>blueprint_active</code></td>
+<td>włączona jest automatyzacja używająca blueprintu Deye (niżej); bez zapisów, a problem w Naprawach ją wskazuje</td>
+</tr>
+<tr>
+<td><code>layout_mismatch</code></td>
+<td>rejestry nie zgadzają się ze stanami encji (zob. <a href="#obsługiwany-sprzęt">Obsługiwany sprzęt</a>)</td>
+</tr>
+<tr>
+<td><code>paused</code></td>
+<td>przełącznik wstrzymania jest włączony</td>
+</tr>
+<tr>
+<td><code>verification_required</code></td>
+<td>zapisy zakończone, ale nie każdy rejestr potwierdzony</td>
+</tr>
+<tr>
+<td><code>write_failed</code></td>
+<td>rejestr nie potwierdził się po ponowieniach</td>
+</tr>
+<tr>
+<td><code>simulation_blocked</code></td>
+<td>Simulation odrzucone przy wymaganym przywróceniu</td>
+</tr>
+<tr>
+<td><code>run_failed</code></td>
+<td>przebieg zgłosił wyjątek; szczegóły w dzienniku Home Assistant</td>
+</tr>
+<tr>
+<td><code>controller_unavailable</code></td>
+<td>nie dało się odczytać Energy Compass lub encji Solarman; nic nie zapisano</td>
+</tr>
+</tbody>
+</table></section>
+<p>Każda zmiana stanu pracy silnika blueprintowego przechodzi przez <code>energy_compass.controller_runtime</code>; gdy to wywołanie się nie powiedzie, przebieg zatrzymuje się przed zapisem kolejnego rejestru. Silnik natywny odrzuca tę usługę, więc przebieg blueprintu, który się prześlizgnie, zatrzyma się przed pierwszym zapisem.</p>
+<h3 id="śledzenie-przebiegu-silnik-natywny">Śledzenie przebiegu (silnik natywny)</h3>
+<p>Blueprint zostawiał ślad automatyzacji na każdy przebieg; silnik natywny zastępują:</p>
+<ul>
+<li><code>reason</code> i <code>reason_code</code> sensora stanu pracy oraz jego atrybut <code>last_run</code> (nie jest zapisywany w historii): wyzwalacz,
+  decyzja, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony, zablokowany) i jak przebieg się zakończył;</li>
+<li>diagnostyka integracji (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code> i <code>run_history</code>, ostatnie 50 przebiegów
+  (w pamięci, więc restart je czyści);</li>
+<li>wpis w dzienniku zdarzeń sensora stanu pracy za każdym razem, gdy zmieni się kod stanu pracy lub potwierdzony tryb;</li>
+<li>kod <code>error</code> oraz problemy w Naprawach „Przebiegi sterownika Deye kończą się błędem” i „Automatyzacja blueprintu
+  Deye nadal działa”, więc zatrzymany sterownik widać bez czytania logów.</li>
+</ul>
 <h3 id="gdy-energy-compass-jest-niedostępny">Gdy Energy Compass jest niedostępny</h3>
 <p>Bez Energy Compass nie da się odczytać ani trybu, ani stanu pracy, więc żadnego zapisu nie można uznać
 za bezpieczny ani zarejestrować. Blueprint zatrzymuje się więc na pierwszym kroku, bez żadnego zapisu
 i wywołania usługi, gdy sensor sterownika nie istnieje lub jest niedostępny, ma inny <code>controller_schema</code>
 albo nie ma <code>mode_entity</code>: ślad mówi <code>Energy Compass niedostępny: sterowanie wstrzymane bez zapisów</code>.
+Silnik natywny robi to samo bez śladu: przebieg kończy się bez zapisu, kod stanu pracy to <code>error</code> z powodem
+<code>controller_unavailable</code>, a po trzech takich przebiegach pojawia się problem w Naprawach.
 Falownik zachowuje ostatni profil; wymuszony kierunek TOU kończy się na najbliższej granicy programu TOU,
 a prądy baterii zostają. Jeśli Energy Compass zniknie w środku przebiegu, następne wywołanie stanu pracy
 się nie powiedzie i przebieg zatrzyma się przed kolejnym zapisem rejestru. Home Assistant zgłasza
 uszkodzony wpis; napraw go albo zwolnij falownik ręcznie.</p>
+<h3 id="limity-i-wartości-domyślne-silnik-natywny">Limity i wartości domyślne (silnik natywny)</h3>
+<p>Ustawia je grupa ekspercka <strong>Limity i przejęcie</strong> w kroku opcji; puste pole zachowuje wartość domyślną,
+a zmiana działa od następnego przebiegu bez przeładowania. W kodzie nie ma wpisanych wartości żadnego domu.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Opcja</th>
+<th>Domyślnie</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_power_w</code></td>
+<td>mniejsza z mocy ładowania i rozładowania w ustawieniach Energy Compass, w W</td>
+</tr>
+<tr>
+<td><code>max_current</code>, <code>relinquish_current</code></td>
+<td>atrybut <code>max</code> encji prądu ładowania, ograniczony do <code>max_power_w</code> / 400 V</td>
+</tr>
+<tr>
+<td><code>max_grid_current</code></td>
+<td>atrybut <code>max</code> encji prądu z sieci, ograniczony tak samo</td>
+</tr>
+<tr>
+<td><code>hold_grid_current</code>, <code>reached_discharge_current</code>, <code>balance_grid_current</code></td>
+<td>1 A, 1 A, 2 A</td>
+</tr>
+<tr>
+<td><code>voltage_grid_charge_ceiling</code></td>
+<td>55,2 V</td>
+</tr>
+<tr>
+<td><code>commissioned_battery_modes</code></td>
+<td>Capacity</td>
+</tr>
+<tr>
+<td><code>old_writers</code></td>
+<td>brak</td>
+</tr>
+<tr>
+<td><code>telemetry_entities</code></td>
+<td>sensory SOC i napięcia urządzenia</td>
+</tr>
+<tr>
+<td><code>discharge_energy_entity</code></td>
+<td>sensor łącznego rozładowania baterii urządzenia, gdy jest dokładnie jeden</td>
+</tr>
+<tr>
+<td>nadpisania encji</td>
+<td>brak; sześć encji jest znajdowanych na urządzeniu po kluczach tłumaczeń Solarman</td>
+</tr>
+</tbody>
+</table></section>
+<p>Gdy moc lub któryś limit prądu wyszedłby zerowy (na przykład moc ładowania 0 w ustawieniach baterii), krok opcji
+go nie zapisze: pokaże grupę i poprosi o wpisanie limitów. Włączenie silnika natywnego wymaga też liczbowego odczytu
+napięcia baterii, bo po nim odróżnia pakiet od 48 V.</p>
 <h3 id="wejścia">Wejścia</h3>
+<p>To wejścia przestarzałego blueprintu, z jego własnymi wartościami domyślnymi; silnik natywny bierze wartości z
+powyższej tabeli.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2543,6 +2804,33 @@ i magazyn sterownika, więc sterownik wymaga 0.1.37 razem z nowym blueprintem.</
 Wycofanie przed usunięciem pakietu: wyłącz nową automatyzację, przywróć stary blueprint i wejścia i
 włącz ją; import nigdy nie zapisał pomocników pakietu. Powrót do 0.1.36 wymaga wcześniejszego
 przywrócenia starego blueprintu i pakietu.</p>
+<h3 id="migracja-z-blueprintu-na-silnik-natywny">Migracja z blueprintu na silnik natywny</h3>
+<p>Oba silniki nigdy nie zapisują razem. Wybranie <code>native</code> w <strong>Opcje → Sterownik Deye → Silnik</strong> jest odrzucane,
+dopóki tryb nie jest <code>Off</code>, a przywrócenie nie zostanie wykonane. Gdy silnikiem jest <code>native</code>:</p>
+<ul>
+<li>select trybu odmawia wyjścia z <code>Off</code> (błąd wymienia automatyzację), dopóki włączona jest automatyzacja
+  używająca blueprintu;</li>
+<li>każdy przebieg sprawdza to samo, niezależnie od zapisanego trybu: przy takiej włączonej automatyzacji nic nie jest
+  zapisywane, powód stanu to <code>blueprint_active</code> (z nazwą automatyzacji), a problem w Naprawach trwa do jej wyłączenia.
+  Dotyczy to też przeładowania z trybem <code>Auto</code> i blueprintu, który nigdy nie został zaktualizowany;</li>
+<li><code>energy_compass.controller_runtime</code> odrzuca każde wywołanie, więc przebieg blueprintu, który się prześlizgnie,
+  zatrzyma się przed pierwszym zapisem.</li>
+</ul>
+<p>Gdy dokładnie jedna automatyzacja używa blueprintu na tym samym urządzeniu Solarman (jej encje ładowania,
+rozładowania, sieci i trybu należą do tego urządzenia), jej limity i nadpisania encji są wczytywane do grupy
+eksperckiej do sprawdzenia; nic nie jest stosowane przed zapisem. Automatyzacja na innym falowniku nie wczytuje niczego.
+Wczytanie działa, gdy silnikiem nadal jest <code>blueprint</code>.</p>
+<ol>
+<li>Wybierz tryb <code>Off</code> i poczekaj, aż <code>restore_pending</code> będzie wyłączone, a kod stanu to <code>restored</code> (albo przebieg
+   zgłosi zwolnienie).</li>
+<li>Wyłącz automatyzację blueprintu. Nie zatrzymuj jej wykonań w środku; poczekaj, aż się zakończą.</li>
+<li><strong>Opcje → Sterownik Deye:</strong> ustaw silnik na <code>native</code>, sprawdź wczytane limity i zapisz. Wpis się przeładuje.</li>
+<li>Wybierz <code>Simulation</code>, przez pewien czas porównuj <code>runtime.desired</code> z tym, co zapisywał blueprint, potem wybierz <code>Auto</code>
+   w wierszu <code>CHARGE_PV</code> lub <code>SELF_CONSUME</code>.</li>
+<li>Po tygodniu usuń automatyzację i plik blueprintu.</li>
+</ol>
+<p>Wycofanie: wybierz <code>Off</code>, poczekaj na <code>restored</code>, ustaw silnik na <code>blueprint</code>, włącz automatyzację, potem wybierz tryb.
+Flaga wstrzymania jest zerowana, gdy silnik wraca na <code>blueprint</code>.</p>
 <h3 id="przykładowe-dashboardy">Przykładowe dashboardy</h3>
 <p>Generuje je <code>tools/dashboards/build.py</code> z zastępczymi identyfikatorami encji:</p>
 <section class="table-scroll"><table>
@@ -2559,7 +2847,7 @@ przywrócenia starego blueprintu i pakietu.</p>
 </tr>
 <tr>
 <td><code>controller_diagnostics.yaml</code></td>
-<td>stan optymalizatora i sterownika, powód, potwierdzony tryb, ostatnie potwierdzenie, ważność planu i prognozy, aktywny program TOU, niepotwierdzone zapisy, flagi sesji i przywrócenia oraz odczyt trzech limitów prądu</td>
+<td>stan optymalizatora i sterownika, powód i kod powodu, falownik i czy jest zweryfikowany, ostatni przebieg, potwierdzony tryb, ostatnie potwierdzenie, ważność planu i prognozy, aktywny program TOU, niepotwierdzone zapisy, flagi sesji i przywrócenia oraz odczyt trzech limitów prądu</td>
 </tr>
 <tr>
 <td><code>plan_chart.yaml</code></td>
@@ -2573,11 +2861,12 @@ przywrócenia starego blueprintu i pakietu.</p>
 </table></section>
 <p>Panel używa kart natywnych oraz ApexCharts Card do prognozy SOC; oba wykresy wymagają ApexCharts Card. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/builder.html">Generator YAML</a> wypełnia każdą z nich Twoimi encjami, pojemnością
 i językiem. Opis: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">przewodnik instalacji</a> (EN).</p>
-<p>Przykłady sterownika używają trzech ról: <code>deye_controller</code>, <code>deye_mode</code> i <code>deye_runtime</code> (domyślnie
-<code>sensor.energy_compass_deye_controller</code>, <code>select.energy_compass_deye_mode</code> i
-<code>sensor.energy_compass_deye_controller_runtime</code>). Gdy Twoje identyfikatory są inne, przekaż generatorowi
-<code>--entity deye_mode=select.moj_tryb</code> albo wypełnij je w generatorze YAML; sesja, flaga przywrócenia, najbliższa
-zmiana TOU i prefiks TOU są czytane z atrybutów sterownika.</p>
+<p>Przykłady sterownika używają czterech ról: <code>deye_controller</code>, <code>deye_mode</code>, <code>deye_runtime</code> i <code>deye_pause</code> (domyślnie
+<code>sensor.energy_compass_deye_controller</code>, <code>select.energy_compass_deye_mode</code>,
+<code>sensor.energy_compass_deye_controller_runtime</code> i <code>switch.energy_compass_pause_inverter_writes</code>). Panel pokazuje
+przełącznik wstrzymania tylko wtedy, gdy encja istnieje, czyli przy silniku natywnym. Gdy Twoje identyfikatory są inne,
+przekaż generatorowi <code>--entity deye_mode=select.moj_tryb</code> albo wypełnij je w generatorze YAML; sesja, flaga przywrócenia,
+najbliższa zmiana TOU i prefiks TOU są czytane z atrybutów sterownika.</p>
 <h2 id="energy-atlas-opcjonalnie">Energy Atlas (opcjonalnie)</h2>
 <p>Energy Atlas to osobna usługa Datamindz, która agreguje zanonimizowaną telemetrię z wielu instalacji
 do celów badawczych i porównawczych. Wysyłanie danych jest <strong>opcjonalne i domyślnie wyłączone</strong>: przy
