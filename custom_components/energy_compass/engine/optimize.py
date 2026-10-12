@@ -9,6 +9,7 @@ import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
 from scipy.sparse import coo_matrix
 
+from .balance import fallback_costs
 from .charge_benefit import constrain_charge_benefit, validate_charge_benefit
 from .charge_price import price_allows_grid_charge
 from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fractions
@@ -147,8 +148,9 @@ def _constrain_balance(
         return [], None
     threshold = problem.balance_threshold_kwh
     choices: list[int] = []
+    ranking = fallback_costs(problem.balance_windows)
     for number, window in enumerate(problem.balance_windows):
-        chosen = model.variable(binary=True)
+        chosen = model.variable(binary=True, cost=ranking[number])
         # Registered in the slot vectors so the variable-count check covers it.
         vectors[0][f"balance_choice_{number}"] = chosen
         if problem.balance_fixed:

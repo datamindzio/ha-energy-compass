@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 from .models import BalanceWindow, Battery, Plan, Problem, Slot
 
 DUE_LOOKAHEAD = timedelta(hours=24)
+# Share of the pessimistic shortfall cost that ranks otherwise equal windows.
+FALLBACK_WEIGHT = 0.05
 
 
 def _aligned(moment: datetime) -> bool:
@@ -30,6 +32,8 @@ def candidate_windows(
     With a pessimistic PV series (and the battery to simulate on it) a
     CHARGE_PV window is offered only if the pack still reaches the threshold by
     the window start and PV still covers load inside the window on that series.
+    A window offered as CHARGE_GRID on that series carries the pessimistic
+    shortfall cost the solver uses to rank it against the others.
     """
     pessimistic = pessimistic_pv_kwh is not None and battery is not None
     reach = _best_case_energy(slots, battery, pessimistic_pv_kwh) if pessimistic else ()
@@ -66,8 +70,30 @@ def candidate_windows(
             mode = "CHARGE_GRID"
         else:
             continue
-        windows.append(BalanceWindow(members, mode))
+        fallback = 0.0
+        if pessimistic and mode == "CHARGE_GRID":
+            fallback = sum(
+                max(0.0, slots[i].load_kwh - pessimistic_pv_kwh[i])
+                * slots[i].buy_per_kwh
+                for i in members
+            )
+        windows.append(BalanceWindow(members, mode, fallback))
     return tuple(windows)
+
+
+def fallback_costs(windows: tuple[BalanceWindow, ...]) -> tuple[float, ...]:
+    """Solver cost of choosing each window, relative to the cheapest one.
+
+    The solver prices a window on the median PV series, where a vetoed
+    CHARGE_GRID window can look free, so every start would tie. This weighted
+    excess over the cheapest window's pessimistic shortfall picks the start that
+    is cheapest if the pessimistic series comes true. Zero for a single window
+    (a pinned probe) and when no window carries a shortfall.
+    """
+    if not windows:
+        return ()
+    floor = min(window.fallback_cost for window in windows)
+    return tuple(FALLBACK_WEIGHT * (window.fallback_cost - floor) for window in windows)
 
 
 def _best_case_energy(

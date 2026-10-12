@@ -1018,6 +1018,12 @@ Otherwise the start is offered only as **CHARGE_GRID**, subject to the usual gri
 rules, so the solver can pick a cheap grid window instead. The dispatch plan itself keeps using the median
 series. Without the source nothing changes.
 
+The solver prices every window on the median series, where PV surplus can pay for a vetoed
+**CHARGE_GRID** window, so several starts would cost the same. To avoid a tie-break landing on an
+expensive slot, each such window carries a ranking cost: the load the pessimistic series leaves to
+the grid inside the window, at the slot buy prices. The solver adds 5 % of each window's excess over
+the cheapest window to its choice. It is a preference only; it is not part of the plan's cost.
+
 Trade-off: the pack test counts PV surplus only. A start the pack would reach only by charging from the
 grid before the window is offered as **CHARGE_GRID** alone, and is dropped when the grid-charge price
 ceiling blocks a slot of the window, so `balance_no_window_in_horizon` can appear where a window existed

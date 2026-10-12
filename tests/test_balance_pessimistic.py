@@ -8,7 +8,10 @@ from custom_components.energy_compass.config_models import (
     SourceConfig,
     validate_sources,
 )
-from custom_components.energy_compass.engine.balance import candidate_windows
+from custom_components.energy_compass.engine.balance import (
+    candidate_windows,
+    fallback_costs,
+)
 from custom_components.energy_compass.engine.models import (
     Battery,
     InputError,
@@ -125,13 +128,9 @@ def test_pessimistic_failure_without_grid_charge_leaves_no_window():
     assert _windows(slots, (0.2,) * 4, initial=24.0, ok=(False,) * 4) == ()
 
 
-def test_solver_picks_cheap_grid_window_when_pessimistic_pv_is_insufficient():
-    rows = [(0.9, 3.0, 1.0), (0.2, 3.0, 1.0), (0.2, 3.0, 1.0), (0.9, 3.0, 1.0)]
-    slots = _slots(rows)
-    windows = _windows(slots, (0.2,) * 4, initial=24.0)
-    assert all(w.mode == "CHARGE_GRID" for w in windows)
-    problem = Problem(
-        slots,
+def _balance_problem(rows, windows, **extra):
+    return Problem(
+        _slots(rows),
         SiteLimits(8, 25, 8, False),
         _battery(24.0),
         "value",
@@ -142,11 +141,60 @@ def test_solver_picks_cheap_grid_window_when_pessimistic_pv_is_insufficient():
         balance_windows=windows,
         balance_threshold_kwh=0.99 * CAP,
         balance_miss_cost=100.0,
+        **extra,
     )
-    plan = solve(problem)
+
+
+VETOED = [(0.9, 3.0, 1.0), (0.2, 3.0, 1.0), (0.2, 3.0, 1.0), (0.9, 3.0, 1.0)]
+
+
+def test_vetoed_grid_windows_carry_the_pessimistic_shortfall_cost():
+    windows = _windows(_slots(VETOED), (0.2,) * 4, initial=24.0)
+    # (load 1.0 - pessimistic 0.2) kWh at the slot buy price.
+    assert [round(w.fallback_cost, 6) for w in windows] == [0.72, 0.16, 0.16, 0.72]
+    assert [w.fallback_cost for w in _windows(_slots(VETOED), None, initial=24.0)] == [
+        0.0
+    ] * 4
+
+
+def test_pv_windows_and_median_only_candidates_carry_no_shortfall_cost():
+    slots = _slots(MEDIAN)
+    assert {w.fallback_cost for w in _windows(slots, (3.0,) * 4, initial=25.0)} == {0.0}
+    assert {w.fallback_cost for w in _windows(slots, None)} == {0.0}
+
+
+def test_pinned_windows_tie_on_the_median_series_but_not_on_the_ranking():
+    windows = _windows(_slots(VETOED), (0.2,) * 4, initial=24.0)
+    # Start 0 cannot be pinned: the pack starts at 24.0, below the 24.75 threshold.
+    pinned = [
+        solve(_balance_problem(VETOED, (w,), balance_fixed=True)) for w in windows[1:]
+    ]
+    # The plan objective prices the median series, where the PV surplus pays for
+    # every window: identical, so only the ranking cost can tell them apart.
+    assert [p.balance_start for p in pinned] == [1, 2, 3]
+    assert max(p.objective for p in pinned) - min(p.objective for p in pinned) < 1e-6
+    assert fallback_costs(windows) == pytest.approx((0.028, 0.0, 0.0, 0.028))
+
+
+def test_solver_picks_cheap_grid_window_when_pessimistic_pv_is_insufficient():
+    windows = _windows(_slots(VETOED), (0.2,) * 4, initial=24.0)
+    assert all(w.mode == "CHARGE_GRID" for w in windows)
+    plan = solve(_balance_problem(VETOED, windows))
     assert plan.balance_start in (1, 2)
-    window = next(w for w in windows if w.slots[0] == plan.balance_start)
-    assert window.mode == "CHARGE_GRID"
+    # The ranking is not part of the published objective.
+    pinned = solve(
+        _balance_problem(VETOED, (windows[plan.balance_start],), balance_fixed=True)
+    )
+    assert plan.objective == pytest.approx(pinned.objective)
+
+
+def test_solver_takes_grid_windows_from_the_median_series_when_pv_is_short():
+    # Median PV 0.5 < load 1.0: CHARGE_GRID without any pessimistic series.
+    rows = [(0.9, 0.5, 1.0), (0.2, 0.5, 1.0), (0.2, 0.5, 1.0), (0.9, 0.5, 1.0)]
+    windows = _windows(_slots(rows), None, initial=24.0)
+    assert [w.mode for w in windows] == ["CHARGE_GRID"] * 4
+    plan = solve(_balance_problem(rows, windows))
+    assert plan.balance_start in (1, 2)
 
 
 # --- runtime ---------------------------------------------------------------
