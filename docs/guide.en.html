@@ -1098,7 +1098,7 @@ hours: <code>activity = minimum_mode_power_kw × h</code> (default 0.1 kW) and
 <tr>
 <td><code>CHARGE_PV</code></td>
 <td>Charge from PV</td>
-<td>activity ≤ charge ≤ surplus — only solar surplus charges. No discharge, no curtailment.</td>
+<td>activity ≤ charge ≤ surplus — only solar surplus charges. No discharge, no curtailment. Load-following: grid export only while the charge is at its power limit or the battery is full.</td>
 <td>PV surplus exists.</td>
 </tr>
 <tr>
@@ -1150,10 +1150,28 @@ directly by any other available mode.</p>
   it ends, the rest of the commitment is <code>HOLD</code> with full import (a new <code>HOLD</code> clock starts). The
   same happens — from the first interval if need be — when the battery cannot cover the house
   and still keep the inverter standby loss (<code>idle_drain_kw</code>) of the later intervals, with no PV
-  or grid charge to pay it in time. The plan is <code>infeasible</code> until the commitment ends when the
+  or grid charge to pay it in time. <code>HOLD</code> starts only in an interval without a PV surplus the
+  pack could take, in every committed interval: with one, the row stays <code>CHARGE_PV</code>. A committed
+  interval in which neither mode has anything to follow (net load and PV surplus both below
+  <code>minimum_mode_power_kw × h</code>, for example a night base load under 100 W) is <code>HOLD</code> by
+  classification and does not end the commitment: the plan bridges it (no <code>HOLD</code> clock starts,
+  and the persisted commitment keeps its mode and start) or, when the battery is spent or full,
+  starts a real <code>HOLD</code> run there as in any other interval
+  (<code>dispatch_policy.carried_idle_starts</code> lists the bridged intervals). The plan is
+  <code>infeasible</code> until the commitment ends when the
   terminal rule cannot be met afterwards (<code>preserve_initial</code> with no later PV or grid charge to
   refill what the house drew); the rare remaining cases are listed in
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>.</li>
+<li><strong><code>CHARGE_PV</code> follows the surplus.</strong> The inverter charges with every watt the house does not
+  use, so the plan never pairs a partial charge with grid export: in a <code>CHARGE_PV</code> interval the
+  battery takes the whole PV surplus, and export appears only once the charge is at its interval
+  power limit or the battery has been filled to its upper bound. Otherwise the row is not
+  <code>CHARGE_PV</code>. Applies while <code>minimum_mode_minutes</code> is above 0. A carried
+  <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment is held to the same rule. If the battery is full before it
+  ends (the next interval could not take even the minimum activity above the upper bound), the
+  rest of the commitment is <code>HOLD</code> with the surplus exported (a new <code>HOLD</code> clock starts). A first
+  committed interval that already has less room than the minimum activity is not covered: the
+  plan is <code>infeasible</code> until the commitment ends.</li>
 <li><strong>PV-follow group:</strong> <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.</li>

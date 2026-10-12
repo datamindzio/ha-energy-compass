@@ -1103,7 +1103,7 @@ przechowuje własną kopię zaakceptowanego planu przez przeładowanie wpisu, al
 <tr>
 <td><code>CHARGE_PV</code></td>
 <td>Ładowanie z PV</td>
-<td>activity ≤ ładowanie ≤ nadwyżka — ładuje tylko nadwyżka słoneczna. Bez rozładowania i ograniczania PV.</td>
+<td>activity ≤ ładowanie ≤ nadwyżka — ładuje tylko nadwyżka słoneczna. Bez rozładowania i ograniczania PV. Podąża za nadwyżką: eksport do sieci tylko przy ładowaniu na limicie mocy albo gdy bateria jest pełna.</td>
 <td>Jest nadwyżka PV.</td>
 </tr>
 <tr>
@@ -1158,11 +1158,29 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   bateria wyczerpie się przed jego końcem, reszta zobowiązania to <code>HOLD</code> z pełnym importem
   (startuje nowy zegar <code>HOLD</code>). Tak samo — w razie potrzeby już od pierwszego przedziału — gdy
   bateria nie może pokryć domu i zarazem zachować poboru czuwania falownika (<code>idle_drain_kw</code>)
-  z późniejszych przedziałów, a PV ani ładowanie z sieci nie uzupełnią go na czas. Plan jest
+  z późniejszych przedziałów, a PV ani ładowanie z sieci nie uzupełnią go na czas. <code>HOLD</code> zaczyna
+  się tylko w przedziale bez nadwyżki PV, którą bateria mogłaby przyjąć, w każdym przedziale
+  zobowiązania: przy nadwyżce wiersz zostaje <code>CHARGE_PV</code>. Przedział zobowiązania, w którym żaden
+  z trybów nie ma za czym podążać (obciążenie netto i nadwyżka PV poniżej
+  <code>minimum_mode_power_kw × h</code>, np. nocny pobór bazowy poniżej 100 W), to z klasyfikacji <code>HOLD</code>
+  i nie kończy zobowiązania: plan go przemostkowuje (nie startuje zegar <code>HOLD</code>, a zapisane
+  zobowiązanie zachowuje tryb i start) albo, gdy bateria jest wyczerpana lub pełna, zaczyna tam
+  prawdziwy przebieg <code>HOLD</code>, tak jak w każdym innym przedziale
+  (<code>dispatch_policy.carried_idle_starts</code> wymienia przemostkowane przedziały). Plan jest
   <code>infeasible</code> (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
   (<code>preserve_initial</code> bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
   dom); rzadkie pozostałe przypadki opisuje
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a> (EN).</li>
+<li><strong><code>CHARGE_PV</code> podąża za nadwyżką.</strong> Falownik ładuje każdym watem, którego dom nie zużywa, więc plan
+  nigdy nie łączy częściowego ładowania z eksportem do sieci: w przedziale <code>CHARGE_PV</code> bateria
+  przejmuje całą nadwyżkę PV, a eksport pojawia się dopiero, gdy ładowanie jest na limicie mocy
+  przedziału albo bateria została napełniona do górnej granicy. W innym wypadku wiersz nie jest
+  <code>CHARGE_PV</code>. Dotyczy przypadku, gdy <code>minimum_mode_minutes</code> jest większe od 0. Przeniesione
+  zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli bateria zapełni się przed
+  jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
+  granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki (startuje nowy zegar <code>HOLD</code>).
+  Nie obejmuje to pierwszego przedziału zobowiązania, który ma już mniej miejsca niż minimalna
+  aktywność: plan jest <code>infeasible</code> (niewykonalny) do końca zobowiązania.</li>
 <li><strong>Grupa podążania za PV:</strong> <code>CHARGE_PV</code> i <code>SELF_CONSUME</code> dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.</li>

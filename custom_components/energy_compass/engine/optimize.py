@@ -9,7 +9,7 @@ import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
 from scipy.sparse import coo_matrix
 
-from .balance import fallback_costs
+from .balance import REACH_TOL, fallback_costs
 from .charge_benefit import constrain_charge_benefit, validate_charge_benefit
 from .charge_price import price_allows_grid_charge
 from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fractions
@@ -28,7 +28,7 @@ from .models import (
 from .normalize import validate_problem
 from .settlement import planning_buy, planning_sell
 
-_TOL = 1e-6
+_TOL = REACH_TOL
 _UTC = UTC
 
 
@@ -930,7 +930,12 @@ def _solve(
         if flexible_load
         else problem
     )
-    validate_modes(mode_problem, flows)
+    bridges = tuple(
+        i
+        for i, v in enumerate(vectors)
+        if "hold_run" in v and values[v["hold_run"]] < 0.5
+    )
+    validate_modes(mode_problem, flows, bridges)
     grid_cost = sum(
         slot.buy_per_kwh * flow.grid_import_kwh
         - slot.sell_per_kwh * flow.grid_export_kwh
@@ -987,6 +992,7 @@ def _solve(
             peak_reserve_shortfall_kwh=peak_reserve_shortfall_kwh,
             time_limited=model.time_limited,
             mip_gap=model.mip_gap,
+            carried_bridges=bridges,
         ),
         tuple(float(values[v["flex_load"]]) for v in vectors) if flexible_load else (),
     )
