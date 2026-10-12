@@ -733,6 +733,18 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 model.constrain({real: 1, run: -1}, -np.inf, 0)
                 model.constrain({real: 1, v["mode_HOLD"]: -1, run: -1}, -1, np.inf)
                 held = {real: -1}
+                if follows_pv:
+                    # As in any committed interval: a released HOLD does not go back
+                    # to the commitment and starts no clock of its own.
+                    if released:
+                        model.constrain(
+                            {**{v[f"mode_{mode}"]: 1 for mode in members}, **released},
+                            -np.inf,
+                            1,
+                        )
+                    free_hold.add(i)
+                    released = {real: 1}
+                curtailing = {}
             elif i in idle:
                 # Nothing to follow: the flows are HOLD by classification. Either a HOLD
                 # run is under way or starts here on a release, as in any committed
