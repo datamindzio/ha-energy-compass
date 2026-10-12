@@ -70,17 +70,41 @@ def test_golden_cost_min_solver_model_is_unchanged(monkeypatch, name):
     assert _rows_sha256(captured["rows"]) == expected["rows_sha256"]
 
 
+# Last-digit float noise differs between platforms (libm / HiGHS builds); anything
+# beyond this tolerance, or any non-numeric difference, is a real plan change.
+_FLOAT_REL = 1e-9
+_FLOAT_ABS = 1e-9
+
+
+def _assert_matches(actual, expected, path):
+    if isinstance(expected, (list, tuple)):
+        assert isinstance(actual, (list, tuple)), path
+        assert len(actual) == len(expected), path
+        for index, (a, e) in enumerate(zip(actual, expected)):
+            _assert_matches(a, e, f"{path}[{index}]")
+    elif isinstance(expected, (int, float)) and not isinstance(expected, bool):
+        assert not isinstance(actual, bool), path
+        assert actual == pytest.approx(expected, rel=_FLOAT_REL, abs=_FLOAT_ABS), path
+    else:
+        assert actual == expected, path
+
+
 @pytest.mark.parametrize("name", _FIXTURE_NAMES)
 def test_golden_cost_min_plan_is_unchanged(monkeypatch, name):
     problem = golden_problems()[name]
     plan, _ = _solve_with_capture(monkeypatch, problem)
     expected = _SNAPSHOT[name]
-    assert [
-        [getattr(flow, field.name) for field in fields(flow)] for flow in plan.flows
-    ] == expected["flows"]
-    assert plan.objective == expected["objective"]
-    assert plan.grid_cost == expected["grid_cost"]
-    assert plan.wear_cost == expected["wear_cost"]
-    assert plan.terminal_credit == expected["terminal_credit"]
-    assert plan.new_export_episodes == expected["new_export_episodes"]
-    assert plan.export_episode_reserve == expected["export_episode_reserve"]
+    _assert_matches(
+        [[getattr(flow, field.name) for field in fields(flow)] for flow in plan.flows],
+        expected["flows"],
+        f"{name}.flows",
+    )
+    for key in (
+        "objective",
+        "grid_cost",
+        "wear_cost",
+        "terminal_credit",
+        "new_export_episodes",
+        "export_episode_reserve",
+    ):
+        _assert_matches(getattr(plan, key), expected[key], f"{name}.{key}")
