@@ -1027,8 +1027,11 @@ directly by any other available mode.</p>
   covers the whole demand, and import appears only once the discharge is at its interval power
   limit or the battery has been emptied to its reserve. Otherwise the row is <code>HOLD</code> with full
   import. Applies while <code>minimum_mode_minutes</code> is above 0. A carried <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>
-  commitment is executed the same way: with <code>preserve_initial</code>, grid charging off and no PV to
-  refill what the house draws meanwhile, the plan is <code>infeasible</code> until that commitment ends.</li>
+  commitment is executed the same way. If the battery runs out before it ends, the rest of the
+  commitment is <code>HOLD</code> with full import (a new <code>HOLD</code> clock starts). The plan is <code>infeasible</code>
+  until the commitment ends only when the terminal rule cannot be met afterwards
+  (<code>preserve_initial</code> with no later PV or grid charge to refill what the house drew), or with a
+  0 % reserve and an inverter standby loss (<code>idle_drain_kw</code>).</li>
 <li><strong>PV-follow group:</strong> <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.</li>

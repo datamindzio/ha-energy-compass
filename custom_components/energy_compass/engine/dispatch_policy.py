@@ -155,6 +155,20 @@ def _follow_load(model, problem, v, x, slot, hours, flex_max, can_empty) -> None
         model.constrain({**coupled, x_sc: -1}, -np.inf, 0)
 
 
+def _lock_floor(problem, drains, index) -> float:
+    """Energy below which the battery cannot keep SELF_CONSUME active in a slot."""
+    battery = problem.battery
+    slot = problem.slots[index]
+    hours = (
+        slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
+    ).total_seconds() / 3600
+    return (
+        battery.capacity_kwh * battery.minimum_soc_fraction
+        + drains[index]
+        + problem.minimum_mode_power_kw * hours / battery.eta_discharge
+    )
+
+
 def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) -> None:
     """Bind one named state to material flows and forbid premature transitions."""
     if not problem.battery or not problem.minimum_mode_minutes:
@@ -318,13 +332,29 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 model.constrain({v[blocked]: 1}, 0, 0)
     if previous is not None:
         held_until = since.astimezone(UTC) + dwell
-        for start, v in zip(starts, vectors, strict=True):
-            if start < held_until:
-                model.constrain(
-                    {v[f"mode_{mode}"]: 1 for mode in _members(dwell_group(previous))},
-                    1,
-                    1,
-                )
+        members = _members(dwell_group(previous))
+        # A battery too empty to go on ends a carried PV-follow commitment the way an
+        # observed SOC bound does: the inverter imports for the house, which is HOLD.
+        release = {}
+        for i, (start, v) in enumerate(zip(starts, vectors, strict=True)):
+            if start >= held_until:
+                break
+            kept = {v[f"mode_{mode}"]: 1 for mode in members}
+            if release:
+                model.constrain({v["mode_HOLD"]: 1, **release}, -np.inf, 0)
+                release = {v["mode_HOLD"]: -1}
+                kept[v["mode_HOLD"]] = 1
+            model.constrain(kept, 1, 1)
+            if "SELF_CONSUME" in members and i + 1 < len(vectors):
+                depleted = v["lock_depleted"] = model.variable(binary=True)
+                slack = model.upper[v["energy"]] - _lock_floor(problem, drains, i + 1)
+                if slack > 0:
+                    model.constrain(
+                        {v["energy"]: 1, depleted: slack},
+                        -np.inf,
+                        model.upper[v["energy"]],
+                    )
+                release[depleted] = -1
     for i, v in enumerate(vectors):
         for group in GROUPS:
             members = _members(group)
@@ -354,7 +384,10 @@ def validate_modes(problem: Problem, flows) -> None:
     previous, since = _initial(problem)
     dwell = timedelta(minutes=problem.minimum_mode_minutes)
     coverage_end = problem.slots[-1].end.astimezone(UTC)
-    for slot, flow in zip(problem.slots, flows, strict=True):
+    drains = drain_schedule(problem)
+    carried = dwell_group(previous) == "PV_FOLLOW"
+    left = None
+    for index, (slot, flow) in enumerate(zip(problem.slots, flows, strict=True)):
         start = slot.start.astimezone(UTC)
         activity = (
             problem.minimum_mode_power_kw
@@ -414,7 +447,17 @@ def validate_modes(problem: Problem, flows) -> None:
                     "solver_failure", "invalid solver result: legacy direction guard"
                 )
         if dwell_group(mode) != dwell_group(previous):
-            if previous is not None and start < since.astimezone(UTC) + dwell:
+            if (
+                previous is not None
+                and start < since.astimezone(UTC) + dwell
+                # A carried PV-follow commitment ends once the battery cannot go on.
+                and not (
+                    carried
+                    and mode == "HOLD"
+                    and left is not None
+                    and left <= _lock_floor(problem, drains, index) + _EMPTY_TOLERANCE
+                )
+            ):
                 raise SolveError(
                     "solver_failure", "invalid solver result: minimum mode duration"
                 )
@@ -424,4 +467,6 @@ def validate_modes(problem: Problem, flows) -> None:
                     "invalid solver result: active mode beyond coverage",
                 )
             since = start
+            carried = False
         previous = mode
+        left = flow.end_soc_kwh

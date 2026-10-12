@@ -268,7 +268,8 @@ def _validate_solution(
             "battery_mode",
             "reserve_discharge",
             "load_above_solar",
-            *(f"mode_{mode}" for mode in MODES),
+            # HOLD is continuous: the one-hot row below makes it integral.
+            *(f"mode_{mode}" for mode in MODES if mode != "HOLD"),
         ):
             if name in variables:
                 _check(
