@@ -353,22 +353,30 @@ def test_charge_pv_follows_the_load_like_self_consumption():
     assert deficit.grid_import_kwh == 0
 
 
+def _grid_flow(start_soc=5.0, charge=2.0):
+    # end SOC as planned: the charge through the 0.9 charging efficiency, no drain
+    return replay.Flow(0.0, 0.0, charge, 0.0, 0.0, start_soc + charge * 0.9)
+
+
 @pytest.mark.parametrize(
-    ("pv", "load", "charge", "grid_import"),
+    ("pv", "load", "charge", "grid_import", "end"),
     [
         # forecast 1.0 PV / 0.5 load: surplus 0.5, so the grid share of 2.0 is 1.5
-        (1.0, 0.5, 2.0, 1.5),  # as forecast
-        (1.5, 0.5, 2.5, 1.5),  # PV above forecast charges the battery more
-        (0.2, 0.5, 1.5, 1.8),  # PV below forecast: no shortfall bought from the grid
-        (2.5, 0.5, 3.0, 1.0),  # charge power limit caps the charge
+        (1.0, 0.5, 2.0, 1.5, 6.8),  # as forecast
+        # PV above forecast: the grid stops at the planned SOC, PV charges on top
+        (1.5, 0.5, 2.0, 1.0, 6.8),
+        (2.5, 0.5, 2.0, 0.0, 6.8),  # PV alone reaches the target: no grid at all
+        (3.5, 0.5, 3.0, 0.0, 7.7),  # PV beyond the target, up to the power limit
+        # PV below forecast: no shortfall bought from the grid, no catch-up either
+        (0.2, 0.5, 1.5, 1.8, 6.35),
     ],
 )
-def test_charge_grid_only_the_grid_share_follows_the_plan(
-    pv, load, charge, grid_import
+def test_charge_grid_stops_the_grid_share_at_the_planned_soc(
+    pv, load, charge, grid_import, end
 ):
-    flow, _ = replay.realize(
+    flow, end_soc = replay.realize(
         "CHARGE_GRID",
-        _flow(charge=2.0),
+        _grid_flow(),
         pv,
         load,
         1.0,
@@ -381,6 +389,26 @@ def test_charge_grid_only_the_grid_share_follows_the_plan(
     assert flow.charge_kwh == pytest.approx(charge)
     assert flow.grid_import_kwh == pytest.approx(grid_import)
     assert flow.grid_export_kwh == 0
+    assert end_soc == pytest.approx(end)
+
+
+def test_charge_grid_below_plan_start_is_not_caught_up():
+    # Start 1.0 kWh under the 5.0 the plan assumed: only the planned 1.5 grid
+    # share is bought, so the SOC ends short of the planned end.
+    flow, end_soc = replay.realize(
+        "CHARGE_GRID",
+        _grid_flow(),
+        1.0,
+        0.5,
+        1.0,
+        4.0,
+        _values(),
+        100.0,
+        forecast=(1.0, 0.5),
+    )
+
+    assert flow.grid_import_kwh == pytest.approx(1.5)
+    assert end_soc == pytest.approx(4.0 + 2.0 * 0.9)
 
 
 _DEPOSIT = ("--set", "deposit_model=manual")

@@ -1681,9 +1681,11 @@ grupowane w dni według lokalnej daty `start`; ustawienia podaje się tylko prze
 - Wykonany plan podąża za sterownikiem (`tools/deye_controller/build.py`) względem rzeczywistych
   danych. `SELF_CONSUME` i `CHARGE_PV` podążają za obciążeniem: cała nadwyżka PV ładuje baterię, a
   niedobór jest pokrywany z niej. W `CHARGE_GRID` za planem idzie tylko udział sieci — zaplanowane
-  ładowanie minus nadwyżka obiecana przez prognozę — a rzeczywista nadwyżka PV ładuje ponad to, więc
-  PV powyżej prognozy ładuje więcej, a poniżej mniej, nigdy zaś niedoboru nie kupuje się z sieci.
-  `DISCHARGE_GRID` rozładowuje zaplanowaną energię, `HOLD` zatrzymuje baterię. Eksport ponad
+  ładowanie minus nadwyżka obiecana przez prognozę — a sieć przestaje ładować po osiągnięciu
+  planowanego końcowego SOC wiersza, tak jak w sterowniku; rzeczywista nadwyżka PV ładuje ponad to.
+  PV powyżej prognozy zmniejsza więc import z sieci (SOC może skończyć powyżej planu, wyłącznie dzięki
+  PV), a poniżej prognozy ładuje mniej — niedoboru nie kupuje się z sieci, a startowy SOC poniżej planu
+  nie jest nadrabiany. `DISCHARGE_GRID` rozładowuje zaplanowaną energię, `HOLD` zatrzymuje baterię. Eksport ponad
   `grid_export_kw` jest ucinany (curtailment), a zmagazynowana energia nie jest eksportowana ponad
   dotychczasową produkcję PV, gdy włączone jest **Sell only PV** (`limit_export_to_pv`).
 - [Zapas na drogie okresy](#zapas-na-drogie-okresy) (`peak_reserve_margin_kwh`) jest odtwarzany jak w integracji: wymaga
@@ -1721,7 +1723,7 @@ bez błędu prognozy. Dla statystyk godzinowych ustaw `interval_minutes: 60`.
 | `reference_probe_failed` | Co najmniej jedna próba odniesienia nie powiodła się lub zabrakło czasu. |
 | `short_source_coverage` | Pokrycie cen/prognoz kończy się przed żądanym horyzontem planowania. |
 | `current_guidance_unavailable` | Próba dla bieżącego przedziału nieznana; późniejsze okna mogą być poprawne. |
-| `missing_forecast_continuation` | Skonfigurowane źródło nie opublikowało jeszcze danych dla części horyzontu (np. jutrzejsze ceny przed ok. 14:00). |
+| `missing_forecast_continuation` | Skonfigurowane źródło (poza opcjonalnym pesymistycznym źródłem PV) nie opublikowało jeszcze danych dla części horyzontu (np. jutrzejsze ceny przed ok. 14:00). |
 | `load_history_fallback` | Część prognozy zużycia używa zapasowego dziennego zużycia, bo historia jest niewystarczająca. |
 | `unvalidated_tariff` | Kalibracja taryfy oznaczona jako `unvalidated`. |
 | `unvalidated_capacity` | Kalibracja pojemności baterii oznaczona jako `unvalidated`. |
@@ -1752,5 +1754,5 @@ To są surowe kody, nietłumaczone.
 | Kod | Znaczenie |
 | --- | --- |
 | `balance_overdue` | Faza balansu to `due`, ale w planie nie zmieściło się żadne okno trzymania; balans w tym horyzoncie został pominięty. |
-| `balance_pessimistic_pv_unavailable` | Pesymistyczne źródło PV jest skonfigurowane, ale niedostępne, nieaktualne lub nie pokrywa horyzontu; okna balansu wybrano na serii mediany PV. |
+| `balance_pessimistic_pv_unavailable` | Pesymistyczne źródło PV jest skonfigurowane, ale niedostępne, nieaktualne, błędnie sformatowane lub ujemne albo nie pokrywa horyzontu; okna balansu wybrano na serii mediany PV. |
 | `balance_no_window_in_horizon` | Faza balansu to `eligible` lub `due`, ale w horyzoncie nie istnieje żadne kandydujące okno trzymania (żaden wyrównany start nie spełnia wymogów PV/ładowania z sieci). |

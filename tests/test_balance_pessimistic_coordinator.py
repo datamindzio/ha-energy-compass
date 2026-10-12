@@ -177,3 +177,48 @@ async def test_pessimistic_source_going_bad_changes_the_fingerprint(
     assert content() == changed
     assert len({healthy, changed, malformed}) == 3
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def _setup_unavailable(hass, hass_storage, *, lfp_balance):
+    config = _config()
+    config["settings"]["lfp_balance"] = lfp_balance
+    entry = MockConfigEntry(
+        domain="energy_compass", data=config, title="Home", version=3
+    )
+    entry.add_to_hass(hass)
+    key = f"energy_compass.{entry.entry_id}.balance"
+    hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": DUE}
+    hass.states.async_set("sensor.pv_low", "unavailable", {"rows": _rows(1.0)})
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    return entry
+
+
+async def test_unavailable_pessimistic_entity_with_balance_only_warns_its_own_code(
+    recorder_mock, hass, hass_storage, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    _publish(hass, low=None)
+    entry = await _setup_unavailable(hass, hass_storage, lfp_balance=True)
+    data = entry.runtime_data.data
+    assert data["valid"], data.get("reason")
+    warnings = data["quality"]["warnings"]
+    assert "balance_pessimistic_pv_unavailable" in warnings
+    assert "missing_forecast_continuation" not in warnings
+    assert data["quality"]["missing_sources"] == []
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_unavailable_pessimistic_entity_without_balance_raises_no_warning(
+    recorder_mock, hass, hass_storage, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    _publish(hass, low=None)
+    entry = await _setup_unavailable(hass, hass_storage, lfp_balance=False)
+    data = entry.runtime_data.data
+    assert data["valid"], data.get("reason")
+    warnings = data["quality"]["warnings"]
+    assert "balance_pessimistic_pv_unavailable" not in warnings
+    assert "missing_forecast_continuation" not in warnings
+    assert data["quality"]["missing_sources"] == []
+    assert await hass.config_entries.async_unload(entry.entry_id)

@@ -1656,8 +1656,10 @@ into days by the local date of `start`; settings come only from `--set`.
 - The executed plan follows the controller (`tools/deye_controller/build.py`) against realized data.
   `SELF_CONSUME` and `CHARGE_PV` follow the load: all PV surplus charges the battery and a deficit is
   covered from it. In `CHARGE_GRID` only the grid share follows the plan — the planned charge minus the
-  surplus the forecast promised — and the realized PV surplus charges on top, so PV above the forecast
-  charges more and PV below it charges less, never a shortfall bought from the grid. `DISCHARGE_GRID`
+  surplus the forecast promised — and the grid stops at the row's planned end SOC, as the controller
+  does; the realized PV surplus charges on top. PV above the forecast therefore shrinks the grid
+  import (the SOC may end above plan, by PV only), and PV below it charges less — a shortfall is never
+  bought from the grid, nor a start SOC below plan caught up. `DISCHARGE_GRID`
   discharges the planned energy, `HOLD` parks the battery. Grid export beyond `grid_export_kw` is
   curtailed, and stored energy is not exported beyond the PV produced so far when **Sell only PV**
   (`limit_export_to_pv`) is on.
@@ -1695,7 +1697,7 @@ Use `interval_minutes: 60` for hourly statistics.
 | `reference_probe_failed` | At least one reference probe failed or timed out. |
 | `short_source_coverage` | Price/forecast coverage ends before the requested planning horizon. |
 | `current_guidance_unavailable` | Current interval probe unknown; later windows may still be valid. |
-| `missing_forecast_continuation` | A configured source has not yet published data for part of the requested horizon (e.g. tomorrow's prices before ~14:00). |
+| `missing_forecast_continuation` | A configured source (except the optional pessimistic PV source) has not yet published data for part of the requested horizon (e.g. tomorrow's prices before ~14:00). |
 | `load_history_fallback` | Part of the load forecast uses the fallback daily load because history is insufficient. |
 | `unvalidated_tariff` | Tariff calibration marked `unvalidated`. |
 | `unvalidated_capacity` | Battery capacity calibration marked `unvalidated`. |
@@ -1726,5 +1728,5 @@ These are raw codes, not translated.
 | Code | Meaning |
 | --- | --- |
 | `balance_overdue` | The balance phase is `due` but no hold window could be fit into the plan; a balance was missed this horizon. |
-| `balance_pessimistic_pv_unavailable` | A pessimistic PV source is configured but unavailable, stale or does not cover the horizon; the balance windows were chosen on the median PV series. |
+| `balance_pessimistic_pv_unavailable` | A pessimistic PV source is configured but unavailable, stale, malformed or negative, or does not cover the horizon; the balance windows were chosen on the median PV series. |
 | `balance_no_window_in_horizon` | The balance phase is `eligible` or `due` but no candidate hold window exists in the horizon at all (no aligned start satisfies PV/grid-charge feasibility). |

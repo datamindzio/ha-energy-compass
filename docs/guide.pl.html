@@ -2710,9 +2710,11 @@ grupowane w dni według lokalnej daty <code>start</code>; ustawienia podaje się
 <li>Wykonany plan podąża za sterownikiem (<code>tools/deye_controller/build.py</code>) względem rzeczywistych
   danych. <code>SELF_CONSUME</code> i <code>CHARGE_PV</code> podążają za obciążeniem: cała nadwyżka PV ładuje baterię, a
   niedobór jest pokrywany z niej. W <code>CHARGE_GRID</code> za planem idzie tylko udział sieci — zaplanowane
-  ładowanie minus nadwyżka obiecana przez prognozę — a rzeczywista nadwyżka PV ładuje ponad to, więc
-  PV powyżej prognozy ładuje więcej, a poniżej mniej, nigdy zaś niedoboru nie kupuje się z sieci.
-  <code>DISCHARGE_GRID</code> rozładowuje zaplanowaną energię, <code>HOLD</code> zatrzymuje baterię. Eksport ponad
+  ładowanie minus nadwyżka obiecana przez prognozę — a sieć przestaje ładować po osiągnięciu
+  planowanego końcowego SOC wiersza, tak jak w sterowniku; rzeczywista nadwyżka PV ładuje ponad to.
+  PV powyżej prognozy zmniejsza więc import z sieci (SOC może skończyć powyżej planu, wyłącznie dzięki
+  PV), a poniżej prognozy ładuje mniej — niedoboru nie kupuje się z sieci, a startowy SOC poniżej planu
+  nie jest nadrabiany. <code>DISCHARGE_GRID</code> rozładowuje zaplanowaną energię, <code>HOLD</code> zatrzymuje baterię. Eksport ponad
   <code>grid_export_kw</code> jest ucinany (curtailment), a zmagazynowana energia nie jest eksportowana ponad
   dotychczasową produkcję PV, gdy włączone jest <strong>Sell only PV</strong> (<code>limit_export_to_pv</code>).</li>
 <li><a href="#zapas-na-drogie-okresy">Zapas na drogie okresy</a> (<code>peak_reserve_margin_kwh</code>) jest odtwarzany jak w integracji: wymaga
@@ -2772,7 +2774,7 @@ bez błędu prognozy. Dla statystyk godzinowych ustaw <code>interval_minutes: 60
 </tr>
 <tr>
 <td><code>missing_forecast_continuation</code></td>
-<td>Skonfigurowane źródło nie opublikowało jeszcze danych dla części horyzontu (np. jutrzejsze ceny przed ok. 14:00).</td>
+<td>Skonfigurowane źródło (poza opcjonalnym pesymistycznym źródłem PV) nie opublikowało jeszcze danych dla części horyzontu (np. jutrzejsze ceny przed ok. 14:00).</td>
 </tr>
 <tr>
 <td><code>load_history_fallback</code></td>
@@ -2862,7 +2864,7 @@ bez błędu prognozy. Dla statystyk godzinowych ustaw <code>interval_minutes: 60
 </tr>
 <tr>
 <td><code>balance_pessimistic_pv_unavailable</code></td>
-<td>Pesymistyczne źródło PV jest skonfigurowane, ale niedostępne, nieaktualne lub nie pokrywa horyzontu; okna balansu wybrano na serii mediany PV.</td>
+<td>Pesymistyczne źródło PV jest skonfigurowane, ale niedostępne, nieaktualne, błędnie sformatowane lub ujemne albo nie pokrywa horyzontu; okna balansu wybrano na serii mediany PV.</td>
 </tr>
 <tr>
 <td><code>balance_no_window_in_horizon</code></td>
