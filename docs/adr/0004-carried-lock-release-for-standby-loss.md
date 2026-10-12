@@ -82,10 +82,9 @@ The released rows are `HOLD` with full import, the mode the unlocked solver pick
    problem was `infeasible`; the run reading is what keeps the sweep at zero newly infeasible problems.
    The solver reports which rows it bridged (`Plan.carried_bridges`) and hands them to
    `validate_modes(problem, flows, bridges)`. A bridge row must be `HOLD` in an interval `idle_slots` lists; every
-   other `HOLD` row, an idle one included, takes the normal release check. Without `bridges` every idle row reads as
-   a bridge. Flexible-load probes are out of scope of the bridge reading: the model takes the idle set with the
-   largest probe it may add, and the validator checks the bridges the solver reports against the problem it is
-   given. The controller writes the `HOLD` registers for a bridge row, which is what the inverter does anyway with
+   other `HOLD` row, an idle one included, takes the normal release check. Without `bridges` the validator accepts
+   either reading of an idle `HOLD` row (T-038; T-025 read every idle row as a bridge).
+   The controller writes the `HOLD` registers for a bridge row, which is what the inverter does anyway with
    nothing to follow. The coordinator keeps the persisted commitment (mode and start) on a bridge row, so the next
    calculation still carries `SELF_CONSUME`/`CHARGE_PV`, and the clock of a later real `HOLD` run starts at its own
    first row, not at the bridges before it (`mode_run_start`); `dispatch_policy.carried_idle_starts` lists the bridge
@@ -98,11 +97,42 @@ The released rows are `HOLD` with full import, the mode the unlocked solver pick
 3. Only the carried commitment is covered. A PV-follow mode the solver starts itself still needs its next
    intervals to offer a member (no `HOLD` bridge); changing that is a separate decision.
 
-Evidence: `tests/test_carried_commitment_sweep.py` keeps a seeded corpus of committed problems (2 to 16 quarter
-hours, loads and PV around the minimum activity, both initial modes, 30/60/120 minute durations, sites that cannot
-export, packs a hair above the reserve or below the ceiling, standby loss, a legacy direction guard, flexible-load
-probes). It fails on main and passes here: every problem is planned or `infeasible`, never rejected by the
-validator, and no plan starts `HOLD` on a chargeable surplus. Against main, seed 11 with 1200 problems in each of
-three variants (plain, with the legacy direction guard, with flexible-load probes) gave no newly infeasible
-problem. What stays `infeasible` there is `preserve_initial` that cannot be met (T-001) and the rare standby loss
-that only scattered PV could pay.
+## Follow-up (T-038): the legacy direction guard and flexible-load probes
+
+T-025 left two neighbours of the rule without a plan: a direction the legacy guard blocks was read as open, and a
+flexible-load probe was held to the tightening without the bridge reading.
+
+1. **A blocked direction is not open.** `_takes_surplus`, `_follow_open`, the mode availability in
+   `constrain_modes` (`CHARGE_PV` and `SELF_CONSUME` get no capacity in the direction the guard blocks) and
+   `validate_modes` all take `_guarded`, so a guarded pack that may not charge has no `CHARGE_PV` to follow, one that
+   may not discharge has no `SELF_CONSUME`, and an interval with only that direction to follow is idle (a bridge or a
+   `HOLD` run, as above). Seeded repros E and F of the T-025 review are tests.
+2. **Probes get the bridge reading, with the model and the validator on one idle set.** The alternative was to drop
+   the tightening for probes, which would again let a plan start `HOLD` on a chargeable surplus the moment a probe
+   is asked about. Instead the validator receives the realised problem (the slot load plus the probe) and the model
+   reads it the same way: a row idle without the probe is a bridge only while the probe it takes stays below
+   `probe_room` (the load at which `SELF_CONSUME` would open, less `_PROBE_MARGIN = 1e-5` kWh, which keeps HiGHS
+   away from tiny coefficients); otherwise it is an ordinary committed row. A surplus the probe takes below the
+   minimum activity is not chargeable as realised (`open_surplus`, with `release`), so `HOLD` may start on it.
+   Slots exactly at the minimum activity differ between the base and the realised load by rounding, so a flow within
+   `_OPEN_TOLERANCE = 1e-9` kWh of it counts as reaching it in the availability, `_follow_open` and `_takes_surplus`.
+3. **What stays infeasible until the commitment ends.** The commitment forbids a plan that started `HOLD` on a
+   surplus the pack could take, and some problems had no other plan: a `preserve_initial` terminal the commitment
+   leaves no way to meet (pinned problem #44, infeasible without a probe as well, so a probe does not change it), a
+   daily throughput budget smaller than the minimum activity the commitment asks for, and the standby loss case
+   above. `docs/model.md` lists them; the optimizer reports `infeasible` and the last plan is retained.
+4. `validate_modes(problem, flows, bridges=None)` means *either reading*, and a test covers `_publish_current`
+   deriving `carried_idle` and `mode_start` from `carried_idle_starts`.
+
+Evidence (corrected in T-038): `tests/test_carried_commitment_sweep.py` keeps a seeded corpus of committed problems
+(2 to 16 quarter hours, loads and PV around the minimum activity, both initial modes, 30/60/120 minute durations,
+sites that cannot export, packs a hair above the reserve or below the ceiling, standby loss, a legacy direction guard,
+flexible-load probes). It fails on main and passes here: every problem is planned or `infeasible`, never rejected by
+the validator, and no plan starts `HOLD` on a chargeable surplus. T-025 stated that seed 11 gave no newly infeasible
+problem against main; it did not: the review found problems with the legacy guard and with probes that were planned
+on 34d6e1f and `infeasible` after T-025 (repros E and F, probes #44, #62, #917, #1424). The T-038 sweep
+(`tests/test_carried_commitment_guard_probes.py` pins them) compares eight seeded corpora of 1500 problems each
+(plain, flexible-load probes, with and without the guard; seeds 211 to 233) against 34d6e1f: no newly
+`solver_failure`, no `HOLD` started on a chargeable surplus with a pack that is not full, and three newly
+`infeasible` problems in 12000, all of them plans that had started `HOLD` on a chargeable surplus (a
+`preserve_initial` terminal in one, a daily throughput budget in two), the class under point 3.

@@ -667,8 +667,15 @@ Rules (defaults: 60 min, 0.1 kW):
   (`dispatch_policy.carried_idle_starts` lists the bridged intervals). The plan is
   `infeasible` until the commitment ends when the
   terminal rule cannot be met afterwards (`preserve_initial` with no later PV or grid charge to
-  refill what the house drew); the rare remaining cases are listed in
-  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget).
+  refill what the house drew; a flexible-load probe does not change that) or when the daily
+  throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
+  cases are listed in
+  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget). A direction the
+  legacy direction guard blocks (`initial_battery_mode`) is not open: a pack that may not charge
+  has no `CHARGE_PV` to follow and one that may not discharge has no `SELF_CONSUME`, so an interval
+  with only that direction to follow is bridged too. A flexible-load probe is bridged the same
+  way, as long as the probe it takes leaves the interval idle; a PV surplus it takes below the
+  minimum activity is not one the pack could take, so `HOLD` may start on it.
 - **`CHARGE_PV` follows the surplus.** The inverter charges with every watt the house does not
   use, so the plan never pairs a partial charge with grid export: in a `CHARGE_PV` interval the
   battery takes the whole PV surplus, and export appears only once the charge is at its interval

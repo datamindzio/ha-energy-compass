@@ -790,8 +790,8 @@ def test_an_idle_interval_after_a_depleting_one_may_start_the_hold_run():
 
 
 def test_a_flexible_load_probe_agrees_with_its_own_validator():
-    # The model's idle set uses the largest probe, the validator sees the realised
-    # one; the rows the model reads as bridges are the ones it hands over.
+    # The model reads a row as a bridge only when it is idle as realised, which is
+    # what the validator sees; the rows it reads as bridges are the ones it hands over.
     rows = [(0.01, 0.0), (0.5, 0.1), (0.02, 0.02), (0.03, 0.01), (0.02, 0.05)]
     problem = spent_pack_problem(
         rows,
@@ -801,7 +801,15 @@ def test_a_flexible_load_probe_agrees_with_its_own_validator():
         initial_dispatch_mode_since=DUSK,
     )
     result = solve_flexible_load(problem, FlexibleLoadRequest(0.3, 0.5))
-    assert modes(result.plan) == ["HOLD"] * 5
+    # The first row is a bridge, so the commitment goes on into the surplus after it.
+    assert modes(result.plan) == [
+        "HOLD",
+        "CHARGE_PV",
+        "SELF_CONSUME",
+        "HOLD",
+        "SELF_CONSUME",
+    ]
+    assert result.plan.carried_bridges == (0, 3)
     validate_modes(
         replace(
             problem,
