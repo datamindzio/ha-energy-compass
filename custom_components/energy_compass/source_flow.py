@@ -8,6 +8,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 
+from .calibration import BATTERY_COUNTER_MEASUREMENTS
 from .config_models import (
     LoadSource,
     NumericSetting,
@@ -70,6 +71,7 @@ MEASUREMENTS = (
     "grid_import_energy",
     "grid_export_energy",
     "throughput_today",
+    *BATTERY_COUNTER_MEASUREMENTS,
     *DAILY_EXPORT_MEASUREMENTS,
 )
 TARGETS = (
@@ -201,7 +203,13 @@ class SourceEditor:
             return ["forecast"]
         if target == "load":
             return ["fixed", "forecast", "statistic", "power_history"]
-        if target in ("soc", "bms_soc", "throughput_today", *DAILY_EXPORT_MEASUREMENTS):
+        if target in (
+            "soc",
+            "bms_soc",
+            "throughput_today",
+            *BATTERY_COUNTER_MEASUREMENTS,
+            *DAILY_EXPORT_MEASUREMENTS,
+        ):
             return ["measurement"]
         return ["measurement", "statistic"]
 
@@ -219,7 +227,8 @@ class SourceEditor:
             elif (
                 target in ("pv", "pv_pessimistic")
                 and not self._draft["sources"]["pv"]["enabled"]
-                or target in ("soc", "bms_soc", "throughput_today")
+                or target
+                in ("soc", "bms_soc", "throughput_today", *BATTERY_COUNTER_MEASUREMENTS)
                 and not self._draft["sources"]["battery_enabled"]
             ):
                 errors["base"] = "component_disabled"
@@ -288,7 +297,12 @@ class SourceEditor:
                 if ref.role in ("buy", "sell")
                 and self._draft["helpers"].get(f"{ref.role}_rate")
                 else "measurement"
-                if ref.role in ("throughput_today", *DAILY_EXPORT_MEASUREMENTS)
+                if ref.role
+                in (
+                    "throughput_today",
+                    *BATTERY_COUNTER_MEASUREMENTS,
+                    *DAILY_EXPORT_MEASUREMENTS,
+                )
                 and ref.kind == "statistic"
                 else "statistic"
                 if ref.kind == "statistic"
@@ -707,7 +721,12 @@ class SourceEditor:
             *(
                 name
                 for name in MEASUREMENTS
-                if name not in ("throughput_today", *DAILY_EXPORT_MEASUREMENTS)
+                if name
+                not in (
+                    "throughput_today",
+                    *BATTERY_COUNTER_MEASUREMENTS,
+                    *DAILY_EXPORT_MEASUREMENTS,
+                )
             ),
         ):
             return self.async_show_form(
@@ -1223,7 +1242,12 @@ class SourceEditor:
                             "max_age_seconds", current.get("max_age_seconds")
                         ),
                         minimum=0
-                        if target in ("throughput_today", *DAILY_EXPORT_MEASUREMENTS)
+                        if target
+                        in (
+                            "throughput_today",
+                            *BATTERY_COUNTER_MEASUREMENTS,
+                            *DAILY_EXPORT_MEASUREMENTS,
+                        )
                         else current.get("minimum"),
                         maximum=current.get("maximum"),
                     ).to_dict()
@@ -1267,7 +1291,7 @@ class SourceEditor:
                 else selected_age
                 if selected_age is not None
                 else 86400
-                if target in DAILY_EXPORT_MEASUREMENTS
+                if target in (*BATTERY_COUNTER_MEASUREMENTS, *DAILY_EXPORT_MEASUREMENTS)
                 else 600,
             )
         )

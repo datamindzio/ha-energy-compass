@@ -314,12 +314,14 @@ falownika.
   `pv_power` ani `pv_energy`; przy wyłączonej baterii nie ma `soc`, `bms_soc` ani `battery_power`.
   Dwa liczniki dzienne nie podlegają bramkom.
 - **Zapisywane limity wieku** pomiarów: 3600 s dla `battery_power`, `grid_import_power` i
-  `grid_export_power`; 86400 s dla `pv_power`, liczników skumulowanych i liczników dziennych (stałe
-  0 W w nocy nigdy nie aktualizuje stanu).
+  `grid_export_power`; 86400 s dla `pv_power`, liczników skumulowanych, liczników energii ładowania
+  i rozładowania baterii oraz liczników dziennych (stałe 0 W w nocy nigdy nie aktualizuje stanu).
 - **Nigdy nie wykrywane:** `buy`; `throughput_today` (aby użyć `daily_cycles`, podaj jedną encję z
   sumą ładowania i rozładowania po stronie AC od północy, zob. [wymagania
   źródeł](source-requirements.md#daily-battery-throughput)); `battery_energy`,
-  `battery_charge_power` i `battery_discharge_power`; oraz pomocniki.
+  `battery_charge_power`, `battery_discharge_power`, `battery_charge_energy` i
+  `battery_discharge_energy` (opcjonalne liczniki [pomiarów
+  kalibracyjnych](#pomiary-kalibracyjne-opcjonalnie)); oraz pomocniki.
 
 Podgląd pokazuje potem zwykłe potwierdzenia nowego wpisu. Jego pole **Wróć do menu głównego** (nic
 nie zostanie zapisane) opuszcza Podgląd bez walidacji i zapisu. Tabele pomocnicze są w [wymaganiach
@@ -466,8 +468,64 @@ stateDiagram-v2
 | `insufficient_data` | Insufficient data / Za mało danych | Zarezerwowany w tłumaczeniach; **nie jest emitowany** przez obecny koordynator — brak danych daje `invalid_input`. | — |
 
 Atrybuty: `last_calculation_started_at`, `calculations_since_load`,
-`expired_previous_generated_at`. Diagnostyka dodaje `calculations_last_hour` i
-`calculations_last_24h`.
+`expired_previous_generated_at` oraz `measured_calibration`, gdy podpięto liczniki kalibracyjne
+(zob. [Pomiary kalibracyjne](#pomiary-kalibracyjne-opcjonalnie)). Diagnostyka dodaje
+`calculations_last_hour` i `calculations_last_24h`.
+
+### Pomiary kalibracyjne (opcjonalnie)
+
+Plany niosą `calibration` i `capacity_calibration`, które pozostają `unvalidated`, dopóki ich nie
+ustawisz, i nie mówią nic o tym, jak daleko ustawione wartości są od rzeczywistości. Dwie
+diagnostyki tylko do odczytu porównują je z Twoimi licznikami. Nigdy nie zmieniają planu. Blok
+pojawia się tylko, gdy jego źródła są podpięte; bez żadnego źródła `measured_calibration` nie ma ani
+w atrybutach Stanu optymalizatora (wyłączonych z rejestratora), ani w diagnostyce integracji.
+
+| Blok | Źródła (Źródła → Dodaj źródło → Pomiar) | Raportuje |
+| --- | --- | --- |
+| `battery_round_trip` | `battery_charge_energy` i `battery_discharge_energy`: liczniki całkowite energii przechodzącej przez zaciski baterii, kWh lub Wh, bateria włączona | energia rozładowania ÷ energia ładowania z ostatnich 30 dni, obok ustawionego `eta_charge × eta_discharge` |
+| `pv_forecast_accuracy` | `pv_energy`: całkowity licznik PV, PV włączone, encja (nie statystyka rejestratora) | rzeczywista ÷ prognozowana energia PV z ostatnich 14 dni, łącznie i dla każdej lokalnej godziny doby |
+
+| Pole | Znaczenie |
+| --- | --- |
+| `status` | `ok` albo `insufficient_data`, dopóki okno jest za krótkie |
+| `window_days`, `covered_hours` | Okno kroczące (30 / 14 dni) i pełne godziny, które miały wszystkie potrzebne wartości |
+| `minimum_hours` | Pokryte godziny potrzebne, zanim pojawi się stosunek: 168 dla sprawności cyklu (i co najmniej 1 kWh ładowania), 24 dla PV |
+| `charge_kwh`, `discharge_kwh` | Sprawność cyklu: zsumowane przyrosty liczników w pokrytych godzinach |
+| `measured`, `configured`, `difference` | Sprawność cyklu: zmierzony stosunek (null do `ok`), `eta_charge × eta_discharge` oraz pierwszy minus drugi |
+| `forecast_kwh`, `measured_kwh`, `ratio` | PV: sumy z pokrytych godzin i ich iloraz; `ratio` jest null, gdy suma prognozy jest poniżej 0,05 kWh albo gdy `status` to `insufficient_data` |
+| `by_local_hour` | PV: klucze `"00"`–`"23"` (godzina doby w strefie czasowej instalacji), każdy z `ratio`, `hours`, `forecast_kwh` i `measured_kwh` |
+
+Jak to jest mierzone:
+
+- **Granice godzin.** Każdy odczyt licznika dostaje znacznik czasu raportu samego źródła i jest
+  sprowadzany do wartości na każdej pełnej godzinie UTC przez interpolację między kolejnymi
+  odczytami. Licznik bez zmian jest dokładny przy dowolnej przerwie; licznik rosnący w przerwie
+  dłuższej niż 2 godziny nie daje wartości. Energia godziny to różnica jej dwóch granic.
+- **Liczniki bezczynne.** Licznik, który zapisuje stan tylko przy zmianie (szablon, utility meter
+  lub helper całkujący), nie raportuje w bezczynności. Taki, który nie zmienił się dłużej niż
+  2 godziny, jest uznawany za utrzymujący wartość do teraz, dopóki jego ostatni raport nie jest
+  starszy niż maksymalny wiek źródła (domyślnie 24 godziny; przy wyłączonej kontroli wieku bez
+  limitu), więc jego bezczynne godziny się liczą. Zamrożone źródło od bezczynnego odróżnia wyłącznie
+  ten wiek: po jego przekroczeniu godziny wypadają. Godziny bezczynności pojawiają się z
+  2-godzinnym opóźnieniem, a źródło utrzymujące stałą niezerową moc bez zapisu stanu jest
+  odczytywane jako bezczynne.
+- **Brakujące godziny, resety i zakłócenia.** Godzina bez obu granic jest pomijana, nigdy
+  uzupełniana. Licznik, który maleje, to reset albo zakłócenie: ani spadek, ani odcinek, który z
+  niego wychodzi, nie dają granicy, więc godziny po obu stronach wypadają z obu stosunków (licznik po
+  resecie jest używany znów od drugiego odczytu). Wzrost szybszy niż 100 kW (plus 1 kWh) między
+  dwoma odczytami jest odrzucany tak samo, podobnie jak przyrost godziny powyżej 101 kWh; pojedynczy
+  absurdalny odczyt kosztuje więc kilka godzin i nigdy nie przekłamuje stosunku.
+- **Zmiana źródła.** Zapisane wartości licznika należą do encji, atrybutu, mnożnika i jednostki, z
+  których je odczytano. Podpięcie roli pod inne źródło czyści historię tego licznika (drugi licznik
+  zachowuje swoją), a stosunek wypełnia się od nowa.
+- **Prognoza „jak użyta”.** Każdy opublikowany plan zapisuje swoją prognozę PV na bieżącą godzinę
+  (przeskalowaną z reszty godziny, gdy plan liczono w jej trakcie). Zostaje najpełniejszy plan danej
+  godziny; plan pokrywający mniej niż połowę godziny nie jest zapisywany. Bieżąca, niedokończona
+  godzina nie jest porównywana.
+- **Przechowywanie.** Jeden mały wiersz na godzinę: około 31 dni wartości liczników i 15 dni
+  prognoz, we własnym magazynie integracji (`energy_compass.<entry_id>.calibration`), zapisywany przy
+  każdej nowej godzinie i przy wyładowaniu, odczytywany przy starcie. Niepoprawny magazyn jest
+  odrzucany z ostrzeżeniem.
 
 ### Wyniki wyprzedzone
 

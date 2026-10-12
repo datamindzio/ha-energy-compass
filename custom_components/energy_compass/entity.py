@@ -34,6 +34,7 @@ PLAN_ATTRIBUTES = frozenset(
         "measurements",
         "load_quality",
         "flexible_load_profiles",
+        "measured_calibration",
     }
 )
 
@@ -257,6 +258,9 @@ class EnergyCompassEntity(CoordinatorEntity):
             counts = self.coordinator.calculation_counts()
             attrs["last_calculation_started_at"] = counts["last_calculation_started_at"]
             attrs["calculations_since_load"] = counts["calculations_since_load"]
+            measured = self.coordinator.calibration_report()
+            if measured is not None:
+                attrs["measured_calibration"] = measured
         return attrs
 
 

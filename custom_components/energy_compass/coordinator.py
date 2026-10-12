@@ -17,6 +17,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from . import calibration
 from .balance_tracker import (
     balance_settings,
     empty_state,
@@ -111,6 +112,10 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         # so the next start retries the recorder.
         self._balance_persist = True
         self._balance_store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.balance")
+        self._calibration = calibration.empty_state()
+        self._calibration_store = Store(
+            hass, 1, f"{DOMAIN}.{entry.entry_id}.calibration"
+        )
         self.previous_plan = None
         # Set by async_setup_entry only when options["atlas"]["enabled"] (ADR-0019 §3).
         self.atlas = None
@@ -141,6 +146,11 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             self._balance = None
         if self._balance is None:
             self._balance = await self._seed_balance()
+        stored = await self._calibration_store.async_load()
+        if stored is not None and not calibration.valid_state(stored):
+            _LOGGER.warning("Invalid stored calibration state; starting empty")
+            stored = None
+        self._calibration = stored or calibration.empty_state()
         self._registry_unsub = self.hass.bus.async_listen(
             er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_changed
         )
@@ -277,6 +287,53 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             "planned_mode": window["mode"] if window else None,
             "pv_series": self.data.get("balance_pv_series"),
         }
+
+    def _observe_calibration(self, config, states, now):
+        """Fold counter readings into the calibration store; never raises."""
+        try:
+            if not any(calibration.configured_blocks(config)):
+                return
+            readings = calibration.read_counters(config, states, now)
+            if calibration.observe(self._calibration, readings, now):
+                self._calibration_store.async_delay_save(lambda: self._calibration, 30)
+        except Exception:
+            _LOGGER.debug("Calibration observation failed", exc_info=True)
+
+    def _record_pv_forecast(self, result, now):
+        try:
+            if calibration.record_forecast(
+                self._calibration, result.get("pv_forecast_hours"), now
+            ):
+                self._calibration_store.async_delay_save(lambda: self._calibration, 30)
+        except Exception:
+            _LOGGER.debug("PV forecast recording failed", exc_info=True)
+
+    def calibration_report(self, now=None):
+        """Measured round trip and PV forecast accuracy; None without sources."""
+        round_trip, pv = calibration.configured_blocks(self.configuration)
+        if not (round_trip or pv):
+            return None
+        now = now or dt_util.utcnow()
+        report = {}
+        if round_trip:
+            params = self.data.get("controller_parameters") or {}
+            settings = self.configuration["settings"]
+            charge = params.get("eta_charge", settings.get("eta_charge"))
+            discharge = params.get("eta_discharge", settings.get("eta_discharge"))
+            configured = (
+                charge * discharge
+                if isinstance(charge, int | float)
+                and isinstance(discharge, int | float)
+                else None
+            )
+            report["battery_round_trip"] = calibration.round_trip_report(
+                self._calibration, now, configured
+            )
+        if pv:
+            report["pv_forecast_accuracy"] = calibration.pv_accuracy_report(
+                self._calibration, now, self.configuration["timezone"]
+            )
+        return report
 
     def _subscribe(self):
         if self._source_unsub:
@@ -446,6 +503,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         self.configuration = config
         states = snapshot(self.hass, config)
         now = dt_util.utcnow()
+        self._observe_calibration(config, states, now)
         values = effective_settings(config, states, now)
         daily_export_observations(config, states, values, now)
         source, _ = available_forecasts(
@@ -833,6 +891,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         }
         if not retained:
             self.last_successful_plan_at = result["generated_at"]
+        self._record_pv_forecast(result, now)
         self._anchor_windows({**current_result, "generated_at": now.isoformat()})
         self.async_set_updated_data(current_result)
 
@@ -1157,3 +1216,4 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         await self._grid_charge_store.async_save(self._grid_charge_commitment)
         if self._balance is not None and self._balance_persist:
             await self._balance_store.async_save(self._balance)
+        await self._calibration_store.async_save(self._calibration)

@@ -432,6 +432,7 @@
           </table>
         </section>
         <p>This entity remains available during calculation failures. Attribute <code>expired_previous_generated_at</code> identifies the last invalidated plan snapshot when one exists.</p>
+        <p>When the optional lifetime counters <code>battery_charge_energy</code> and <code>battery_discharge_energy</code> (battery round trip) or <code>pv_energy</code> (PV forecast accuracy) are bound as Sources measurements, attribute <code>measured_calibration</code> (also in the integration diagnostics) reports the measured round trip over 30 days next to <code>eta_charge × eta_discharge</code> and the real ÷ forecast PV ratio over 14 days, in total and per local hour. It is read-only and never changes a plan; without those sources the attribute is absent. See the <a href="guide.en.html#measured-calibration-optional">guide</a>.</p>
       </article>
 
       <article id="battery_balance">

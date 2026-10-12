@@ -310,11 +310,13 @@ dashboard's two grid meters resolve to the inverter's counter.
   `pv_energy` rows; with the battery off no `soc`, `bms_soc` or `battery_power` rows. The two daily
   counters are never gated.
 - **Stored age limits** of the measurements: 3600 s for `battery_power`, `grid_import_power` and
-  `grid_export_power`; 86400 s for `pv_power`, the lifetime counters and the daily counters (a
-  constant 0 W at night never updates the state).
+  `grid_export_power`; 86400 s for `pv_power`, the lifetime counters, the battery charge and discharge
+  energy counters and the daily counters (a constant 0 W at night never updates the state).
 - **Never detected:** `buy`; `throughput_today` (to use `daily_cycles` provide one entity with the
   AC-side charge plus discharge since midnight, see [source requirements](source-requirements.md#daily-battery-throughput));
-  `battery_energy`, `battery_charge_power` and `battery_discharge_power`; and helpers.
+  `battery_energy`, `battery_charge_power`, `battery_discharge_power`, `battery_charge_energy` and
+  `battery_discharge_energy` (the optional [measured calibration](#measured-calibration-optional)
+  counters); and helpers.
 
 Preview then shows the usual acknowledgements for a new entry. Its **Back to the main menu**
 checkbox leaves Preview without validating or saving anything. The matching reference tables are in
@@ -462,8 +464,62 @@ stateDiagram-v2
 | `insufficient_data` | Insufficient data / Za mało danych | Reserved in translations; **not emitted** by the current coordinator — missing data reports `invalid_input`. | — |
 
 Attributes: `last_calculation_started_at`, `calculations_since_load`,
-`expired_previous_generated_at`. Diagnostics add `calculations_last_hour` and
-`calculations_last_24h`.
+`expired_previous_generated_at`, and `measured_calibration` when calibration counters are bound
+(see [Measured calibration](#measured-calibration-optional)). Diagnostics add
+`calculations_last_hour` and `calculations_last_24h`.
+
+### Measured calibration (optional)
+
+Plans carry `calibration` and `capacity_calibration`, which stay `unvalidated` until you set them and
+say nothing about how far the configured values are from reality. Two read-only diagnostics compare
+them with your own counters. They never change a plan. A block appears only while its sources are
+bound; with none bound, `measured_calibration` is absent from the Optimizer status attributes
+(excluded from the recorder) and from the integration diagnostics.
+
+| Block | Sources (Sources → Add source → Measurement) | Reports |
+| --- | --- | --- |
+| `battery_round_trip` | `battery_charge_energy` and `battery_discharge_energy`: lifetime counters of the energy that passed the battery terminals, kWh or Wh, battery enabled | discharge ÷ charge energy over the last 30 days, next to the configured `eta_charge × eta_discharge` |
+| `pv_forecast_accuracy` | `pv_energy`: the lifetime PV counter, PV enabled, an entity (not a recorder statistic) | real ÷ forecast PV energy over the last 14 days, in total and per local hour of the day |
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `ok`, or `insufficient_data` while the window is too short |
+| `window_days`, `covered_hours` | Rolling window (30 / 14 days) and the full hours that had every value they need |
+| `minimum_hours` | Covered hours needed before the ratio is shown: 168 for the round trip (and at least 1 kWh charged), 24 for PV |
+| `charge_kwh`, `discharge_kwh` | Round trip: summed counter deltas over the covered hours |
+| `measured`, `configured`, `difference` | Round trip: measured ratio (null until `ok`), `eta_charge × eta_discharge` and the first minus the second |
+| `forecast_kwh`, `measured_kwh`, `ratio` | PV: sums over covered hours and their quotient; `ratio` is null when the forecast sum is below 0.05 kWh or while `status` is `insufficient_data` |
+| `by_local_hour` | PV: keys `"00"`–`"23"` (hour of the day in the installation timezone), each with `ratio`, `hours`, `forecast_kwh` and `measured_kwh` |
+
+How it is measured:
+
+- **Hour boundaries.** Each counter reading is stamped with the source's own report time and reduced
+  to its value at every full UTC hour by interpolating between consecutive readings. An unchanged
+  counter is exact however long the gap; a moving one across a gap longer than 2 hours gives no
+  value. Energy of an hour is the difference of its two boundaries.
+- **Idle counters.** A counter that writes its state only when it moves (a template, utility meter
+  or integration helper) does not report while idle. One that has not changed for more than 2 hours
+  is taken to hold its value up to now, as long as its last report is no older than the source's
+  maximum age (24 hours by default; with the age check off, no limit), so its idle hours count.
+  Only that age tells a frozen source from an idle one: past it the hours drop out. Idle hours
+  appear 2 hours late, and a source that holds a steady non-zero rate without writing its state is
+  read as idle.
+- **Missing hours, resets and glitches.** An hour without both boundaries is skipped, never filled.
+  A counter that goes down is a reset or a glitch: neither the step down nor the segment that
+  recovers from it yields a boundary, so the hours on both sides drop out of both ratios (a counter
+  that restarts after a reset is used again from its second reading). A rise faster than 100 kW
+  (plus 1 kWh) between two readings is rejected the same way, as is an hour delta above 101 kWh, so
+  a single absurd reading costs a few hours and never skews a ratio.
+- **Rebinding.** Stored counter values belong to the entity, attribute, multiplier and unit they
+  were read from. Binding the role to something else clears that counter's history (the other
+  counter keeps its own) and the ratio fills again from then on.
+- **Forecast as used.** Each published plan records its PV forecast for the current hour (scaled up
+  from the remainder when the plan was solved mid-hour). The fullest plan of the hour is kept; a plan
+  that covers less than half of the hour is not recorded. The current, unfinished hour is not
+  compared.
+- **Storage.** One small row per hour: about 31 days of counter values and 15 days of forecasts, kept
+  in the integration's own store (`energy_compass.<entry_id>.calibration`), saved at each new hour and
+  on unload, restored on start. An invalid store is dropped with a warning.
 
 ### Superseded results
 
