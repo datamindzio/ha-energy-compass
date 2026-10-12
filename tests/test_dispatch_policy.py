@@ -275,6 +275,34 @@ def test_flow_above_the_classifier_threshold_is_not_hold():
         validate_modes(problem, (flow,))
 
 
+@pytest.mark.parametrize(("excess", "valid"), [(5e-7, True), (2e-6, False)])
+def test_charge_pv_upper_bound_follows_the_classifier_threshold(excess, valid):
+    # Surplus is 1 kWh; the classifier labels CHARGE_PV up to surplus + 1e-6.
+    problem = dispatch(((1, 0, 2, 1),), minimum_mode_minutes=15)
+    flow = Flow(0, 0, 1 + excess, 0, 0, 1 + excess, "charge", "CHARGE_PV")
+    if valid:
+        validate_modes(problem, (flow,))
+    else:
+        with pytest.raises(SolveError, match="physical dispatch mode"):
+            validate_modes(problem, (flow,))
+
+
+def test_legacy_direction_guard_tolerates_classifier_noise():
+    problem = dispatch(((0, 0, 0, 1),), minimum_mode_minutes=15)
+    problem = replace(
+        problem,
+        initial_battery_mode="charge",
+        initial_battery_mode_since=problem.slots[0].start,
+    )
+    # Noise the classifier reads as HOLD must not trip the discharge guard.
+    validate_modes(problem, (Flow(0, 0, 0, 5e-7, 0, 0, None, "HOLD"),))
+    # A real discharge during a charge commitment still does.
+    with pytest.raises(SolveError, match="legacy direction guard"):
+        validate_modes(
+            problem, (Flow(0, 0, 0, 0.5, 0, 0, "discharge", "SELF_CONSUME"),)
+        )
+
+
 async def test_direction_commitment_survives_recalculate_and_reload(
     recorder_mock, hass, enable_custom_integrations, freezer
 ):

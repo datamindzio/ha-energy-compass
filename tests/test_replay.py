@@ -27,8 +27,8 @@ def test_sample_prices_plan_between_self_use_and_hindsight(capsys):
     assert code == 0
     assert [day["date"] for day in days] == ["2026-09-20", "2026-09-21"]
     expected = {
-        "2026-09-20": (-0.7249, 0.7308, -0.7383),
-        "2026-09-21": (2.7562, 3.9765, 2.0073),
+        "2026-09-20": (-0.7249, 0.7308, -0.7249),
+        "2026-09-21": (2.6933, 3.9765, 2.0073),
     }
     for day in days:
         plan, self_use, hindsight = expected[day["date"]]
@@ -44,7 +44,7 @@ def test_table_prints_the_three_costs_and_totals(capsys):
 
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].split()[:4] == ["date", "plan", "self_use", "hindsight"]
-    assert lines[-1].split()[:4] == ["total", "2.031", "4.707", "1.269"]
+    assert lines[-1].split()[:4] == ["total", "1.968", "4.707", "1.282"]
 
 
 def test_set_overrides_a_setting_so_runs_compare(capsys):
@@ -460,8 +460,8 @@ def test_low_export_factor_moves_the_plan_but_not_the_measuring_stick(capsys):
 
     assert code == 0
     assert _total(low, "self_use") == pytest.approx(_total(baseline, "self_use"))
-    assert _total(low, "plan") == pytest.approx(2.151, abs=1e-3)
-    assert _total(low, "hindsight") == pytest.approx(1.336, abs=1e-3)
+    assert _total(low, "plan") == pytest.approx(2.495, abs=1e-3)
+    assert _total(low, "hindsight") == pytest.approx(1.481, abs=1e-3)
     assert _total(low, "plan") > _total(baseline, "plan")
 
 

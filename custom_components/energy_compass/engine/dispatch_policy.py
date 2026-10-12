@@ -170,9 +170,49 @@ def _lock_floor(problem, drains, index) -> float:
     )
 
 
+def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
+    """Apply the load-following rule without the mode model.
+
+    With no minimum duration there are no mode binaries, but the flows are still
+    labelled SELF_CONSUME and a controller still holds the full discharge cap,
+    so a partial discharge next to import stays unexecutable. One binary per
+    interval stands for "the battery discharges"; it plays the role of the
+    SELF_CONSUME indicator, and the rule on the discharge is the same.
+    """
+    battery = problem.battery
+    reserve = battery.capacity_kwh * battery.minimum_soc_fraction
+    lowest = battery.initial_kwh
+    for slot, v, drain in zip(
+        problem.slots, vectors, drain_schedule(problem), strict=True
+    ):
+        hours = (
+            slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
+        ).total_seconds() / 3600
+        discharge_max = model.upper[v["bd"]]
+        lowest -= discharge_max / battery.eta_discharge + drain
+        if discharge_max <= 0:
+            continue
+        discharging = v["discharging"] = model.variable(binary=True)
+        model.constrain({v["bd"]: 1, discharging: -discharge_max}, -np.inf, 0)
+        flex_max = model.upper[v["flex_load"]] if flexible_load else 0
+        _follow_load(
+            model,
+            problem,
+            v,
+            {"SELF_CONSUME": discharging},
+            slot,
+            hours,
+            flex_max,
+            lowest <= reserve,
+        )
+
+
 def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) -> None:
     """Bind one named state to material flows and forbid premature transitions."""
-    if not problem.battery or not problem.minimum_mode_minutes:
+    if not problem.battery:
+        return
+    if not problem.minimum_mode_minutes:
+        _follow_load_unmoded(model, problem, vectors, flexible_load=flexible_load)
         return
     battery = problem.battery
     dwell = timedelta(minutes=problem.minimum_mode_minutes)
@@ -385,9 +425,35 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             model.constrain(holding, -np.inf, 0)
 
 
+def _check_load_following(problem: Problem, slot, flow, mode) -> None:
+    """Reject import beside a partial discharge in a SELF_CONSUME interval."""
+    if mode != "SELF_CONSUME" or flow.grid_import_kwh <= _IMPORT_TOLERANCE:
+        return
+    hours = (
+        slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
+    ).total_seconds() / 3600
+    power_limit = min(
+        problem.battery.discharge_kw * hours,
+        problem.site.inverter_kw * hours - slot.pv_kwh,
+    )
+    reserve = problem.battery.capacity_kwh * problem.battery.minimum_soc_fraction
+    if (
+        flow.discharge_kwh < power_limit - _IMPORT_TOLERANCE
+        and flow.end_soc_kwh > reserve + _EMPTY_TOLERANCE
+    ):
+        raise SolveError(
+            "solver_failure",
+            "invalid solver result: self-consume imports below its limit",
+        )
+
+
 def validate_modes(problem: Problem, flows) -> None:
     """Independently certify labels, activity, coverage and carried commitments."""
-    if not problem.battery or not problem.minimum_mode_minutes:
+    if not problem.battery:
+        return
+    if not problem.minimum_mode_minutes:
+        for slot, flow in zip(problem.slots, flows, strict=True):
+            _check_load_following(problem, slot, flow, machine_state(slot, flow))
         return
     previous, since = _initial(problem)
     dwell = timedelta(minutes=problem.minimum_mode_minutes)
@@ -417,7 +483,7 @@ def validate_modes(problem: Problem, flows) -> None:
         valid = {
             "CHARGE_GRID": charge >= surplus + activity - tolerance
             and max(abs(discharge), abs(curt)) <= noise,
-            "CHARGE_PV": activity - tolerance <= charge <= surplus + tolerance
+            "CHARGE_PV": activity - tolerance <= charge <= surplus + noise
             and max(abs(discharge), abs(curt)) <= noise,
             "DISCHARGE_GRID": min(discharge, export) >= activity - tolerance
             and max(abs(charge), abs(curt)) <= noise,
@@ -431,29 +497,13 @@ def validate_modes(problem: Problem, flows) -> None:
             raise SolveError(
                 "solver_failure", "invalid solver result: physical dispatch mode"
             )
-        if mode == "SELF_CONSUME" and flow.grid_import_kwh > _IMPORT_TOLERANCE:
-            hours = (slot.end.astimezone(UTC) - start).total_seconds() / 3600
-            power_limit = min(
-                problem.battery.discharge_kw * hours,
-                problem.site.inverter_kw * hours - slot.pv_kwh,
-            )
-            reserve = (
-                problem.battery.capacity_kwh * problem.battery.minimum_soc_fraction
-            )
-            if (
-                discharge < power_limit - _IMPORT_TOLERANCE
-                and flow.end_soc_kwh > reserve + _EMPTY_TOLERANCE
-            ):
-                raise SolveError(
-                    "solver_failure",
-                    "invalid solver result: self-consume imports below its limit",
-                )
+        _check_load_following(problem, slot, flow, mode)
         if (
             problem.initial_battery_mode is not None
             and start < problem.initial_battery_mode_since.astimezone(UTC) + dwell
         ):
             blocked = discharge if problem.initial_battery_mode == "charge" else charge
-            if abs(blocked) > tolerance:
+            if abs(blocked) > noise:
                 raise SolveError(
                     "solver_failure", "invalid solver result: legacy direction guard"
                 )
