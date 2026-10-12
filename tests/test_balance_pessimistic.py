@@ -213,12 +213,12 @@ def _config(*, pessimistic=True):
     return config
 
 
-def _states(low=0.1, median=1.0):
+def _states(low=0.1, median=1.0, soc="95"):
     def entity(rows):
         return {"state": "ok", "attributes": {"rows": rows}, "last_updated": NOW}
 
     states = {
-        "sensor.soc": {"state": "95", "attributes": {}, "last_updated": NOW},
+        "sensor.soc": {"state": soc, "attributes": {}, "last_updated": NOW},
         "sensor.pv": entity(_rows(median)),
     }
     if low is not None:
@@ -276,6 +276,39 @@ def test_pessimistic_gap_falls_back_with_a_warning():
     problem, _, quality = build_problem(_config(), states, NOW, balance_state=DUE)
     assert "CHARGE_PV" in _modes(problem)
     assert "balance_pessimistic_pv_unavailable" in quality["warnings"]
+
+
+def _holding():
+    return {
+        "last_completed_at": (NOW - timedelta(days=8)).isoformat(),
+        "hold_started_at": (NOW - timedelta(minutes=20)).isoformat(),
+        "last_full_at": (NOW - timedelta(minutes=2)).isoformat(),
+    }
+
+
+def test_hold_in_progress_on_a_low_pessimistic_series_is_a_grid_window():
+    problem, _, quality = build_problem(
+        _config(), _states(low=0.1, soc="100"), NOW, balance_state=_holding()
+    )
+    assert quality["balance_phase"] == "holding"
+    assert quality["balance_pv_series"] == "pessimistic"
+    assert _modes(problem) == ["CHARGE_GRID"]
+
+
+def test_hold_in_progress_on_a_sufficient_pessimistic_series_stays_pv():
+    problem, _, _ = build_problem(
+        _config(), _states(low=1.0, soc="100"), NOW, balance_state=_holding()
+    )
+    assert _modes(problem) == ["CHARGE_PV"]
+
+
+def test_hold_in_progress_without_grid_charge_has_no_window_on_a_low_series():
+    config = _config()
+    config["settings"]["allow_grid_charge"] = False
+    problem, _, _ = build_problem(
+        config, _states(low=0.1, soc="100"), NOW, balance_state=_holding()
+    )
+    assert problem.balance_windows == ()
 
 
 def test_plan_publishes_the_series_that_decided_the_window():

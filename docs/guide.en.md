@@ -841,8 +841,8 @@ The balance window is chosen on the median PV forecast, so a low-PV day can leav
 threshold and the balance missed again. **Sources → Add source → PV pessimistic (optional)** binds a
 second, lower forecast of the same site (for Solcast, `pv_estimate10`; the Solcast presets propose that
 field). It takes the same interval-forecast mapping as a PV source; **Review and edit sources** lists,
-edits, extends with a continuation and removes it. It needs PV enabled and is not available with the
-Energy dashboard solar forecast, which has no pessimistic series.
+edits, extends with a continuation and removes it. It needs PV enabled. It can accompany either kind of PV
+source; the Energy dashboard solar forecast has no pessimistic series, so bind this one separately.
 
 With it configured, a **CHARGE_PV** window is offered only if both hold on the pessimistic series:
 
@@ -854,11 +854,18 @@ Otherwise the start is offered only as **CHARGE_GRID**, subject to the usual gri
 rules, so the solver can pick a cheap grid window instead. The dispatch plan itself keeps using the median
 series. Without the source nothing changes.
 
-The `pv_series` attribute of the Battery balance sensor, and `balance_pv_series` in the plan's attributes
-(also `quality.balance_pv_series`), say which series decided the candidate windows: `pessimistic` when the
-source is configured and usable, `median` otherwise. If the source is configured but unavailable, stale,
-negative or does not cover the horizon, the windows fall back to the median series and the plan carries
-the `balance_pessimistic_pv_unavailable` warning.
+Trade-off: the pack test counts PV surplus only. A start the pack would reach only by charging from the
+grid before the window is offered as **CHARGE_GRID** alone, and is dropped when the grid-charge price
+ceiling blocks a slot of the window, so `balance_no_window_in_horizon` can appear where a window existed
+without the source.
+
+The `pv_series` attribute of the Battery balance sensor and the `balance_pv_series` attribute of the plan
+sensor say which series decided the candidate windows: `pessimistic` when the source is configured and
+usable, `median` otherwise (also without the source); `null` when `lfp_balance` is off or there is no
+battery. The source is optional input and never invalidates the plan. If it is unavailable, stale,
+malformed, negative or does not cover the horizon, the windows fall back to the median series and the plan carries the
+`balance_pessimistic_pv_unavailable` warning. A source going stale raises no state change, so the fallback
+takes effect at the next periodic recalculation (`refresh_minutes`) or source change.
 
 ### `cost_min` — cost minimisation
 

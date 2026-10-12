@@ -846,8 +846,8 @@ Okno balansu jest wybierane na medianie prognozy PV, więc dzień z niskim PV mo
 progu i balans znów przepada. **Źródła danych → Dodaj źródło → PV pesymistyczna (opcjonalna)** wiąże
 drugą, niższą prognozę tej samej instalacji (dla Solcast to `pv_estimate10`; presety Solcast proponują to
 pole). Używa tego samego mapowania prognozy przedziałowej co źródło PV; **Przegląd i edycja źródeł**
-wyświetla je, edytuje, rozszerza o kontynuację i usuwa. Wymaga włączonego PV i nie jest dostępne z prognozą
-PV z panelu Energia, która nie ma serii pesymistycznej.
+wyświetla je, edytuje, rozszerza o kontynuację i usuwa. Wymaga włączonego PV. Może towarzyszyć każdemu
+rodzajowi źródła PV; prognoza PV z panelu Energia nie ma serii pesymistycznej, więc to źródło wiąże się osobno.
 
 Po skonfigurowaniu okno **CHARGE_PV** jest proponowane tylko wtedy, gdy na serii pesymistycznej spełnione
 są oba warunki:
@@ -860,11 +860,19 @@ W przeciwnym razie ten start jest proponowany wyłącznie jako **CHARGE_GRID**, 
 ładowania z sieci i sufitu ceny, więc solver może wybrać tanie okno sieciowe. Sam plan dyspozycji nadal
 używa serii mediany. Bez tego źródła nic się nie zmienia.
 
-Atrybut `pv_series` sensora Balansowanie baterii oraz `balance_pv_series` w atrybutach planu (także
-`quality.balance_pv_series`) podają, która seria zdecydowała o oknach kandydujących: `pessimistic`, gdy
-źródło jest skonfigurowane i użyteczne, w przeciwnym razie `median`. Gdy źródło jest skonfigurowane, ale
-niedostępne, nieaktualne, ujemne lub nie pokrywa horyzontu, okna wracają do serii mediany, a plan niesie
-ostrzeżenie `balance_pessimistic_pv_unavailable`.
+Uwaga: test baterii liczy wyłącznie nadwyżkę PV. Start, do którego bateria dotarłaby dopiero po
+naładowaniu z sieci przed oknem, jest proponowany tylko jako **CHARGE_GRID** i odpada, gdy sufit ceny
+ładowania z sieci blokuje przedział okna — wtedy może pojawić się `balance_no_window_in_horizon` tam, gdzie
+bez tego źródła okno istniało.
+
+Atrybut `pv_series` sensora Balansowanie baterii oraz atrybut `balance_pv_series` sensora planu podają,
+która seria zdecydowała o oknach kandydujących: `pessimistic`, gdy źródło jest skonfigurowane i
+użyteczne, w przeciwnym razie `median` (także bez źródła); `null`, gdy `lfp_balance` jest wyłączone lub
+nie ma baterii. Źródło jest wejściem opcjonalnym i nigdy nie unieważnia planu. Gdy jest niedostępne,
+nieaktualne, błędne, ujemne lub nie pokrywa horyzontu, okna wracają do serii mediany, a plan niesie
+ostrzeżenie `balance_pessimistic_pv_unavailable`. Zestarzenie się źródła nie wywołuje zmiany stanu, więc
+powrót do mediany następuje przy najbliższym okresowym przeliczeniu (`refresh_minutes`) lub zmianie
+źródła.
 
 ### `cost_min` — minimalizacja kosztów
 

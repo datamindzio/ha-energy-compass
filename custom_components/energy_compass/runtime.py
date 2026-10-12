@@ -259,7 +259,11 @@ def _soc(config, source, values, states, now, previous_soc=None):
 
 
 def freshness_deadline(config, states, values, now):
-    """Return the first required input deadline, independent of plan lifetime."""
+    """Return the first required input deadline, independent of plan lifetime.
+
+    The optional pessimistic PV source is not required: once it is stale the
+    balance windows fall back to the median series at the next refresh.
+    """
     source, _ = available_forecasts(SourceConfig.from_dict(config["sources"]), states)
     deadlines = []
     _, _, export_deadline = daily_export_observations(config, states, values, now)
@@ -269,7 +273,6 @@ def freshness_deadline(config, states, values, now):
         *source.buy.forecast,
         *source.sell.forecast,
         *(binding for group in source.pv.arrays for binding in group),
-        *source.pv.pessimistic,
     ]
     if source.load.forecast:
         bindings.append(source.load.forecast)

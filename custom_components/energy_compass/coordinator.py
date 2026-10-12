@@ -401,8 +401,6 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             if price.mode == "forecast"
         ]
         groups.extend(source.pv.arrays)
-        if source.pv.pessimistic:
-            groups.append(source.pv.pessimistic)
         if source.load.forecast:
             groups.append((source.load.forecast,))
         for group in groups:
@@ -418,6 +416,26 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                     for row in rows
                 ]
             )
+        if source.pv.pessimistic:
+            # Optional input: a stale or malformed series is a distinct
+            # fingerprint (the plan falls back to the median series), never an
+            # invalid input.
+            try:
+                rows = merge_continuations(
+                    tuple(
+                        parse_intervals(states, binding, dt_util.utcnow())
+                        for binding in source.pv.pessimistic
+                    )
+                )
+            except InputError:
+                selected.append("pessimistic_pv_unavailable")
+            else:
+                selected.append(
+                    [
+                        (row.start.isoformat(), row.end.isoformat(), row.value)
+                        for row in rows
+                    ]
+                )
         return json.dumps(selected, sort_keys=True, default=str)
 
     def _inputs(self):
