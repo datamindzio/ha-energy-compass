@@ -399,6 +399,42 @@ def test_a_running_blueprint_automation_blocks_every_write_with_its_own_reason()
     assert not h.restore_pending
 
 
+def test_blueprint_automation_does_not_hide_mode_off_with_nothing_pending():
+    h = native.Harness()
+    h.data[native.MODE]["state"] = "Off"
+    h.blueprint_active = ("automation.old_deye",)
+    runner = native.Runner(h)
+    runner.run()
+    assert runner.outcomes == ["released"]
+    assert runner.writes == []
+    assert h.stored_runtime().get("reason_code") != "blueprint_active"
+
+
+def test_blueprint_automation_does_not_hide_a_simulation_decision():
+    h = native.Harness()
+    h.data[P]["attributes"]["intervals"][0].update(CHARGE_GRID)
+    h.data[native.MODE]["state"] = "Simulation"
+    h.blueprint_active = ("automation.old_deye",)
+    runner = native.Runner(h)
+    runner.run()
+    assert runner.outcomes == ["simulation"]
+    assert runner.writes == []
+    assert h.stored_runtime().get("reason_code") != "blueprint_active"
+
+
+def test_blueprint_automation_stops_a_pending_restore_in_mode_off():
+    h = native.Harness()
+    h.data[native.MODE]["state"] = "Off"
+    h.restore_pending = True
+    h.blueprint_active = ("automation.old_deye",)
+    runner = native.Runner(h)
+    runner.run()
+    assert runner.outcomes == ["takeover_blocked"]
+    assert runner.writes == []
+    assert h.restore_pending
+    assert h.stored_runtime()["reason_code"] == "blueprint_active"
+
+
 def test_a_blueprint_automation_starting_mid_run_stops_the_next_write():
     h = native.Harness()
     h.data[P]["attributes"]["intervals"][0].update(CHARGE_GRID)

@@ -20,8 +20,9 @@ which the blueprint stored in the controller runtime sensor (`runtime.desired`,
     DIFF    different and not explained by timing: a real difference
     NOREF   no blueprint decision in the dump
 
-Exit status: 0 all EQUAL, 1 any DIFF, 2 only TIMING or STALE differences, 3 nothing
-could be compared. The setup file:
+Exit status: 0 all EQUAL, 1 any DIFF or STALE (a stuck or switched-off blueprint must
+not look acceptable; --allow-stale downgrades STALE to the TIMING status), 2 only TIMING
+differences, 3 nothing could be compared. The setup file:
 
     {
       "timezone": "Europe/Warsaw",
@@ -237,6 +238,11 @@ def main(argv=None) -> int:
     parser.add_argument("dumps", type=Path, help="directory of per-minute state dumps")
     parser.add_argument("--setup", type=Path, required=True)
     parser.add_argument("--stale-seconds", type=float, default=STALE_SECONDS)
+    parser.add_argument(
+        "--allow-stale",
+        action="store_true",
+        help="report STALE minutes with exit status 2 instead of 1",
+    )
     args = parser.parse_args(argv)
     setup = load_setup(args.setup)
     limits = limits_from(setup)
@@ -262,7 +268,7 @@ def main(argv=None) -> int:
     print(", ".join(f"{key} {value}" for key, value in counts.items()))
     if counts["EQUAL"] + counts["TIMING"] + counts["STALE"] + counts["DIFF"] == 0:
         return 3
-    if counts["DIFF"]:
+    if counts["DIFF"] or (counts["STALE"] and not args.allow_stale):
         return 1
     if counts["TIMING"] or counts["STALE"]:
         return 2

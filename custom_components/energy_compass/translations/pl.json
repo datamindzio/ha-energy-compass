@@ -1456,7 +1456,7 @@
     },
     "deye_blueprint_active": {
       "title": "Automatyzacja blueprintu Deye nadal działa",
-      "description": "Automatyzacja {automation} używa blueprintu sterownika Deye, a wybrany jest silnik wbudowany. Energy Compass nie zapisuje niczego do falownika, dopóki automatyzacja nie zostanie wyłączona, a jej wykonania zatrzymane: dwa zapisujące sterowniki walczyłyby o falownik."
+      "description": "Automatyzacja {automation} używa blueprintu sterownika Deye, a wybrany jest silnik wbudowany. Energy Compass nie zapisuje niczego do falownika, nawet przywrócenia BASE, dopóki automatyzacja jest włączona: dwa zapisujące sterowniki walczyłyby o falownik. Falownik zachowuje ostatni nadany profil do czasu wyłączenia automatyzacji i zatrzymania jej wykonań; wtedy sterownik kontynuuje albo przywraca BASE przy następnym przebiegu."
     },
     "deye_run_failed": {
       "title": "Przebiegi sterownika Deye kończą się błędem",

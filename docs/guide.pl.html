@@ -2584,7 +2584,7 @@ Assistant (po polsku dla <code>pl</code>, w pozostałych przypadkach po angielsk
 </tr>
 <tr>
 <td><code>blueprint_active</code></td>
-<td>włączona jest automatyzacja używająca blueprintu Deye (niżej); bez zapisów, a problem w Naprawach ją wskazuje</td>
+<td>włączona jest automatyzacja używająca blueprintu Deye (niżej); bez żadnych zapisów (nawet przywrócenia), a problem w Naprawach ją wskazuje</td>
 </tr>
 <tr>
 <td><code>layout_mismatch</code></td>
@@ -2828,9 +2828,12 @@ dopóki tryb nie jest <code>Off</code>, a przywrócenie nie zostanie wykonane. G
 <ul>
 <li>select trybu odmawia wyjścia z <code>Off</code> (błąd wymienia automatyzację), dopóki włączona jest automatyzacja
   używająca blueprintu;</li>
-<li>każdy przebieg sprawdza to samo, niezależnie od zapisanego trybu: przy takiej włączonej automatyzacji nic nie jest
-  zapisywane, powód stanu to <code>blueprint_active</code> (z nazwą automatyzacji), a problem w Naprawach trwa do jej wyłączenia.
-  Dotyczy to też przeładowania z trybem <code>Auto</code> i blueprintu, który nigdy nie został zaktualizowany;</li>
+<li>przebieg, który by zapisywał (tryb <code>Auto</code> albo <code>Off</code> z oczekującym przywróceniem), zatrzymuje się przy takiej włączonej
+  automatyzacji: nic nie jest zapisywane, powód stanu to <code>blueprint_active</code> (z nazwą automatyzacji), a problem w
+  Naprawach trwa do jej wyłączenia. Nawet przywrócenie BASE nie jest wtedy zapisywane, więc falownik zachowuje ostatni
+  nadany profil; po wyłączeniu automatyzacji sterownik kontynuuje (albo przywraca BASE) przy następnym przebiegu. Tryb
+  <code>Off</code> bez niczego do przywrócenia i <code>Simulation</code> działają jak zwykle i nie są blokowane. Dotyczy to też przeładowania
+  z trybem <code>Auto</code> i blueprintu, który nigdy nie został zaktualizowany;</li>
 <li><code>energy_compass.controller_runtime</code> odrzuca każde wywołanie, więc przebieg blueprintu, który się prześlizgnie,
   zatrzyma się przed pierwszym zapisem.</li>
 </ul>

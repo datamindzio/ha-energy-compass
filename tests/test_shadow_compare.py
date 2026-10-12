@@ -158,8 +158,11 @@ def test_an_old_runtime_is_stale_not_a_difference(case):
     runtime["attributes"]["updated_at"] = (h.now - timedelta(hours=3)).isoformat()
     path.write_text(json.dumps(dump))
     result = run(dumps, setup)
-    assert result.returncode == 2
+    assert result.returncode == 1
     assert "STALE" in result.stdout
+    allowed = run(dumps, setup, "--allow-stale")
+    assert allowed.returncode == 2
+    assert "STALE" in allowed.stdout
 
 
 def test_a_dump_without_a_blueprint_decision_is_reported_not_compared(case):

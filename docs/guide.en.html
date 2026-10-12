@@ -2567,7 +2567,7 @@ the Home Assistant language (Polish for <code>pl</code>, English otherwise); the
 </tr>
 <tr>
 <td><code>blueprint_active</code></td>
-<td>an automation using the Deye blueprint is on (see below); no write, and a repair issue names it</td>
+<td>an automation using the Deye blueprint is on (see below); no write at all (not even the restore), and a repair issue names it</td>
 </tr>
 <tr>
 <td><code>layout_mismatch</code></td>
@@ -2813,10 +2813,12 @@ refused until the mode is <code>Off</code> and the restore is done. While the en
 <ul>
 <li>the mode select refuses to leave <code>Off</code> (the error names the automation) while an automation that uses
   the blueprint is on;</li>
-<li>every run checks the same thing, whatever the stored mode: with such an automation on, nothing is written,
-  the runtime reason is <code>blueprint_active</code> (naming the automation) and a repair issue stays until the
-  automation is switched off. This also covers a reload with mode <code>Auto</code> and a blueprint that was never
-  updated;</li>
+<li>a run that would write (mode <code>Auto</code>, or <code>Off</code> with a restore pending) stops when such an automation is on:
+  nothing is written, the runtime reason is <code>blueprint_active</code> (naming the automation) and a repair issue stays
+  until the automation is switched off. Not even the restore to BASE is written meanwhile, so the inverter keeps
+  the last profile it was given; once the automation is off, the controller continues (or restores BASE) on its
+  next run. Mode <code>Off</code> with nothing to restore and <code>Simulation</code> run as usual and are not blocked. This also covers
+  a reload with mode <code>Auto</code> and a blueprint that was never updated;</li>
 <li><code>energy_compass.controller_runtime</code> rejects every call, so a blueprint run that slips through stops
   before its first write.</li>
 </ul>

@@ -1456,7 +1456,7 @@
     },
     "deye_blueprint_active": {
       "title": "Deye blueprint automation is still on",
-      "description": "The automation {automation} uses the Deye controller blueprint while the native engine is selected. Energy Compass writes nothing to the inverter until the automation is switched off and its runs have stopped, because two writers would fight over the inverter."
+      "description": "The automation {automation} uses the Deye controller blueprint while the native engine is selected. Energy Compass writes nothing to the inverter, not even the restore to BASE, while the automation is on, because two writers would fight over the inverter. The inverter keeps the last profile it was given until the automation is switched off and its runs have stopped; then the controller continues, or restores BASE, on its next run."
     },
     "deye_run_failed": {
       "title": "Deye controller runs are failing",

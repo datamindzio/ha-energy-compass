@@ -233,6 +233,16 @@ class DeyeExecutor:
             }
 
         snapshot = self._snapshot(run, "mode")
+        if snapshot.mode == "Simulation" and run.pending:
+            await port.select_mode("Off")
+            await self._persist(run, self._outcome_runtime(run, "simulation_blocked"))
+            return "simulation_rejected"
+        if snapshot.mode == "Simulation":
+            if not await self._layout_holds(run, snapshot):
+                return "layout_mismatch"
+            return "simulation"
+        if snapshot.mode == "Off" and not run.pending:
+            return "released"
         if snapshot.blueprint_active:
             await self._persist(
                 run,
@@ -248,16 +258,6 @@ class DeyeExecutor:
                 },
             )
             return "takeover_blocked"
-        if snapshot.mode == "Simulation" and run.pending:
-            await port.select_mode("Off")
-            await self._persist(run, self._outcome_runtime(run, "simulation_blocked"))
-            return "simulation_rejected"
-        if snapshot.mode == "Simulation":
-            if not await self._layout_holds(run, snapshot):
-                return "layout_mismatch"
-            return "simulation"
-        if snapshot.mode == "Off" and not run.pending:
-            return "released"
         if snapshot.paused:
             return await self._paused(run)
         if not decision.writers_safe:

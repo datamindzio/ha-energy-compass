@@ -1591,7 +1591,7 @@ Assistant (po polsku dla `pl`, w pozostałych przypadkach po angielsku); teksty 
 | `voltage_range` | cel w trybie Voltage poza 495–560 V |
 | `settings_range` | brak zakresu lub kroku encji albo cel poza zakresem |
 | `takeover_blocked` | automatyzacja z `old_writers` jest włączona lub działa |
-| `blueprint_active` | włączona jest automatyzacja używająca blueprintu Deye (niżej); bez zapisów, a problem w Naprawach ją wskazuje |
+| `blueprint_active` | włączona jest automatyzacja używająca blueprintu Deye (niżej); bez żadnych zapisów (nawet przywrócenia), a problem w Naprawach ją wskazuje |
 | `layout_mismatch` | rejestry nie zgadzają się ze stanami encji (zob. [Obsługiwany sprzęt](#obsługiwany-sprzęt)) |
 | `paused` | przełącznik wstrzymania jest włączony |
 | `verification_required` | zapisy zakończone, ale nie każdy rejestr potwierdzony |
@@ -1716,9 +1716,12 @@ dopóki tryb nie jest `Off`, a przywrócenie nie zostanie wykonane. Gdy silnikie
 
 - select trybu odmawia wyjścia z `Off` (błąd wymienia automatyzację), dopóki włączona jest automatyzacja
   używająca blueprintu;
-- każdy przebieg sprawdza to samo, niezależnie od zapisanego trybu: przy takiej włączonej automatyzacji nic nie jest
-  zapisywane, powód stanu to `blueprint_active` (z nazwą automatyzacji), a problem w Naprawach trwa do jej wyłączenia.
-  Dotyczy to też przeładowania z trybem `Auto` i blueprintu, który nigdy nie został zaktualizowany;
+- przebieg, który by zapisywał (tryb `Auto` albo `Off` z oczekującym przywróceniem), zatrzymuje się przy takiej włączonej
+  automatyzacji: nic nie jest zapisywane, powód stanu to `blueprint_active` (z nazwą automatyzacji), a problem w
+  Naprawach trwa do jej wyłączenia. Nawet przywrócenie BASE nie jest wtedy zapisywane, więc falownik zachowuje ostatni
+  nadany profil; po wyłączeniu automatyzacji sterownik kontynuuje (albo przywraca BASE) przy następnym przebiegu. Tryb
+  `Off` bez niczego do przywrócenia i `Simulation` działają jak zwykle i nie są blokowane. Dotyczy to też przeładowania
+  z trybem `Auto` i blueprintu, który nigdy nie został zaktualizowany;
 - `energy_compass.controller_runtime` odrzuca każde wywołanie, więc przebieg blueprintu, który się prześlizgnie,
   zatrzyma się przed pierwszym zapisem.
 

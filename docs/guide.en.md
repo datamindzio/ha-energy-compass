@@ -1574,7 +1574,7 @@ the Home Assistant language (Polish for `pl`, English otherwise); the blueprint 
 | `voltage_range` | a Voltage-mode target outside 495–560 V |
 | `settings_range` | an entity range or step is missing, or a target is outside it |
 | `takeover_blocked` | an automation in `old_writers` is on or running |
-| `blueprint_active` | an automation using the Deye blueprint is on (see below); no write, and a repair issue names it |
+| `blueprint_active` | an automation using the Deye blueprint is on (see below); no write at all (not even the restore), and a repair issue names it |
 | `layout_mismatch` | the registers disagree with the entity states (see [Supported hardware](#supported-hardware)) |
 | `paused` | the pause switch is on |
 | `verification_required` | writes finished but not every register confirmed |
@@ -1701,10 +1701,12 @@ refused until the mode is `Off` and the restore is done. While the engine is `na
 
 - the mode select refuses to leave `Off` (the error names the automation) while an automation that uses
   the blueprint is on;
-- every run checks the same thing, whatever the stored mode: with such an automation on, nothing is written,
-  the runtime reason is `blueprint_active` (naming the automation) and a repair issue stays until the
-  automation is switched off. This also covers a reload with mode `Auto` and a blueprint that was never
-  updated;
+- a run that would write (mode `Auto`, or `Off` with a restore pending) stops when such an automation is on:
+  nothing is written, the runtime reason is `blueprint_active` (naming the automation) and a repair issue stays
+  until the automation is switched off. Not even the restore to BASE is written meanwhile, so the inverter keeps
+  the last profile it was given; once the automation is off, the controller continues (or restores BASE) on its
+  next run. Mode `Off` with nothing to restore and `Simulation` run as usual and are not blocked. This also covers
+  a reload with mode `Auto` and a blueprint that was never updated;
 - `energy_compass.controller_runtime` rejects every call, so a blueprint run that slips through stops
   before its first write.
 
