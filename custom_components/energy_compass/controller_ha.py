@@ -321,10 +321,12 @@ class DeyeController:
     @callback
     def runtime_view(self) -> tuple[str, dict]:
         runtime = self.state.runtime
+        history = self.host.history if self.host is not None else []
         return runtime.get("code") or "waiting", {
             **core.runtime_summary(runtime, self.state.restore_pending),
             "runtime": dict(runtime),
             "updated_at": self.state.runtime_written_at,
+            "last_run": history[-1] if history else None,
         }
 
     @callback
@@ -373,6 +375,11 @@ class DeyeController:
             )
         )
         self._evaluate()
+
+    @callback
+    def async_runtime_changed(self) -> None:
+        """Let the runtime sensor republish, e.g. after a run only changed `last_run`."""
+        self._notify(self._runtime_listeners)
 
     @callback
     def async_set_paused(self, paused: bool) -> None:
@@ -530,6 +537,7 @@ class DeyeController:
             "tou_problem": self.resolution.problem,
             "engine": self.engine,
             "hardware": self.hardware.as_attribute(),
+            "run_history": self.host.history if self.host is not None else [],
             "session": self.session,
             "mode": self.state.mode,
             "restore_pending": self.state.restore_pending,

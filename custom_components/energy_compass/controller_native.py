@@ -206,6 +206,7 @@ class NativeHost:
         self._unsubscribe: list[CALLBACK_TYPE] = []
         self._watched: tuple[str, ...] = ()
         self._unwatch: CALLBACK_TYPE | None = None
+        self._logged: tuple[Any, Any] | None = None
 
     def _limits(self) -> profile.Limits:
         setup = self.port.setup
@@ -213,7 +214,14 @@ class NativeHost:
             raise ControllerUnavailable("setup")
         return setup.limits
 
+    @property
+    def history(self) -> list[dict[str, Any]]:
+        """The last runs, oldest first."""
+        return list(self.executor.history)
+
     async def async_start(self) -> None:
+        runtime = self.controller.state.runtime
+        self._logged = (runtime.get("confirmed_mode"), runtime.get("code"))
         self._unsubscribe = [
             self.controller.async_add_listener(self._controller_changed),
             async_track_time_change(self.hass, self._minute, second=0),
@@ -267,7 +275,7 @@ class NativeHost:
             self._rerun = False
             self.executor.language = self.hass.config.language
             try:
-                outcome = await self.executor.run()
+                outcome = await self.executor.run(trigger)
             except ControllerUnavailable:
                 outcome = "controller_unavailable"
             except Exception:
@@ -275,10 +283,35 @@ class NativeHost:
                 outcome = "error"
             self.runs += 1
             self._sync_watch()
+            self._log_change()
+            self.controller.async_runtime_changed()
             _LOGGER.debug("Deye controller run (%s): %s", trigger, outcome)
             if not self._rerun or self._stopped:
                 return
             trigger = "queued"
+
+    def _log_change(self) -> None:
+        """One logbook entry whenever the confirmed mode or the runtime code changes."""
+        runtime = self.controller.state.runtime
+        now = (runtime.get("confirmed_mode"), runtime.get("code"))
+        before, self._logged = self._logged, now
+        if before == now:
+            return
+        from homeassistant.components.logbook import async_log_entry
+
+        registry = er.async_get(self.hass)
+        async_log_entry(
+            self.hass,
+            "Deye controller",
+            f"{before[1]} → {now[1]}; confirmed {before[0]} → {now[0]}; "
+            f"{runtime.get('reason', '')}",
+            domain="energy_compass",
+            entity_id=registry.async_get_entity_id(
+                "sensor",
+                "energy_compass",
+                f"{self.controller.entry.entry_id}_deye_runtime",
+            ),
+        )
 
     @callback
     def _started(self, _event: Event) -> None:

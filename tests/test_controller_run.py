@@ -6,6 +6,7 @@ and the parity tests; this file pins what only the executor promises.
 
 import asyncio
 import copy
+import json
 
 import deye_native_harness as native
 import pytest
@@ -294,3 +295,63 @@ def test_a_run_in_flight_stops_before_its_next_write_and_resumes_later():
     runner.run()
     assert runner.outcomes[-1] == "run_finished"
     assert h.stored_runtime()["confirmed_mode"] == "CHARGE_GRID"
+
+
+def test_the_history_records_what_a_run_decided_sent_and_how_it_ended():
+    _, runner = pause_runner()
+    runner.run()
+    (record,) = runner.executor.history
+    assert record["outcome"] == "run_finished"
+    assert record["code"] == "ok"
+    assert record["decision"]["state"] == "CHARGE_GRID"
+    assert record["decision"]["reason_code"] == "ok"
+    assert record["transactions"][0]["commands"]
+    sent = [(w["entity"], w["value"]) for w in record["writes"]]
+    assert sent == runner.writes
+    assert all(w["confirmed"] and not w["write_error"] for w in record["writes"])
+    assert record["seconds"] >= 0
+    json.dumps(record)
+
+
+def test_failed_and_blocked_writes_are_visible_in_the_history():
+    h, runner, _ = failing_runner(write=RuntimeError("service failed"))
+    runner.run()
+    (record,) = runner.executor.history
+    assert record["outcome"] == "write_failed"
+    sent = [w for w in record["writes"] if "attempt" in w]
+    assert sent
+    assert all(w["write_error"] and not w["confirmed"] for w in sent)
+    h, runner = pause_runner()
+
+    def pause_after_one(r, entity, value):
+        h.paused = True
+
+    runner.hook = pause_after_one
+    runner.run()
+    (record,) = runner.executor.history
+    assert record["outcome"] == "paused"
+    assert any(w.get("blocked") for w in record["writes"])
+
+
+def test_the_history_keeps_the_last_fifty_runs_only():
+    _, runner = pause_runner()
+    for number in range(55):
+        runner.executor.history.append({"n": number})
+    runner.run()
+    assert len(runner.executor.history) == 50
+    assert runner.executor.history[0] == {"n": 6}
+    assert runner.executor.history[-1]["outcome"] == "run_finished"
+
+
+def test_a_cancelled_run_is_recorded_as_cancelled():
+    _, runner, _ = failing_runner(write=asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        runner.run()
+    assert runner.executor.history[-1]["outcome"] == "cancelled"
+
+
+def test_the_record_stays_small_for_a_state_attribute():
+    _, runner = pause_runner()
+    runner.executor.history.clear()
+    runner.run()
+    assert len(json.dumps(runner.executor.history[-1])) < 16000

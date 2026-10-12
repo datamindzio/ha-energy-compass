@@ -1372,6 +1372,11 @@ z zapisywanych atrybutów, a inne zmiany najwyżej raz na minutę. Akceptacje, u
 sesji, zmiany trybu, importy i zmiany urządzenia trafiają do historii 50 wpisów w magazynie i w
 diagnostyce integracji (`deye_controller`); zdarzenia nie są wysyłane.
 
+Przy silniku natywnym sensor stanu pracy ma też `last_run` (nie jest zapisywany w historii): co uruchomiło ostatni
+przebieg, decyzję, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony lub zablokowany) i jak
+przebieg się zakończył. Ostatnie 50 przebiegów jest przechowywane w pamięci, nie w magazynie, i widnieje w diagnostyce
+jako `run_history`. Wpis w dzienniku zdarzeń podaje stary i nowy kod stanu pracy oraz potwierdzony tryb, gdy któryś się zmieni.
+
 ### Usługi
 
 | Usługa | Przeznaczenie |

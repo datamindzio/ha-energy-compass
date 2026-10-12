@@ -17,6 +17,7 @@ Simulation.
 """
 
 import logging
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -29,6 +30,8 @@ from . import controller_texts as texts
 _LOGGER = logging.getLogger(__name__)
 TRANSACTIONS = 3
 WRITE_ATTEMPTS = 3
+HISTORY_LIMIT = 50
+MAX_RECORDED_WRITES = 60
 
 
 class ControllerUnavailable(Exception):
@@ -93,6 +96,8 @@ class DeyeExecutor:
         self._limits = limits
         self.language = language
         self._layout_session: Any = None
+        self.history: deque[dict[str, Any]] = deque(maxlen=HISTORY_LIMIT)
+        self._record: dict[str, Any] | None = None
 
     def _snapshot(self, run: _Run, stage: str) -> profile.Snapshot:
         """A fresh snapshot carrying the runtime this executor last stored.
@@ -117,6 +122,8 @@ class DeyeExecutor:
         run.runtime, run.pending = await self.port.persist(
             runtime, pending, durable=durable
         )
+        if self._record is not None:
+            self._record["code"] = run.runtime.get("code")
 
     def _decisions(
         self, snapshot: profile.Snapshot, run: _Run
@@ -164,8 +171,38 @@ class DeyeExecutor:
             **values,
         }
 
-    async def run(self) -> str:
-        """One pass; the outcome code explains why it ended (for the run history)."""
+    async def run(self, trigger: str = "") -> str:
+        """One pass; the outcome code explains why it ended.
+
+        The last 50 passes are kept in `history`, in memory only: what triggered the
+        run, the decision, the planned and sent commands with their outcome, and how
+        it ended.
+        """
+        started = self.port.now()
+        record: dict[str, Any] = {
+            "trigger": trigger,
+            "at": started.isoformat(),
+            "decision": None,
+            "transactions": [],
+            "writes": [],
+            "outcome": "cancelled",
+            "code": None,
+        }
+        self._record = record
+        try:
+            outcome = await self._pass()
+        except Exception:
+            record["outcome"] = "error"
+            raise
+        else:
+            record["outcome"] = outcome
+            return outcome
+        finally:
+            record["seconds"] = round((self.port.now() - started).total_seconds(), 3)
+            self._record = None
+            self.history.append(record)
+
+    async def _pass(self) -> str:
         port = self.port
         snapshot = port.snapshot("start")
         if snapshot.controller is None:
@@ -183,6 +220,17 @@ class DeyeExecutor:
         await self._persist(
             run, self._decision_runtime(run, decision, port.now().isoformat())
         )
+        if self._record is not None:
+            self._record["decision"] = {
+                "state": decision.state,
+                "valid": decision.valid,
+                "reason_code": decision.reason_code,
+                "operation": decision.operation,
+                "requested_mode": decision.requested_mode,
+                "target_soc": decision.target_soc,
+                "target_voltage": decision.target_voltage,
+                "target_reached": decision.target_reached,
+            }
 
         snapshot = self._snapshot(run, "mode")
         if snapshot.mode == "Simulation" and run.pending:
@@ -269,6 +317,14 @@ class DeyeExecutor:
                     entities.grid: target.desired[entities.grid],
                 }
             commands = profile.diff(snapshot, target)
+            if self._record is not None:
+                self._record["transactions"].append(
+                    {
+                        "attempt": attempt,
+                        "cleanup": cleanup,
+                        "commands": [list(command) for command in commands],
+                    }
+                )
             failed = False
             fresh = target
             if commands:
@@ -406,12 +462,16 @@ class DeyeExecutor:
         confirmed = False
         allowed = False
         register = run.registers[command.entity]
-        for _ in range(WRITE_ATTEMPTS):
+        for attempt in range(1, WRITE_ATTEMPTS + 1):
             snapshot = self._snapshot(run, "write_fresh")
             fresh, baseline = self._decisions(snapshot, run)
             allowed = self._allowed(
                 snapshot, command, target, fresh, baseline, cleanup, failed
             )
+            if not allowed and attempt == 1:
+                self._add_write(
+                    {"entity": command.entity, "value": command.value, "blocked": True}
+                )
             if allowed and not confirmed:
                 await self._persist(
                     run, profile.mark_dirty(run.runtime, command.entity), durable=True
@@ -425,9 +485,11 @@ class DeyeExecutor:
                     # Like the blueprint's continue_on_error: a failed call is not
                     # confirmed, the attempts and transactions carry on. Cancellation
                     # is not an Exception and must never be swallowed here.
+                    write_error = False
                     try:
                         await port.write(command)
                     except Exception:
+                        write_error = True
                         _LOGGER.debug("Deye write failed", exc_info=True)
                     try:
                         response = await port.read_registers(
@@ -444,6 +506,7 @@ class DeyeExecutor:
                         run, profile.record_observation(run.runtime, observed, snapshot)
                     )
                     confirmed = profile.confirms(response, command, register)
+                    self._note_write(command, attempt, write_error, confirmed)
                     if confirmed:
                         await self._persist(
                             run,
@@ -452,6 +515,29 @@ class DeyeExecutor:
                             ),
                         )
         return confirmed, allowed, fresh
+
+    def _add_write(self, entry: dict[str, Any]) -> None:
+        """Keep the record small enough for a state attribute."""
+        record = self._record
+        if record is None:
+            return
+        if len(record["writes"]) < MAX_RECORDED_WRITES:
+            record["writes"].append(entry)
+        else:
+            record["writes_truncated"] = True
+
+    def _note_write(
+        self, command: profile.Command, attempt: int, error: bool, confirmed: bool
+    ) -> None:
+        self._add_write(
+            {
+                "entity": command.entity,
+                "value": command.value,
+                "attempt": attempt,
+                "write_error": error,
+                "confirmed": confirmed,
+            }
+        )
 
     @staticmethod
     def _allowed(

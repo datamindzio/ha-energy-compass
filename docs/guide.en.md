@@ -1354,6 +1354,11 @@ changes and at most once a minute for other changes. Acceptances, revocations, s
 changes, imports and device changes go to a history of 50 entries in the store and in the integration's
 diagnostics (`deye_controller`); no events are fired.
 
+With the native engine the runtime sensor also has `last_run` (not recorded): what triggered the last run, the
+decision, the planned commands, each write with its outcome (sent, failed, confirmed or blocked) and how the run
+ended. The last 50 runs are kept in memory, not in the store, and appear in the diagnostics as `run_history`. A
+logbook entry names the old and new runtime code and confirmed mode whenever either changes.
+
 ### Services
 
 | Service | Purpose |

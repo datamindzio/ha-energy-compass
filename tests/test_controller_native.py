@@ -1,6 +1,7 @@
 """The native Deye controller inside Home Assistant: wiring, restart and unload."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,7 +17,10 @@ from native_site import (
     refresh_telemetry,
     register_inverter,
 )
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_capture_events,
+)
 
 from custom_components.energy_compass import controller as core
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
@@ -187,7 +191,7 @@ async def test_triggers_during_a_run_coalesce_into_one_more_run(hass, site):
     gate = asyncio.Event()
     calls = []
 
-    async def run():
+    async def run(trigger=""):
         calls.append(1)
         await gate.wait()
         return "run_finished"
@@ -322,3 +326,67 @@ async def test_the_layout_probe_also_runs_in_simulation(hass, site):
     await controller.host.async_wait_idle()
     assert controller.state.runtime["reason_code"] == "layout_mismatch"
     assert inverter.writes == []
+
+
+async def test_the_runtime_sensor_carries_the_last_run_unrecorded(hass, site):
+    entry, _ = site
+    controller = controller_of(entry)
+    await run_once(entry, "test-trigger")
+    state = hass.states.get("sensor.synthetic_deye_controller_runtime")
+    # Detail-only changes reach the state at most once a minute.
+    assert "last_run" in state.attributes
+    last = controller.runtime_view()[1]["last_run"]
+    assert last["trigger"] == "test-trigger"
+    assert last["outcome"] == "released"
+    from custom_components.energy_compass.controller_entity import (
+        RUNTIME_UNRECORDED,
+        DeyeRuntimeSensor,
+    )
+
+    assert "last_run" in RUNTIME_UNRECORDED
+    assert "last_run" in DeyeRuntimeSensor._unrecorded_attributes
+    assert controller.host.history[-1] == last
+
+
+async def test_a_logbook_entry_is_written_when_code_or_confirmed_mode_changes(
+    hass, site
+):
+    entry, _ = site
+    controller = controller_of(entry)
+    events = async_capture_events(hass, "logbook_entry")
+    await run_once(entry)
+    assert events == []
+    publish(entry, publication())
+    refresh_telemetry(hass)
+    await run_once(entry)
+    events.clear()
+    controller.async_set_mode("Auto")
+    await controller.host.async_wait_idle()
+    await hass.async_block_till_done()
+    assert len(events) == 1
+    data = events[0].data
+    assert data["name"] == "Deye controller"
+    assert data["entity_id"] == "sensor.synthetic_deye_controller_runtime"
+    assert "CHARGE_PV" in data["message"] and "ok" in data["message"]
+    await run_once(entry)
+    await hass.async_block_till_done()
+    assert len(events) == 1
+
+
+async def test_diagnostics_carry_the_engine_hardware_and_run_history(hass, site):
+    from custom_components.energy_compass.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    entry, _ = site
+    for number in range(52):
+        await run_once(entry, f"run-{number}")
+    diagnostics = (await async_get_config_entry_diagnostics(hass, entry))[
+        "deye_controller"
+    ]
+    assert diagnostics["engine"] == "native"
+    assert diagnostics["hardware"]["verified"] is True
+    history = diagnostics["run_history"]
+    assert len(history) == 50
+    assert history[-1]["trigger"] == "run-51"
+    assert "SN-REDACTED" not in json.dumps(diagnostics, default=str)
