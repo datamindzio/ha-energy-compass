@@ -250,6 +250,12 @@ FIELDS = {
         "Deye controller runtime sensor",
         "Sensor stanu pracy sterownika Deye",
     ),
+    "deye_pause": (
+        "entity",
+        "switch.energy_compass_pause_inverter_writes",
+        "Deye pause writes switch (native engine only)",
+        "Przełącznik wstrzymania zapisów Deye (tylko silnik wbudowany)",
+    ),
 }
 SECTIONS = {
     "plan": ("Plan chart (ApexCharts)", "Wykres planu (ApexCharts)"),
