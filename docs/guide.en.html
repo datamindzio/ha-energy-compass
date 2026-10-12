@@ -1141,9 +1141,12 @@ directly by any other available mode.</p>
   discharge in any interval the flows label <code>SELF_CONSUME</code> is bound the same way. A carried
   <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment is executed the same way. If the battery runs out before
   it ends, the rest of the commitment is <code>HOLD</code> with full import (a new <code>HOLD</code> clock starts). The
-  plan is <code>infeasible</code> until the commitment ends only when the terminal rule cannot be met
-  afterwards (<code>preserve_initial</code> with no later PV or grid charge to refill what the house drew),
-  or with a 0 % reserve and an inverter standby loss (<code>idle_drain_kw</code>).</li>
+  same happens — from the first interval if need be — when the battery cannot cover the house
+  and still keep the inverter standby loss (<code>idle_drain_kw</code>) of the later intervals, with no PV
+  or grid charge to pay it in time. The plan is <code>infeasible</code> until the commitment ends when the
+  terminal rule cannot be met afterwards (<code>preserve_initial</code> with no later PV or grid charge to
+  refill what the house drew); the rare remaining cases are listed in
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>.</li>
 <li><strong>PV-follow group:</strong> <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.</li>

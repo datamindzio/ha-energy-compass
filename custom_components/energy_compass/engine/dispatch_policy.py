@@ -5,7 +5,7 @@ from datetime import UTC, timedelta
 import numpy as np
 
 from .charge_price import price_allows_grid_charge
-from .idle_drain import drain_schedule
+from .idle_drain import cumulative, drain_schedule
 from .machine_state import _TOL as _CLASSIFIER_TOLERANCE
 from .machine_state import machine_state
 from .models import Problem, SolveError
@@ -156,18 +156,79 @@ def _follow_load(model, problem, v, x, slot, hours, flex_max, can_empty) -> None
         model.constrain({**coupled, x_sc: -1}, -np.inf, 0)
 
 
-def _lock_floor(problem, drains, index) -> float:
+def _hours(slot) -> float:
+    return (
+        slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
+    ).total_seconds() / 3600
+
+
+def _takes_surplus(problem, slot) -> bool:
+    """Tell whether CHARGE_PV is open: the pack can take its activity from PV surplus."""
+    hours = _hours(slot)
+    activity = problem.minimum_mode_power_kw * hours
+    return (
+        activity > 2e-6
+        and min(problem.battery.charge_kw * hours, slot.pv_kwh - slot.load_kwh)
+        >= activity
+    )
+
+
+def _owed(problem, drains, held_until) -> tuple[float, ...]:
+    """Energy each slot must end with so the standby loss of later slots stays payable.
+
+    Best case for the pack: every later slot charges all it may, from PV surplus
+    and, outside the carried commitment, from the grid where grid charging is
+    open. Ending a slot below this value cannot stay above the relaxed reserve
+    floor later whatever the plan does, so it is a bound the energy rows already
+    imply, not a new requirement.
+    """
+    battery = problem.battery
+    reserve = min(
+        battery.capacity_kwh * battery.minimum_soc_fraction, battery.initial_kwh
+    )
+    drained = cumulative(drains)
+    owed = []
+    later = 0.0
+    for slot, drain, lost in zip(
+        reversed(problem.slots), reversed(drains), reversed(drained), strict=True
+    ):
+        hours = _hours(slot)
+        owed.append(max(reserve - lost, later, 0.0))
+        charge = max(slot.pv_kwh - slot.load_kwh, 0)
+        if (
+            battery.allow_grid_charge
+            and slot.start.astimezone(UTC) >= held_until
+            and price_allows_grid_charge(problem, slot)
+        ):
+            charge += problem.site.grid_import_kw * hours
+        later = (
+            owed[-1]
+            + drain
+            - battery.eta_charge * min(battery.charge_kw * hours, charge)
+        )
+    return tuple(reversed(owed))
+
+
+def _lock_floor(problem, drains, owed, index) -> float:
     """Energy below which the battery cannot keep SELF_CONSUME active in a slot."""
     battery = problem.battery
     slot = problem.slots[index]
-    hours = (
-        slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
-    ).total_seconds() / 3600
-    return (
-        battery.capacity_kwh * battery.minimum_soc_fraction
-        + drains[index]
-        + problem.minimum_mode_power_kw * hours / battery.eta_discharge
-    )
+    hours = _hours(slot)
+    keep = battery.capacity_kwh * battery.minimum_soc_fraction
+    discharge = problem.minimum_mode_power_kw * hours
+    if owed[index] > keep + 1e-9:
+        # Later standby loss needs more than the reserve, so the pack cannot end
+        # on it: SELF_CONSUME has to cover the house or reach its power limit.
+        keep = owed[index]
+        discharge = max(
+            discharge,
+            min(
+                slot.load_kwh - slot.pv_kwh,
+                battery.discharge_kw * hours,
+                problem.site.inverter_kw * hours - slot.pv_kwh,
+            ),
+        )
+    return keep + drains[index] + discharge / battery.eta_discharge
 
 
 def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
@@ -374,21 +435,33 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
     if previous is not None:
         held_until = since.astimezone(UTC) + dwell
         members = _members(dwell_group(previous))
+        follows_pv = "SELF_CONSUME" in members
+        owed = _owed(problem, drains, held_until) if follows_pv else ()
         # A battery too empty to go on ends a carried PV-follow commitment the way an
         # observed SOC bound does: the inverter imports for the house, which is HOLD.
+        # In the first slot that is known up front; with PV surplus to charge from
+        # the inverter still has something to follow.
+        spent = (
+            follows_pv
+            and not _takes_surplus(problem, problem.slots[0])
+            and battery.initial_kwh <= _lock_floor(problem, drains, owed, 0) + 1e-9
+        )
         release = {}
         for i, (start, v) in enumerate(zip(starts, vectors, strict=True)):
             if start >= held_until:
                 break
             kept = {v[f"mode_{mode}"]: 1 for mode in members}
-            if release:
-                model.constrain({v["mode_HOLD"]: 1, **release}, -np.inf, 0)
+            if release or (spent and i == 0):
+                if release:
+                    model.constrain({v["mode_HOLD"]: 1, **release}, -np.inf, 0)
                 release = {v["mode_HOLD"]: -1}
                 kept[v["mode_HOLD"]] = 1
             model.constrain(kept, 1, 1)
-            if "SELF_CONSUME" in members and i + 1 < len(vectors):
+            if follows_pv and i + 1 < len(vectors):
                 depleted = v["lock_depleted"] = model.variable(binary=True)
-                slack = model.upper[v["energy"]] - _lock_floor(problem, drains, i + 1)
+                slack = model.upper[v["energy"]] - _lock_floor(
+                    problem, drains, owed, i + 1
+                )
                 if slack > 0:
                     model.constrain(
                         {v["energy"]: 1, depleted: slack},
@@ -460,7 +533,8 @@ def validate_modes(problem: Problem, flows) -> None:
     coverage_end = problem.slots[-1].end.astimezone(UTC)
     drains = drain_schedule(problem)
     carried = dwell_group(previous) == "PV_FOLLOW"
-    left = None
+    owed = _owed(problem, drains, since.astimezone(UTC) + dwell) if carried else ()
+    left = problem.battery.initial_kwh
     for index, (slot, flow) in enumerate(zip(problem.slots, flows, strict=True)):
         start = slot.start.astimezone(UTC)
         activity = (
@@ -515,8 +589,9 @@ def validate_modes(problem: Problem, flows) -> None:
                 and not (
                     carried
                     and mode == "HOLD"
-                    and left is not None
-                    and left <= _lock_floor(problem, drains, index) + _EMPTY_TOLERANCE
+                    and (index or not _takes_surplus(problem, slot))
+                    and left
+                    <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
                 )
             ):
                 raise SolveError(

@@ -1150,10 +1150,13 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   a rozładowanie w każdym przedziale, który przepływy oznaczają jako <code>SELF_CONSUME</code>, jest związane
   tak samo. Przeniesione zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> jest wykonywane tak samo. Jeśli
   bateria wyczerpie się przed jego końcem, reszta zobowiązania to <code>HOLD</code> z pełnym importem
-  (startuje nowy zegar <code>HOLD</code>). Plan jest <code>infeasible</code> (niewykonalny) do końca zobowiązania tylko
-  wtedy, gdy potem nie da się spełnić reguły końcowej (<code>preserve_initial</code> bez późniejszego PV lub
-  ładowania z sieci, które uzupełniłyby to, co zużył dom), albo przy rezerwie 0 % i poborze
-  czuwania falownika (<code>idle_drain_kw</code>).</li>
+  (startuje nowy zegar <code>HOLD</code>). Tak samo — w razie potrzeby już od pierwszego przedziału — gdy
+  bateria nie może pokryć domu i zarazem zachować poboru czuwania falownika (<code>idle_drain_kw</code>)
+  z późniejszych przedziałów, a PV ani ładowanie z sieci nie uzupełnią go na czas. Plan jest
+  <code>infeasible</code> (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
+  (<code>preserve_initial</code> bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
+  dom); rzadkie pozostałe przypadki opisuje
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a> (EN).</li>
 <li><strong>Grupa podążania za PV:</strong> <code>CHARGE_PV</code> i <code>SELF_CONSUME</code> dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.</li>

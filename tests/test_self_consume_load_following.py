@@ -1,5 +1,6 @@
 """SELF_CONSUME follows the load: no grid import beside a spare discharge power."""
 
+import random
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -312,16 +313,14 @@ def test_validator_releases_a_carried_lock_only_after_an_emptied_battery():
         validate_modes(problem, charging)
 
 
-def test_standby_loss_owed_by_an_empty_reserve_keeps_the_lock_infeasible():
-    # Known limit: with a 0 % reserve the pack must keep the standby loss of the
-    # later slots, so the discharge can neither reach its power limit nor end on
-    # the reserve, and a carried lock has no plan until it runs out.
+def zero_reserve(initial):
+    """A carried PV-follow lock over two of three dark slots, 0 % reserve, standby loss."""
     problem = dispatch(((1.0, 0, 0, 0.5),) * 3, minutes=30, minimum_mode_minutes=60)
-    problem = replace(
+    return replace(
         problem,
         battery=replace(
             problem.battery,
-            initial_kwh=0.3,
+            initial_kwh=initial,
             discharge_kw=0.5,
             allow_grid_charge=False,
             allow_battery_export=False,
@@ -330,14 +329,134 @@ def test_standby_loss_owed_by_an_empty_reserve_keeps_the_lock_infeasible():
         initial_dispatch_mode="CHARGE_PV",
         initial_dispatch_mode_since=problem.slots[0].start - timedelta(minutes=15),
     )
-    with pytest.raises(SolveError) as caught:
-        solve(problem)
-    assert caught.value.reason == "infeasible"
-    expired = replace(
-        problem,
-        initial_dispatch_mode_since=problem.slots[0].start - timedelta(hours=2),
+
+
+@pytest.mark.parametrize(
+    ("initial", "modes"),
+    [
+        # Discharging at the power limit would take the standby loss of the later slots.
+        (0.3, ["HOLD", "HOLD", "HOLD"]),
+        # One slot at the limit fits, a second one does not.
+        (0.4, ["SELF_CONSUME", "HOLD", "HOLD"]),
+        (0.6, ["SELF_CONSUME", "SELF_CONSUME", "HOLD"]),
+    ],
+)
+def test_standby_loss_owed_by_an_empty_reserve_releases_the_lock(initial, modes):
+    # With a 0 % reserve the pack cannot end on the reserve: it has to keep the
+    # standby loss of the later slots, so the lock ends where the house would take it.
+    problem = zero_reserve(initial)
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == modes
+    assert min(flow.end_soc_kwh for flow in plan.flows) >= 0
+    assert_load_following(problem, plan)
+
+
+def winter_night(slots, *, drain=0.03):
+    """A carried SELF_CONSUME lock 0.15 kWh above a 10 % reserve, nothing to recharge from."""
+    problem = dispatch(
+        ((1.0, 0, 0, 0.5),) + ((1.0, 0, 0, 0.05),) * (slots - 1),
+        minimum_mode_minutes=30,
+        terminal_value_per_kwh=0.3,
     )
-    assert solve(expired).flows
+    return replace(
+        problem,
+        battery=replace(
+            problem.battery,
+            capacity_kwh=5,
+            minimum_soc_fraction=0.1,
+            initial_kwh=0.65,
+            charge_kw=1,
+            discharge_kw=1,
+            eta_charge=0.95,
+            eta_discharge=0.95,
+            allow_grid_charge=False,
+            allow_battery_export=False,
+            idle_drain_kw=drain,
+        ),
+        initial_dispatch_mode="SELF_CONSUME",
+        initial_dispatch_mode_since=problem.slots[0].start - timedelta(minutes=15),
+    )
+
+
+def test_carried_lock_ends_at_once_when_later_standby_loss_needs_the_battery():
+    # 80 slots lose 0.6 kWh on standby, more than the 0.5 kWh reserve: covering
+    # the house down to the reserve would leave the later loss unpaid.
+    problem = winter_night(80)
+    plan = solve(problem)
+    assert {flow.dispatch_mode for flow in plan.flows[:4]} == {"HOLD"}
+    assert plan.flows[0].discharge_kwh == pytest.approx(0)
+    assert plan.flows[0].grid_import_kwh == pytest.approx(0.5)
+    assert min(flow.end_soc_kwh for flow in plan.flows) >= 0
+
+
+@pytest.mark.parametrize(("slots", "drain"), [(40, 0.03), (80, 0.0)])
+def test_carried_lock_holds_while_the_reserve_covers_the_standby_loss(slots, drain):
+    problem = winter_night(slots, drain=drain)
+    plan = solve(problem)
+    assert plan.flows[0].dispatch_mode == "SELF_CONSUME"
+    # The house empties the pack to its reserve inside the committed slot.
+    assert plan.flows[0].end_soc_kwh == pytest.approx(0.5)
+    assert plan.flows[0].grid_import_kwh > 0.3
+    assert_load_following(problem, plan)
+
+
+def test_validator_releases_a_first_slot_only_for_a_pack_that_cannot_go_on():
+    problem = winter_night(80)
+    held = solve(problem).flows
+    validate_modes(problem, held)
+    # Without the standby loss the same pack can cover the house: the lock holds.
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(winter_night(80, drain=0.0), held)
+
+
+def test_carried_lock_never_lacks_a_plan_without_a_way_to_recharge():
+    rng = random.Random(19)
+    for _ in range(40):
+        problem = winter_night(rng.choice((8, 24, 80)), drain=rng.choice((0.03, 0.13)))
+        reserve = rng.choice((0.0, 0.1, 0.2))
+        problem = replace(
+            problem,
+            slots=tuple(
+                replace(slot, load_kwh=rng.choice((0.05, 0.2, 0.5)))
+                for slot in problem.slots
+            ),
+            battery=replace(
+                problem.battery,
+                minimum_soc_fraction=reserve,
+                # From just above the reserve (at it the safety exception applies) to full.
+                initial_kwh=5 * reserve + rng.choice((0.002, 0.02, 0.15, 0.6, 2.5)),
+                discharge_kw=rng.choice((0.5, 2)),
+            ),
+            minimum_mode_minutes=rng.choice((30, 60)),
+        )
+        # solve() certifies its own rows with validate_modes.
+        plan = solve(problem)
+        assert_load_following(problem, plan)
+
+
+def test_first_slot_with_pv_surplus_keeps_a_spent_pack_on_the_lock():
+    # With surplus to charge from the inverter still follows PV, however well the
+    # export would pay: a pack too empty for SELF_CONSUME is no reason for HOLD.
+    problem = evening(0.01)
+    problem = replace(
+        problem,
+        slots=(
+            replace(problem.slots[0], sell_per_kwh=5.0, pv_kwh=1.0),
+            *problem.slots[1:],
+        ),
+    )
+    plan = solve(problem)
+    assert plan.flows[0].dispatch_mode == "CHARGE_PV"
+    exported = Flow(0, 0.875, 0, 0, 0, 0.01, None, "HOLD")
+    resting = tuple(
+        Flow(0.125, 0, 0, 0, 0, 0.01, None, "HOLD") for _ in problem.slots[1:]
+    )
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (exported, *resting))
+    # Without the surplus the same pack ends the lock in its first slot.
+    dark = evening(0.01)
+    assert solve(dark).flows[0].dispatch_mode == "HOLD"
+    validate_modes(dark, (resting[0], *resting))
 
 
 def staggered_prices(**changes):
