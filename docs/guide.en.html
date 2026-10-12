@@ -2550,9 +2550,10 @@ into days by the local date of <code>start</code>; settings come only from <code
 <li>The executed plan follows the controller (<code>tools/deye_controller/build.py</code>) against realized data.
   <code>SELF_CONSUME</code> and <code>CHARGE_PV</code> follow the load: all PV surplus charges the battery and a deficit is
   covered from it. In <code>CHARGE_GRID</code> only the grid share follows the plan — the planned charge minus the
-  surplus the forecast promised — and the grid stops at the row's planned end SOC, as the controller
-  does; the realized PV surplus charges on top. PV above the forecast therefore shrinks the grid
-  import (the SOC may end above plan, by PV only), and PV below it charges less — a shortfall is never
+  surplus the forecast promised. Grid and the realized PV surplus charge together until the row's
+  planned end SOC; then the grid stops, as the controller does, and PV keeps charging for the rest of
+  the slot. PV above the forecast therefore shrinks the grid import (the SOC may end above plan, by PV
+  only), and PV below it charges less — a shortfall is never
   bought from the grid, nor a start SOC below plan caught up. <code>DISCHARGE_GRID</code>
   discharges the planned energy, <code>HOLD</code> parks the battery. Grid export beyond <code>grid_export_kw</code> is
   curtailed, and stored energy is not exported beyond the PV produced so far when <strong>Sell only PV</strong>
