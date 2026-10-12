@@ -25,6 +25,10 @@ the inverter).
    row; before, the `HOLD` clock forbade it). This applies to the empty-battery release as well.
 3. `validate_modes` mirrors it: a released `HOLD` keeps the commitment's clock, `CURTAIL` is accepted from
    the commitment or the released `HOLD` once the pack was seen at the ceiling, nothing else is.
+4. Idle committed intervals (T-025, [ADR-0004](0004-carried-lock-release-for-standby-loss.md)): a real `HOLD`
+   run there (`hold_run` = 1) is a release like any other and starts no clock either, so a spent pack whose
+   idle first interval is a bridge may start its `HOLD` in the next one; a bridge never follows a released
+   `HOLD` (the commitment has ended).
 
 ## Alternatives rejected
 
@@ -42,6 +46,8 @@ the inverter).
   and this change): 0 newly infeasible, 36 newly feasible, 84 better objectives, none worse beyond 1e-6. Of
   the 27 problems T-010 made infeasible, this change fixes 17; 10 remain (4 carried, 5 with a
   post-deadline clock, 1 free plan).
+- After rebasing onto T-025 (idle bridges), a sweep of 3 seeds × 500 random problems (same families, idle
+  rows and a full pack included) against origin/main: 0 newly infeasible, 0 `solver_failure`, 8 newly feasible.
 - `benchmarks/optimizer.py` (96 slots, all strategies) unchanged within noise: the rows exist only inside a
   carried commitment.
 - The empty-battery `HOLD` also loses its own clock; its plans can only get cheaper.

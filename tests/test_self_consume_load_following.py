@@ -726,11 +726,11 @@ def spent_pack_problem(rows, battery, *, site=None, mode="CHARGE_PV", **changes)
     return replace(problem, **changes)
 
 
-def test_a_spent_pack_in_an_idle_first_interval_starts_its_hold_run_there():
-    # The pack ends the commitment in the idle interval: HOLD starts there and its
-    # 30 minutes end before the CURTAIL interval. A bridge would leave the next
-    # interval to start a HOLD run that runs into it, and a zero-export site could
-    # not hold through a surplus.
+def test_a_spent_pack_in_an_idle_first_interval_ends_the_commitment_before_the_surplus():
+    # The pack ends the commitment in HOLD and the CURTAIL interval follows at the
+    # deadline, on a zero-export site that could not hold through the surplus. The
+    # released HOLD starts no clock of its own (ADR-0005), so the idle interval may
+    # be the HOLD run or a bridge before it: both read the same flows as valid.
     problem = spent_pack_problem(
         [(0.024, 0.025), (0.0, 0.2), (0.1, 0.05)],
         Battery(5, 0, 1, 0.02, 0.5, 3, 0.95, 0.95, 0, False, True, 0.0),
@@ -738,12 +738,9 @@ def test_a_spent_pack_in_an_idle_first_interval_starts_its_hold_run_there():
     )
     plan = solve(problem)
     assert modes(plan) == ["HOLD", "HOLD", "CURTAIL"]
-    assert plan.carried_bridges == ()
     validate_modes(problem, plan.flows, plan.carried_bridges)
-    # Read as a bridge the same rows would need a HOLD run in the second interval
-    # that is longer than the commitment.
-    with pytest.raises(SolveError, match="minimum mode duration"):
-        validate_modes(problem, plan.flows, {0})
+    validate_modes(problem, plan.flows, ())
+    validate_modes(problem, plan.flows, {0})
 
 
 def test_a_spent_pack_in_an_idle_first_interval_keeps_a_terminal_rule_feasible():
@@ -834,7 +831,7 @@ def test_validator_takes_only_hold_as_a_bridge():
         validate_modes(problem, (quiet, quiet, follow, *(hold,) * 5), {0, 1})
 
 
-def test_a_hold_run_after_a_bridge_starts_its_own_clock():
+def test_a_hold_release_after_a_bridge_needs_a_release():
     problem = committed([(0.0, 0.02), (0.0, 0.2), (0.0, 0.2), (0.0, 0.2), (0.0, 0.2)])
     problem = replace(
         problem,
