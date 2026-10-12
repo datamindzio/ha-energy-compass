@@ -6,6 +6,7 @@ import numpy as np
 
 from .charge_price import price_allows_grid_charge
 from .idle_drain import drain_schedule
+from .machine_state import _TOL as _CLASSIFIER_TOLERANCE
 from .machine_state import machine_state
 from .models import Problem, SolveError
 
@@ -355,9 +356,14 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                         model.upper[v["energy"]],
                     )
                 release[depleted] = -1
-    for i, v in enumerate(vectors):
-        for group in GROUPS:
-            members = _members(group)
+    for group in GROUPS:
+        members = _members(group)
+        # A group's start is a continuous flag: it is at least the rise of the
+        # group's indicator, and the indicator must cover every start still inside
+        # its dwell. Summing the starts, not pairing each with every later slot,
+        # gives the relaxation the convex hull of a minimum duration.
+        starts_here = []
+        for i, v in enumerate(vectors):
             # Modes are one-hot, so a group's member sum is its binary indicator.
             current = {v[f"mode_{mode}"]: 1 for mode in members}
             prior = (
@@ -366,15 +372,17 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             initial = int(previous is not None and dwell_group(previous) == group)
             if ACTIVE.intersection(members) and coverage_end < starts[i] + dwell:
                 model.constrain({**current, **prior}, -np.inf, initial if i == 0 else 0)
-            for j in range(i + 1, len(vectors)):
-                if starts[j] >= starts[i] + dwell:
-                    break
-                following = {vectors[j][f"mode_{mode}"]: -1 for mode in members}
-                model.constrain(
-                    {**current, **following, **prior},
-                    -np.inf,
-                    initial if i == 0 else 0,
-                )
+            started = v[f"start_{group}"] = model.variable(upper=1.0)
+            starts_here.append(started)
+            model.constrain(
+                {started: -1, **current, **prior}, -np.inf, initial if i == 0 else 0
+            )
+        for i, v in enumerate(vectors):
+            holding = {
+                starts_here[j]: 1 for j in range(i + 1) if starts[i] < starts[j] + dwell
+            }
+            holding.update({v[f"mode_{mode}"]: -1 for mode in members})
+            model.constrain(holding, -np.inf, 0)
 
 
 def validate_modes(problem: Problem, flows) -> None:
@@ -396,6 +404,9 @@ def validate_modes(problem: Problem, flows) -> None:
         )
         mode = machine_state(slot, flow)
         tolerance = min(1e-7, activity * 1e-4)
+        # A flow the classifier reads as zero is zero: solver noise up to its
+        # threshold must not fail a slot it already labelled HOLD or an idle flow.
+        noise = max(tolerance, _CLASSIFIER_TOLERANCE)
         charge, discharge, curt, export = (
             flow.charge_kwh,
             flow.discharge_kwh,
@@ -405,16 +416,16 @@ def validate_modes(problem: Problem, flows) -> None:
         surplus = max(slot.pv_kwh - slot.load_kwh, 0)
         valid = {
             "CHARGE_GRID": charge >= surplus + activity - tolerance
-            and max(abs(discharge), abs(curt)) <= tolerance,
+            and max(abs(discharge), abs(curt)) <= noise,
             "CHARGE_PV": activity - tolerance <= charge <= surplus + tolerance
-            and max(abs(discharge), abs(curt)) <= tolerance,
+            and max(abs(discharge), abs(curt)) <= noise,
             "DISCHARGE_GRID": min(discharge, export) >= activity - tolerance
-            and max(abs(charge), abs(curt)) <= tolerance,
+            and max(abs(charge), abs(curt)) <= noise,
             "SELF_CONSUME": discharge >= activity - tolerance
-            and max(abs(charge), abs(export), abs(curt)) <= tolerance,
-            "HOLD": max(abs(charge), abs(discharge), abs(curt)) <= tolerance,
+            and max(abs(charge), abs(export), abs(curt)) <= noise,
+            "HOLD": max(abs(charge), abs(discharge), abs(curt)) <= noise,
             "CURTAIL": curt >= activity - tolerance
-            and max(abs(charge), abs(discharge)) <= tolerance,
+            and max(abs(charge), abs(discharge)) <= noise,
         }
         if flow.dispatch_mode != mode or not valid[mode]:
             raise SolveError(
