@@ -5,6 +5,7 @@ from datetime import UTC, timedelta
 import numpy as np
 
 from .charge_price import price_allows_grid_charge
+from .idle_drain import drain_schedule
 from .machine_state import machine_state
 from .models import Problem, SolveError
 
@@ -17,6 +18,9 @@ MODES = (
     "CURTAIL",
 )
 ACTIVE = frozenset(MODES[:4])
+# Import this small is solver noise, not a plan.
+_IMPORT_TOLERANCE = 1e-5
+_EMPTY_TOLERANCE = 1e-4
 
 
 # CHARGE_PV and SELF_CONSUME both let the inverter follow PV: surplus charges
@@ -81,6 +85,90 @@ def _initial(problem):
     ), problem.initial_dispatch_mode_since
 
 
+def _follow_load(model, problem, v, x, slot, hours, flex_max, can_empty) -> None:
+    """Make SELF_CONSUME discharge what the house draws, up to what the battery gives.
+
+    The inverter discharges whatever the house draws, so a partial discharge
+    next to grid import is not a state a controller can hold. Import needs the
+    discharge at its interval power limit or the battery emptied to its reserve.
+    Written on the discharge, not on the import: the bound is the (small) load,
+    not the (large) grid connection, which keeps the relaxation tight.
+    """
+    battery = problem.battery
+    power_limit = min(
+        model.upper[v["bd"]], problem.site.inverter_kw * hours - slot.pv_kwh
+    )
+    # Signed: PV above the house lowers what a flexible load asks of the battery.
+    demand_max = slot.load_kwh - slot.pv_kwh + flex_max
+    reserve = battery.capacity_kwh * battery.minimum_soc_fraction
+    spare = model.upper[v["energy"]] - reserve
+    x_sc = x["SELF_CONSUME"]
+    # `relief` is the share of the obligation an emptied battery is excused from.
+    relief = {}
+    if can_empty and spare > 0:
+        empty = v["self_consume_empty"] = model.variable(binary=True)
+        # Any discharge ends at or above the reserve, so a battery that ends on
+        # it has just been emptied.
+        model.constrain(
+            {v["energy"]: 1, empty: spare}, -np.inf, model.upper[v["energy"]]
+        )
+        relief[empty] = 1
+    flexible = flex_max > 0
+    flex = {v["flex_load"]: -1} if flexible else {}
+    if power_limit >= demand_max - 1e-9:
+        # Discharge reaches the load before its own limit: cover all of it.
+        model.constrain(
+            {v["bd"]: 1, **flex, x_sc: -demand_max, **{e: demand_max for e in relief}},
+            -flex_max,
+            np.inf,
+        )
+        coupled = {**relief}
+    elif not flexible:
+        # The limit binds: discharge it all.
+        model.constrain(
+            {v["bd"]: 1, x_sc: -power_limit, **{e: power_limit for e in relief}},
+            0,
+            np.inf,
+        )
+        coupled = {**relief}
+    else:
+        # Either the limit binds or the (variable) load is covered.
+        power = v["self_consume_power"] = model.variable(binary=True)
+        model.constrain(
+            {v["bd"]: 1, power: -power_limit, **{e: power_limit for e in relief}},
+            0,
+            np.inf,
+        )
+        model.constrain(
+            {
+                v["bd"]: 1,
+                **flex,
+                x_sc: -demand_max,
+                power: demand_max,
+                **{e: demand_max for e in relief},
+            },
+            -flex_max,
+            np.inf,
+        )
+        coupled = {**relief, power: 1}
+    if coupled:
+        model.constrain({**coupled, x_sc: -1}, -np.inf, 0)
+
+
+def _lock_floor(problem, drains, index) -> float:
+    """Energy below which the battery cannot keep SELF_CONSUME active in a slot."""
+    battery = problem.battery
+    slot = problem.slots[index]
+    hours = (
+        slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
+    ).total_seconds() / 3600
+    return (
+        battery.capacity_kwh * battery.minimum_soc_fraction
+        + drains[index]
+        + problem.minimum_mode_power_kw * hours / battery.eta_discharge
+    )
+
+
 def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) -> None:
     """Bind one named state to material flows and forbid premature transitions."""
     if not problem.battery or not problem.minimum_mode_minutes:
@@ -90,7 +178,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
     starts = [s.start.astimezone(UTC) for s in problem.slots]
     coverage_end = problem.slots[-1].end.astimezone(UTC)
     previous, since = _initial(problem)
-    for slot, v in zip(problem.slots, vectors, strict=True):
+    drains = drain_schedule(problem)
+    lowest = battery.initial_kwh
+    for slot, v, drain in zip(problem.slots, vectors, drains, strict=True):
         hours = (
             slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
         ).total_seconds() / 3600
@@ -130,7 +220,14 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         }
         for mode in MODES:
             key = f"mode_{mode}"
-            v[key] = model.variable(binary=True)
+            # HOLD is the remainder of the one-hot row below, so it is integral whenever
+            # the other modes are; leaving it continuous spares the solver a branching
+            # variable without changing the feasible set.
+            v[key] = (
+                model.variable(upper=1.0)
+                if mode == "HOLD"
+                else model.variable(binary=True)
+            )
             # Below classifier resolution a named material state cannot be certified.
             if not available[mode] or (mode != "HOLD" and activity <= 2e-6):
                 model.upper[v[key]] = 0
@@ -221,6 +318,12 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             -np.inf,
             model.upper[v["gout"]],
         )
+        # Even discharging at full power from the start, the pack may not reach
+        # its reserve yet; then it cannot be emptied in this interval.
+        lowest -= model.upper[v["bd"]] / battery.eta_discharge + drain
+        if available["SELF_CONSUME"]:
+            can_empty = lowest <= battery.capacity_kwh * battery.minimum_soc_fraction
+            _follow_load(model, problem, v, x, slot, hours, extra_load_max, can_empty)
     if problem.initial_battery_mode is not None:
         held_until = problem.initial_battery_mode_since.astimezone(UTC) + dwell
         for start, v in zip(starts, vectors, strict=True):
@@ -229,13 +332,29 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 model.constrain({v[blocked]: 1}, 0, 0)
     if previous is not None:
         held_until = since.astimezone(UTC) + dwell
-        for start, v in zip(starts, vectors, strict=True):
-            if start < held_until:
-                model.constrain(
-                    {v[f"mode_{mode}"]: 1 for mode in _members(dwell_group(previous))},
-                    1,
-                    1,
-                )
+        members = _members(dwell_group(previous))
+        # A battery too empty to go on ends a carried PV-follow commitment the way an
+        # observed SOC bound does: the inverter imports for the house, which is HOLD.
+        release = {}
+        for i, (start, v) in enumerate(zip(starts, vectors, strict=True)):
+            if start >= held_until:
+                break
+            kept = {v[f"mode_{mode}"]: 1 for mode in members}
+            if release:
+                model.constrain({v["mode_HOLD"]: 1, **release}, -np.inf, 0)
+                release = {v["mode_HOLD"]: -1}
+                kept[v["mode_HOLD"]] = 1
+            model.constrain(kept, 1, 1)
+            if "SELF_CONSUME" in members and i + 1 < len(vectors):
+                depleted = v["lock_depleted"] = model.variable(binary=True)
+                slack = model.upper[v["energy"]] - _lock_floor(problem, drains, i + 1)
+                if slack > 0:
+                    model.constrain(
+                        {v["energy"]: 1, depleted: slack},
+                        -np.inf,
+                        model.upper[v["energy"]],
+                    )
+                release[depleted] = -1
     for i, v in enumerate(vectors):
         for group in GROUPS:
             members = _members(group)
@@ -265,7 +384,10 @@ def validate_modes(problem: Problem, flows) -> None:
     previous, since = _initial(problem)
     dwell = timedelta(minutes=problem.minimum_mode_minutes)
     coverage_end = problem.slots[-1].end.astimezone(UTC)
-    for slot, flow in zip(problem.slots, flows, strict=True):
+    drains = drain_schedule(problem)
+    carried = dwell_group(previous) == "PV_FOLLOW"
+    left = None
+    for index, (slot, flow) in enumerate(zip(problem.slots, flows, strict=True)):
         start = slot.start.astimezone(UTC)
         activity = (
             problem.minimum_mode_power_kw
@@ -298,6 +420,23 @@ def validate_modes(problem: Problem, flows) -> None:
             raise SolveError(
                 "solver_failure", "invalid solver result: physical dispatch mode"
             )
+        if mode == "SELF_CONSUME" and flow.grid_import_kwh > _IMPORT_TOLERANCE:
+            hours = (slot.end.astimezone(UTC) - start).total_seconds() / 3600
+            power_limit = min(
+                problem.battery.discharge_kw * hours,
+                problem.site.inverter_kw * hours - slot.pv_kwh,
+            )
+            reserve = (
+                problem.battery.capacity_kwh * problem.battery.minimum_soc_fraction
+            )
+            if (
+                discharge < power_limit - _IMPORT_TOLERANCE
+                and flow.end_soc_kwh > reserve + _EMPTY_TOLERANCE
+            ):
+                raise SolveError(
+                    "solver_failure",
+                    "invalid solver result: self-consume imports below its limit",
+                )
         if (
             problem.initial_battery_mode is not None
             and start < problem.initial_battery_mode_since.astimezone(UTC) + dwell
@@ -308,7 +447,17 @@ def validate_modes(problem: Problem, flows) -> None:
                     "solver_failure", "invalid solver result: legacy direction guard"
                 )
         if dwell_group(mode) != dwell_group(previous):
-            if previous is not None and start < since.astimezone(UTC) + dwell:
+            if (
+                previous is not None
+                and start < since.astimezone(UTC) + dwell
+                # A carried PV-follow commitment ends once the battery cannot go on.
+                and not (
+                    carried
+                    and mode == "HOLD"
+                    and left is not None
+                    and left <= _lock_floor(problem, drains, index) + _EMPTY_TOLERANCE
+                )
+            ):
                 raise SolveError(
                     "solver_failure", "invalid solver result: minimum mode duration"
                 )
@@ -318,4 +467,6 @@ def validate_modes(problem: Problem, flows) -> None:
                     "invalid solver result: active mode beyond coverage",
                 )
             since = start
+            carried = False
         previous = mode
+        left = flow.end_soc_kwh

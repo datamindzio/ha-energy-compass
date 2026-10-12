@@ -1109,7 +1109,7 @@ przechowuje własną kopię zaakceptowanego planu przez przeładowanie wpisu, al
 <tr>
 <td><code>SELF_CONSUME</code></td>
 <td>Autokonsumpcja</td>
-<td>Rozładowanie ≥ activity, bez ładowania, eksportu i ograniczania — bateria zasila dom.</td>
+<td>Rozładowanie ≥ activity, bez ładowania, eksportu i ograniczania — bateria zasila dom. Podąża za obciążeniem: import z sieci tylko przy rozładowaniu na limicie mocy albo gdy bateria jest opróżniona do rezerwy.</td>
 <td>SOC powyżej rezerwy operacyjnej.</td>
 </tr>
 <tr>
@@ -1142,6 +1142,17 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   <code>minimum_mode_minutes</code>.</strong> Tylko końcowy pasywny przebieg HOLD/CURTAIL może być przycięty przez
   pokrycie prognozy. Koordynator zapisuje
   przyjęty tryb i jego start; przeliczenie i restart zachowują zegar.</li>
+<li><strong><code>SELF_CONSUME</code> podąża za obciążeniem.</strong> Falownik rozładowuje tyle, ile pobiera dom, więc plan
+  nigdy nie łączy małego rozładowania z importem z sieci: w przedziale <code>SELF_CONSUME</code> bateria
+  pokrywa całe zapotrzebowanie, a import pojawia się dopiero, gdy rozładowanie sięga limitu mocy
+  w przedziale albo bateria została opróżniona do rezerwy. W przeciwnym razie wiersz to <code>HOLD</code>
+  z pełnym importem. Obowiązuje, gdy <code>minimum_mode_minutes</code> jest większe od 0. Przeniesione
+  zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> jest wykonywane tak samo. Jeśli bateria wyczerpie się
+  przed jego końcem, reszta zobowiązania to <code>HOLD</code> z pełnym importem (startuje nowy zegar
+  <code>HOLD</code>). Plan jest <code>infeasible</code> (niewykonalny) do końca zobowiązania tylko wtedy, gdy potem nie
+  da się spełnić reguły końcowej (<code>preserve_initial</code> bez późniejszego PV lub ładowania z sieci,
+  które uzupełniłyby to, co zużył dom), albo przy rezerwie 0 % i poborze czuwania falownika
+  (<code>idle_drain_kw</code>).</li>
 <li><strong>Grupa podążania za PV:</strong> <code>CHARGE_PV</code> i <code>SELF_CONSUME</code> dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.</li>

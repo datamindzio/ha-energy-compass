@@ -613,7 +613,7 @@ Sensor **Kompas energii** pokazuje tryb pracy bieżącego przedziału; każdy wi
 | `CHARGE_GRID` | Ładowanie z sieci | Ładowanie ≥ nadwyżka PV + activity — ładuje się więcej, niż daje nadwyżka PV, więc baterię zasila sieć. Bez rozładowania i ograniczania PV. | `allow_grid_charge` włączone; cena ≤ sufit ceny ładowania z sieci, gdy ten limit jest włączony. |
 | `CHARGE_PV` | Ładowanie z PV | activity ≤ ładowanie ≤ nadwyżka — ładuje tylko nadwyżka słoneczna. Bez rozładowania i ograniczania PV. | Jest nadwyżka PV. |
 | `DISCHARGE_GRID` | Rozładowanie z eksportem | Rozładowanie ≥ activity **i** eksport do sieci ≥ activity — bateria sprzedaje energię. | `allow_battery_export` włączone; moc eksportu > 0; pozwala na to budżet Sell only PV i próg korzyści eksportu. |
-| `SELF_CONSUME` | Autokonsumpcja | Rozładowanie ≥ activity, bez ładowania, eksportu i ograniczania — bateria zasila dom. | SOC powyżej rezerwy operacyjnej. |
+| `SELF_CONSUME` | Autokonsumpcja | Rozładowanie ≥ activity, bez ładowania, eksportu i ograniczania — bateria zasila dom. Podąża za obciążeniem: import z sieci tylko przy rozładowaniu na limicie mocy albo gdy bateria jest opróżniona do rezerwy. | SOC powyżej rezerwy operacyjnej. |
 | `HOLD` | Wstrzymanie | Brak ładowania, rozładowania i ograniczania — bateria stoi; dom zasila sieć/PV. | Zawsze dostępny. |
 | `CURTAIL` | Ograniczanie PV | Ograniczenie produkcji ≥ activity, bateria nieaktywna. | `allow_curtailment` włączone. |
 
@@ -655,6 +655,17 @@ Zasady (domyślnie 60 min, 0,1 kW):
   `minimum_mode_minutes`.** Tylko końcowy pasywny przebieg HOLD/CURTAIL może być przycięty przez
   pokrycie prognozy. Koordynator zapisuje
   przyjęty tryb i jego start; przeliczenie i restart zachowują zegar.
+- **`SELF_CONSUME` podąża za obciążeniem.** Falownik rozładowuje tyle, ile pobiera dom, więc plan
+  nigdy nie łączy małego rozładowania z importem z sieci: w przedziale `SELF_CONSUME` bateria
+  pokrywa całe zapotrzebowanie, a import pojawia się dopiero, gdy rozładowanie sięga limitu mocy
+  w przedziale albo bateria została opróżniona do rezerwy. W przeciwnym razie wiersz to `HOLD`
+  z pełnym importem. Obowiązuje, gdy `minimum_mode_minutes` jest większe od 0. Przeniesione
+  zobowiązanie `CHARGE_PV`/`SELF_CONSUME` jest wykonywane tak samo. Jeśli bateria wyczerpie się
+  przed jego końcem, reszta zobowiązania to `HOLD` z pełnym importem (startuje nowy zegar
+  `HOLD`). Plan jest `infeasible` (niewykonalny) do końca zobowiązania tylko wtedy, gdy potem nie
+  da się spełnić reguły końcowej (`preserve_initial` bez późniejszego PV lub ładowania z sieci,
+  które uzupełniłyby to, co zużył dom), albo przy rezerwie 0 % i poborze czuwania falownika
+  (`idle_drain_kw`).
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.
