@@ -4,14 +4,17 @@ Read-only bookkeeping, no Home Assistant imports and no effect on the plan.
 Cumulative counters are reduced to their value at each full UTC hour boundary
 by interpolating between consecutive readings, so the state is bounded by the
 window (one small row per hour) however often a counter reports. A counter
-that goes down is a reset: no boundary is derived across it and the hours that
-span it drop out of both ratios instead of becoming negative energy. An hour
-is used only when every value it needs exists; missing hours are skipped, never
-filled.
+that goes down is a reset or a glitch: no boundary is derived from the step
+down or from the segment that recovers from it, and a rise faster than any
+household device can deliver is rejected the same way, so the hours around
+them drop out of both ratios instead of becoming negative or invented energy.
+A counter bound to another source starts over. An hour is used only when every
+value it needs exists; missing hours are skipped, never filled.
 """
 
 from datetime import datetime, timedelta
 from math import isfinite
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from .config_models import NumericSetting, resolve_numeric
@@ -35,6 +38,12 @@ _RETENTION = ROUND_TRIP_WINDOW + timedelta(days=1)
 # trustworthy value at the hour boundaries in between; one that did not move is
 # exact however long the gap.
 MAX_INTERPOLATION_GAP = timedelta(hours=2)
+# A counter that rises faster than this between two readings is a glitch, not
+# energy: no home battery or PV array delivers it. The slack absorbs the
+# resolution of a counter that is read twice in the same second.
+MAX_COUNTER_KW = 100.0
+COUNTER_SLACK_KWH = 1.0
+_MAX_HOUR_KWH = MAX_COUNTER_KW + COUNTER_SLACK_KWH
 # A plan published late in the hour carries only the remainder of it; scaling a
 # short remainder up to a full hour amplifies noise, so it is not recorded.
 MIN_FORECAST_FRACTION = 0.5
@@ -42,6 +51,8 @@ MIN_FORECAST_FRACTION = 0.5
 # minimum of energy so that two idle counters cannot produce a ratio.
 MIN_ROUND_TRIP_HOURS = 7 * 24
 MIN_ROUND_TRIP_CHARGE_KWH = 1.0
+# A day of hours before the PV ratio is called measured.
+MIN_PV_HOURS = 24
 # Hours of the day whose total forecast is below this have no meaningful ratio.
 MIN_RATIO_FORECAST_KWH = 0.05
 _STATE_KEYS = ("last", "hours", "forecast")
@@ -61,6 +72,9 @@ def valid_state(raw) -> bool:
                 return False
             _stamp(row[0])
             _number(row[1])
+            if not isinstance(row[2], str) or not isinstance(row[3], bool):
+                return False
+            _stamp(row[4])
         for hour, counters in raw["hours"].items():
             _stamp(hour)
             if not set(counters) <= set(COUNTER_KEYS):
@@ -95,24 +109,65 @@ def _hour_floor(value: datetime) -> datetime:
     return value.replace(minute=0, second=0, microsecond=0)
 
 
-def observe(state: dict, readings: dict, now: datetime) -> bool:
-    """Fold counter readings {key: (reported_at, kWh) | None} into the state.
+class Reading(NamedTuple):
+    """One counter value in kWh as the source reported it."""
 
-    Returns True when a new hour boundary was derived (worth persisting).
+    at: datetime
+    value: float
+    # Identity of the bound source; a counter bound to another one starts over.
+    source: str = ""
+    # Latest time a counter that has not changed for longer than the
+    # interpolation gap is still taken to hold its value. A source that writes
+    # its state only on change does not report while idle.
+    until: datetime | None = None
+
+
+def observe(state: dict, readings: dict, now: datetime) -> bool:
+    """Fold counter readings {key: Reading | None} into the state.
+
+    Returns True when the stored state changed (worth persisting).
     """
     changed = False
     for key in COUNTER_KEYS:
         reading = readings.get(key)
         if reading is None:
             continue
-        at, value = reading
         last = state["last"].get(key)
+        if last is not None and last[2] != reading.source:
+            _forget(state, key)
+            last = None
+            changed = True
         previous = None
+        at, value = reading.at, reading.value
+        reported = at
         if last is not None:
-            previous = (_stamp(last[0]), last[1])
-            if at <= previous[0]:
+            held, reported = _stamp(last[0]), _stamp(last[4])
+            previous = (held, last[1], last[3])
+            if value == previous[1]:
+                # Idle for longer than a moving counter may go unreported: a
+                # source that writes only on change holds its value until the
+                # reading's limit without saying so.
+                if (reading.until or at) - at > MAX_INTERPOLATION_GAP:
+                    at = reading.until
+                if at <= held:
+                    continue
+                reported = max(reported, reading.at)
+            elif at <= reported:
                 continue
-        state["last"][key] = [at.isoformat(), value]
+            else:
+                # A change that lands inside the held span starts after it.
+                at = max(at, held)
+                reported = reading.at
+        # A step down is a reset or a glitch; the segment that follows it is
+        # not trusted either, whether it recovers or restarts the counter.
+        trusted = previous is None or value >= previous[1]
+        state["last"][key] = [
+            at.isoformat(),
+            value,
+            reading.source,
+            trusted,
+            reported.isoformat(),
+        ]
         # Walk the hour starts the segment (previous, at] spans; a first
         # reading only fixes a boundary it lands on exactly.
         boundary = _hour_floor(previous[0]) + _HOUR if previous else _hour_floor(at)
@@ -131,11 +186,24 @@ def observe(state: dict, readings: dict, now: datetime) -> bool:
     return changed
 
 
+def _forget(state: dict, key: str) -> None:
+    """Drop everything stored for a counter whose source changed."""
+    del state["last"][key]
+    for stamp in list(state["hours"]):
+        state["hours"][stamp].pop(key, None)
+        if not state["hours"][stamp]:
+            del state["hours"][stamp]
+
+
 def _at_boundary(previous, current, boundary) -> float | None:
-    (t0, v0), (t1, v1) = previous, current
+    (t0, v0, trusted), (t1, v1) = previous, current
+    if v1 < v0:
+        return None
+    if v1 - v0 > MAX_COUNTER_KW * ((t1 - t0) / _HOUR) + COUNTER_SLACK_KWH:
+        return None
     if boundary == t1:
         return v1
-    if v1 < v0:
+    if not trusted:
         return None
     if v1 == v0:
         return v1
@@ -191,7 +259,7 @@ def _hours(window: timedelta, now: datetime):
 def _delta(state: dict, hour: datetime, key: str) -> float | None:
     start = state["hours"].get(hour.isoformat(), {}).get(key)
     end = state["hours"].get((hour + _HOUR).isoformat(), {}).get(key)
-    if start is None or end is None or end < start:
+    if start is None or end is None or not 0 <= end - start <= _MAX_HOUR_KWH:
         return None
     return end - start
 
@@ -243,15 +311,18 @@ def pv_accuracy_report(state: dict, now: datetime, timezone: str) -> dict:
         row[1] += measured
         row[2] += 1
 
+    enough = hours >= MIN_PV_HOURS
+
     def ratio(forecast, measured):
-        if forecast < MIN_RATIO_FORECAST_KWH:
+        if not enough or forecast < MIN_RATIO_FORECAST_KWH:
             return None
         return round(measured / forecast, 3)
 
     return {
-        "status": "ok" if hours else "insufficient_data",
+        "status": "ok" if enough else "insufficient_data",
         "window_days": PV_WINDOW.days,
         "covered_hours": hours,
+        "minimum_hours": MIN_PV_HOURS,
         "forecast_kwh": round(totals[0], 3),
         "measured_kwh": round(totals[1], 3),
         "ratio": ratio(*totals),
@@ -319,11 +390,27 @@ def configured_blocks(config: dict) -> tuple[bool, bool]:
     return round_trip and bool(config["sources"]["battery_enabled"]), pv
 
 
+def _identity(setting: NumericSetting) -> str:
+    """What a stored counter value was read from; any change restarts its history."""
+    binding = setting.entity
+    return "|".join(
+        (
+            binding.entity_id,
+            binding.attribute or "",
+            repr(setting.multiplier),
+            setting.source_unit or setting.unit,
+        )
+    )
+
+
 def read_counters(config: dict, states: dict, now: datetime) -> dict:
     """Latest counter readings in kWh stamped with the source's own report time.
 
     An unavailable, mismatched-unit or negative counter is simply not read: a
-    diagnostic never raises into the plan.
+    diagnostic never raises into the plan. A counter that has not moved for longer
+    than MAX_INTERPOLATION_GAP is taken to hold its value until now, while its
+    last report is no older than the role's maximum age: a source that writes
+    only on change is idle, not dead, until then (no age limit: until now).
     """
     readings = {}
     for key, role in COUNTER_MEASUREMENTS.items():
@@ -342,5 +429,10 @@ def read_counters(config: dict, states: dict, now: datetime) -> dict:
         except InputError, KeyError, TypeError, ValueError:
             continue
         if value >= 0:
-            readings[key] = (min(stamp, now), value)
+            stamp = min(stamp, now)
+            max_age = selected.get("max_age_seconds")
+            until = now if not max_age else stamp + timedelta(seconds=max_age)
+            readings[key] = Reading(
+                stamp, value, _identity(setting), max(stamp, min(now, until))
+            )
     return readings

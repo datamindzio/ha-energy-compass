@@ -488,10 +488,10 @@ w atrybutach Stanu optymalizatora (wyłączonych z rejestratora), ani w diagnost
 | --- | --- |
 | `status` | `ok` albo `insufficient_data`, dopóki okno jest za krótkie |
 | `window_days`, `covered_hours` | Okno kroczące (30 / 14 dni) i pełne godziny, które miały wszystkie potrzebne wartości |
-| `minimum_hours` | Tylko sprawność cyklu: 168 pokrytych godzin i co najmniej 1 kWh ładowania, zanim pojawi się `measured` |
+| `minimum_hours` | Pokryte godziny potrzebne, zanim pojawi się stosunek: 168 dla sprawności cyklu (i co najmniej 1 kWh ładowania), 24 dla PV |
 | `charge_kwh`, `discharge_kwh` | Sprawność cyklu: zsumowane przyrosty liczników w pokrytych godzinach |
 | `measured`, `configured`, `difference` | Sprawność cyklu: zmierzony stosunek (null do `ok`), `eta_charge × eta_discharge` oraz pierwszy minus drugi |
-| `forecast_kwh`, `measured_kwh`, `ratio` | PV: sumy z pokrytych godzin i ich iloraz; `ratio` jest null, gdy suma prognozy jest poniżej 0,05 kWh |
+| `forecast_kwh`, `measured_kwh`, `ratio` | PV: sumy z pokrytych godzin i ich iloraz; `ratio` jest null, gdy suma prognozy jest poniżej 0,05 kWh albo gdy `status` to `insufficient_data` |
 | `by_local_hour` | PV: klucze `"00"`–`"23"` (godzina doby w strefie czasowej instalacji), każdy z `ratio`, `hours`, `forecast_kwh` i `measured_kwh` |
 
 Jak to jest mierzone:
@@ -500,9 +500,23 @@ Jak to jest mierzone:
   sprowadzany do wartości na każdej pełnej godzinie UTC przez interpolację między kolejnymi
   odczytami. Licznik bez zmian jest dokładny przy dowolnej przerwie; licznik rosnący w przerwie
   dłuższej niż 2 godziny nie daje wartości. Energia godziny to różnica jej dwóch granic.
-- **Brakujące godziny i resety.** Godzina bez obu granic jest pomijana, nigdy uzupełniana. Licznik,
-  który maleje, to reset: przez niego nie wyznacza się granic, a godzina, która go obejmuje, wypada z
-  obu stosunków.
+- **Liczniki bezczynne.** Licznik, który zapisuje stan tylko przy zmianie (szablon, utility meter
+  lub helper całkujący), nie raportuje w bezczynności. Taki, który nie zmienił się dłużej niż
+  2 godziny, jest uznawany za utrzymujący wartość do teraz, dopóki jego ostatni raport nie jest
+  starszy niż maksymalny wiek źródła (domyślnie 24 godziny; przy wyłączonej kontroli wieku bez
+  limitu), więc jego bezczynne godziny się liczą. Zamrożone źródło od bezczynnego odróżnia wyłącznie
+  ten wiek: po jego przekroczeniu godziny wypadają. Godziny bezczynności pojawiają się z
+  2-godzinnym opóźnieniem, a źródło utrzymujące stałą niezerową moc bez zapisu stanu jest
+  odczytywane jako bezczynne.
+- **Brakujące godziny, resety i zakłócenia.** Godzina bez obu granic jest pomijana, nigdy
+  uzupełniana. Licznik, który maleje, to reset albo zakłócenie: ani spadek, ani odcinek, który z
+  niego wychodzi, nie dają granicy, więc godziny po obu stronach wypadają z obu stosunków (licznik po
+  resecie jest używany znów od drugiego odczytu). Wzrost szybszy niż 100 kW (plus 1 kWh) między
+  dwoma odczytami jest odrzucany tak samo, podobnie jak przyrost godziny powyżej 101 kWh; pojedynczy
+  absurdalny odczyt kosztuje więc kilka godzin i nigdy nie przekłamuje stosunku.
+- **Zmiana źródła.** Zapisane wartości licznika należą do encji, atrybutu, mnożnika i jednostki, z
+  których je odczytano. Podpięcie roli pod inne źródło czyści historię tego licznika (drugi licznik
+  zachowuje swoją), a stosunek wypełnia się od nowa.
 - **Prognoza „jak użyta”.** Każdy opublikowany plan zapisuje swoją prognozę PV na bieżącą godzinę
   (przeskalowaną z reszty godziny, gdy plan liczono w jej trakcie). Zostaje najpełniejszy plan danej
   godziny; plan pokrywający mniej niż połowę godziny nie jest zapisywany. Bieżąca, niedokończona

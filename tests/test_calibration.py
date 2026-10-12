@@ -1,7 +1,10 @@
 import json
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from custom_components.energy_compass import calibration
+from custom_components.energy_compass.calibration import Reading
 from custom_components.energy_compass.engine.models import Slot
 
 T0 = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
@@ -12,7 +15,7 @@ def feed(state, key, values, step=timedelta(hours=1), start=T0, now=NOW):
     """One reading per step; None skips the report, the clock still advances."""
     for index, value in enumerate(values):
         if value is not None:
-            calibration.observe(state, {key: (start + index * step, value)}, now)
+            calibration.observe(state, {key: Reading(start + index * step, value)}, now)
 
 
 def test_round_trip_of_synthetic_counters():
@@ -75,27 +78,28 @@ def test_round_trip_survives_missing_hours_and_a_counter_reset():
     # Hours around the reset and around the silent stretch are dropped, never
     # negative or invented: the ratio is still the real 0.9.
     assert report["measured"] == 0.9
-    # 30 hours around the silent stretch and the one hour that spans the reset.
-    assert report["covered_hours"] == hours - 30 - 1
+    # 30 hours around the silent stretch, the hour that spans the reset and the
+    # hour after it (the first reading of a reset counter is not trusted).
+    assert report["covered_hours"] == hours - 30 - 2
     assert report["charge_kwh"] > 0
 
 
 def test_idle_counter_is_exact_across_a_long_gap_but_a_moving_one_is_not():
     state = calibration.empty_state()
-    calibration.observe(state, {"pv": (T0, 10.0)}, NOW)
-    calibration.observe(state, {"pv": (T0 + timedelta(hours=10), 10.0)}, NOW)
+    calibration.observe(state, {"pv": Reading(T0, 10.0)}, NOW)
+    calibration.observe(state, {"pv": Reading(T0 + timedelta(hours=10), 10.0)}, NOW)
     assert state["hours"][(T0 + timedelta(hours=5)).isoformat()]["pv"] == 10.0
-    calibration.observe(state, {"pv": (T0 + timedelta(hours=15), 12.0)}, NOW)
+    calibration.observe(state, {"pv": Reading(T0 + timedelta(hours=15), 12.0)}, NOW)
     assert (T0 + timedelta(hours=12)).isoformat() not in state["hours"]
 
 
 def test_stale_or_repeated_reading_is_ignored():
     state = calibration.empty_state()
     at = T0 + timedelta(minutes=30)
-    assert not calibration.observe(state, {"pv": (at, 1.0)}, NOW)
-    calibration.observe(state, {"pv": (at + timedelta(hours=1), 2.0)}, NOW)
+    assert not calibration.observe(state, {"pv": Reading(at, 1.0)}, NOW)
+    calibration.observe(state, {"pv": Reading(at + timedelta(hours=1), 2.0)}, NOW)
     before = json.dumps(state, sort_keys=True)
-    calibration.observe(state, {"pv": (at, 9.0)}, NOW)
+    calibration.observe(state, {"pv": Reading(at, 9.0)}, NOW)
     assert json.dumps(state, sort_keys=True) == before
 
 
@@ -169,10 +173,10 @@ def test_pv_accuracy_total_and_per_local_hour_with_missing_hours():
 
 def test_pv_accuracy_drops_the_hours_across_a_counter_reset():
     state = calibration.empty_state()
-    start = NOW - timedelta(days=1)
-    values = [500 + h for h in range(10)] + [h for h in range(15)]
+    start = NOW - timedelta(days=2)
+    values = [500 + h for h in range(30)] + [h for h in range(19)]
     feed(state, "pv", values, start=start)
-    for h in range(24):
+    for h in range(48):
         at = start + timedelta(hours=h)
         calibration.record_forecast(
             state,
@@ -180,8 +184,8 @@ def test_pv_accuracy_drops_the_hours_across_a_counter_reset():
             at,
         )
     report = calibration.pv_accuracy_report(state, NOW, "UTC")
-    # 24 hours of readings, minus the hour that spans the reset.
-    assert report["covered_hours"] == 23
+    # 48 hours of readings, minus the hour that spans the reset and the next.
+    assert report["covered_hours"] == 46
     assert report["ratio"] == 1.0
 
 
@@ -194,7 +198,7 @@ def test_store_is_bounded_and_round_trips_through_json():
         now = at
         calibration.observe(
             state,
-            {"pv": (at, hour * 1.0), "charge": (at, hour * 0.5)},
+            {"pv": Reading(at, hour * 1.0), "charge": Reading(at, hour * 0.5)},
             at,
         )
         calibration.record_forecast(
@@ -226,8 +230,40 @@ def test_invalid_stored_state_is_rejected():
             "forecast": {},
         },
         {"last": {}, "hours": {}, "forecast": {"2026-09-01T00:00:00+00:00": [1]}},
+        {
+            "last": {"pv": ["2026-09-01T00:00:00+00:00", 1.0]},
+            "hours": {},
+            "forecast": {},
+        },
+        {
+            "last": {
+                "pv": [
+                    "2026-09-01T00:00:00+00:00",
+                    1.0,
+                    "s",
+                    "yes",
+                    "2026-09-01T00:00:00+00:00",
+                ]
+            },
+            "hours": {},
+            "forecast": {},
+        },
     ):
         assert not calibration.valid_state(bad)
+    kept = {
+        "last": {
+            "pv": [
+                "2026-09-01T00:00:00+00:00",
+                1.0,
+                "sensor.p||1.0|kWh",
+                False,
+                "2026-08-31T23:00:00+00:00",
+            ]
+        },
+        "hours": {},
+        "forecast": {},
+    }
+    assert calibration.valid_state(kept)
 
 
 def test_configured_blocks_and_counter_reading():
@@ -281,4 +317,241 @@ def test_configured_blocks_and_counter_reading():
         },
     }
     readings = calibration.read_counters(config, states, NOW)
-    assert readings == {"charge": (stamp, 12.5), "discharge": (NOW, 9.0)}
+    assert readings == {
+        "charge": Reading(stamp, 12.5, "sensor.c||1.0|kWh", NOW),
+        "discharge": Reading(NOW, 9.0, "sensor.d||0.001|Wh", NOW),
+    }
+    # An unchanged counter is held only for the role's maximum age.
+    config["measurements"]["battery_charge_energy"]["max_age_seconds"] = 60
+    held = calibration.read_counters(config, states, NOW)["charge"]
+    assert held.until == stamp + timedelta(seconds=60)
+    config["measurements"]["battery_charge_energy"]["max_age_seconds"] = None
+    assert calibration.read_counters(config, states, NOW)["charge"].until == NOW
+
+
+MINUTE = timedelta(minutes=1)
+POLL_OFFSET = timedelta(seconds=30)  # polling never lands on a full hour
+
+
+def _minute_polled(days=9, glitch=None, source="", start=T0 + POLL_OFFSET):
+    """1 kWh/h in and 0.9 kWh/h out, polled every minute; glitch = (index, kWh)."""
+    state = calibration.empty_state()
+    for index in range(days * 24 * 60):
+        at = start + index * MINUTE
+        charge = 5000 + index / 60
+        if glitch and index == glitch[0]:
+            charge = glitch[1]
+        calibration.observe(
+            state,
+            {
+                "charge": Reading(at, charge, source),
+                "discharge": Reading(at, 4000 + 0.9 * index / 60, source),
+            },
+            NOW,
+        )
+    return state
+
+
+def _clean_hours():
+    return calibration.round_trip_report(_minute_polled(), NOW, 0.95)["covered_hours"]
+
+
+@pytest.mark.parametrize(
+    "glitch",
+    [
+        # One zero reading on the last poll before an hour, counter back next poll.
+        (3 * 24 * 60 + 12 * 60 + 59, 0.0),
+        # One absurd reading on the first poll after an hour.
+        (3 * 24 * 60 + 13 * 60, 65535.0),
+        # A small dip in the middle of an hour.
+        (3 * 24 * 60 + 12 * 60 + 30, 4990.0),
+    ],
+)
+def test_one_glitch_reading_drops_hours_but_never_invents_energy(glitch):
+    report = calibration.round_trip_report(_minute_polled(glitch=glitch), NOW, 0.95)
+    assert report["status"] == "ok"
+    # The ratio stays the real one; only the hours around the glitch are lost.
+    assert report["measured"] == 0.9
+    assert _clean_hours() - 3 <= report["covered_hours"] <= _clean_hours()
+    assert report["charge_kwh"] == pytest.approx(report["covered_hours"])
+
+
+def test_down_step_and_the_segment_that_recovers_from_it_derive_no_boundary():
+    state = calibration.empty_state()
+    for minutes, value in ((10, 5.0), (50, 0.0), (70, 5.5), (80, 5.6)):
+        calibration.observe(state, {"pv": Reading(T0 + minutes * MINUTE, value)}, NOW)
+    # The step down, the recovery across 01:00 and nothing else.
+    assert T0.isoformat() not in state["hours"]
+    assert (T0 + timedelta(hours=1)).isoformat() not in state["hours"]
+    calibration.observe(state, {"pv": Reading(T0 + timedelta(hours=2), 6.6)}, NOW)
+    assert state["hours"][(T0 + timedelta(hours=2)).isoformat()]["pv"] == 6.6
+
+
+def test_rise_faster_than_any_device_delivers_is_rejected():
+    one = (T0 + timedelta(hours=1)).isoformat()
+    state = calibration.empty_state()
+    calibration.observe(state, {"pv": Reading(T0 + 30 * MINUTE, 5.0)}, NOW)
+    # 4995 kWh in an hour across 01:00 is a glitch, not energy.
+    calibration.observe(state, {"pv": Reading(T0 + 90 * MINUTE, 5000.0)}, NOW)
+    assert state["hours"] == {}
+    # The same, landing exactly on the hour: the reading is not a boundary.
+    glitch = calibration.empty_state()
+    calibration.observe(glitch, {"pv": Reading(T0 + 30 * MINUTE, 5.0)}, NOW)
+    calibration.observe(glitch, {"pv": Reading(T0 + 60 * MINUTE, 65535.0)}, NOW)
+    assert glitch["hours"] == {}
+    # A real 3 kWh/h is nowhere near the bound.
+    real = calibration.empty_state()
+    calibration.observe(real, {"pv": Reading(T0 + 30 * MINUTE, 5.0)}, NOW)
+    calibration.observe(real, {"pv": Reading(T0 + 90 * MINUTE, 8.0)}, NOW)
+    assert real["hours"][one]["pv"] == pytest.approx(6.5)
+    # An absurd hour delta between two accepted boundaries is dropped too.
+    odd = calibration.empty_state()
+    odd["hours"] = {
+        T0.isoformat(): {"pv": 5.0},
+        one: {"pv": 5000.0},
+    }
+    assert calibration._delta(odd, T0, "pv") is None
+
+
+def test_rebinding_a_counter_starts_its_history_over():
+    # Two days of a daily counter, then the lifetime counter takes its place
+    # while polling is off the hour; the other counter keeps its history.
+    state = calibration.empty_state()
+    rebound = T0 + POLL_OFFSET + 2 * 24 * 60 * MINUTE
+    for index in range(10 * 24 * 60):
+        at = T0 + POLL_OFFSET + index * MINUTE
+        daily = at < rebound
+        calibration.observe(
+            state,
+            {
+                "charge": Reading(
+                    at,
+                    3.0 + index / 60 if daily else 5000 + index / 60,
+                    "sensor.daily" if daily else "sensor.lifetime",
+                ),
+                "discharge": Reading(at, 4000 + 0.9 * index / 60, "sensor.out"),
+            },
+            NOW,
+        )
+    report = calibration.round_trip_report(state, NOW, 0.95)
+    assert report["status"] == "ok"
+    assert report["measured"] == 0.9
+    # Nothing of the daily counter survives; the discharge history does.
+    assert all(
+        "charge" not in row
+        for stamp, row in state["hours"].items()
+        if datetime.fromisoformat(stamp) < rebound
+    )
+    assert any(
+        "discharge" in row
+        for stamp, row in state["hours"].items()
+        if datetime.fromisoformat(stamp) < rebound
+    )
+    assert state["last"]["charge"][2] == "sensor.lifetime"
+    assert report["covered_hours"] <= 8 * 24
+    assert report["charge_kwh"] == pytest.approx(report["covered_hours"])
+
+
+def test_source_identity_covers_attribute_multiplier_and_unit():
+    from custom_components.energy_compass.config_models import NumericSetting
+    from custom_components.energy_compass.sources.bindings import EntityBinding
+
+    def identity(entity="sensor.c", attribute=None, multiplier=1.0, unit="kWh"):
+        return calibration._identity(
+            NumericSetting(
+                entity=EntityBinding(entity, attribute=attribute),
+                unit="kWh",
+                source_unit=unit,
+                multiplier=multiplier,
+            )
+        )
+
+    base = identity()
+    assert identity() == base
+    assert len({base, identity("sensor.d"), identity(attribute="total")}) == 3
+    assert len({base, identity(multiplier=0.001), identity(unit="Wh")}) == 3
+
+
+def _change_only(days=9, max_age=timedelta(hours=24)):
+    """Counters that write state only when they move: charge 10-14 UTC at 1 kWh/h,
+    discharge 18-24 UTC at 0.6 kWh/h, both idle otherwise; reported at last change."""
+    state = calibration.empty_state()
+    charge, discharge = 5000.0, 4000.0
+    changed = {"charge": T0, "discharge": T0}
+    # Three more idle hours: an idle counter is covered once it has been
+    # unchanged for longer than the interpolation gap.
+    for index in range((days * 24 + 3) * 60):
+        at = T0 + index * MINUTE
+        if 10 <= at.hour < 14:
+            charge += 1 / 60
+            changed["charge"] = at
+        if 18 <= at.hour:
+            discharge += 0.6 / 60
+            changed["discharge"] = at
+
+        charge_until = min(at, changed["charge"] + max_age)
+        discharge_until = min(at, changed["discharge"] + max_age)
+        calibration.observe(
+            state,
+            {
+                "charge": Reading(changed["charge"], charge, "", charge_until),
+                "discharge": Reading(
+                    changed["discharge"], discharge, "", discharge_until
+                ),
+            },
+            NOW,
+        )
+    return state
+
+
+def test_counters_that_write_only_on_change_still_cover_their_idle_hours():
+    report = calibration.round_trip_report(_change_only(), NOW, 0.95)
+    assert report["status"] == "ok"
+    assert report["measured"] == 0.9
+    # Idle hours count: every hour of the nine days is covered, not only the
+    # ones in which a counter moved (4 kWh charged and 3.6 discharged a day).
+    assert report["covered_hours"] >= 9 * 24
+    assert report["charge_kwh"] == pytest.approx(36.0)
+    assert report["discharge_kwh"] == pytest.approx(32.4)
+
+
+def test_unchanged_counter_holds_until_its_maximum_age_then_the_hours_drop():
+    state = calibration.empty_state()
+    hour = timedelta(hours=1)
+    calibration.observe(state, {"pv": Reading(T0, 10.0, "", T0 + 30 * MINUTE)}, NOW)
+    # No new report, the source is idle: the value holds up to the age limit.
+    calibration.observe(state, {"pv": Reading(T0, 10.0, "", T0 + 3 * hour)}, NOW)
+    for offset in (1, 2, 3):
+        assert state["hours"][(T0 + offset * hour).isoformat()]["pv"] == 10.0
+    # Past the limit the source is frozen, not idle: until stops advancing.
+    calibration.observe(state, {"pv": Reading(T0, 10.0, "", T0 + 3 * hour)}, NOW)
+    assert (T0 + 4 * hour).isoformat() not in state["hours"]
+    # It moves again 5 hours later: the silence yields no boundary, the new
+    # reading itself is one.
+    calibration.observe(
+        state, {"pv": Reading(T0 + 8 * hour, 10.5, "", T0 + 8 * hour)}, NOW
+    )
+    assert [stamp for stamp in state["hours"] if stamp > T0.isoformat()] == [
+        (T0 + offset * hour).isoformat() for offset in (1, 2, 3, 8)
+    ]
+    assert state["hours"][(T0 + 8 * hour).isoformat()]["pv"] == 10.5
+
+
+def test_pv_accuracy_needs_a_day_of_hours():
+    state = calibration.empty_state()
+    start = NOW - timedelta(hours=10)
+    feed(state, "pv", [float(h) for h in range(11)], start=start)
+    for h in range(10):
+        at = start + timedelta(hours=h)
+        calibration.record_forecast(
+            state,
+            [{"hour_start": at.isoformat(), "kwh_hour": 1.0, "fraction": 1.0}],
+            at,
+        )
+    report = calibration.pv_accuracy_report(state, NOW, "UTC")
+    assert report["status"] == "insufficient_data"
+    assert report["covered_hours"] == 10
+    assert report["minimum_hours"] == 24
+    assert report["ratio"] is None
+    assert all(row["ratio"] is None for row in report["by_local_hour"].values())
+    assert report["forecast_kwh"] == 10.0

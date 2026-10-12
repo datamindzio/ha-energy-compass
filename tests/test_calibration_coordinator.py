@@ -3,6 +3,7 @@ from datetime import timedelta
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.energy_compass import calibration
 from custom_components.energy_compass.config_models import NumericSetting
 from custom_components.energy_compass.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -150,7 +151,7 @@ async def test_published_forecast_hour_is_recorded_once(
 
 
 async def test_pv_forecast_accuracy_end_to_end(
-    recorder_mock, hass, enable_custom_integrations, freezer
+    recorder_mock, hass, hass_storage, enable_custom_integrations, freezer
 ):
     from custom_components.energy_compass.config_models import PvSource
     from custom_components.energy_compass.sources.bindings import IntervalBinding
@@ -196,7 +197,22 @@ async def test_pv_forecast_accuracy_end_to_end(
         )
 
     publish_inputs(1000.0)
-    entry = await _setup(hass, config)
+    entry = MockConfigEntry(
+        domain="energy_compass", data=config, title="Home", version=3
+    )
+    entry.add_to_hass(hass)
+    # A day of history from the store: the ratio needs 24 covered hours.
+    first = dt_util.utcnow() - timedelta(hours=24)
+    stored = calibration.empty_state()
+    for back in range(24):
+        hour = first + timedelta(hours=back)
+        stored["hours"][hour.isoformat()] = {"pv": 976.0 + back}
+        stored["forecast"][hour.isoformat()] = [2.0, 1.0]
+    stored["hours"][dt_util.utcnow().isoformat()] = {"pv": 1000.0}
+    key = f"energy_compass.{entry.entry_id}.calibration"
+    hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": stored}
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     assert coordinator.data["pv_forecast_hours"][0]["kwh_hour"] == 2.0
     for hour in range(1, 4):
@@ -207,7 +223,7 @@ async def test_pv_forecast_accuracy_end_to_end(
     accuracy = report["pv_forecast_accuracy"]
     assert "battery_round_trip" not in report
     assert accuracy["status"] == "ok"
-    assert accuracy["covered_hours"] >= 1
+    assert accuracy["covered_hours"] >= 24
     assert accuracy["ratio"] == 0.5
     assert accuracy["by_local_hour"]["10"]["ratio"] == 0.5
     status = hass.states.get("sensor.home_optimizer_status")
