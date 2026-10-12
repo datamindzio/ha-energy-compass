@@ -18,6 +18,7 @@ BALANCE_ATTRIBUTES = (
     "planned_start",
     "planned_end",
     "planned_mode",
+    "pv_series",
     "hold_progress_minutes",
     "hold_required_minutes",
     "threshold_percent",
@@ -33,6 +34,7 @@ PLAN_ATTRIBUTES = frozenset(
         "measurements",
         "load_quality",
         "flexible_load_profiles",
+        "measured_calibration",
     }
 )
 
@@ -180,6 +182,7 @@ class EnergyCompassEntity(CoordinatorEntity):
             )
             attrs["load_quality"] = quality.get("load")
             attrs["strategy"] = data.get("strategy")
+            attrs["balance_pv_series"] = data.get("balance_pv_series")
             attrs["autonomy_shortfall_kwh"] = data.get("autonomy_shortfall_kwh")
             attrs["peak_reserve_shortfall_kwh"] = data.get("peak_reserve_shortfall_kwh")
             attrs["time_limited"] = data.get("time_limited")
@@ -255,6 +258,9 @@ class EnergyCompassEntity(CoordinatorEntity):
             counts = self.coordinator.calculation_counts()
             attrs["last_calculation_started_at"] = counts["last_calculation_started_at"]
             attrs["calculations_since_load"] = counts["calculations_since_load"]
+            measured = self.coordinator.calibration_report()
+            if measured is not None:
+                attrs["measured_calibration"] = measured
         return attrs
 
 

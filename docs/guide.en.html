@@ -143,6 +143,7 @@
         <li><a href="#cost-card">Cost card</a></li>
         <li><a href="#deye-inverter-controller-solarman">Deye inverter controller (Solarman)</a></li>
         <li><a href="#energy-atlas-optional">Energy Atlas (optional)</a></li>
+        <li><a href="#offline-replay-tool">Offline replay tool</a></li>
         <li><a href="#reason-code-reference">Reason code reference</a></li>
       </ul>
     </nav>
@@ -174,6 +175,7 @@ inverters through Solarman: see <a href="#deye-inverter-controller-solarman">Dey
 <li><a href="#cost-card">Cost card</a></li>
 <li><a href="#deye-inverter-controller-solarman">Deye inverter controller (Solarman)</a></li>
 <li><a href="#energy-atlas-optional">Energy Atlas (optional)</a></li>
+<li><a href="#offline-replay-tool">Offline replay tool</a></li>
 <li><a href="#reason-code-reference">Reason code reference</a></li>
 </ol>
 <h2 id="how-it-works">How it works</h2>
@@ -372,8 +374,9 @@ overrides the pre-fill at save time; the Preview lists that key as edited, namin
 effective value.</p>
 <p>Polish settlement and tariff profiles require currency PLN; choosing one with another currency is
 rejected, on the field that caused it. Setup profiles never set a tariff price (<code>buy_rate</code>,
-<code>buy_off_peak_rate</code>, <code>sell_rate</code>, <code>buy_addition</code>, <code>sell_addition</code>, <code>monthly_charge</code>) and never touch a
-strategy-owned setting.</p>
+<code>buy_off_peak_rate</code>, <code>buy_distribution_rate</code>, <code>buy_distribution_off_peak_rate</code>, <code>sell_rate</code>, <code>buy_addition</code>,
+<code>sell_addition</code>, <code>monthly_charge</code>) and never touch a strategy-owned setting. They never enable the
+<a href="#net-billing-deposit-value">deposit model</a> either: every installation starts with it off.</p>
 <p><strong>Sell only PV</strong> (<code>limit_export_to_pv</code>) stays on with every settlement profile — a Polish prosumer may
 only sell energy produced by their own PV — and is turned off either by switching to the <code>max_export</code>
 strategy or by setting <code>limit_export_to_pv</code> to off directly; the explicit setting persists across
@@ -515,6 +518,16 @@ for G12w, the statutory holidays in the horizon.</p>
 <p><strong>Enea G12.</strong> Enea sets the hours per meter: 8 hours within 22–7 (start 22 or 23) and 2 hours within
 13–17 (start 13, 14 or 15). The default is 22 and 13 (Enea FAQ); the extra form asks for both, so check
 your meter or bill.</p>
+<p><strong>Distribution tariff.</strong> A buy source that is not a tariff schedule (a fixed rate, an entity, or a
+dynamic energy price from a forecast) can still take the distributor's zones: <strong>Tariffs → Buy source →
+Distribution tariff (zones for the distribution rates)</strong> (currency PLN) offers the same catalog,
+winter-clock flag and Enea hours, or <em>None (single zone)</em>. The zones apply to the two distribution
+rates of the <a href="#net-billing-deposit-value">deposit model</a> (<code>buy_distribution_rate</code>,
+<code>buy_distribution_off_peak_rate</code>); their band edges become interval boundaries for the planner, as for
+a schedule. They do not change the buy source. A schedule source keeps its own zones, so choosing a
+tariff schedule drops a stored distribution tariff. Preview shows both parts of the first interval's
+buy price, the energy part and the distribution part. The buy row of <strong>Sources → Review and edit
+sources</strong> shows the distribution mode, the zones and the rate per zone.</p>
 <p><strong>RCE sell price.</strong> <strong>Tariffs → Sell source → RCE market price (PSE)</strong> saves the sensor of the <code>rce_pse</code>
 integration (attribute <code>prices</code>, value <code>rce_pln</code>, end <code>dtime</code>, PLN/MWh, 15 minutes) as a forecast source
 with a price floor of 0: the raw value is floored at 0 per kWh <strong>before</strong> the multiplier, VAT and
@@ -632,11 +645,13 @@ dashboard's two grid meters resolve to the inverter's counter.</p>
   <code>pv_energy</code> rows; with the battery off no <code>soc</code>, <code>bms_soc</code> or <code>battery_power</code> rows. The two daily
   counters are never gated.</li>
 <li><strong>Stored age limits</strong> of the measurements: 3600 s for <code>battery_power</code>, <code>grid_import_power</code> and
-  <code>grid_export_power</code>; 86400 s for <code>pv_power</code>, the lifetime counters and the daily counters (a
-  constant 0 W at night never updates the state).</li>
+  <code>grid_export_power</code>; 86400 s for <code>pv_power</code>, the lifetime counters, the battery charge and discharge
+  energy counters and the daily counters (a constant 0 W at night never updates the state).</li>
 <li><strong>Never detected:</strong> <code>buy</code>; <code>throughput_today</code> (to use <code>daily_cycles</code> provide one entity with the
   AC-side charge plus discharge since midnight, see <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/source-requirements.md#daily-battery-throughput">source requirements</a>);
-  <code>battery_energy</code>, <code>battery_charge_power</code> and <code>battery_discharge_power</code>; and helpers.</li>
+  <code>battery_energy</code>, <code>battery_charge_power</code>, <code>battery_discharge_power</code>, <code>battery_charge_energy</code> and
+  <code>battery_discharge_energy</code> (the optional <a href="#measured-calibration-optional">measured calibration</a>
+  counters); and helpers.</li>
 </ul>
 <p>Preview then shows the usual acknowledgements for a new entry. Its <strong>Back to the main menu</strong>
 checkbox leaves Preview without validating or saving anything. The matching reference tables are in
@@ -821,7 +836,7 @@ reloads.</p>
 <strong>Expose windows</strong>, and flexible depth with <strong>Consumption outlook → Enable flexible energy depth</strong>.
 Battery balance is disabled by default and enabled with the <strong>LFP balance</strong> setting; its
 attributes carry <code>last_completed</code>, <code>next_due</code>, <code>days_overdue</code>, <code>planned_start</code>, <code>planned_end</code>,
-<code>planned_mode</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code> and <code>threshold_percent</code>.</p>
+<code>planned_mode</code>, <code>pv_series</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code> and <code>threshold_percent</code>.</p>
 <h3 id="availability-rule">Availability rule</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8f0236fbff5e-dark.svg"><img src="assets/diagrams/diagram-8f0236fbff5e.svg" alt="Diagram 3" loading="lazy"></picture></figure>
 <h2 id="optimizer-status--calculation-lifecycle">Optimizer status — calculation lifecycle</h2>
@@ -881,8 +896,104 @@ attributes carry <code>last_completed</code>, <code>next_due</code>, <code>days_
 </tbody>
 </table></section>
 <p>Attributes: <code>last_calculation_started_at</code>, <code>calculations_since_load</code>,
-<code>expired_previous_generated_at</code>. Diagnostics add <code>calculations_last_hour</code> and
-<code>calculations_last_24h</code>.</p>
+<code>expired_previous_generated_at</code>, and <code>measured_calibration</code> when calibration counters are bound
+(see <a href="#measured-calibration-optional">Measured calibration</a>). Diagnostics add
+<code>calculations_last_hour</code> and <code>calculations_last_24h</code>.</p>
+<h3 id="measured-calibration-optional">Measured calibration (optional)</h3>
+<p>Plans carry <code>calibration</code> and <code>capacity_calibration</code>, which stay <code>unvalidated</code> until you set them and
+say nothing about how far the configured values are from reality. Two read-only diagnostics compare
+them with your own counters. They never change a plan. A block appears only while its sources are
+bound; with none bound, <code>measured_calibration</code> is absent from the Optimizer status attributes
+(excluded from the recorder) and from the integration diagnostics.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Block</th>
+<th>Sources (Sources → Add source → Measurement)</th>
+<th>Reports</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>battery_round_trip</code></td>
+<td><code>battery_charge_energy</code> and <code>battery_discharge_energy</code>: lifetime counters of the energy that passed the battery terminals, kWh or Wh, battery enabled</td>
+<td>discharge ÷ charge energy over the last 30 days, next to the configured <code>eta_charge × eta_discharge</code></td>
+</tr>
+<tr>
+<td><code>pv_forecast_accuracy</code></td>
+<td><code>pv_energy</code>: the lifetime PV counter, PV enabled, an entity (not a recorder statistic)</td>
+<td>real ÷ forecast PV energy over the last 14 days, in total and per local hour of the day</td>
+</tr>
+</tbody>
+</table></section>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>status</code></td>
+<td><code>ok</code>, or <code>insufficient_data</code> while the window is too short</td>
+</tr>
+<tr>
+<td><code>window_days</code>, <code>covered_hours</code></td>
+<td>Rolling window (30 / 14 days) and the full hours that had every value they need</td>
+</tr>
+<tr>
+<td><code>minimum_hours</code></td>
+<td>Covered hours needed before the ratio is shown: 168 for the round trip (and at least 1 kWh charged), 24 for PV</td>
+</tr>
+<tr>
+<td><code>charge_kwh</code>, <code>discharge_kwh</code></td>
+<td>Round trip: summed counter deltas over the covered hours</td>
+</tr>
+<tr>
+<td><code>measured</code>, <code>configured</code>, <code>difference</code></td>
+<td>Round trip: measured ratio (null until <code>ok</code>), <code>eta_charge × eta_discharge</code> and the first minus the second</td>
+</tr>
+<tr>
+<td><code>forecast_kwh</code>, <code>measured_kwh</code>, <code>ratio</code></td>
+<td>PV: sums over covered hours and their quotient; <code>ratio</code> is null when the forecast sum is below 0.05 kWh or while <code>status</code> is <code>insufficient_data</code></td>
+</tr>
+<tr>
+<td><code>by_local_hour</code></td>
+<td>PV: keys <code>"00"</code>–<code>"23"</code> (hour of the day in the installation timezone), each with <code>ratio</code>, <code>hours</code>, <code>forecast_kwh</code> and <code>measured_kwh</code></td>
+</tr>
+</tbody>
+</table></section>
+<p>How it is measured:</p>
+<ul>
+<li><strong>Hour boundaries.</strong> Each counter reading is stamped with the source's own report time and reduced
+  to its value at every full UTC hour by interpolating between consecutive readings. An unchanged
+  counter is exact however long the gap; a moving one across a gap longer than 2 hours gives no
+  value. Energy of an hour is the difference of its two boundaries.</li>
+<li><strong>Idle counters.</strong> A counter that writes its state only when it moves (a template, utility meter
+  or integration helper) does not report while idle. One that has not changed for more than 2 hours
+  is taken to hold its value up to now, as long as its last report is no older than the source's
+  maximum age (24 hours by default; with the age check off, no limit), so its idle hours count.
+  Only that age tells a frozen source from an idle one: past it the hours drop out. Idle hours
+  appear 2 hours late, and a source that holds a steady non-zero rate without writing its state is
+  read as idle.</li>
+<li><strong>Missing hours, resets and glitches.</strong> An hour without both boundaries is skipped, never filled.
+  A counter that goes down is a reset or a glitch: neither the step down nor the segment that
+  recovers from it yields a boundary, so the hours on both sides drop out of both ratios (a counter
+  that restarts after a reset is used again from its second reading). A rise faster than 100 kW
+  (plus 1 kWh) between two readings is rejected the same way, as is an hour delta above 101 kWh, so
+  a single absurd reading costs a few hours and never skews a ratio.</li>
+<li><strong>Rebinding.</strong> Stored counter values belong to the entity, attribute, multiplier and unit they
+  were read from. Binding the role to something else clears that counter's history (the other
+  counter keeps its own) and the ratio fills again from then on.</li>
+<li><strong>Forecast as used.</strong> Each published plan records its PV forecast for the current hour (scaled up
+  from the remainder when the plan was solved mid-hour). The fullest plan of the hour is kept; a plan
+  that covers less than half of the hour is not recorded. The current, unfinished hour is not
+  compared.</li>
+<li><strong>Storage.</strong> One small row per hour: about 31 days of counter values and 15 days of forecasts, kept
+  in the integration's own store (<code>energy_compass.&lt;entry_id&gt;.calibration</code>), saved at each new hour and
+  on unload, restored on start. An invalid store is dropped with a warning.</li>
+</ul>
 <h3 id="superseded-results">Superseded results</h3>
 <p>If inputs change while a solve runs, the finished result is still published when only inputs (not
 configuration) changed — it is fresher than the retained plan — and a new solve follows.
@@ -1089,6 +1200,11 @@ directly by any other available mode.</p>
 <td>Planning-only shadow price per imported kWh, under every strategy.</td>
 </tr>
 <tr>
+<td><strong>Deposit model</strong> (<code>deposit_model</code>)</td>
+<td><code>off</code></td>
+<td>Values exported energy and the deposit-payable part of imports by what the prosumer deposit will really pay back. Needs the distribution part of the buy price. See <a href="#net-billing-deposit-value">Net-billing deposit value</a>.</td>
+</tr>
+<tr>
 <td><strong>Inverter standby loss</strong> (<code>idle_drain_kw</code>)</td>
 <td>0 (off)</td>
 <td>Constant battery drain modelled per interval.</td>
@@ -1107,6 +1223,157 @@ directly by any other available mode.</p>
 </table></section>
 <p>Setup profiles can pre-fill the import penalty, standby loss and terminal rule for new installations;
 see <a href="#setup-profiles-new-installations">Setup profiles</a>.</p>
+<h3 id="net-billing-deposit-value">Net-billing deposit value</h3>
+<p>Under Polish net billing the value of exported energy is booked on the <strong>prosumer deposit</strong>, and the
+deposit pays only what you owe the seller for <strong>energy</strong>; distribution charges are paid in cash.
+After 12 months the unused part is refunded, but a month's refund cannot exceed
+<strong>ρ × the value exported in that month</strong> (ρ = 30 % with hourly RCE settlement, 20 % with monthly
+RCEm); the rest is void. While the deposit is short, or its unused part still fits under the cap,
+one currency unit of export or of energy-part import is worth exactly one unit of cash and the
+planner needs no correction. Once the cap binds, one more unit of export is worth only ρ and the
+energy part of an import costs nothing in cash (it is paid from money that would expire). The
+deposit model lets the planner see that. It is <strong>off by default</strong> and then the plan is
+byte-identical to a build without it.</p>
+<p><strong>Two parts of the buy price.</strong> The model must know which part of a buy price is energy (payable by
+the deposit) and which is distribution (paid in cash). The buy price of an interval is the sum of the
+two, and you give the distribution part as rates, never the energy part:</p>
+<pre><code class="language-text">included:  buy = buy source price                  (the source is an all-in price, e.g. a tariff schedule)
+added:     buy = buy source price + distribution   (the source is the energy price only)
+energy part = clamp(buy − distribution, 0, max(buy, 0))
+</code></pre>
+<p>Use <code>added</code> for a dynamic energy price (a forecast such as RCE-based tariffs) or a price list typed
+as on the invoice. It changes the buy price itself, for the planner <strong>and</strong> for reported costs, and
+works with the deposit model off. Example: dynamic energy price 0.25 at midday and 0.95 in the evening
+peak plus the G12 distribution rate 0.540 give buy prices 0.79 and 1.49; at night 0.45 + 0.143 give
+0.593. When the cap binds the planner sees only the distribution part: 0.540, 0.540 and 0.143. A
+negative energy price keeps its real price and has no energy part to waive.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Setting (Tariffs)</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deposit_model</code></td>
+<td><code>off</code></td>
+<td><code>off</code>: full prices. <code>manual</code>: you state <code>export_value_factor</code>. <code>auto</code>: Energy Compass derives it from the two yearly sums below.</td>
+</tr>
+<tr>
+<td><code>deposit_refund_percent</code></td>
+<td>30</td>
+<td>ρ, the refund cap as a share of a month's export value. 20 for monthly RCEm settlement.</td>
+</tr>
+<tr>
+<td><code>export_value_factor</code></td>
+<td>1.0</td>
+<td><code>manual</code> only: what one more unit of export is worth (0–1).</td>
+</tr>
+<tr>
+<td><code>deposit_yearly_value</code></td>
+<td>0</td>
+<td><code>auto</code>: deposit you expect to be booked over 12 months (export value at the settlement price, 1.23 included). 0 = unknown.</td>
+</tr>
+<tr>
+<td><code>deposit_yearly_energy_cost</code></td>
+<td>0</td>
+<td><code>auto</code>: what the deposit can pay over 12 months: the per-kWh energy charge of the imports, gross. The trade fee, other fixed fees and distribution are not part of it. 0 = unknown.</td>
+</tr>
+<tr>
+<td><code>buy_distribution_mode</code></td>
+<td><code>included</code></td>
+<td><code>included</code> or <code>added</code>, as above.</td>
+</tr>
+<tr>
+<td><code>buy_distribution_rate</code>, <code>buy_distribution_off_peak_rate</code></td>
+<td>0</td>
+<td>Everything the distributor bills per kWh (network rate, quality, RES and cogeneration fees), typed like the buy rate; the first is the peak or single zone, the second the off-peak zone. VAT applies when <code>buy_apply_vat</code> is on; <code>buy_multiplier</code>, <code>buy_addition</code> and a forecast floor apply to the buy source only. The zones come from the tariff schedule of the buy source or from a <a href="#built-in-polish-tariffs">distribution tariff</a>; with neither, or with G11, the first rate applies all day. With two zones set both rates or neither: exactly one zero rate fails the calculation closed. The monthly fee belongs in <code>monthly_charge</code>.</td>
+</tr>
+</tbody>
+</table></section>
+<p>The cap pressure π (0 = deposit short or within the cap, 1 = cap binding) gives two factors that
+exist only inside the optimizer:</p>
+<pre><code class="language-text">export value factor  φx = 1 − π × (1 − ρ)     1 → ρ
+import energy factor φe = 1 − π               1 → 0
+planning buy  = buy − (1 − φe) × energy part of buy
+planning sell = φx × max(sell, 0) + min(sell, 0)
+</code></pre>
+<ul>
+<li><strong><code>auto</code></strong>: the unused share of the yearly deposit is <code>s = 1 − E / D</code> (<code>D</code> = <code>deposit_yearly_value</code>,
+  <code>E</code> = <code>deposit_yearly_energy_cost</code>), and π ramps from 0 at <code>s = ρ/2</code> to 1 at <code>s = ρ</code>. If <code>D</code> or <code>E</code>
+  is 0 the model has no input: π = 0 and <code>reason</code> is <code>inputs_missing</code>; the plan stays valid and no
+  Alert is raised. The balance of the deposit is deliberately not an input — one day's balance says
+  nothing without the booking dates behind it.</li>
+<li><strong><code>manual</code></strong>: <code>φx</code> is your <code>export_value_factor</code> as typed, even below ρ. Only π is derived from it,
+  <code>π = clamp((1 − φx) / (1 − ρ), 0, 1)</code>, so <code>φe = 1 − π</code> follows (a value at or below ρ devalues the
+  energy part of imports fully). With <code>deposit_refund_percent</code> 100 both factors are 1.</li>
+<li><strong>No distribution part</strong> (the distribution rates are 0): the whole buy
+  price would count as deposit-payable and an import would look free. With π above 0 <code>φe</code> is
+  therefore forced to 1 and <code>reason</code> is <code>split_missing</code>; <code>φx</code> still applies. Set the distribution
+  rates to use the model.</li>
+<li><strong>Hysteresis (<code>auto</code>)</strong>: π is evaluated once per local day (the first calculation after local
+  midnight) and held for the day in the <code>settlement</code> Store, so restarts and reloads do not re-evaluate
+  it. A new value replaces the held one only if it differs by at least 0.10, or reaches exactly 0 or 1.
+  Changing any of the five deposit settings (<code>deposit_model</code>, <code>deposit_refund_percent</code>,
+  <code>export_value_factor</code>, <code>deposit_yearly_value</code>, <code>deposit_yearly_energy_cost</code>) re-evaluates at once.</li>
+<li><strong>Negative sell prices</strong> stay whole: the factor scales only the positive part, because a negative
+  price is a real charge.</li>
+<li><strong>Reported costs do not change.</strong> Net cost, <code>Plan.grid_cost</code>, the cost sensors, consumption levels and
+  the <code>maximum_grid_charge_price</code> ceiling all stay at invoice prices; only the planning objective uses
+  the factors, under every strategy and before the strategy weights.</li>
+<li><strong>Battery sale threshold</strong>, worked example (PGE G12 2026 gross prices, round trip 0.89, wear
+  0.05 per kWh, ρ = 30 %): selling from the battery and buying the energy back at night pays above
+  about 0.73 currency/kWh while the cap is not binding and above about 0.71 when it binds (the cheaper
+  night re-buy offsets the lower export value); at ρ = 20 % the threshold rises to about 1.07. What changes with the cap binding is the use of
+  surplus PV (worth 0.12 instead of 0.40 at a sell price of 0.40, so it goes to the battery and
+  flexible load first) and night grid charging, which stays profitable.</li>
+</ul>
+<p>Diagnostics are in the plan attribute <code>dispatch_policy.settlement</code>:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model</code></td>
+<td><code>off</code>, <code>manual</code> or <code>auto</code></td>
+</tr>
+<tr>
+<td><code>export_value_factor</code>, <code>import_energy_factor</code></td>
+<td>φx and φe the optimizer used</td>
+</tr>
+<tr>
+<td><code>cap_pressure</code></td>
+<td>π</td>
+</tr>
+<tr>
+<td><code>unused_share</code></td>
+<td><code>s</code> for <code>auto</code>, else <code>null</code></td>
+</tr>
+<tr>
+<td><code>refund_percent</code>, <code>yearly_deposit</code>, <code>yearly_energy_cost</code></td>
+<td>the inputs used</td>
+</tr>
+<tr>
+<td><code>distribution_mode</code></td>
+<td><code>included</code> or <code>added</code></td>
+</tr>
+<tr>
+<td><code>evaluated_on</code></td>
+<td>local date π was last evaluated</td>
+</tr>
+<tr>
+<td><code>reason</code></td>
+<td><code>ok</code>, <code>off</code>, <code>inputs_missing</code>, <code>split_missing</code> (π above 0 but no distribution part, <code>φe</code> forced to 1) or <code>held</code> (today's π was already evaluated)</td>
+</tr>
+</tbody>
+</table></section>
+<p>Reading <code>D</code> and <code>E</code> from long-term statistics instead of typing them is not part of this release.</p>
 <h3 id="peak-period-reserve">Peak-period reserve</h3>
 <p>The load forecast is a mean, so a plan that drains the battery exactly to the reserve by the end of an
 expensive period falls short on roughly every second day. <code>peak_reserve_margin_kwh</code> asks the solver to
@@ -1447,7 +1714,8 @@ during a hold that is eligible or due. A window is published as <strong>CHARGE_P
 only when PV covers load in every one of its slots; otherwise (mixed PV/grid or
 pure grid, such as a night window) it is <strong>CHARGE_GRID</strong>, which additionally
 requires grid charging to be allowed and the grid-charge price ceiling (if any)
-to pass in every slot — with <code>balance_hold: true</code> on every row. From the slot before the earliest candidate
+to pass in every slot — with <code>balance_hold: true</code> on every row. With an optional
+<a href="#pessimistic-pv-for-the-balance-window">pessimistic PV source</a> the PV test is stricter. From the slot before the earliest candidate
 window to the horizon end, the battery's energy may rise up to full capacity
 instead of the configured SOC ceiling, so a hold is never blocked by
 <code>soc_ceiling</code> below 100 %; that lift only matters when the ceiling is below
@@ -1456,8 +1724,35 @@ prices the load, not the balance choice.</p>
 <p>The <strong>Battery balance</strong> diagnostic sensor (<code>sensor.&lt;name&gt;_battery_balance</code>)
 reports <code>ok</code>, <code>eligible</code>, <code>scheduled</code>, <code>holding</code> or <code>overdue</code>, with
 <code>last_completed</code>, <code>next_due</code>, <code>days_overdue</code>, <code>planned_start</code>, <code>planned_end</code>,
-<code>planned_mode</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code>,
+<code>planned_mode</code>, <code>pv_series</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code>,
 <code>threshold_percent</code>.</p>
+<h4 id="pessimistic-pv-for-the-balance-window">Pessimistic PV for the balance window</h4>
+<p>The balance window is chosen on the median PV forecast, so a low-PV day can leave the pack short of the
+threshold and the balance missed again. <strong>Sources → Add source → PV pessimistic (optional)</strong> binds a
+second, lower forecast of the same site (for Solcast, <code>pv_estimate10</code>; the Solcast presets propose that
+field). It takes the same interval-forecast mapping as a PV source; <strong>Review and edit sources</strong> lists,
+edits, extends with a continuation and removes it. It needs PV enabled. It can accompany either kind of PV
+source; the Energy dashboard solar forecast has no pessimistic series, so bind this one separately.</p>
+<p>With it configured, a <strong>CHARGE_PV</strong> window is offered only if both hold on the pessimistic series:</p>
+<ol>
+<li>Pack: charging from PV surplus alone (<code>pv − load</code>, at <code>eta_charge</code> and <code>charge_kw</code>, no discharge)
+   lifts the pack to the balance threshold by the window start.</li>
+<li>Window: PV covers load in every slot of the window.</li>
+</ol>
+<p>Otherwise the start is offered only as <strong>CHARGE_GRID</strong>, subject to the usual grid-charge and price-ceiling
+rules, so the solver can pick a cheap grid window instead. The dispatch plan itself keeps using the median
+series. Without the source nothing changes.</p>
+<p>Trade-off: the pack test counts PV surplus only. A start the pack would reach only by charging from the
+grid before the window is offered as <strong>CHARGE_GRID</strong> alone, and is dropped when the grid-charge price
+ceiling blocks a slot of the window, so <code>balance_no_window_in_horizon</code> can appear where a window existed
+without the source.</p>
+<p>The <code>pv_series</code> attribute of the Battery balance sensor and the <code>balance_pv_series</code> attribute of the plan
+sensor say which series decided the candidate windows: <code>pessimistic</code> when the source is configured and
+usable, <code>median</code> otherwise (also without the source); <code>null</code> when <code>lfp_balance</code> is off or there is no
+battery. The source is optional input and never invalidates the plan. If it is unavailable, stale,
+malformed, negative or does not cover the horizon, the windows fall back to the median series and the plan carries the
+<code>balance_pessimistic_pv_unavailable</code> warning. A source going stale raises no state change, so the fallback
+takes effect at the next periodic recalculation (<code>refresh_minutes</code>) or source change.</p>
 <h3 id="cost_min--cost-minimisation"><code>cost_min</code> — cost minimisation</h3>
 <ul>
 <li><strong>Goal:</strong> lowest forecast cost: purchases − sales + battery wear − terminal credit.</li>
@@ -1955,6 +2250,12 @@ baterii (pojemność, sprawność) w planie</code>.</p>
 <td>all Disabled, SOC 10 %</td>
 </tr>
 <tr>
+<td><code>HOLD</code>, <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> at SOC ≥ 100 % in Voltage mode (<code>HOLD</code>: kept until SOC ≤ 99 %)</td>
+<td>cap / 0 A in <code>HOLD</code>, cap otherwise</td>
+<td>0 A</td>
+<td>all Disabled, SOC 10 %</td>
+</tr>
+<tr>
 <td><code>CHARGE_GRID</code></td>
 <td>cap / 0 A</td>
 <td>planned grid share, ≤ <code>max_grid_current</code></td>
@@ -1984,7 +2285,7 @@ baterii (pojemność, sprawność) w planie</code>.</p>
 for discharging. The cap has hysteresis: the current already on the inverter is kept while it still fits
 the power cap, and the next ampere step is taken only with 2 % voltage headroom (about 10 V at 530 V), so
 a pack voltage crossing a step boundary does not rewrite the ceiling on every sag and rebound. The
-power cap is never exceeded. At 100 % SOC the charge current becomes 0 A. Planned currents convert interval kWh with
+power cap is never exceeded. At 100 % SOC the charge current of <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> and <code>CHARGE_GRID</code> becomes 0 A; in battery operation mode <code>Voltage</code> only <code>CHARGE_GRID</code> does, because the other two follow the full-pack rule at the end of this paragraph. Planned currents convert interval kWh with
 <code>eta_charge</code> (charging) or <code>eta_discharge</code> (discharging) over the full interval. Target SOC uses the accepted plan's <code>capacity_kwh</code>; target voltage follows a fixed
 high-voltage LFP curve (496–536 V for 10–90 %, 584 V charging or 544 V discharging at 100 %). A reached
 target in <code>CHARGE_GRID</code>/<code>DISCHARGE_GRID</code> is latched for that plan interval. A reached <code>DISCHARGE_GRID</code>
@@ -1994,7 +2295,18 @@ larger loads come from the grid; 0 A would send the whole house load to the grid
 interval whose planned <code>discharge_kwh</code> is below the 0.05 kWh tolerance (export planned from PV) is reached
 at once. In an LFP balance row
 (<code>balance_hold: true</code>) the charge current stays on at 100 %, <code>CHARGE_GRID</code> targets 100 % and the grid
-current is at least <code>balance_grid_current</code>. <code>CURTAIL</code> runs the <code>HOLD</code> profile with a warning, because the
+current is at least <code>balance_grid_current</code>. In <code>Voltage</code> mode the inverter ends charging on pack voltage, and a
+counter-based SOC source can read 100 % before the pack is full. So at SOC ≥ 100 % in <code>HOLD</code>, <code>CHARGE_PV</code> and
+<code>SELF_CONSUME</code> the controller keeps the normal charge current cap (with the same hysteresis, so there are no 0 A
+rewrites around the ceiling) instead of 0 A (or the <code>hold_grid_current</code> of <code>HOLD</code>). The grid current is 0 A,
+so PV is the only source, discharge follows the plan row (0 A in <code>HOLD</code>), and no SOC target is written and
+no "reached" state is latched. In <code>HOLD</code> the switch has hysteresis: the full-pack profile starts at SOC ≥ 100 % and
+stays through the following <code>HOLD</code> runs until SOC is 99 % or lower, so an SOC source that dithers between 99.9 %
+and 100 % does not rewrite the profile on every crossing. Each switch is one write transaction that begins with
+charge 0 A, and there is at most one per percentage point of SOC movement; without PV the pack drifts down on the
+inverter's own draw and <code>HOLD</code> tops it up from the grid, a cycle of hours. <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> need no
+hysteresis, because below 100 % they write the same values. <code>CHARGE_GRID</code> (it keeps <code>voltage_grid_charge_ceiling</code>
+and its 0 A charge current at 100 %), <code>CURTAIL</code>, the balance hold and <code>Capacity</code> mode behave as before. <code>CURTAIL</code> runs the <code>HOLD</code> profile with a warning, because the
 controller cannot limit PV.</p>
 <p>Only battery modes listed in <code>commissioned_battery_modes</code> are controlled; any other mode (for example
 Voltage before its thresholds were proven) keeps the base profile. With Voltage allowed, a target
@@ -2314,6 +2626,148 @@ sends past telemetry from Home Assistant's own recorder history for every entity
 5-minute statistics where the recorder still keeps them, hourly statistics for older history — to
 every entry that currently has sending enabled and a registered site, using the same value
 corrections as live delivery. It fails with an error if no entry currently qualifies.</p>
+<h2 id="offline-replay-tool">Offline replay tool</h2>
+<p><code>tools/replay.py</code> answers "what does this setting change do to the real cost?" without Home
+Assistant. It imports the optimizer from <code>custom_components/energy_compass/engine</code> and replays
+recorded days; it needs the same Python and SciPy as the integration (run it in the test image or
+any environment where <code>import scipy</code> works) and plots nothing. For every day and in total it prints,
+in the installation's currency:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Cost of</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>plan</code></td>
+<td>the Energy Compass plan <strong>as executed</strong>: re-solved every <code>refresh_minutes</code> on the forecast known at plan time, the planned mode and energies applied to the realized PV and load</td>
+</tr>
+<tr>
+<td><code>self_use</code></td>
+<td>plain self-consumption: the battery follows the load, no grid charging, no battery export</td>
+</tr>
+<tr>
+<td><code>hindsight</code></td>
+<td>one solve of the same objective on the <strong>realized</strong> PV and load — the best the same settings could have done</td>
+</tr>
+</tbody>
+</table></section>
+<pre><code>python tools/replay.py tools/replay_sample.json --currency PLN
+python tools/replay.py tools/replay_sample.json --set allow_grid_charge=false
+</code></pre>
+<p><code>--set key=value</code> (repeatable) overrides any planner setting by its key (the keys of Options, as in
+<code>settings.py</code>; strategy-owned flags set this way are treated as explicit). Run twice and compare the
+<code>plan</code> column to measure a change. <code>--json</code> prints the numbers (with <code>solve_failures</code>, the number of
+failed plan solves of the day) instead of the table; <code>--timezone</code> and <code>--initial-soc</code> apply to CSV
+input only. A bad file, value or override ends with <code>error: …</code> naming the place and exit code 2.</p>
+<h3 id="input-format">Input format</h3>
+<p>One JSON file (or a CSV, below). <code>tools/replay_sample.json</code> is a complete two-day synthetic example.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>timezone</code></td>
+<td>IANA name, e.g. <code>Europe/Warsaw</code> (default <code>UTC</code>)</td>
+</tr>
+<tr>
+<td><code>interval_minutes</code></td>
+<td>interval length, default <code>15</code>; all days of a file share it</td>
+</tr>
+<tr>
+<td><code>settings</code></td>
+<td>optional planner settings (<code>capacity_kwh</code>, <code>charge_kw</code>, <code>grid_export_kw</code>, <code>strategy</code>, <code>refresh_minutes</code>, …); unset keys take the shipped defaults, so set at least the battery and site limits</td>
+</tr>
+<tr>
+<td><code>days[].start</code></td>
+<td>ISO timestamp of the first interval (with offset, or local to <code>timezone</code>)</td>
+</tr>
+<tr>
+<td><code>days[].date</code></td>
+<td>label for the table, default the local date of <code>start</code></td>
+</tr>
+<tr>
+<td><code>days[].initial_soc_percent</code></td>
+<td>battery SOC at <code>start</code> (default <code>initial_soc_percent</code> of the file, else 50)</td>
+</tr>
+<tr>
+<td><code>days[].intervals[]</code></td>
+<td>one object per interval, in order and without gaps (below)</td>
+</tr>
+</tbody>
+</table></section>
+<p>Each interval has six numbers: <code>buy</code> and <code>sell</code> (currency/kWh, the final tariff prices), <code>pv_forecast</code>
+and <code>load_forecast</code> (kWh in the interval, <strong>as known at plan time</strong>) and <code>pv</code> and <code>load</code> (kWh actually
+produced and consumed). The six values must be finite and the four energies not negative (clip the
+small negative values that rounding in statistics can leave, e.g. in <code>import + PV − export</code>); an error
+names the place, <code>days[n][i]</code> (day <code>n</code> from 1, interval <code>i</code> from 0) or <code>line n</code> of a CSV.</p>
+<p>An interval may also carry <code>buy_energy</code> (CSV column too): the energy part of <code>buy</code>, the part the
+deposit can pay (the rest of <code>buy</code> is distribution), in the same units, not above <code>buy</code> and empty or
+missing meaning 0. It matters only with the
+<a href="#net-billing-deposit-value">deposit model</a>, which you switch on with <code>--set deposit_model=manual
+--set export_value_factor=0.3</code> (or <code>auto</code> with the two yearly values). <code>buy</code> stays the invoice
+price, so <code>buy_distribution_mode</code>, <code>buy_distribution_rate</code> and <code>buy_distribution_off_peak_rate</code> are
+not read — prices come from the file — and a warning says so. Costs are reported at the file's prices
+whatever the factors are.</p>
+<p>Days are independent: each is planned and measured on its own and ends at its last interval, even
+when the file holds consecutive days. The horizon therefore shrinks to the end of the day, so
+<code>horizon_hours</code> beyond the day and the carry of energy over midnight are not measured.</p>
+<p>CSV has one row per interval with the columns <code>start</code>, <code>buy</code>, <code>sell</code>, <code>pv_forecast</code>, <code>load_forecast</code>,
+<code>pv</code>, <code>load</code> and optionally <code>buy_energy</code> and <code>initial_soc_percent</code> (read on the first row of a day). Rows are grouped
+into days by the local date of <code>start</code>; settings come only from <code>--set</code>.</p>
+<h3 id="reading-the-result">Reading the result</h3>
+<ul>
+<li><strong>Day-end energy is valued</strong>, because a day boundary is arbitrary for a battery. Every solve values
+  the final SOC at <code>terminal_value_per_kwh</code> when <code>terminal_mode</code> is <code>value</code>, else at the day's mean buy
+  price, so the plan may end a day below its initial SOC. The <strong>reported</strong> cost prices the difference
+  between the final and the initial SOC at the day's mean buy price whatever the settings are, so
+  <code>terminal_mode</code> and <code>terminal_value_per_kwh</code> change the plan but not the measuring stick: <code>self_use</code>
+  is identical in every run, and two runs differing in the terminal value are comparable.</li>
+<li><code>wear_per_kwh</code> is part of the reported cost (half of the charged plus discharged energy), so runs
+  with different <code>wear_per_kwh</code> are not comparable.</li>
+<li><code>hindsight</code> is the optimum of the <strong>shaped objective</strong> (strategy weights, import penalty and the
+  terminal value of the solves included) priced in real currency. For <code>cost_min</code> with no import
+  penalty and a terminal value equal to the day's mean buy price it is a lower bound of <code>plan</code>; for
+  other strategies it is the best that strategy could do. With <code>terminal_mode</code> <code>value</code> and a lower
+  value than the mean buy price, <code>hindsight</code> may drain the battery and report more than <code>plan</code>, which
+  is a sign that the terminal value undervalues stored energy.</li>
+<li>The executed plan follows the controller (<code>tools/deye_controller/build.py</code>) against realized data.
+  <code>SELF_CONSUME</code> and <code>CHARGE_PV</code> follow the load: all PV surplus charges the battery and a deficit is
+  covered from it. In <code>CHARGE_GRID</code> only the grid share follows the plan — the planned charge minus the
+  surplus the forecast promised. Grid and the realized PV surplus charge together until the row's
+  planned end SOC; then the grid stops, as the controller does, and PV keeps charging for the rest of
+  the slot. PV above the forecast therefore shrinks the grid import (the SOC may end above plan, by PV
+  only), and PV below it charges less — a shortfall is never
+  bought from the grid, nor a start SOC below plan caught up. <code>DISCHARGE_GRID</code>
+  discharges the planned energy, <code>HOLD</code> parks the battery. Grid export beyond <code>grid_export_kw</code> is
+  curtailed, and stored energy is not exported beyond the PV produced so far when <strong>Sell only PV</strong>
+  (<code>limit_export_to_pv</code>) is on.</li>
+<li>The <a href="#peak-period-reserve">peak-period reserve</a> (<code>peak_reserve_margin_kwh</code>) is replayed as in the integration: it needs
+  <code>limit_grid_charge_price</code> (its ceiling is the cheap price), else a warning says it has no effect.</li>
+<li>Not replayed: LFP balance windows, the autonomy tail beyond the data, and carried export or
+  grid-charge commitments. A warning names the enabled ones. A failed plan solve runs that step as
+  self-consumption and is reported under the table and as <code>solve_failures</code>; a failed <code>hindsight</code>
+  solve or inconsistent settings stop the run with <code>error: &lt;date&gt;: …</code>.</li>
+</ul>
+<h3 id="exporting-the-data-from-home-assistant">Exporting the data from Home Assistant</h3>
+<p><code>buy</code> and <code>sell</code> are the final prices the planner sees: from your tariff, or from the history of the
+price entities Energy Compass reads. The realized energy comes from long-term statistics: the
+<strong>Energy</strong> dashboard's menu offers <strong>Download data</strong> (CSV, hourly). The same hourly <code>change</code> values
+the replay needs are returned by the <code>recorder/statistics_during_period</code> WebSocket command with
+<code>"period": "hour"</code> and <code>"types": ["change"]</code>
+(<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/tools/export_value_backfill.py"><code>tools/export_value_backfill.py</code></a> shows the call). Take
+<code>pv</code> from the PV production statistic and <code>load</code> from the home consumption statistic
+(energy in = grid import + PV − grid export, when no consumption sensor exists).
+<code>pv_forecast</code> and <code>load_forecast</code> are what your forecast entities said <strong>before</strong> the interval — the
+Compass plan attribute <code>intervals</code> (or the Solcast/forecast history) recorded at plan time; using
+the realized value as the forecast gives an idealised plan with no forecast error.
+Use <code>interval_minutes: 60</code> for hourly statistics.</p>
 <h2 id="reason-code-reference">Reason code reference</h2>
 <h3 id="coverage--quality-reasons-reason-reasons-attributes">Coverage / quality reasons (<code>reason</code>, <code>reasons</code> attributes)</h3>
 <section class="table-scroll"><table>
@@ -2350,7 +2804,7 @@ corrections as live delivery. It fails with an error if no entry currently quali
 </tr>
 <tr>
 <td><code>missing_forecast_continuation</code></td>
-<td>A configured source has not yet published data for part of the requested horizon (e.g. tomorrow's prices before ~14:00).</td>
+<td>A configured source (except the optional pessimistic PV source) has not yet published data for part of the requested horizon (e.g. tomorrow's prices before ~14:00).</td>
 </tr>
 <tr>
 <td><code>load_history_fallback</code></td>
@@ -2437,6 +2891,10 @@ corrections as live delivery. It fails with an error if no entry currently quali
 <tr>
 <td><code>balance_overdue</code></td>
 <td>The balance phase is <code>due</code> but no hold window could be fit into the plan; a balance was missed this horizon.</td>
+</tr>
+<tr>
+<td><code>balance_pessimistic_pv_unavailable</code></td>
+<td>A pessimistic PV source is configured but unavailable, stale, malformed or negative, or does not cover the horizon; the balance windows were chosen on the median PV series.</td>
 </tr>
 <tr>
 <td><code>balance_no_window_in_horizon</code></td>

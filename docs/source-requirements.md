@@ -9,7 +9,8 @@ Use **Sources → Review and edit sources** to identify one existing binding, th
 | Current price | State of a sensor, number or input_number | Finite number | Held constant over the planning horizon; read again on recalculation |
 | Current price attribute | Named attribute of an available numeric-source entity | Finite number | Same constant-horizon assumption |
 | Price forecast | Attribute of an available entity | List of records, or a timestamp-to-price map | Future changes follow the supplied intervals |
-| Tariff schedule (buy, PLN) | Catalog entry, optional winter-clock flag and Enea hours | No entity; rates `buy_rate` and `buy_off_peak_rate` must be above zero | Zones switch on the tariff clock inside the planning grid; no age or coverage limit |
+| Tariff schedule (buy, PLN) | Catalog entry, optional winter-clock flag and Enea hours | No entity; rates `buy_rate` and `buy_off_peak_rate` must be above zero; the optional distribution rates `buy_distribution_rate` and `buy_distribution_off_peak_rate` (default 0, the deposit-model split) follow the same bands | Zones switch on the tariff clock inside the planning grid; no age or coverage limit |
+| PV pessimistic (optional) | Attribute of an available entity, same interval-forecast mapping as a PV array (Solcast: `detailedForecast`, value field `pv_estimate10`) | Same record shapes and units as a PV array; one series, continuations allowed | Lower PV forecast used only to vet LFP balance `CHARGE_PV` windows; needs PV enabled; may accompany either PV kind, including the Energy dashboard solar forecast; optional input, a stale or malformed series falls back to the median PV series. See [Pessimistic PV for the balance window](guide.en.md#pessimistic-pv-for-the-balance-window) |
 | PV: Energy dashboard solar forecast | One or more loaded integrations with an Energy solar-forecast platform | No entity; `wh_hours` keys with Wh values | Wh per local hour, summed as the Energy dashboard does; missing hours are 0; no age check; cannot be combined with entity PV arrays (see [Energy dashboard solar forecast](guide.en.md#energy-dashboard-solar-forecast)) |
 
 Use the installation currency, for example `PLN/kWh` or `PLN/MWh`. MWh prices convert to kWh once by dividing by 1000. No exchange conversion is performed. For a state value, existing `unit_of_measurement` must match the declared source unit; attribute values require an explicit unit declaration. Zero and negative prices are allowed within configured bounds; they are not automatically clipped.
@@ -64,13 +65,17 @@ The existing optimizer budgets charge plus discharge on its AC-side flow basis; 
 
 When **Planning → Sell only PV** is enabled and grid export capacity is above zero, add both counters through **Sources → Add source → PV energy today → Measurement** and **Sources → Add source → Grid export energy today → Measurement**. Select kWh or Wh entities or attributes that count generation and grid export since local midnight, reset daily and never go negative. These roles accept measurements only, with a default maximum age of 86400 seconds; a recorder statistic or lifetime total cannot replace them. Both counters must report on the current local date. The policy combines observed totals with the forecast for each local day, as described in the [dispatch model](model.md).
 
+## Calibration counters (optional)
+
+To compare the configured battery round trip with reality, add **Sources → Add source → Battery charge energy (lifetime)** and **Battery discharge energy (lifetime)** (measurement roles `battery_charge_energy` and `battery_discharge_energy`). Select cumulative kWh or Wh entities that count the energy charged into and discharged out of the battery at its terminals over its lifetime, never decreasing except on a counter reset. They need the battery enabled, accept measurements only (no recorder statistic) and default to a maximum age of 86400 seconds. Both are needed; the measured round trip is discharge ÷ charge over the last 30 days. To compare the PV forecast with real production, bind the existing `pv_energy` lifetime counter (PV enabled, an entity, not a recorder statistic); the report is real ÷ forecast over the last 14 days. These counters never affect a plan. A reset or glitch is detected as a decrease (or a rise faster than 100 kW) and the hours around it are skipped, a counter that writes only on change is read as idle until its maximum age passes, and binding a role to another entity starts that counter over; see [Measured calibration](guide.en.md#measured-calibration-optional) for the fields and the method.
+
 ## Automatic detection
 
 A new installation opens **Detected sources** after the first form (see [Detected sources](guide.en.md#detected-sources-new-installations)). It never runs in Configure or Reconfigure.
 
 **Identity rule.** A candidate is identified only by the integration platform and the entity's translation key (and, for Solarman, a Deye device in the same config entry), by the Energy Compass template identities (a `template` sensor whose unique id starts with `energy_compass_` and whose `settlement` attribute names a multiplier; a `template` sensor with device class battery and unit %), or by a reference in the Energy dashboard preferences. Entity ids and names are never matched. Disabled entities, domains other than `sensor`, Energy Compass's own entities and external statistic ids are excluded before ranking.
 
-**Providers.** Energy dashboard preferences (`energy_prefs`), Solcast (`solcast_solar`), RCE PSE (`rce_pse`), ha-solarman (`solarman`, Deye config entries only) and `template` sensors. Dashboard sources rank first, integration signals are the fallback, and a row with several candidates offers all of them with **Do not bind** last. `buy`, `throughput_today`, `battery_energy`, `battery_charge_power`, `battery_discharge_power` and helpers are never detected.
+**Providers.** Energy dashboard preferences (`energy_prefs`), Solcast (`solcast_solar`), RCE PSE (`rce_pse`), ha-solarman (`solarman`, Deye config entries only) and `template` sensors. Dashboard sources rank first, integration signals are the fallback, and a row with several candidates offers all of them with **Do not bind** last. `buy`, `throughput_today`, `battery_energy`, `battery_charge_power`, `battery_discharge_power`, `battery_charge_energy`, `battery_discharge_energy` and helpers are never detected.
 
 **Stored measurement age limits.**
 
@@ -78,7 +83,7 @@ A new installation opens **Detected sources** after the first form (see [Detecte
 | --- | --- |
 | `battery_power`, `grid_import_power`, `grid_export_power` | 3600 |
 | `pv_power` | 86400 |
-| `pv_energy`, `grid_import_energy`, `grid_export_energy` (lifetime counters) | 86400 |
+| `pv_energy`, `grid_import_energy`, `grid_export_energy` (lifetime counters), `battery_charge_energy`, `battery_discharge_energy` | 86400 |
 | `pv_energy_today`, `grid_export_energy_today` (daily counters) | 86400 |
 
 Power is stored in kW (`W` × 0.001), counters in kWh (`Wh` × 0.001); `grid_export_power` is the grid sensor with sign −1. The daily counters are bounded at 0 and fail when they are negative. The RCE sensor must report PLN/MWh; the Energy dashboard forecast needs no entity or age limit.

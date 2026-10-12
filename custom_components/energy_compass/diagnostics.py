@@ -7,6 +7,7 @@ async def async_get_config_entry_diagnostics(hass, entry):
     data = coordinator.data
     previous = coordinator.previous_plan
     settings = coordinator.configuration.get("settings", {})
+    measured = coordinator.calibration_report()
     return {
         "status": data.get("status"),
         "valid": data.get("valid"),
@@ -42,6 +43,7 @@ async def async_get_config_entry_diagnostics(hass, entry):
         if coordinator.controller is not None
         else {"enabled": False},
         "setup_profiles": coordinator.configuration.get("setup_profiles"),
+        **({"measured_calibration": measured} if measured is not None else {}),
     }
 
 

@@ -44,6 +44,8 @@ class Slot:
     sell_per_kwh: float
     pv_kwh: float
     load_kwh: float
+    # Part of buy_per_kwh the prosumer deposit can pay (ADR-0001); never above buy.
+    buy_energy_per_kwh: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -124,6 +126,10 @@ class Problem:
     balance_miss_cost: float = 0.0
     balance_fixed: bool = False
     balance_lift_slots: tuple[int, ...] = ()
+    # Net-billing settlement (ADR-0001): planning-only weights on the export
+    # price and on the deposit-payable part of the buy price. 1.0 = invoice prices.
+    export_value_factor: float = 1.0
+    import_energy_factor: float = 1.0
 
 
 @dataclass(frozen=True)

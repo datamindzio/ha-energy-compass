@@ -15,8 +15,10 @@ from homeassistant.config_entries import ConfigEntryState
 
 from .balance_tracker import balance_settings, empty_state, soc_percent
 from .balance_tracker import status as balance_status
+from .calibration import forecast_hours
 from .config_models import (
     NumericSetting,
+    PriceSource,
     SolarForecastBinding,
     SourceConfig,
     resolve_numeric,
@@ -53,6 +55,7 @@ from .engine.optimize import solve
 from .engine.peak_reserve import peak_reserve_targets, peak_reserve_weight
 from .engine.strategy import resolve_flags, strategy_weights
 from .settings import validate_configuration
+from .settlement import resolve_settlement
 from .sources.battery import SocSettings, validate_soc
 from .sources.bindings import (
     field,
@@ -167,7 +170,7 @@ def available_forecasts(source, states):
     """Omit unpublished continuations without making any independent source optional."""
     missing = set()
 
-    def select(bindings):
+    def select(bindings, report=True):
         available = []
         for binding in bindings:
             entity = binding.entity
@@ -186,7 +189,8 @@ def available_forecasts(source, states):
                 or isinstance(raw, (list, tuple, dict))
                 and not raw
             ):
-                missing.add(entity.entity_id)
+                if report:
+                    missing.add(entity.entity_id)
             else:
                 available.append(binding)
         return tuple(available)
@@ -196,7 +200,10 @@ def available_forecasts(source, states):
         buy=replace(source.buy, forecast=select(source.buy.forecast)),
         sell=replace(source.sell, forecast=select(source.sell.forecast)),
         pv=replace(
-            source.pv, arrays=tuple(select(group) for group in source.pv.arrays)
+            source.pv,
+            arrays=tuple(select(group) for group in source.pv.arrays),
+            # Optional input: balance_pessimistic_pv_unavailable covers it.
+            pessimistic=select(source.pv.pessimistic, report=False),
         ),
     ), sorted(missing)
 
@@ -257,7 +264,11 @@ def _soc(config, source, values, states, now, previous_soc=None):
 
 
 def freshness_deadline(config, states, values, now):
-    """Return the first required input deadline, independent of plan lifetime."""
+    """Return the first required input deadline, independent of plan lifetime.
+
+    The optional pessimistic PV source is not required: once it is stale the
+    balance windows fall back to the median series at the next refresh.
+    """
     source, _ = available_forecasts(SourceConfig.from_dict(config["sources"]), states)
     deadlines = []
     _, _, export_deadline = daily_export_observations(config, states, values, now)
@@ -395,6 +406,55 @@ def _load_quality(source_mode, result):
     }
 
 
+def _vat_factor(values, name):
+    return 1 + values["vat_percent"] / 100 if values[f"{name}_apply_vat"] else 1
+
+
+def _buy_zones(price):
+    """Tariff whose bands carry the buy price: the schedule source or the distribution tariff."""
+    return price.schedule if price.mode == "schedule" else price.distribution_schedule
+
+
+def _buy_composition(price, values, config, states, now, intervals, source_prices):
+    """Per slot: the invoice buy price, the part the deposit can pay, and whether a split is known.
+
+    `source_prices` is what the buy source gives. Distribution is added on top in
+    `added` mode and already inside it in `included` mode (ADR-0001 §1).
+    """
+    vat = _vat_factor(values, "buy")
+    peak = values["buy_distribution_rate"] * vat
+    off_peak = values["buy_distribution_off_peak_rate"] * vat
+    zones = _buy_zones(price)
+    if zones is None or zones.tariff == "g11":
+        distribution = (peak,) * len(intervals)
+    else:
+        if (values["buy_distribution_rate"] == 0) != (
+            values["buy_distribution_off_peak_rate"] == 0
+        ):
+            raise InputError(
+                "distribution with two zones needs both rates or neither: "
+                "set Distribution rate and Off-peak distribution rate in Tariffs → Values"
+            )
+        distribution = price_for_slots(
+            PriceSource("schedule", schedule=zones),
+            states,
+            now,
+            intervals,
+            config["currency"],
+            timezone=config["timezone"],
+            schedule_rates={"peak": peak, "off_peak": off_peak},
+        )
+    if values["buy_distribution_mode"] == "added":
+        buy = tuple(source + part for source, part in zip(source_prices, distribution))
+    else:
+        buy = tuple(source_prices)
+    energy = tuple(
+        min(max(total - part, 0.0), max(total, 0.0))
+        for total, part in zip(buy, distribution)
+    )
+    return buy, energy, any(part > 0 for part in distribution)
+
+
 def build_problem(
     config: dict,
     states: dict,
@@ -408,13 +468,14 @@ def build_problem(
     grid_charge_commitment=None,
     balance_state=None,
     solar_forecasts=None,
+    settlement_state=None,
 ):
     """Preserve native boundaries and stop at actual contiguous source coverage."""
     values = effective_settings(config, states, now)
     pv_today, export_today, _ = daily_export_observations(config, states, values, now)
-    source, missing = available_forecasts(
-        SourceConfig.from_dict(config["sources"]), states
-    )
+    configured = SourceConfig.from_dict(config["sources"])
+    configured_pessimistic = bool(configured.pv.pessimistic)
+    source, missing = available_forecasts(configured, states)
     requested_end = now + timedelta(hours=values["horizon_hours"])
     groups = []
     for price in (source.buy, source.sell):
@@ -461,10 +522,11 @@ def build_problem(
         for edge in (row.start, row.end)
         if now < edge < end
     )
-    if source.buy.mode == "schedule":
+    zones = _buy_zones(source.buy)
+    if zones is not None:
         boundaries.update(
             row.start
-            for row in band_rows(source.buy.schedule, now, end, config["timezone"])
+            for row in band_rows(zones, now, end, config["timezone"])
             if now < row.start < end
         )
     edges = sorted(boundaries)
@@ -475,9 +537,7 @@ def build_problem(
         )
     tariffs = []
     for name, price in (("buy", source.buy), ("sell", source.sell)):
-        factor = values[f"{name}_multiplier"] * (
-            1 + values["vat_percent"] / 100 if values[f"{name}_apply_vat"] else 1
-        )
+        factor = values[f"{name}_multiplier"] * _vat_factor(values, name)
         addition = values[f"{name}_addition"]
         schedule_rates = None
         if price.mode == "fixed":
@@ -518,6 +578,9 @@ def build_problem(
                 schedule_rates=schedule_rates,
             )
         )
+    buy_prices, energy_part, split_known = _buy_composition(
+        source.buy, values, config, states, now, intervals, tariffs[0]
+    )
     if any(row.value < 0 for rows in pv_groups for row in rows):
         raise InputError("PV energy must be nonnegative")
     pv = (
@@ -554,9 +617,18 @@ def build_problem(
     loads = load_result.values
     slots = tuple(
         Slot(
-            start, finish, tariffs[0][index], tariffs[1][index], pv[index], loads[index]
+            start,
+            finish,
+            buy_prices[index],
+            tariffs[1][index],
+            pv[index],
+            loads[index],
+            energy_part[index],
         )
         for index, (start, finish) in enumerate(intervals)
+    )
+    settlement, settlement_next = resolve_settlement(
+        values, settlement_state, now, config["timezone"], split_known=split_known
     )
     battery = None
     soc_observation = None
@@ -788,12 +860,26 @@ def build_problem(
         peak_reserve_kwh=peak_reserve_kwh,
         peak_reserve_window=peak_reserve_window,
         peak_reserve_weight=peak_reserve_weight_value,
+        export_value_factor=settlement["export_value_factor"],
+        import_energy_factor=settlement["import_energy_factor"],
         **weights,
     )
     balance_phase = None
+    balance_series = None
     balance_warnings: list[str] = []
     if battery and values["lfp_balance"]:
         tracker = balance_settings(values)
+        threshold_kwh = battery.capacity_kwh * tracker.threshold_percent / 100
+        balance_series = "median"
+        pessimistic_pv = None
+        if source.pv.enabled and configured_pessimistic:
+            try:
+                pessimistic_pv = _pessimistic_pv(
+                    source.pv.pessimistic, states, now, intervals
+                )
+                balance_series = "pessimistic"
+            except InputError:
+                balance_warnings.append("balance_pessimistic_pv_unavailable")
         report = balance_status(balance_state or empty_state(), now, tracker)
         balance_phase = report["phase"]
         # A hold right after a completion is still tracked (and completes), but
@@ -809,15 +895,16 @@ def build_problem(
                 battery.allow_grid_charge and price_allows_grid_charge(problem, slot)
                 for slot in slots
             ),
+            pessimistic_pv_kwh=pessimistic_pv,
+            battery=battery,
+            threshold_kwh=threshold_kwh,
         )
         if balance_phase in ("eligible", "due") and not windows:
             balance_warnings.append("balance_no_window_in_horizon")
         problem = replace(
             problem,
             balance_windows=windows,
-            balance_threshold_kwh=battery.capacity_kwh
-            * tracker.threshold_percent
-            / 100,
+            balance_threshold_kwh=threshold_kwh,
             balance_miss_cost=miss_cost(
                 window_phase, values["balance_value"], report["days_overdue"]
             ),
@@ -837,6 +924,10 @@ def build_problem(
         "load": _load_quality(source.load.mode, load_result),
         "soc_observation": soc_observation,
         "balance_phase": balance_phase,
+        "balance_pv_series": balance_series,
+        # Consumed by `compute`; never published.
+        "settlement": settlement,
+        "settlement_state": settlement_next,
         "warnings": ["unvalidated_tariff"]
         if values["calibration"] != "verified"
         else [],
@@ -852,6 +943,18 @@ def build_problem(
     quality["warnings"].extend(autonomy_warnings)
     quality["warnings"].extend(balance_warnings)
     return problem, values, quality
+
+
+def _pessimistic_pv(bindings, states, now, intervals):
+    """Pessimistic PV per slot; any gap or fault means the series is unusable."""
+    if not bindings:
+        raise InputError("pessimistic PV source unavailable")
+    rows = merge_continuations(
+        tuple(parse_intervals(states, binding, now) for binding in bindings)
+    )
+    if any(row.value < 0 for row in rows):
+        raise InputError("PV energy must be nonnegative")
+    return tuple(row.value for row in sum_pv_arrays((rows,), intervals))
 
 
 async def async_fetch_solar_forecast(hass, binding: SolarForecastBinding) -> dict:
@@ -1055,6 +1158,9 @@ def compute(
     """
     started = perf_counter()
     problem, values, quality = build_problem(config, states, now, **history)
+    settlement = quality.pop("settlement")
+    settlement_state = quality.pop("settlement_state")
+    settlement_held = history.get("settlement_state")
     plan = solve(
         problem,
         time_limit_s=min(values["solve_time_limit_s"], values["total_time_limit_s"]),
@@ -1215,6 +1321,7 @@ def compute(
         / 3600,
         "monthly_charge_reporting_only": values["monthly_charge"],
         "quality": quality,
+        "balance_pv_series": quality.get("balance_pv_series"),
         "dispatch_policy": {
             "limit_grid_charge_price": values["limit_grid_charge_price"],
             "maximum_grid_charge_price": problem.maximum_grid_charge_price,
@@ -1239,8 +1346,20 @@ def compute(
             "export_limit_scope": values["export_limit_scope"],
             "timezone": config["timezone"],
             "daily_balances": daily_export_rows(problem, plan.flows),
+            "settlement": {
+                **settlement,
+                "export_value_factor": round(settlement["export_value_factor"], 4),
+                "import_energy_factor": round(settlement["import_energy_factor"], 4),
+                "cap_pressure": round(settlement["cap_pressure"], 4),
+                "unused_share": None
+                if settlement["unused_share"] is None
+                else round(settlement["unused_share"], 4),
+            },
         },
         "measurements": measurement_diagnostics(config, states, now),
+        "pv_forecast_hours": forecast_hours(problem.slots, now)
+        if config["sources"]["pv"]["enabled"]
+        else [],
         "presentation": {
             key: values[key]
             for key in (
@@ -1271,6 +1390,9 @@ def compute(
             "actions_configured": bool(values["notify_actions"]),
         },
     }
+    if settlement_state is not None or settlement_held is not None:
+        # Popped by the coordinator; never a published attribute.
+        result["settlement_state"] = settlement_state
     if atlas_solve_builder is not None:
         result["atlas_solve_payload"] = atlas_payload
     return result

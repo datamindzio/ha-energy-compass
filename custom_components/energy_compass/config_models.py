@@ -105,6 +105,9 @@ class PriceSource:
     )
     schedule: TariffSchedule | None = None
     floor_per_kwh: float | None = None
+    # Buy only: the distributor's zones for the buy_distribution_* rates when the
+    # buy source has no zones of its own (ADR-0001).
+    distribution_schedule: TariffSchedule | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize selected forecast, fixed or schedule settlement inputs."""
@@ -119,6 +122,8 @@ class PriceSource:
             data["schedule"] = self.schedule.to_dict()
         if self.floor_per_kwh is not None:
             data["floor_per_kwh"] = self.floor_per_kwh
+        if self.distribution_schedule is not None:
+            data["distribution_schedule"] = self.distribution_schedule.to_dict()
         return data
 
     @classmethod
@@ -134,6 +139,9 @@ class PriceSource:
             if value.get("schedule")
             else None,
             value.get("floor_per_kwh"),
+            TariffSchedule.from_dict(value["distribution_schedule"])
+            if value.get("distribution_schedule")
+            else None,
         )
 
 
@@ -157,6 +165,7 @@ class PvSource:
     enabled: bool
     arrays: tuple[tuple[IntervalBinding, ...], ...] = ()
     solar_forecasts: tuple[SolarForecastBinding, ...] = ()
+    pessimistic: tuple[IntervalBinding, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize explicit additive arrays and continuation groups."""
@@ -164,6 +173,8 @@ class PvSource:
             "enabled": self.enabled,
             "arrays": [[item.to_dict() for item in group] for group in self.arrays],
         }
+        if self.pessimistic:
+            data["pessimistic"] = [item.to_dict() for item in self.pessimistic]
         if self.solar_forecasts:
             data["solar_forecasts"] = [item.to_dict() for item in self.solar_forecasts]
         return data
@@ -180,6 +191,9 @@ class PvSource:
             tuple(
                 SolarForecastBinding.from_dict(item)
                 for item in value.get("solar_forecasts", ())
+            ),
+            tuple(
+                IntervalBinding.from_dict(item) for item in value.get("pessimistic", ())
             ),
         )
 
@@ -286,6 +300,14 @@ def validate_sources(config: SourceConfig, own_entity_ids: set[str]) -> None:
             if price.mode != "forecast":
                 raise InputError("price floor needs a forecast source")
             finite(price.floor_per_kwh, "price floor")
+        if price.distribution_schedule is not None:
+            if role != "buy":
+                raise InputError("distribution tariff is a buy source only")
+            if price.mode == "schedule":
+                raise InputError("a tariff schedule source has its own zones")
+            if config.currency != "PLN":
+                raise InputError("distribution tariff requires PLN")
+            validate_schedule(price.distribution_schedule)
         if price.mode == "schedule":
             if role != "buy":
                 raise InputError("tariff schedule is a buy source only")
@@ -320,7 +342,8 @@ def validate_sources(config: SourceConfig, own_entity_ids: set[str]) -> None:
         dependencies.extend(
             binding.entity for group in config.pv.arrays for binding in group
         )
-    elif config.pv.arrays or config.pv.solar_forecasts:
+        dependencies.extend(binding.entity for binding in config.pv.pessimistic)
+    elif config.pv.arrays or config.pv.solar_forecasts or config.pv.pessimistic:
         raise InputError("disabled PV cannot have active bindings")
     if config.load.mode == "forecast":
         if config.load.forecast is None:

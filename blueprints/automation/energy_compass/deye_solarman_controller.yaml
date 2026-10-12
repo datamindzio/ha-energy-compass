@@ -473,7 +473,30 @@ actions:
       {% endif %}
       {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
       {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-      {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+      {# Tryb Voltage: falownik sam konczy ladowanie na napieciu pakietu, a SOC 100 %
+         z estymatora potrafi byc zawyzony (licznik dryfuje miedzy pelnymi
+         kotwicami). HOLD, CHARGE_PV i SELF_CONSUME zostawiaja wiec pelny cap ladowania
+         z samego PV: siec 0 A, kierunek Disabled, bez celu SOC i bez zatrzasku;
+         rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
+         pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
+         balansowanie i tryb Capacity bez zmian. #}
+      {# Histereza pelnego pakietu w HOLD: profil HOLD i profil pelnego pakietu to dwie
+         rozne transakcje (6 zapisow, pierwszy to ladowanie 0 A), a bez PV ciagna SOC
+         w przeciwne strony (pobor wlasny ~140 W w dol, 1 A z sieci w gore). Zrodlo SOC
+         z ulamkami drgajace 99,9 <-> 100,0 przelaczaloby profil co kilka minut. Wejscie
+         przy SOC >= 100, wyjscie dopiero przy SOC <= 99: jedna zmiana profilu na 1 pkt
+         proc. SOC. Zrodlo calkowite zachowuje sie jak dotad (99 = profil HOLD). Stan to
+         poprzednia decyzja z runtime (state HOLD, zaden program TOU w kierunku Grid —
+         zwykly HOLD zawsze ma Grid w aktywnym programie), bez nowego klucza runtime.
+         CHARGE_PV i SELF_CONSUME nie potrzebuja histerezy: ponizej 100 % maja te same
+         nastawy. #}
+      {% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
+      {% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
+      {% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+      {% if full_pv %}
+        {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
+        {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
+      {% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
       {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
         {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
         {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
@@ -744,7 +767,30 @@ actions:
           {% endif %}
           {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
           {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-          {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+          {# Tryb Voltage: falownik sam konczy ladowanie na napieciu pakietu, a SOC 100 %
+             z estymatora potrafi byc zawyzony (licznik dryfuje miedzy pelnymi
+             kotwicami). HOLD, CHARGE_PV i SELF_CONSUME zostawiaja wiec pelny cap ladowania
+             z samego PV: siec 0 A, kierunek Disabled, bez celu SOC i bez zatrzasku;
+             rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
+             pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
+             balansowanie i tryb Capacity bez zmian. #}
+          {# Histereza pelnego pakietu w HOLD: profil HOLD i profil pelnego pakietu to dwie
+             rozne transakcje (6 zapisow, pierwszy to ladowanie 0 A), a bez PV ciagna SOC
+             w przeciwne strony (pobor wlasny ~140 W w dol, 1 A z sieci w gore). Zrodlo SOC
+             z ulamkami drgajace 99,9 <-> 100,0 przelaczaloby profil co kilka minut. Wejscie
+             przy SOC >= 100, wyjscie dopiero przy SOC <= 99: jedna zmiana profilu na 1 pkt
+             proc. SOC. Zrodlo calkowite zachowuje sie jak dotad (99 = profil HOLD). Stan to
+             poprzednia decyzja z runtime (state HOLD, zaden program TOU w kierunku Grid —
+             zwykly HOLD zawsze ma Grid w aktywnym programie), bez nowego klucza runtime.
+             CHARGE_PV i SELF_CONSUME nie potrzebuja histerezy: ponizej 100 % maja te same
+             nastawy. #}
+          {% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
+          {% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
+          {% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+          {% if full_pv %}
+            {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
+            {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
+          {% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
           {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
             {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
             {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
@@ -969,7 +1015,30 @@ actions:
             {% endif %}
             {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
             {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-            {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+            {# Tryb Voltage: falownik sam konczy ladowanie na napieciu pakietu, a SOC 100 %
+               z estymatora potrafi byc zawyzony (licznik dryfuje miedzy pelnymi
+               kotwicami). HOLD, CHARGE_PV i SELF_CONSUME zostawiaja wiec pelny cap ladowania
+               z samego PV: siec 0 A, kierunek Disabled, bez celu SOC i bez zatrzasku;
+               rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
+               pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
+               balansowanie i tryb Capacity bez zmian. #}
+            {# Histereza pelnego pakietu w HOLD: profil HOLD i profil pelnego pakietu to dwie
+               rozne transakcje (6 zapisow, pierwszy to ladowanie 0 A), a bez PV ciagna SOC
+               w przeciwne strony (pobor wlasny ~140 W w dol, 1 A z sieci w gore). Zrodlo SOC
+               z ulamkami drgajace 99,9 <-> 100,0 przelaczaloby profil co kilka minut. Wejscie
+               przy SOC >= 100, wyjscie dopiero przy SOC <= 99: jedna zmiana profilu na 1 pkt
+               proc. SOC. Zrodlo calkowite zachowuje sie jak dotad (99 = profil HOLD). Stan to
+               poprzednia decyzja z runtime (state HOLD, zaden program TOU w kierunku Grid —
+               zwykly HOLD zawsze ma Grid w aktywnym programie), bez nowego klucza runtime.
+               CHARGE_PV i SELF_CONSUME nie potrzebuja histerezy: ponizej 100 % maja te same
+               nastawy. #}
+            {% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
+            {% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
+            {% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+            {% if full_pv %}
+              {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
+              {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
+            {% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
             {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
               {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
               {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
@@ -1255,7 +1324,30 @@ actions:
                     {% endif %}
                     {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                     {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-                    {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+                    {# Tryb Voltage: falownik sam konczy ladowanie na napieciu pakietu, a SOC 100 %
+                       z estymatora potrafi byc zawyzony (licznik dryfuje miedzy pelnymi
+                       kotwicami). HOLD, CHARGE_PV i SELF_CONSUME zostawiaja wiec pelny cap ladowania
+                       z samego PV: siec 0 A, kierunek Disabled, bez celu SOC i bez zatrzasku;
+                       rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
+                       pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
+                       balansowanie i tryb Capacity bez zmian. #}
+                    {# Histereza pelnego pakietu w HOLD: profil HOLD i profil pelnego pakietu to dwie
+                       rozne transakcje (6 zapisow, pierwszy to ladowanie 0 A), a bez PV ciagna SOC
+                       w przeciwne strony (pobor wlasny ~140 W w dol, 1 A z sieci w gore). Zrodlo SOC
+                       z ulamkami drgajace 99,9 <-> 100,0 przelaczaloby profil co kilka minut. Wejscie
+                       przy SOC >= 100, wyjscie dopiero przy SOC <= 99: jedna zmiana profilu na 1 pkt
+                       proc. SOC. Zrodlo calkowite zachowuje sie jak dotad (99 = profil HOLD). Stan to
+                       poprzednia decyzja z runtime (state HOLD, zaden program TOU w kierunku Grid —
+                       zwykly HOLD zawsze ma Grid w aktywnym programie), bez nowego klucza runtime.
+                       CHARGE_PV i SELF_CONSUME nie potrzebuja histerezy: ponizej 100 % maja te same
+                       nastawy. #}
+                    {% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
+                    {% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
+                    {% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+                    {% if full_pv %}
+                      {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
+                      {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
+                    {% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
                     {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
                       {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
                       {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
@@ -1471,7 +1563,30 @@ actions:
                     {% endif %}
                     {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                     {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-                    {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+                    {# Tryb Voltage: falownik sam konczy ladowanie na napieciu pakietu, a SOC 100 %
+                       z estymatora potrafi byc zawyzony (licznik dryfuje miedzy pelnymi
+                       kotwicami). HOLD, CHARGE_PV i SELF_CONSUME zostawiaja wiec pelny cap ladowania
+                       z samego PV: siec 0 A, kierunek Disabled, bez celu SOC i bez zatrzasku;
+                       rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
+                       pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
+                       balansowanie i tryb Capacity bez zmian. #}
+                    {# Histereza pelnego pakietu w HOLD: profil HOLD i profil pelnego pakietu to dwie
+                       rozne transakcje (6 zapisow, pierwszy to ladowanie 0 A), a bez PV ciagna SOC
+                       w przeciwne strony (pobor wlasny ~140 W w dol, 1 A z sieci w gore). Zrodlo SOC
+                       z ulamkami drgajace 99,9 <-> 100,0 przelaczaloby profil co kilka minut. Wejscie
+                       przy SOC >= 100, wyjscie dopiero przy SOC <= 99: jedna zmiana profilu na 1 pkt
+                       proc. SOC. Zrodlo calkowite zachowuje sie jak dotad (99 = profil HOLD). Stan to
+                       poprzednia decyzja z runtime (state HOLD, zaden program TOU w kierunku Grid —
+                       zwykly HOLD zawsze ma Grid w aktywnym programie), bez nowego klucza runtime.
+                       CHARGE_PV i SELF_CONSUME nie potrzebuja histerezy: ponizej 100 % maja te same
+                       nastawy. #}
+                    {% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
+                    {% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
+                    {% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+                    {% if full_pv %}
+                      {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
+                      {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
+                    {% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
                     {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
                       {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
                       {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
@@ -1719,7 +1834,30 @@ actions:
                       {% endif %}
                       {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                       {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-                      {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+                      {# Tryb Voltage: falownik sam konczy ladowanie na napieciu pakietu, a SOC 100 %
+                         z estymatora potrafi byc zawyzony (licznik dryfuje miedzy pelnymi
+                         kotwicami). HOLD, CHARGE_PV i SELF_CONSUME zostawiaja wiec pelny cap ladowania
+                         z samego PV: siec 0 A, kierunek Disabled, bez celu SOC i bez zatrzasku;
+                         rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
+                         pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
+                         balansowanie i tryb Capacity bez zmian. #}
+                      {# Histereza pelnego pakietu w HOLD: profil HOLD i profil pelnego pakietu to dwie
+                         rozne transakcje (6 zapisow, pierwszy to ladowanie 0 A), a bez PV ciagna SOC
+                         w przeciwne strony (pobor wlasny ~140 W w dol, 1 A z sieci w gore). Zrodlo SOC
+                         z ulamkami drgajace 99,9 <-> 100,0 przelaczaloby profil co kilka minut. Wejscie
+                         przy SOC >= 100, wyjscie dopiero przy SOC <= 99: jedna zmiana profilu na 1 pkt
+                         proc. SOC. Zrodlo calkowite zachowuje sie jak dotad (99 = profil HOLD). Stan to
+                         poprzednia decyzja z runtime (state HOLD, zaden program TOU w kierunku Grid —
+                         zwykly HOLD zawsze ma Grid w aktywnym programie), bez nowego klucza runtime.
+                         CHARGE_PV i SELF_CONSUME nie potrzebuja histerezy: ponizej 100 % maja te same
+                         nastawy. #}
+                      {% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
+                      {% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
+                      {% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+                      {% if full_pv %}
+                        {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
+                        {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
+                      {% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
                       {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
                         {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
                         {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
@@ -1935,7 +2073,30 @@ actions:
                       {% endif %}
                       {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
                       {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-                      {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+                      {# Tryb Voltage: falownik sam konczy ladowanie na napieciu pakietu, a SOC 100 %
+                         z estymatora potrafi byc zawyzony (licznik dryfuje miedzy pelnymi
+                         kotwicami). HOLD, CHARGE_PV i SELF_CONSUME zostawiaja wiec pelny cap ladowania
+                         z samego PV: siec 0 A, kierunek Disabled, bez celu SOC i bez zatrzasku;
+                         rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
+                         pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
+                         balansowanie i tryb Capacity bez zmian. #}
+                      {# Histereza pelnego pakietu w HOLD: profil HOLD i profil pelnego pakietu to dwie
+                         rozne transakcje (6 zapisow, pierwszy to ladowanie 0 A), a bez PV ciagna SOC
+                         w przeciwne strony (pobor wlasny ~140 W w dol, 1 A z sieci w gore). Zrodlo SOC
+                         z ulamkami drgajace 99,9 <-> 100,0 przelaczaloby profil co kilka minut. Wejscie
+                         przy SOC >= 100, wyjscie dopiero przy SOC <= 99: jedna zmiana profilu na 1 pkt
+                         proc. SOC. Zrodlo calkowite zachowuje sie jak dotad (99 = profil HOLD). Stan to
+                         poprzednia decyzja z runtime (state HOLD, zaden program TOU w kierunku Grid —
+                         zwykly HOLD zawsze ma Grid w aktywnym programie), bez nowego klucza runtime.
+                         CHARGE_PV i SELF_CONSUME nie potrzebuja histerezy: ponizej 100 % maja te same
+                         nastawy. #}
+                      {% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
+                      {% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
+                      {% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+                      {% if full_pv %}
+                        {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
+                        {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
+                      {% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
                       {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
                         {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
                         {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
@@ -2266,7 +2427,30 @@ actions:
           {% endif %}
           {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
           {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-          {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+          {# Tryb Voltage: falownik sam konczy ladowanie na napieciu pakietu, a SOC 100 %
+             z estymatora potrafi byc zawyzony (licznik dryfuje miedzy pelnymi
+             kotwicami). HOLD, CHARGE_PV i SELF_CONSUME zostawiaja wiec pelny cap ladowania
+             z samego PV: siec 0 A, kierunek Disabled, bez celu SOC i bez zatrzasku;
+             rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
+             pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
+             balansowanie i tryb Capacity bez zmian. #}
+          {# Histereza pelnego pakietu w HOLD: profil HOLD i profil pelnego pakietu to dwie
+             rozne transakcje (6 zapisow, pierwszy to ladowanie 0 A), a bez PV ciagna SOC
+             w przeciwne strony (pobor wlasny ~140 W w dol, 1 A z sieci w gore). Zrodlo SOC
+             z ulamkami drgajace 99,9 <-> 100,0 przelaczaloby profil co kilka minut. Wejscie
+             przy SOC >= 100, wyjscie dopiero przy SOC <= 99: jedna zmiana profilu na 1 pkt
+             proc. SOC. Zrodlo calkowite zachowuje sie jak dotad (99 = profil HOLD). Stan to
+             poprzednia decyzja z runtime (state HOLD, zaden program TOU w kierunku Grid —
+             zwykly HOLD zawsze ma Grid w aktywnym programie), bez nowego klucza runtime.
+             CHARGE_PV i SELF_CONSUME nie potrzebuja histerezy: ponizej 100 % maja te same
+             nastawy. #}
+          {% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
+          {% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
+          {% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+          {% if full_pv %}
+            {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
+            {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
+          {% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
           {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
             {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
             {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
@@ -2482,7 +2666,30 @@ actions:
           {% endif %}
           {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
           {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-          {% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+          {# Tryb Voltage: falownik sam konczy ladowanie na napieciu pakietu, a SOC 100 %
+             z estymatora potrafi byc zawyzony (licznik dryfuje miedzy pelnymi
+             kotwicami). HOLD, CHARGE_PV i SELF_CONSUME zostawiaja wiec pelny cap ladowania
+             z samego PV: siec 0 A, kierunek Disabled, bez celu SOC i bez zatrzasku;
+             rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
+             pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
+             balansowanie i tryb Capacity bez zmian. #}
+          {# Histereza pelnego pakietu w HOLD: profil HOLD i profil pelnego pakietu to dwie
+             rozne transakcje (6 zapisow, pierwszy to ladowanie 0 A), a bez PV ciagna SOC
+             w przeciwne strony (pobor wlasny ~140 W w dol, 1 A z sieci w gore). Zrodlo SOC
+             z ulamkami drgajace 99,9 <-> 100,0 przelaczaloby profil co kilka minut. Wejscie
+             przy SOC >= 100, wyjscie dopiero przy SOC <= 99: jedna zmiana profilu na 1 pkt
+             proc. SOC. Zrodlo calkowite zachowuje sie jak dotad (99 = profil HOLD). Stan to
+             poprzednia decyzja z runtime (state HOLD, zaden program TOU w kierunku Grid —
+             zwykly HOLD zawsze ma Grid w aktywnym programie), bez nowego klucza runtime.
+             CHARGE_PV i SELF_CONSUME nie potrzebuja histerezy: ponizej 100 % maja te same
+             nastawy. #}
+          {% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
+          {% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
+          {% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+          {% if full_pv %}
+            {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
+            {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
+          {% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
           {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
             {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
             {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}

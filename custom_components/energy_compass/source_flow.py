@@ -8,6 +8,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 
+from .calibration import BATTERY_COUNTER_MEASUREMENTS
 from .config_models import (
     LoadSource,
     NumericSetting,
@@ -70,9 +71,19 @@ MEASUREMENTS = (
     "grid_import_energy",
     "grid_export_energy",
     "throughput_today",
+    *BATTERY_COUNTER_MEASUREMENTS,
     *DAILY_EXPORT_MEASUREMENTS,
 )
-TARGETS = ("buy", "sell", "pv", "load", "soc", "bms_soc", *MEASUREMENTS)
+TARGETS = (
+    "buy",
+    "sell",
+    "pv",
+    "pv_pessimistic",
+    "load",
+    "soc",
+    "bms_soc",
+    *MEASUREMENTS,
+)
 
 
 class SourceEditor:
@@ -136,7 +147,8 @@ class SourceEditor:
             ["source_append", "source_remove_group"]
             if ref.kind == "group"
             else ["source_edit", "source_append", "source_remove"]
-            if ref.kind == "interval" and ref.role in ("buy", "sell", "pv")
+            if ref.kind == "interval"
+            and ref.role in ("buy", "sell", "pv", "pv_pessimistic")
             else ["source_edit", "source_remove"]
         )
         options.extend(["source_inventory", "sources"])
@@ -187,9 +199,17 @@ class SourceEditor:
             return modes
         if target == "pv":
             return ["forecast", "solar_forecast"]
+        if target == "pv_pessimistic":
+            return ["forecast"]
         if target == "load":
             return ["fixed", "forecast", "statistic", "power_history"]
-        if target in ("soc", "bms_soc", "throughput_today", *DAILY_EXPORT_MEASUREMENTS):
+        if target in (
+            "soc",
+            "bms_soc",
+            "throughput_today",
+            *BATTERY_COUNTER_MEASUREMENTS,
+            *DAILY_EXPORT_MEASUREMENTS,
+        ):
             return ["measurement"]
         return ["measurement", "statistic"]
 
@@ -205,9 +225,10 @@ class SourceEditor:
             if mode not in choices:
                 errors["base"] = "invalid_input"
             elif (
-                target == "pv"
+                target in ("pv", "pv_pessimistic")
                 and not self._draft["sources"]["pv"]["enabled"]
-                or target in ("soc", "bms_soc", "throughput_today")
+                or target
+                in ("soc", "bms_soc", "throughput_today", *BATTERY_COUNTER_MEASUREMENTS)
                 and not self._draft["sources"]["battery_enabled"]
             ):
                 errors["base"] = "component_disabled"
@@ -276,7 +297,12 @@ class SourceEditor:
                 if ref.role in ("buy", "sell")
                 and self._draft["helpers"].get(f"{ref.role}_rate")
                 else "measurement"
-                if ref.role in ("throughput_today", *DAILY_EXPORT_MEASUREMENTS)
+                if ref.role
+                in (
+                    "throughput_today",
+                    *BATTERY_COUNTER_MEASUREMENTS,
+                    *DAILY_EXPORT_MEASUREMENTS,
+                )
                 and ref.kind == "statistic"
                 else "statistic"
                 if ref.kind == "statistic"
@@ -520,6 +546,122 @@ class SourceEditor:
             errors=errors,
         )
 
+    def _stored_distribution(self):
+        stored = self._draft["sources"]["buy"].get("distribution_schedule")
+        return TariffSchedule.from_dict(stored) if stored else None
+
+    def _distribution_unavailable(self, step_id):
+        """The distribution tariff is a PLN buy option for sources without zones of their own."""
+        buy = self._draft["sources"]["buy"]
+        if (
+            self._source["target"] != "buy"
+            or self._source.get("mode") != "distribution"
+            or self._draft["currency"] != "PLN"
+            or buy["mode"] == "schedule"
+        ):
+            return self.async_show_form(
+                step_id=step_id,
+                data_schema=vol.Schema({}),
+                errors={"base": "invalid_input"},
+            )
+        return None
+
+    async def async_step_tariff_distribution(self, user_input=None):
+        if blocked := self._distribution_unavailable("tariff_distribution"):
+            return blocked
+        stored = self._stored_distribution()
+        errors = {}
+        if user_input is not None:
+            tariff = user_input["tariff"]
+            winter = user_input["meter_winter_clock"]
+            if tariff == "none":
+                return await self._save_distribution(None)
+            if tariff not in CATALOG or not isinstance(winter, bool):
+                errors["base"] = "invalid_input"
+            else:
+                self._schedule_choice = (tariff, winter)
+                if CATALOG[tariff].choices:
+                    return await self.async_step_tariff_distribution_hours()
+                return await self._save_distribution(TariffSchedule(tariff, winter, {}))
+        default_tariff = stored.tariff if stored else "none"
+        default_winter = stored.meter_winter_clock if stored else False
+        if user_input is not None:
+            default_tariff = user_input.get("tariff", default_tariff)
+            default_winter = user_input.get("meter_winter_clock", default_winter)
+        return self.async_show_form(
+            step_id="tariff_distribution",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("tariff", default=default_tariff): select(
+                        [
+                            *source_mode_options(["none"], self.hass.config.language),
+                            *tariff_options(self.hass.config.language),
+                        ]
+                    ),
+                    vol.Required(
+                        "meter_winter_clock", default=default_winter
+                    ): selector.BooleanSelector(),
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_tariff_distribution_hours(self, user_input=None):
+        if blocked := self._distribution_unavailable("tariff_distribution_hours"):
+            return blocked
+        if self._schedule_choice is None:
+            return await self.async_step_tariff_distribution()
+        tariff, winter = self._schedule_choice
+        spec = CATALOG[tariff]
+        stored = self._stored_distribution()
+        defaults = (
+            dict(stored.params)
+            if stored and stored.tariff == tariff
+            else dict(TariffSchedule.default(tariff).params)
+        )
+        errors = {}
+        if user_input is not None:
+            try:
+                schedule = TariffSchedule(
+                    tariff,
+                    winter,
+                    {name: int(user_input[name]) for name in spec.choices},
+                )
+                validate_schedule(schedule)
+            except InputError, KeyError, TypeError, ValueError:
+                errors["base"] = "invalid_input"
+            else:
+                return await self._save_distribution(schedule)
+            defaults.update(
+                {
+                    name: user_input[name]
+                    for name in spec.choices
+                    if str(user_input.get(name, "")).isdigit()
+                }
+            )
+        return self.async_show_form(
+            step_id="tariff_distribution_hours",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(name, default=str(defaults[name])): select(
+                        [str(hour) for hour in hours]
+                    )
+                    for name, hours in spec.choices.items()
+                }
+            ),
+            errors=errors,
+        )
+
+    async def _save_distribution(self, schedule):
+        candidate = deepcopy(self._draft)
+        price = candidate["sources"]["buy"]
+        if schedule is None:
+            price.pop("distribution_schedule", None)
+        else:
+            price["distribution_schedule"] = schedule.to_dict()
+        self._draft = candidate
+        return await self._after_source_save()
+
     async def async_step_tariff_rce(self, user_input=None):
         if blocked := self._tariff_step_unavailable("tariff_rce", "sell"):
             return blocked
@@ -658,6 +800,8 @@ class SourceEditor:
             mode="schedule", forecast=[], fixed=None, schedule=schedule.to_dict()
         )
         price.pop("floor_per_kwh", None)
+        # A schedule source carries the distribution zones itself (ADR-0001).
+        price.pop("distribution_schedule", None)
         if previous_mode != "schedule":
             candidate["helpers"].pop("buy_rate", None)
         if self._source_ref:
@@ -695,7 +839,12 @@ class SourceEditor:
             *(
                 name
                 for name in MEASUREMENTS
-                if name not in ("throughput_today", *DAILY_EXPORT_MEASUREMENTS)
+                if name
+                not in (
+                    "throughput_today",
+                    *BATTERY_COUNTER_MEASUREMENTS,
+                    *DAILY_EXPORT_MEASUREMENTS,
+                )
             ),
         ):
             return self.async_show_form(
@@ -933,9 +1082,14 @@ class SourceEditor:
                     unit=preset.price_unit or defaults["unit"],
                     interval_minutes=preset.price_interval_minutes or 60,
                 )
-            elif target == "pv":
+            elif target in ("pv", "pv_pessimistic"):
                 defaults.update(
-                    value_path=preset.pv_value_field or "value",
+                    value_path=(
+                        preset.pv_pessimistic_value_field
+                        if target == "pv_pessimistic"
+                        else preset.pv_value_field
+                    )
+                    or "value",
                     start_path=preset.pv_start_field or "start",
                     unit=preset.pv_unit or "kWh",
                     interval_minutes=preset.pv_interval_minutes or 60,
@@ -1053,7 +1207,7 @@ class SourceEditor:
             self._source["operation"] == "edit"
             and self._source_ref is not None
             and self._source_ref.kind == "interval"
-            and target in ("buy", "sell", "pv")
+            and target in ("buy", "sell", "pv", "pv_pessimistic")
         )
         candidate = (
             replace_source(self._draft, self._source_ref, self._source_original, data)
@@ -1091,6 +1245,14 @@ class SourceEditor:
                 power=None,
                 daily_estimate=None,
             )
+        elif target == "pv_pessimistic":
+            pv = candidate["sources"]["pv"]
+            if editing_interval:
+                pass
+            elif self._source["operation"] == "append" and pv.get("pessimistic"):
+                pv["pessimistic"].append(data)
+            else:
+                pv["pessimistic"] = [data]
         else:
             candidate["sources"]["pv"].pop("solar_forecasts", None)
             groups = candidate["sources"]["pv"]["arrays"]
@@ -1198,7 +1360,12 @@ class SourceEditor:
                             "max_age_seconds", current.get("max_age_seconds")
                         ),
                         minimum=0
-                        if target in ("throughput_today", *DAILY_EXPORT_MEASUREMENTS)
+                        if target
+                        in (
+                            "throughput_today",
+                            *BATTERY_COUNTER_MEASUREMENTS,
+                            *DAILY_EXPORT_MEASUREMENTS,
+                        )
                         else current.get("minimum"),
                         maximum=current.get("maximum"),
                     ).to_dict()
@@ -1242,7 +1409,7 @@ class SourceEditor:
                 else selected_age
                 if selected_age is not None
                 else 86400
-                if target in DAILY_EXPORT_MEASUREMENTS
+                if target in (*BATTERY_COUNTER_MEASUREMENTS, *DAILY_EXPORT_MEASUREMENTS)
                 else 600,
             )
         )

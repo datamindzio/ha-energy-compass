@@ -25,6 +25,7 @@ from .models import (
     SolveError,
 )
 from .normalize import validate_problem
+from .settlement import planning_buy, planning_sell
 
 _TOL = 1e-6
 _UTC = UTC
@@ -543,13 +544,13 @@ def _solve(
         variables = {
             "gin": model.variable(
                 upper=problem.site.grid_import_kw * duration,
-                cost=problem.import_weight * slot.buy_per_kwh
+                cost=problem.import_weight * planning_buy(problem, slot)
                 + problem.import_kwh_weight,
             ),
             "gout": model.variable(
                 upper=problem.site.grid_export_kw * duration,
                 cost=-problem.export_weight
-                * (slot.sell_per_kwh - problem.pv_export_margin),
+                * (planning_sell(problem, slot) - problem.pv_export_margin),
             ),
             "curt": model.variable(
                 upper=slot.pv_kwh if problem.site.allow_curtailment else 0
