@@ -53,7 +53,8 @@ in `docs/runtime-validation.md` § Consumption probe limits):
 4. Performance numbers in the guides come from a command in `benchmarks/` and name the host. A change that
    moves solve time re-runs that command and updates the table in the same PR.
 5. Making the probes fit is a solve-time problem of the model, not of the probe: it is owned by the
-   formulation work on the load-following rows (T-039 for the CHARGE_PV rule of T-010), and by the
+   formulation work on the load-following rows (T-044 decides whether the CHARGE_PV rule of T-010 is
+   reformulated or its cost accepted; T-039 measured it and found no tightening), and by the
    revisit conditions of ADR-0003.
 
 Revisit when the solver interface offers a warm start together with an absolute gap in currency, when the
@@ -92,6 +93,6 @@ question for the owner, with the measured error, not a default.
   budget: its five solves time out at 2 s for the same two strategies, so the depth is unknown there too
   (measured, same table). The dispatch plan itself is unaffected. The guides say so.
 - At 48 h no strategy completes its probes since the CHARGE_PV load-following rule (T-010) made every solve
-  4-7 times slower at 192 slots; that regression is T-039 and is not accepted by this ADR.
+  4-7 times slower at 192 slots; that regression (measured in T-039, decided in T-044) is not accepted by this ADR.
 - The probe table goes stale with every change to solve time; decision 4 and the test tie it to the code.
 - The test costs about a minute of suite time (eight real-solver cases, 180 s timeout each).
