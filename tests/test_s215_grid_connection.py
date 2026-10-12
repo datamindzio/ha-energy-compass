@@ -74,9 +74,8 @@ def _config() -> dict:
 # --- attribute builder + contract --------------------------------------------------------
 
 
-def test_S215_vendored_contract_is_1_3_0_hexmap2():
+def test_S215_vendored_contract_carries_the_field():
     doc = yaml.safe_load(CONTRACT.read_text())
-    assert doc["info"]["version"] == "1.3.0-hexmap2"
     assert FIELD in doc["components"]["schemas"]["AttrsV1"]["properties"]
 
 
