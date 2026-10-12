@@ -9,6 +9,7 @@ import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
 from scipy.sparse import coo_matrix
 
+from .balance import REACH_TOL, fallback_costs
 from .charge_benefit import constrain_charge_benefit, validate_charge_benefit
 from .charge_price import price_allows_grid_charge
 from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fractions
@@ -27,7 +28,7 @@ from .models import (
 from .normalize import validate_problem
 from .settlement import planning_buy, planning_sell
 
-_TOL = 1e-6
+_TOL = REACH_TOL
 _UTC = UTC
 
 
@@ -96,6 +97,10 @@ class _Model:
             raise SolveError(
                 reasons.get(result.status, "solver_failure"), result.message
             )
+        # A proven solve stops at HiGHS's relative gap (default 1e-4 unless the
+        # model asked for 0); report it instead of a constant 0.
+        gap = getattr(result, "mip_gap", None)
+        self.mip_gap = float(gap) if gap is not None and isfinite(gap) else 0.0
         return np.asarray(result.x)
 
 
@@ -147,8 +152,14 @@ def _constrain_balance(
         return [], None
     threshold = problem.balance_threshold_kwh
     choices: list[int] = []
+    ranking = fallback_costs(
+        problem.balance_windows,
+        problem.balance_miss_cost,
+        initial_kwh=battery.initial_kwh,
+        threshold_kwh=threshold,
+    )
     for number, window in enumerate(problem.balance_windows):
-        chosen = model.variable(binary=True)
+        chosen = model.variable(binary=True, cost=ranking[number])
         # Registered in the slot vectors so the variable-count check covers it.
         vectors[0][f"balance_choice_{number}"] = chosen
         if problem.balance_fixed:
@@ -919,7 +930,12 @@ def _solve(
         if flexible_load
         else problem
     )
-    validate_modes(mode_problem, flows)
+    bridges = tuple(
+        i
+        for i, v in enumerate(vectors)
+        if "hold_run" in v and values[v["hold_run"]] < 0.5
+    )
+    validate_modes(mode_problem, flows, bridges)
     grid_cost = sum(
         slot.buy_per_kwh * flow.grid_import_kwh
         - slot.sell_per_kwh * flow.grid_export_kwh
@@ -976,6 +992,7 @@ def _solve(
             peak_reserve_shortfall_kwh=peak_reserve_shortfall_kwh,
             time_limited=model.time_limited,
             mip_gap=model.mip_gap,
+            carried_bridges=bridges,
         ),
         tuple(float(values[v["flex_load"]]) for v in vectors) if flexible_load else (),
     )

@@ -1091,7 +1091,7 @@ hours: <code>activity = minimum_mode_power_kw × h</code> (default 0.1 kW) and
 <tr>
 <td><code>CHARGE_PV</code></td>
 <td>Charge from PV</td>
-<td>activity ≤ charge ≤ surplus — only solar surplus charges. No discharge, no curtailment.</td>
+<td>activity ≤ charge ≤ surplus — only solar surplus charges. No discharge, no curtailment. Load-following: grid export only while the charge is at its power limit or the battery is full.</td>
 <td>PV surplus exists.</td>
 </tr>
 <tr>
@@ -1141,9 +1141,30 @@ directly by any other available mode.</p>
   discharge in any interval the flows label <code>SELF_CONSUME</code> is bound the same way. A carried
   <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment is executed the same way. If the battery runs out before
   it ends, the rest of the commitment is <code>HOLD</code> with full import (a new <code>HOLD</code> clock starts). The
-  plan is <code>infeasible</code> until the commitment ends only when the terminal rule cannot be met
-  afterwards (<code>preserve_initial</code> with no later PV or grid charge to refill what the house drew),
-  or with a 0 % reserve and an inverter standby loss (<code>idle_drain_kw</code>).</li>
+  same happens — from the first interval if need be — when the battery cannot cover the house
+  and still keep the inverter standby loss (<code>idle_drain_kw</code>) of the later intervals, with no PV
+  or grid charge to pay it in time. <code>HOLD</code> starts only in an interval without a PV surplus the
+  pack could take, in every committed interval: with one, the row stays <code>CHARGE_PV</code>. A committed
+  interval in which neither mode has anything to follow (net load and PV surplus both below
+  <code>minimum_mode_power_kw × h</code>, for example a night base load under 100 W) is <code>HOLD</code> by
+  classification and does not end the commitment: the plan bridges it (no <code>HOLD</code> clock starts,
+  and the persisted commitment keeps its mode and start) or, when the battery is spent or full,
+  starts a real <code>HOLD</code> run there as in any other interval
+  (<code>dispatch_policy.carried_idle_starts</code> lists the bridged intervals). The plan is
+  <code>infeasible</code> until the commitment ends when the
+  terminal rule cannot be met afterwards (<code>preserve_initial</code> with no later PV or grid charge to
+  refill what the house drew); the rare remaining cases are listed in
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>.</li>
+<li><strong><code>CHARGE_PV</code> follows the surplus.</strong> The inverter charges with every watt the house does not
+  use, so the plan never pairs a partial charge with grid export: in a <code>CHARGE_PV</code> interval the
+  battery takes the whole PV surplus, and export appears only once the charge is at its interval
+  power limit or the battery has been filled to its upper bound. Otherwise the row is not
+  <code>CHARGE_PV</code>. Applies while <code>minimum_mode_minutes</code> is above 0. A carried
+  <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment is held to the same rule. If the battery is full before it
+  ends (the next interval could not take even the minimum activity above the upper bound), the
+  rest of the commitment is <code>HOLD</code> with the surplus exported (a new <code>HOLD</code> clock starts). A first
+  committed interval that already has less room than the minimum activity is not covered: the
+  plan is <code>infeasible</code> until the commitment ends.</li>
 <li><strong>PV-follow group:</strong> <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.</li>
@@ -1755,6 +1776,19 @@ source; the Energy dashboard solar forecast has no pessimistic series, so bind t
 <p>Otherwise the start is offered only as <strong>CHARGE_GRID</strong>, subject to the usual grid-charge and price-ceiling
 rules, so the solver can pick a cheap grid window instead. The dispatch plan itself keeps using the median
 series. Without the source nothing changes.</p>
+<p>The solver prices every window on the median series, where PV surplus can pay for a vetoed
+<strong>CHARGE_GRID</strong> window, so several starts would cost the same. To avoid a tie-break landing on an
+expensive slot, every <strong>CHARGE_GRID</strong> window offered while the pessimistic series is present (also one
+that is <strong>CHARGE_GRID</strong> on the median series alone) carries a ranking cost: the energy the pessimistic series leaves to the
+grid, that is what the pack still lacks to reach the threshold at the window start plus the load PV does
+not cover inside the window, at the window's buy prices. The solver adds 5 % of each window's excess over
+the cheapest window the solver can pick to that window's cost, so a window the pessimistic series still supports
+(<strong>CHARGE_PV</strong>) beats a vetoed one and, among vetoed ones, the cheapest wins. The addition never exceeds
+half the cost of skipping the balance. A start-0 window the pack cannot reach (it starts below the
+threshold) is left out of that comparison, so it never shifts the other windows towards a skip; the
+ranking can still tip a close call against the balance. It is a preference, not a
+strict tie-break: a start that is cheaper on the median series by more than 5 % of the difference in
+ranking cost still wins. It is not part of the plan's cost.</p>
 <p>Trade-off: the pack test counts PV surplus only. A start the pack would reach only by charging from the
 grid before the window is offered as <strong>CHARGE_GRID</strong> alone, and is dropped when the grid-charge price
 ceiling blocks a slot of the window, so <code>balance_no_window_in_horizon</code> can appear where a window existed
@@ -1865,7 +1899,7 @@ takes effect at the next periodic recalculation (<code>refresh_minutes</code>) o
 </tr>
 <tr>
 <td><code>mip_gap</code></td>
-<td>Relative MIP gap the solver reported for the published plan: <code>0</code> = proven optimal; for a time-limited plan, the bound on how far its objective may be from the optimum (e.g. <code>0.017</code> = 1.7 %).</td>
+<td>Relative MIP gap the solver reported for the published plan: <code>0</code> = proven optimal (a proven plan reads <code>0</code>, or at most <code>0.0001</code> when no episode hurdle is active); for a time-limited plan, the bound on how far its objective may be from the optimum (e.g. <code>0.017</code> = 1.7 %).</td>
 </tr>
 <tr>
 <td><code>cap_violation_kwh</code></td>

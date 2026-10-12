@@ -1,5 +1,6 @@
 """SELF_CONSUME follows the load: no grid import beside a spare discharge power."""
 
+import random
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -10,8 +11,12 @@ from test_dispatch_policy import dispatch
 from custom_components.energy_compass.engine.dispatch_policy import validate_modes
 from custom_components.energy_compass.engine.machine_state import machine_state
 from custom_components.energy_compass.engine.models import (
+    Battery,
     FlexibleLoadRequest,
     Flow,
+    Problem,
+    SiteLimits,
+    Slot,
     SolveError,
 )
 from custom_components.energy_compass.engine.optimize import (
@@ -312,16 +317,14 @@ def test_validator_releases_a_carried_lock_only_after_an_emptied_battery():
         validate_modes(problem, charging)
 
 
-def test_standby_loss_owed_by_an_empty_reserve_keeps_the_lock_infeasible():
-    # Known limit: with a 0 % reserve the pack must keep the standby loss of the
-    # later slots, so the discharge can neither reach its power limit nor end on
-    # the reserve, and a carried lock has no plan until it runs out.
+def zero_reserve(initial):
+    """A carried PV-follow lock over two of three dark slots, 0 % reserve, standby loss."""
     problem = dispatch(((1.0, 0, 0, 0.5),) * 3, minutes=30, minimum_mode_minutes=60)
-    problem = replace(
+    return replace(
         problem,
         battery=replace(
             problem.battery,
-            initial_kwh=0.3,
+            initial_kwh=initial,
             discharge_kw=0.5,
             allow_grid_charge=False,
             allow_battery_export=False,
@@ -330,14 +333,134 @@ def test_standby_loss_owed_by_an_empty_reserve_keeps_the_lock_infeasible():
         initial_dispatch_mode="CHARGE_PV",
         initial_dispatch_mode_since=problem.slots[0].start - timedelta(minutes=15),
     )
-    with pytest.raises(SolveError) as caught:
-        solve(problem)
-    assert caught.value.reason == "infeasible"
-    expired = replace(
-        problem,
-        initial_dispatch_mode_since=problem.slots[0].start - timedelta(hours=2),
+
+
+@pytest.mark.parametrize(
+    ("initial", "modes"),
+    [
+        # Discharging at the power limit would take the standby loss of the later slots.
+        (0.3, ["HOLD", "HOLD", "HOLD"]),
+        # One slot at the limit fits, a second one does not.
+        (0.4, ["SELF_CONSUME", "HOLD", "HOLD"]),
+        (0.6, ["SELF_CONSUME", "SELF_CONSUME", "HOLD"]),
+    ],
+)
+def test_standby_loss_owed_by_an_empty_reserve_releases_the_lock(initial, modes):
+    # With a 0 % reserve the pack cannot end on the reserve: it has to keep the
+    # standby loss of the later slots, so the lock ends where the house would take it.
+    problem = zero_reserve(initial)
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == modes
+    assert min(flow.end_soc_kwh for flow in plan.flows) >= 0
+    assert_load_following(problem, plan)
+
+
+def winter_night(slots, *, drain=0.03):
+    """A carried SELF_CONSUME lock 0.15 kWh above a 10 % reserve, nothing to recharge from."""
+    problem = dispatch(
+        ((1.0, 0, 0, 0.5),) + ((1.0, 0, 0, 0.05),) * (slots - 1),
+        minimum_mode_minutes=30,
+        terminal_value_per_kwh=0.3,
     )
-    assert solve(expired).flows
+    return replace(
+        problem,
+        battery=replace(
+            problem.battery,
+            capacity_kwh=5,
+            minimum_soc_fraction=0.1,
+            initial_kwh=0.65,
+            charge_kw=1,
+            discharge_kw=1,
+            eta_charge=0.95,
+            eta_discharge=0.95,
+            allow_grid_charge=False,
+            allow_battery_export=False,
+            idle_drain_kw=drain,
+        ),
+        initial_dispatch_mode="SELF_CONSUME",
+        initial_dispatch_mode_since=problem.slots[0].start - timedelta(minutes=15),
+    )
+
+
+def test_carried_lock_ends_at_once_when_later_standby_loss_needs_the_battery():
+    # 80 slots lose 0.6 kWh on standby, more than the 0.5 kWh reserve: covering
+    # the house down to the reserve would leave the later loss unpaid.
+    problem = winter_night(80)
+    plan = solve(problem)
+    assert {flow.dispatch_mode for flow in plan.flows[:4]} == {"HOLD"}
+    assert plan.flows[0].discharge_kwh == pytest.approx(0)
+    assert plan.flows[0].grid_import_kwh == pytest.approx(0.5)
+    assert min(flow.end_soc_kwh for flow in plan.flows) >= 0
+
+
+@pytest.mark.parametrize(("slots", "drain"), [(40, 0.03), (80, 0.0)])
+def test_carried_lock_holds_while_the_reserve_covers_the_standby_loss(slots, drain):
+    problem = winter_night(slots, drain=drain)
+    plan = solve(problem)
+    assert plan.flows[0].dispatch_mode == "SELF_CONSUME"
+    # The house empties the pack to its reserve inside the committed slot.
+    assert plan.flows[0].end_soc_kwh == pytest.approx(0.5)
+    assert plan.flows[0].grid_import_kwh > 0.3
+    assert_load_following(problem, plan)
+
+
+def test_validator_releases_a_first_slot_only_for_a_pack_that_cannot_go_on():
+    problem = winter_night(80)
+    held = solve(problem).flows
+    validate_modes(problem, held)
+    # Without the standby loss the same pack can cover the house: the lock holds.
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(winter_night(80, drain=0.0), held)
+
+
+def test_carried_lock_never_lacks_a_plan_without_a_way_to_recharge():
+    rng = random.Random(19)
+    for _ in range(40):
+        problem = winter_night(rng.choice((8, 24, 80)), drain=rng.choice((0.03, 0.13)))
+        reserve = rng.choice((0.0, 0.1, 0.2))
+        problem = replace(
+            problem,
+            slots=tuple(
+                replace(slot, load_kwh=rng.choice((0.05, 0.2, 0.5)))
+                for slot in problem.slots
+            ),
+            battery=replace(
+                problem.battery,
+                minimum_soc_fraction=reserve,
+                # From just above the reserve (at it the safety exception applies) to full.
+                initial_kwh=5 * reserve + rng.choice((0.002, 0.02, 0.15, 0.6, 2.5)),
+                discharge_kw=rng.choice((0.5, 2)),
+            ),
+            minimum_mode_minutes=rng.choice((30, 60)),
+        )
+        # solve() certifies its own rows with validate_modes.
+        plan = solve(problem)
+        assert_load_following(problem, plan)
+
+
+def test_first_slot_with_pv_surplus_keeps_a_spent_pack_on_the_lock():
+    # With surplus to charge from the inverter still follows PV, however well the
+    # export would pay: a pack too empty for SELF_CONSUME is no reason for HOLD.
+    problem = evening(0.01)
+    problem = replace(
+        problem,
+        slots=(
+            replace(problem.slots[0], sell_per_kwh=5.0, pv_kwh=1.0),
+            *problem.slots[1:],
+        ),
+    )
+    plan = solve(problem)
+    assert plan.flows[0].dispatch_mode == "CHARGE_PV"
+    exported = Flow(0, 0.875, 0, 0, 0, 0.01, None, "HOLD")
+    resting = tuple(
+        Flow(0.125, 0, 0, 0, 0, 0.01, None, "HOLD") for _ in problem.slots[1:]
+    )
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (exported, *resting))
+    # Without the surplus the same pack ends the lock in its first slot.
+    dark = evening(0.01)
+    assert solve(dark).flows[0].dispatch_mode == "HOLD"
+    validate_modes(dark, (resting[0], *resting))
 
 
 def staggered_prices(**changes):
@@ -469,3 +592,342 @@ def test_load_following_counts_local_slots_across_spring_forward_in_utc(
         assert flow.discharge_kwh == pytest.approx(4)
         assert flow.grid_import_kwh == pytest.approx(2)
     assert sum(f.discharge_kwh for f in plan.flows) == pytest.approx(10)
+
+
+QUARTER = timedelta(minutes=15)
+DUSK = datetime(2026, 12, 18, 19, tzinfo=UTC)
+
+
+def committed(rows, *, initial_mode="SELF_CONSUME", **changes):
+    """A carried PV-follow commitment with 45 minutes left, rows are (PV, load) kWh."""
+    slots = tuple(
+        Slot(DUSK + i * QUARTER, DUSK + (i + 1) * QUARTER, 1.0, 0.0, pv, load)
+        for i, (pv, load) in enumerate(rows)
+    )
+    problem = Problem(
+        slots,
+        SiteLimits(8, 8, 8, True),
+        Battery(5, 0.1, 1, 3.0, 1, 1, 0.95, 0.95, 0.01, False, False, 0.0),
+        "value",
+        0.3,
+        (),
+        "UTC",
+        minimum_mode_minutes=60,
+        initial_dispatch_mode=initial_mode,
+        initial_dispatch_mode_since=DUSK - QUARTER,
+    )
+    return replace(problem, **changes)
+
+
+def modes(plan):
+    return [flow.dispatch_mode for flow in plan.flows]
+
+
+@pytest.mark.parametrize(
+    "rows",
+    (
+        [(0.0, 0.02)] * 8,  # night base load under the minimum activity
+        [(0.2, 0.2)] + [(0.0, 0.2)] * 7,  # PV equals the load at dusk
+        [(0.0, 0.2)] * 8,  # the committed intervals have a load to follow
+    ),
+    ids=("low load", "pv equals load", "normal"),
+)
+@pytest.mark.parametrize("initial_mode", ("SELF_CONSUME", "CHARGE_PV"))
+def test_carried_commitment_has_a_plan_when_no_pv_follow_mode_is_open(
+    rows, initial_mode
+):
+    # solve() certifies its own rows with validate_modes.
+    assert solve(committed(rows, initial_mode=initial_mode)).flows
+
+
+def test_an_interval_without_a_pv_follow_mode_does_not_start_a_hold_clock():
+    # Dusk: PV equals the load for 15 minutes, then the house draws 0.2 kWh again.
+    # HOLD in the first interval is by classification, not a mode change: the next
+    # committed intervals still have to follow the load.
+    plan = solve(committed([(0.2, 0.2)] + [(0.0, 0.2)] * 7))
+    assert modes(plan)[:3] == ["HOLD", "SELF_CONSUME", "SELF_CONSUME"]
+    for flow in plan.flows[1:3]:
+        assert flow.discharge_kwh == pytest.approx(0.2)
+
+
+def test_a_low_load_night_stays_idle_through_the_commitment():
+    plan = solve(committed([(0.0, 0.02)] * 8))
+    assert modes(plan)[:3] == ["HOLD"] * 3
+    assert all(flow.discharge_kwh == 0 for flow in plan.flows[:3])
+
+
+def test_validator_accepts_an_idle_interval_in_the_commitment_only_when_idle():
+    problem = committed([(0.2, 0.2)] + [(0.0, 0.2)] * 7)
+    hold = Flow(0, 0, 0, 0, 0, 3.0, None, "HOLD")
+    import_hold = Flow(0.2, 0, 0, 0, 0, 3.0, None, "HOLD")
+    follow = Flow(0, 0, 0, 0.2, 0, 3.0 - 0.2 / 0.95, "discharge", "SELF_CONSUME")
+    rest = (import_hold,) * 5
+    # The idle interval may be HOLD and the commitment goes on after it ...
+    validate_modes(problem, (hold, follow, follow, *rest))
+    # ... but HOLD in a committed interval with a load to follow is leaving it.
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (hold, import_hold, follow, *rest))
+
+
+def test_hold_may_not_start_on_a_chargeable_surplus_inside_a_commitment():
+    # Interval 0 takes the pack down to its reserve, which releases HOLD. Interval 1
+    # is still committed and has surplus the pack can take: that is CHARGE_PV, not
+    # a HOLD that would waste it.
+    rows = [(0.0, 0.5), (0.1, 0.05), (0.0, 0.2), (0.0, 0.2)]
+    problem = committed(
+        rows,
+        minimum_mode_minutes=30,
+        initial_dispatch_mode_since=DUSK - timedelta(minutes=1),
+    )
+    problem = replace(
+        problem,
+        battery=replace(problem.battery, minimum_soc_fraction=0.2, initial_kwh=1.05),
+    )
+    plan = solve(problem)
+    assert modes(plan)[:2] == ["SELF_CONSUME", "CHARGE_PV"]
+    validate_modes(problem, plan.flows)
+    # HOLD started in interval 1 is rejected, HOLD that went on from interval 0 is not.
+    sc = Flow(0, 0, 0, 0.05, 0, 1.0, "discharge", "SELF_CONSUME")
+    start = Flow(0, 0.05, 0, 0, 0, 1.0, None, "HOLD")
+    rest = (Flow(0.2, 0, 0, 0, 0, 1.0, None, "HOLD"),) * 2
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (sc, start, *rest))
+
+
+def test_idle_slots_are_the_committed_intervals_with_nothing_to_follow():
+    from custom_components.energy_compass.engine.dispatch_policy import idle_slots
+
+    problem = committed([(0.2, 0.2), (0.0, 0.2), (0.0, 0.02), (0.0, 0.02), (0.0, 0.02)])
+    # The commitment ends at 19:45: the third interval is the last one inside it.
+    assert idle_slots(problem) == {0, 2}
+    assert idle_slots(replace(problem, initial_dispatch_mode="HOLD")) == set()
+    assert idle_slots(replace(problem, initial_dispatch_mode=None)) == set()
+    assert idle_slots(replace(problem, minimum_mode_minutes=0)) == set()
+
+
+def spent_pack_problem(rows, battery, *, site=None, mode="CHARGE_PV", **changes):
+    """Carried commitment, one minute in, a pack that leaves nothing to follow."""
+    slots = tuple(
+        Slot(DUSK + i * QUARTER, DUSK + (i + 1) * QUARTER, 1.0, 0.5, pv, load)
+        for i, (pv, load) in enumerate(rows)
+    )
+    problem = Problem(
+        slots,
+        site or SiteLimits(8, 8, 8, True),
+        battery,
+        "value",
+        0.3,
+        (),
+        "UTC",
+        minimum_mode_minutes=30,
+        initial_dispatch_mode=mode,
+        initial_dispatch_mode_since=DUSK - timedelta(minutes=1),
+    )
+    return replace(problem, **changes)
+
+
+def test_a_spent_pack_in_an_idle_first_interval_starts_its_hold_run_there():
+    # The pack ends the commitment in the idle interval: HOLD starts there and its
+    # 30 minutes end before the CURTAIL interval. A bridge would leave the next
+    # interval to start a HOLD run that runs into it, and a zero-export site could
+    # not hold through a surplus.
+    problem = spent_pack_problem(
+        [(0.024, 0.025), (0.0, 0.2), (0.1, 0.05)],
+        Battery(5, 0, 1, 0.02, 0.5, 3, 0.95, 0.95, 0, False, True, 0.0),
+        site=SiteLimits(8, 8, 0, True),
+    )
+    plan = solve(problem)
+    assert modes(plan) == ["HOLD", "HOLD", "CURTAIL"]
+    assert plan.carried_bridges == ()
+    validate_modes(problem, plan.flows, plan.carried_bridges)
+    # Read as a bridge the same rows would need a HOLD run in the second interval
+    # that is longer than the commitment.
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, plan.flows, {0})
+
+
+def test_a_spent_pack_in_an_idle_first_interval_keeps_a_terminal_rule_feasible():
+    problem = spent_pack_problem(
+        [(0.025, 0.025), (0.05, 0.02), (0.025, 0.02), (0.0, 0.2), (0.02, 0.024)]
+        + [(0.024, 0.5)],
+        Battery(5, 0.1, 1, 0.52, 3, 1, 0.95, 0.95, 0, False, True, 0.0),
+        mode="SELF_CONSUME",
+        terminal_mode="preserve_initial",
+        minimum_mode_minutes=120,
+    )
+    plan = solve(problem)
+    assert modes(plan) == ["HOLD"] * 6
+    assert plan.carried_bridges == ()
+
+
+def test_a_legacy_direction_guard_does_not_cost_the_idle_first_interval_its_release():
+    # CHARGE_PV is blocked by the guard, so the idle interval is the pack's only way
+    # out of the commitment.
+    problem = spent_pack_problem(
+        [(0.025, 0.025), (0.05, 0.02), (0.025, 0.02), (0.0, 0.2), (0.02, 0.024)]
+        + [(0.024, 0.5)],
+        Battery(5, 0.1, 1, 0.52, 3, 1, 0.95, 0.95, 0, False, True, 0.0),
+        mode="SELF_CONSUME",
+        terminal_mode="preserve_initial",
+        minimum_mode_minutes=120,
+        initial_battery_mode="discharge",
+        initial_battery_mode_since=DUSK - QUARTER,
+    )
+    assert modes(solve(problem)) == ["HOLD"] * 6
+
+
+def test_an_idle_interval_after_a_depleting_one_may_start_the_hold_run():
+    # The pack is spent after the first interval; the next one is idle. The HOLD run
+    # may start there with its clock, not only in the interval after it.
+    problem = spent_pack_problem(
+        [(0.0, 0.5), (0.0, 0.02), (0.1, 0.05), (0.0, 0.2)],
+        Battery(5, 0.1, 1, 0.55, 3, 3, 0.95, 0.95, 0, False, False, 0.0),
+        mode="SELF_CONSUME",
+        minimum_mode_minutes=45,
+        site=SiteLimits(8, 8, 0, True),
+    )
+    plan = solve(problem)
+    assert modes(plan)[:2] == ["SELF_CONSUME", "HOLD"]
+    assert modes(plan)[2:] != ["HOLD", "HOLD"] or plan.carried_bridges == (1,)
+    validate_modes(problem, plan.flows, plan.carried_bridges)
+
+
+def test_a_flexible_load_probe_agrees_with_its_own_validator():
+    # The model's idle set uses the largest probe, the validator sees the realised
+    # one; the rows the model reads as bridges are the ones it hands over.
+    rows = [(0.01, 0.0), (0.5, 0.1), (0.02, 0.02), (0.03, 0.01), (0.02, 0.05)]
+    problem = spent_pack_problem(
+        rows,
+        Battery(5, 0.1, 1, 0.505, 3, 3, 0.95, 0.95, 0, False, False, 0.05),
+        site=SiteLimits(8, 8, 8, False),
+        minimum_mode_minutes=60,
+        initial_dispatch_mode_since=DUSK,
+    )
+    result = solve_flexible_load(problem, FlexibleLoadRequest(0.3, 0.5))
+    assert modes(result.plan) == ["HOLD"] * 5
+    validate_modes(
+        replace(
+            problem,
+            slots=tuple(
+                replace(slot, load_kwh=slot.load_kwh + extra)
+                for slot, extra in zip(problem.slots, result.schedule_kwh, strict=True)
+            ),
+        ),
+        result.plan.flows,
+        result.plan.carried_bridges,
+    )
+
+
+def test_validator_takes_only_hold_as_a_bridge():
+    problem = committed([(0.2, 0.2)] + [(0.0, 0.2)] * 7)
+    export = Flow(0, 0.2, 0, 0.2, 0, 3.0 - 0.2 / 0.95, "discharge", "DISCHARGE_GRID")
+    follow = Flow(0, 0, 0, 0.2, 0, 2.5, "discharge", "SELF_CONSUME")
+    hold = Flow(0.2, 0, 0, 0, 0, 2.5, None, "HOLD")
+    rows = (follow, follow, *(hold,) * 5)
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (export, *rows))
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (export, *rows), {0})
+    # A bridge is a row of the committed interval it names, nothing else.
+    quiet = Flow(0, 0, 0, 0, 0, 3.0, None, "HOLD")
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (quiet, quiet, follow, *(hold,) * 5), {0, 1})
+
+
+def test_a_hold_run_after_a_bridge_starts_its_own_clock():
+    problem = committed([(0.0, 0.02), (0.0, 0.2), (0.0, 0.2), (0.0, 0.2), (0.0, 0.2)])
+    problem = replace(
+        problem,
+        minimum_mode_minutes=30,
+        initial_dispatch_mode_since=DUSK - timedelta(minutes=1),
+    )
+
+    def rows(kwh):
+        return (
+            Flow(0, 0, 0, 0, 0, kwh, None, "HOLD"),
+            *(Flow(0.2, 0, 0, 0, 0, kwh, None, "HOLD"),) * 4,
+        )
+
+    # The pack is spent, so HOLD may start in the second interval, after the bridge.
+    spent = replace(problem, battery=replace(problem.battery, initial_kwh=0.52))
+    validate_modes(spent, rows(0.52), {0})
+    # A bridge is no HOLD run: with a pack that can go on, the second interval is
+    # leaving the commitment.
+    full = replace(problem, battery=replace(problem.battery, initial_kwh=3.0))
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(full, rows(3.0), {0})
+
+
+def test_a_plan_names_the_rows_that_bridge_the_carried_commitment():
+    plan = solve(committed([(0.0, 0.02)] * 3 + [(0.0, 0.2)] * 5))
+    assert modes(plan)[:3] == ["HOLD"] * 3
+    assert plan.carried_bridges == (0, 1, 2)
+    # After the commitment (45 minutes) nothing is a bridge any more.
+    assert 3 not in plan.carried_bridges
+
+
+def test_the_runtime_publishes_the_bridge_rows_of_the_plan():
+    from datetime import UTC, datetime
+
+    from test_export_benefit import native_config
+
+    from custom_components.energy_compass.runtime import compute
+
+    config = native_config()
+    config["settings"].update(minimum_mode_minutes=60)
+    now = datetime(2026, 9, 18, 1, tzinfo=UTC)
+    states = {"sensor.soc": {"state": "50", "attributes": {}, "last_updated": now}}
+    commitment = {
+        "mode": "SELF_CONSUME",
+        "since": (now - timedelta(minutes=15)).isoformat(),
+    }
+    result = compute(config, states, now, battery_commitment=commitment)
+    assert result["intervals"][0]["dispatch_mode"] == "HOLD"
+    # No load and no PV: nothing to follow in the committed hour.
+    assert result["dispatch_policy"]["carried_idle_starts"] == [
+        result["intervals"][0]["start"]
+    ]
+    assert (
+        result["intervals"][1]["start"]
+        not in (result["dispatch_policy"]["carried_idle_starts"])
+    )
+
+
+def test_a_hold_run_after_a_bridge_row_starts_where_the_bridge_ends():
+    from custom_components.energy_compass.engine.dispatch_policy import mode_run_start
+
+    rows = [
+        {"start": f"t{i}", "dispatch_mode": mode}
+        for i, mode in enumerate(("SELF_CONSUME", "HOLD", "HOLD", "HOLD", "CURTAIL"))
+    ]
+    assert mode_run_start(rows, 3) == 1
+    assert mode_run_start(rows, 3, ("t1",)) == 2
+    assert mode_run_start(rows, 2, ("t1",)) == 2
+    assert mode_run_start(rows, 1, ("t1",)) == 1
+    assert mode_run_start(rows, 4, ("t1",)) == 4
+
+
+def test_a_bridge_row_keeps_the_carried_commitment_and_its_clock():
+    from types import SimpleNamespace
+
+    from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
+
+    commitment = {"mode": "SELF_CONSUME", "since": "2026-12-18T18:45:00+00:00"}
+    coordinator = SimpleNamespace(
+        _battery_commitment=dict(commitment),
+        _dispatch_store=SimpleNamespace(async_delay_save=lambda *_: None),
+    )
+    result = {
+        "intervals": [{"dispatch_mode": "HOLD"}],
+        "dispatch_policy": {"enabled": True},
+        "generated_at": "2026-12-18T19:00:00+00:00",
+    }
+    EnergyCompassCoordinator._commit_battery_direction(
+        coordinator, result, carried_idle=True
+    )
+    assert coordinator._battery_commitment == commitment
+    EnergyCompassCoordinator._commit_battery_direction(coordinator, result)
+    assert coordinator._battery_commitment == {
+        "mode": "HOLD",
+        "since": "2026-12-18T19:00:00+00:00",
+    }

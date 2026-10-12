@@ -611,7 +611,7 @@ Sensor **Kompas energii** pokazuje tryb pracy bieżącego przedziału; każdy wi
 | Tryb | Znaczenie | Występuje, gdy (przepływy fizyczne) | Dozwolony tylko jeśli |
 | --- | --- | --- | --- |
 | `CHARGE_GRID` | Ładowanie z sieci | Ładowanie ≥ nadwyżka PV + activity — ładuje się więcej, niż daje nadwyżka PV, więc baterię zasila sieć. Bez rozładowania i ograniczania PV. | `allow_grid_charge` włączone; cena ≤ sufit ceny ładowania z sieci, gdy ten limit jest włączony. |
-| `CHARGE_PV` | Ładowanie z PV | activity ≤ ładowanie ≤ nadwyżka — ładuje tylko nadwyżka słoneczna. Bez rozładowania i ograniczania PV. | Jest nadwyżka PV. |
+| `CHARGE_PV` | Ładowanie z PV | activity ≤ ładowanie ≤ nadwyżka — ładuje tylko nadwyżka słoneczna. Bez rozładowania i ograniczania PV. Podąża za nadwyżką: eksport do sieci tylko przy ładowaniu na limicie mocy albo gdy bateria jest pełna. | Jest nadwyżka PV. |
 | `DISCHARGE_GRID` | Rozładowanie z eksportem | Rozładowanie ≥ activity **i** eksport do sieci ≥ activity — bateria sprzedaje energię. | `allow_battery_export` włączone; moc eksportu > 0; pozwala na to budżet Sell only PV i próg korzyści eksportu. |
 | `SELF_CONSUME` | Autokonsumpcja | Rozładowanie ≥ activity, bez ładowania, eksportu i ograniczania — bateria zasila dom. Podąża za obciążeniem: import z sieci tylko przy rozładowaniu na limicie mocy albo gdy bateria jest opróżniona do rezerwy. | SOC powyżej rezerwy operacyjnej. |
 | `HOLD` | Wstrzymanie | Brak ładowania, rozładowania i ograniczania — bateria stoi; dom zasila sieć/PV. | Zawsze dostępny. |
@@ -663,10 +663,31 @@ Zasady (domyślnie 60 min, 0,1 kW):
   a rozładowanie w każdym przedziale, który przepływy oznaczają jako `SELF_CONSUME`, jest związane
   tak samo. Przeniesione zobowiązanie `CHARGE_PV`/`SELF_CONSUME` jest wykonywane tak samo. Jeśli
   bateria wyczerpie się przed jego końcem, reszta zobowiązania to `HOLD` z pełnym importem
-  (startuje nowy zegar `HOLD`). Plan jest `infeasible` (niewykonalny) do końca zobowiązania tylko
-  wtedy, gdy potem nie da się spełnić reguły końcowej (`preserve_initial` bez późniejszego PV lub
-  ładowania z sieci, które uzupełniłyby to, co zużył dom), albo przy rezerwie 0 % i poborze
-  czuwania falownika (`idle_drain_kw`).
+  (startuje nowy zegar `HOLD`). Tak samo — w razie potrzeby już od pierwszego przedziału — gdy
+  bateria nie może pokryć domu i zarazem zachować poboru czuwania falownika (`idle_drain_kw`)
+  z późniejszych przedziałów, a PV ani ładowanie z sieci nie uzupełnią go na czas. `HOLD` zaczyna
+  się tylko w przedziale bez nadwyżki PV, którą bateria mogłaby przyjąć, w każdym przedziale
+  zobowiązania: przy nadwyżce wiersz zostaje `CHARGE_PV`. Przedział zobowiązania, w którym żaden
+  z trybów nie ma za czym podążać (obciążenie netto i nadwyżka PV poniżej
+  `minimum_mode_power_kw × h`, np. nocny pobór bazowy poniżej 100 W), to z klasyfikacji `HOLD`
+  i nie kończy zobowiązania: plan go przemostkowuje (nie startuje zegar `HOLD`, a zapisane
+  zobowiązanie zachowuje tryb i start) albo, gdy bateria jest wyczerpana lub pełna, zaczyna tam
+  prawdziwy przebieg `HOLD`, tak jak w każdym innym przedziale
+  (`dispatch_policy.carried_idle_starts` wymienia przemostkowane przedziały). Plan jest
+  `infeasible` (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
+  (`preserve_initial` bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
+  dom); rzadkie pozostałe przypadki opisuje
+  [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget) (EN).
+- **`CHARGE_PV` podąża za nadwyżką.** Falownik ładuje każdym watem, którego dom nie zużywa, więc plan
+  nigdy nie łączy częściowego ładowania z eksportem do sieci: w przedziale `CHARGE_PV` bateria
+  przejmuje całą nadwyżkę PV, a eksport pojawia się dopiero, gdy ładowanie jest na limicie mocy
+  przedziału albo bateria została napełniona do górnej granicy. W innym wypadku wiersz nie jest
+  `CHARGE_PV`. Dotyczy przypadku, gdy `minimum_mode_minutes` jest większe od 0. Przeniesione
+  zobowiązanie `CHARGE_PV`/`SELF_CONSUME` podlega tej samej regule. Jeśli bateria zapełni się przed
+  jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
+  granicy), reszta zobowiązania to `HOLD` z eksportem nadwyżki (startuje nowy zegar `HOLD`).
+  Nie obejmuje to pierwszego przedziału zobowiązania, który ma już mniej miejsca niż minimalna
+  aktywność: plan jest `infeasible` (niewykonalny) do końca zobowiązania.
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.
@@ -1056,6 +1077,20 @@ W przeciwnym razie ten start jest proponowany wyłącznie jako **CHARGE_GRID**, 
 ładowania z sieci i sufitu ceny, więc solver może wybrać tanie okno sieciowe. Sam plan dyspozycji nadal
 używa serii mediany. Bez tego źródła nic się nie zmienia.
 
+Solver wycenia każde okno na serii mediany, gdzie nadwyżka PV może pokryć odrzucone okno
+**CHARGE_GRID**, więc kilka startów kosztowałoby tyle samo. Żeby o wyborze nie decydował przypadek
+kończący się w drogim przedziale, każde okno **CHARGE_GRID** proponowane przy obecnej serii
+pesymistycznej (także takie, które jest **CHARGE_GRID** już na samej serii mediany) ma koszt rankingowy: energia, którą seria
+pesymistyczna zostawia sieci, czyli to, czego baterii nadal brakuje do progu na starcie okna, plus
+zużycie niepokryte przez PV w obrębie okna, po cenach zakupu z okna. Solver dolicza do kosztu okna 5 %
+jego nadwyżki ponad najtańsze okno, które solver może wybrać, więc okno, które seria pesymistyczna nadal wspiera
+(**CHARGE_PV**), wygrywa z odrzuconym, a wśród odrzuconych wygrywa najtańsze. Dopłata nie przekracza
+połowy kosztu pominięcia balansu. Okno ze startem 0, do którego bateria nie dotrze (zaczyna poniżej
+progu), jest pomijane w tym porównaniu, więc nie przesuwa pozostałych okien w stronę pominięcia;
+ranking może jednak przeważyć w bliskim przypadku przeciw balansowi. To preferencja, nie ścisły
+rozstrzygacz remisów: start tańszy na serii mediany o więcej niż 5 % różnicy kosztu rankingowego nadal
+wygrywa. Nie wchodzi do kosztu planu.
+
 Uwaga: test baterii liczy wyłącznie nadwyżkę PV. Start, do którego bateria dotarłaby dopiero po
 naładowaniu z sieci przed oknem, jest proponowany tylko jako **CHARGE_GRID** i odpada, gdy sufit ceny
 ładowania z sieci blokuje przedział okna — wtedy może pojawić się `balance_no_window_in_horizon` tam, gdzie
@@ -1153,7 +1188,7 @@ powrót do mediany następuje przy najbliższym okresowym przeliczeniu (`refresh
 | `autonomy_shortfall_kwh` | Łączny niedobór poniżej progu autonomii; `0` = próg spełniony. |
 | `peak_reserve_shortfall_kwh` | Łączny niedobór poniżej [zapasu na drogie okresy](#zapas-na-drogie-okresy); `0` = spełniony lub wyłączony. |
 | `time_limited` | `true`, gdy rozwiązanie bazowe osiągnęło `solve_time_limit_s` i zamiast udowodnionego optimum opublikowano najlepsze dotąd znalezione, zwalidowane rozwiązanie. |
-| `mip_gap` | Względna luka MIP zgłoszona przez solver dla opublikowanego planu: `0` = udowodnione optimum; dla planu `time_limited` górna granica odległości jego celu od optimum (np. `0.017` = 1,7 %). |
+| `mip_gap` | Względna luka MIP zgłoszona przez solver dla opublikowanego planu: `0` = udowodnione optimum (udowodniony plan ma `0` albo najwyżej `0.0001`, gdy żaden próg epizodu nie jest aktywny); dla planu `time_limited` górna granica odległości jego celu od optimum (np. `0.017` = 1,7 %). |
 | `cap_violation_kwh` | Łączna energia ponad miękkie limity `grid_friendly`; `0` = limity spełnione. |
 
 ### Zwolnienie przy zmianie strategii

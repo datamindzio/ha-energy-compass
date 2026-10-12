@@ -78,6 +78,10 @@ class BalanceWindow:
 
     slots: tuple[int, ...]
     mode: Literal["CHARGE_PV", "CHARGE_GRID"]
+    # Cost of the energy the pessimistic PV series leaves to the grid (the pack
+    # lacking at the start plus load inside the window), at the buy prices; 0
+    # without that series. Only ranks windows (see balance.py).
+    fallback_cost: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -163,6 +167,8 @@ class Plan:
     peak_reserve_shortfall_kwh: float = 0.0
     time_limited: bool = False
     mip_gap: float | None = 0.0
+    # Rows of a carried PV-follow commitment that are HOLD with nothing to follow.
+    carried_bridges: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)

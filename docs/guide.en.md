@@ -605,7 +605,7 @@ hours: `activity = minimum_mode_power_kw × h` (default 0.1 kW) and
 | Mode | EN meaning | Occurs when (physical flows) | Allowed only if |
 | --- | --- | --- | --- |
 | `CHARGE_GRID` | Charge from grid | Battery charge ≥ surplus + activity — more is charged than PV surplus can supply, so the grid feeds the battery. No discharge, no curtailment. | `allow_grid_charge` on; price ≤ grid-charge ceiling when that limit is on. |
-| `CHARGE_PV` | Charge from PV | activity ≤ charge ≤ surplus — only solar surplus charges. No discharge, no curtailment. | PV surplus exists. |
+| `CHARGE_PV` | Charge from PV | activity ≤ charge ≤ surplus — only solar surplus charges. No discharge, no curtailment. Load-following: grid export only while the charge is at its power limit or the battery is full. | PV surplus exists. |
 | `DISCHARGE_GRID` | Discharge with export | Discharge ≥ activity **and** grid export ≥ activity — the battery sells energy. | `allow_battery_export` on; grid export capacity > 0; Sell only PV budget and export-benefit hurdle allow it. |
 | `SELF_CONSUME` | Self-consumption | Discharge ≥ activity, no charge, no export, no curtailment — the battery covers the house. Load-following: grid import only while the discharge is at its power limit or the battery is emptied to its reserve. | SOC above operating reserve. |
 | `HOLD` | Hold | No charge, no discharge, no curtailment — the battery idles; the grid/PV cover load. | Always available. |
@@ -654,9 +654,30 @@ Rules (defaults: 60 min, 0.1 kW):
   discharge in any interval the flows label `SELF_CONSUME` is bound the same way. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is executed the same way. If the battery runs out before
   it ends, the rest of the commitment is `HOLD` with full import (a new `HOLD` clock starts). The
-  plan is `infeasible` until the commitment ends only when the terminal rule cannot be met
-  afterwards (`preserve_initial` with no later PV or grid charge to refill what the house drew),
-  or with a 0 % reserve and an inverter standby loss (`idle_drain_kw`).
+  same happens — from the first interval if need be — when the battery cannot cover the house
+  and still keep the inverter standby loss (`idle_drain_kw`) of the later intervals, with no PV
+  or grid charge to pay it in time. `HOLD` starts only in an interval without a PV surplus the
+  pack could take, in every committed interval: with one, the row stays `CHARGE_PV`. A committed
+  interval in which neither mode has anything to follow (net load and PV surplus both below
+  `minimum_mode_power_kw × h`, for example a night base load under 100 W) is `HOLD` by
+  classification and does not end the commitment: the plan bridges it (no `HOLD` clock starts,
+  and the persisted commitment keeps its mode and start) or, when the battery is spent or full,
+  starts a real `HOLD` run there as in any other interval
+  (`dispatch_policy.carried_idle_starts` lists the bridged intervals). The plan is
+  `infeasible` until the commitment ends when the
+  terminal rule cannot be met afterwards (`preserve_initial` with no later PV or grid charge to
+  refill what the house drew); the rare remaining cases are listed in
+  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget).
+- **`CHARGE_PV` follows the surplus.** The inverter charges with every watt the house does not
+  use, so the plan never pairs a partial charge with grid export: in a `CHARGE_PV` interval the
+  battery takes the whole PV surplus, and export appears only once the charge is at its interval
+  power limit or the battery has been filled to its upper bound. Otherwise the row is not
+  `CHARGE_PV`. Applies while `minimum_mode_minutes` is above 0. A carried
+  `CHARGE_PV`/`SELF_CONSUME` commitment is held to the same rule. If the battery is full before it
+  ends (the next interval could not take even the minimum activity above the upper bound), the
+  rest of the commitment is `HOLD` with the surplus exported (a new `HOLD` clock starts). A first
+  committed interval that already has less room than the minimum activity is not covered: the
+  plan is `infeasible` until the commitment ends.
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
@@ -1042,6 +1063,20 @@ Otherwise the start is offered only as **CHARGE_GRID**, subject to the usual gri
 rules, so the solver can pick a cheap grid window instead. The dispatch plan itself keeps using the median
 series. Without the source nothing changes.
 
+The solver prices every window on the median series, where PV surplus can pay for a vetoed
+**CHARGE_GRID** window, so several starts would cost the same. To avoid a tie-break landing on an
+expensive slot, every **CHARGE_GRID** window offered while the pessimistic series is present (also one
+that is **CHARGE_GRID** on the median series alone) carries a ranking cost: the energy the pessimistic series leaves to the
+grid, that is what the pack still lacks to reach the threshold at the window start plus the load PV does
+not cover inside the window, at the window's buy prices. The solver adds 5 % of each window's excess over
+the cheapest window the solver can pick to that window's cost, so a window the pessimistic series still supports
+(**CHARGE_PV**) beats a vetoed one and, among vetoed ones, the cheapest wins. The addition never exceeds
+half the cost of skipping the balance. A start-0 window the pack cannot reach (it starts below the
+threshold) is left out of that comparison, so it never shifts the other windows towards a skip; the
+ranking can still tip a close call against the balance. It is a preference, not a
+strict tie-break: a start that is cheaper on the median series by more than 5 % of the difference in
+ranking cost still wins. It is not part of the plan's cost.
+
 Trade-off: the pack test counts PV surplus only. A start the pack would reach only by charging from the
 grid before the window is offered as **CHARGE_GRID** alone, and is dropped when the grid-charge price
 ceiling blocks a slot of the window, so `balance_no_window_in_horizon` can appear where a window existed
@@ -1135,7 +1170,7 @@ takes effect at the next periodic recalculation (`refresh_minutes`) or source ch
 | `autonomy_shortfall_kwh` | Total shortfall below the autonomy floor; `0` = floor met. |
 | `peak_reserve_shortfall_kwh` | Total shortfall below the [peak-period reserve](#peak-period-reserve); `0` = met or off. |
 | `time_limited` | `true` when the base solve hit `solve_time_limit_s` and the best validated solution found so far was published instead of a proven optimum. |
-| `mip_gap` | Relative MIP gap the solver reported for the published plan: `0` = proven optimal; for a time-limited plan, the bound on how far its objective may be from the optimum (e.g. `0.017` = 1.7 %). |
+| `mip_gap` | Relative MIP gap the solver reported for the published plan: `0` = proven optimal (a proven plan reads `0`, or at most `0.0001` when no episode hurdle is active); for a time-limited plan, the bound on how far its objective may be from the optimum (e.g. `0.017` = 1.7 %). |
 | `cap_violation_kwh` | Total energy above `grid_friendly` soft caps; `0` = caps met. |
 
 ### Strategy-switch release

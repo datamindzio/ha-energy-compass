@@ -233,7 +233,8 @@ async def test_daily_sources_can_be_selected_and_saved_in_options(
         saved["measurements"]["grid_export_energy_today"]["entity"]["entity_id"]
         == "sensor.grid_export_energy_today"
     )
-    await hass.async_block_till_done()
+    # The saved options reload the entry; its first solve runs as a background task.
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.runtime_data.data["valid"]
     assert await hass.config_entries.async_unload(entry.entry_id)
 

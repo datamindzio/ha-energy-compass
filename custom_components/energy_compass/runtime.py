@@ -1342,6 +1342,9 @@ def compute(
             "enabled": problem.battery is not None
             and values["minimum_mode_minutes"] > 0,
             "safety_exception": safety_exception(problem),
+            "carried_idle_starts": [
+                detailed[index]["start"] for index in plan.carried_bridges
+            ],
             "limit_export_to_pv": values["limit_export_to_pv"],
             "export_limit_scope": values["export_limit_scope"],
             "timezone": config["timezone"],

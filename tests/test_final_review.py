@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import State
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -218,6 +219,10 @@ async def test_currency_review_requires_acknowledgement_and_saves_edited_amounts
     assert saved["currency"] == "EUR"
     assert saved["settings"]["calibration"] == "unvalidated"
     assert {name: saved["settings"][name] for name in reviewed} == reviewed
+    # The save reloads the entry; settle its backgrounded first solve before teardown.
+    await hass.async_block_till_done(wait_background_tasks=True)
+    if entry.state is ConfigEntryState.LOADED:
+        assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.mark.parametrize("mode", ["options", "reconfigure"])
