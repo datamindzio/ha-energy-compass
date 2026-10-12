@@ -823,7 +823,7 @@ reloads.</p>
 <strong>Expose windows</strong>, and flexible depth with <strong>Consumption outlook → Enable flexible energy depth</strong>.
 Battery balance is disabled by default and enabled with the <strong>LFP balance</strong> setting; its
 attributes carry <code>last_completed</code>, <code>next_due</code>, <code>days_overdue</code>, <code>planned_start</code>, <code>planned_end</code>,
-<code>planned_mode</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code> and <code>threshold_percent</code>.</p>
+<code>planned_mode</code>, <code>pv_series</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code> and <code>threshold_percent</code>.</p>
 <h3 id="availability-rule">Availability rule</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8f0236fbff5e-dark.svg"><img src="assets/diagrams/diagram-8f0236fbff5e.svg" alt="Diagram 3" loading="lazy"></picture></figure>
 <h2 id="optimizer-status--calculation-lifecycle">Optimizer status — calculation lifecycle</h2>
@@ -1439,7 +1439,8 @@ during a hold that is eligible or due. A window is published as <strong>CHARGE_P
 only when PV covers load in every one of its slots; otherwise (mixed PV/grid or
 pure grid, such as a night window) it is <strong>CHARGE_GRID</strong>, which additionally
 requires grid charging to be allowed and the grid-charge price ceiling (if any)
-to pass in every slot — with <code>balance_hold: true</code> on every row. From the slot before the earliest candidate
+to pass in every slot — with <code>balance_hold: true</code> on every row. With an optional
+<a href="#pessimistic-pv-for-the-balance-window">pessimistic PV source</a> the PV test is stricter. From the slot before the earliest candidate
 window to the horizon end, the battery's energy may rise up to full capacity
 instead of the configured SOC ceiling, so a hold is never blocked by
 <code>soc_ceiling</code> below 100 %; that lift only matters when the ceiling is below
@@ -1448,8 +1449,35 @@ prices the load, not the balance choice.</p>
 <p>The <strong>Battery balance</strong> diagnostic sensor (<code>sensor.&lt;name&gt;_battery_balance</code>)
 reports <code>ok</code>, <code>eligible</code>, <code>scheduled</code>, <code>holding</code> or <code>overdue</code>, with
 <code>last_completed</code>, <code>next_due</code>, <code>days_overdue</code>, <code>planned_start</code>, <code>planned_end</code>,
-<code>planned_mode</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code>,
+<code>planned_mode</code>, <code>pv_series</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code>,
 <code>threshold_percent</code>.</p>
+<h4 id="pessimistic-pv-for-the-balance-window">Pessimistic PV for the balance window</h4>
+<p>The balance window is chosen on the median PV forecast, so a low-PV day can leave the pack short of the
+threshold and the balance missed again. <strong>Sources → Add source → PV pessimistic (optional)</strong> binds a
+second, lower forecast of the same site (for Solcast, <code>pv_estimate10</code>; the Solcast presets propose that
+field). It takes the same interval-forecast mapping as a PV source; <strong>Review and edit sources</strong> lists,
+edits, extends with a continuation and removes it. It needs PV enabled. It can accompany either kind of PV
+source; the Energy dashboard solar forecast has no pessimistic series, so bind this one separately.</p>
+<p>With it configured, a <strong>CHARGE_PV</strong> window is offered only if both hold on the pessimistic series:</p>
+<ol>
+<li>Pack: charging from PV surplus alone (<code>pv − load</code>, at <code>eta_charge</code> and <code>charge_kw</code>, no discharge)
+   lifts the pack to the balance threshold by the window start.</li>
+<li>Window: PV covers load in every slot of the window.</li>
+</ol>
+<p>Otherwise the start is offered only as <strong>CHARGE_GRID</strong>, subject to the usual grid-charge and price-ceiling
+rules, so the solver can pick a cheap grid window instead. The dispatch plan itself keeps using the median
+series. Without the source nothing changes.</p>
+<p>Trade-off: the pack test counts PV surplus only. A start the pack would reach only by charging from the
+grid before the window is offered as <strong>CHARGE_GRID</strong> alone, and is dropped when the grid-charge price
+ceiling blocks a slot of the window, so <code>balance_no_window_in_horizon</code> can appear where a window existed
+without the source.</p>
+<p>The <code>pv_series</code> attribute of the Battery balance sensor and the <code>balance_pv_series</code> attribute of the plan
+sensor say which series decided the candidate windows: <code>pessimistic</code> when the source is configured and
+usable, <code>median</code> otherwise (also without the source); <code>null</code> when <code>lfp_balance</code> is off or there is no
+battery. The source is optional input and never invalidates the plan. If it is unavailable, stale,
+malformed, negative or does not cover the horizon, the windows fall back to the median series and the plan carries the
+<code>balance_pessimistic_pv_unavailable</code> warning. A source going stale raises no state change, so the fallback
+takes effect at the next periodic recalculation (<code>refresh_minutes</code>) or source change.</p>
 <h3 id="cost_min--cost-minimisation"><code>cost_min</code> — cost minimisation</h3>
 <ul>
 <li><strong>Goal:</strong> lowest forecast cost: purchases − sales + battery wear − terminal credit.</li>
@@ -2560,6 +2588,10 @@ Use <code>interval_minutes: 60</code> for hourly statistics.</p>
 <tr>
 <td><code>balance_overdue</code></td>
 <td>The balance phase is <code>due</code> but no hold window could be fit into the plan; a balance was missed this horizon.</td>
+</tr>
+<tr>
+<td><code>balance_pessimistic_pv_unavailable</code></td>
+<td>A pessimistic PV source is configured but unavailable, stale or does not cover the horizon; the balance windows were chosen on the median PV series.</td>
 </tr>
 <tr>
 <td><code>balance_no_window_in_horizon</code></td>

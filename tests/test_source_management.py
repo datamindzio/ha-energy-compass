@@ -996,3 +996,59 @@ async def test_polish_required_source_removal_explains_replacement_in_polish(
     detail = rejected["description_placeholders"]["detail"]
     assert "Zastąp" in detail
     assert "źródło" in detail
+
+
+async def test_pessimistic_pv_source_is_added_listed_and_removed(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-09-18T10:00:00+00:00")
+    config = default_configuration("EUR", "UTC")
+    config["preset"] = "solcast"
+    pv = IntervalBinding(
+        EntityBinding("sensor.solcast_today", attribute="detailedForecast"),
+        value_path="pv_estimate",
+        start_path="period_start",
+        interval_minutes=30,
+        unit="kW",
+        value_kind="power",
+        source_timezone="UTC",
+    )
+    config["sources"]["pv"] = {"enabled": True, "arrays": [[pv.to_dict()]]}
+    rows = [
+        {
+            "period_start": "2026-09-18T10:00:00+00:00",
+            "pv_estimate": 2.0,
+            "pv_estimate10": 0.5,
+        }
+    ]
+    hass.states.async_set("sensor.solcast_today", "1", {"detailedForecast": rows})
+    entry = MockConfigEntry(domain="energy_compass", data=config, version=2)
+    entry.add_to_hass(hass)
+    manager = hass.config_entries.options
+    fid = (await manager.async_init(entry.entry_id))["flow_id"]
+    await manager.async_configure(fid, {"next_step_id": "sources"})
+    await manager.async_configure(fid, {"next_step_id": "source_add"})
+    result = await manager.async_configure(fid, {"target": "pv_pessimistic"})
+    assert result["step_id"] == "source_mode"
+    result = await manager.async_configure(fid, {"mode": "forecast"})
+    assert result["step_id"] == "source_entity"
+    await manager.async_configure(fid, {"entity_id": "sensor.solcast_today"})
+    result = await manager.async_configure(fid, {"attribute": "detailedForecast"})
+    assert result["step_id"] == "source_mapping"
+    defaults = {str(key): key.default() for key in result["data_schema"].schema}
+    assert defaults["value_path"] == "pv_estimate10"
+    result = await manager.async_configure(fid, result["data_schema"]({}))
+    assert result["step_id"] == "sources"
+    flow = manager._progress[fid]
+    saved = flow._draft["sources"]["pv"]
+    assert [item["value_path"] for item in saved["pessimistic"]] == ["pv_estimate10"]
+    assert saved["arrays"] == [[pv.to_dict()]]
+    inventory = await manager.async_configure(fid, {"next_step_id": "source_inventory"})
+    await manager.async_configure(
+        fid, {"source": _source_value(inventory, "pv_estimate10")}
+    )
+    result = await manager.async_configure(fid, {"next_step_id": "source_remove"})
+    assert result["step_id"] == "source_remove"
+    result = await manager.async_configure(fid, {"confirm": True})
+    assert result["step_id"] == "sources"
+    assert "pessimistic" not in flow._draft["sources"]["pv"]

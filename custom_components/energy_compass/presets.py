@@ -13,6 +13,7 @@ class Preset:
     pv_attribute: str | None = None
     pv_start_field: str | None = None
     pv_value_field: str | None = None
+    pv_pessimistic_value_field: str | None = None
     pv_unit: str | None = None
     pv_interval_minutes: int | None = None
     soc_unit: str | None = None
@@ -29,6 +30,7 @@ PRESETS = {
         pv_attribute="detailedForecast",
         pv_start_field="period_start",
         pv_value_field="pv_estimate",
+        pv_pessimistic_value_field="pv_estimate10",
         pv_unit="kW",
         pv_interval_minutes=30,
     ),
@@ -49,6 +51,7 @@ PRESETS.update(
             pv_attribute="detailedForecast",
             pv_start_field="period_start",
             pv_value_field="pv_estimate",
+            pv_pessimistic_value_field="pv_estimate10",
             pv_unit="kW",
             pv_interval_minutes=30,
         ),

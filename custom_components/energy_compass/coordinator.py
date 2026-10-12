@@ -275,6 +275,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             "planned_start": window["start"] if window else None,
             "planned_end": window["end"] if window else None,
             "planned_mode": window["mode"] if window else None,
+            "pv_series": self.data.get("balance_pv_series"),
         }
 
     def _subscribe(self):
@@ -415,6 +416,26 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                     for row in rows
                 ]
             )
+        if source.pv.pessimistic:
+            # Optional input: a stale or malformed series is a distinct
+            # fingerprint (the plan falls back to the median series), never an
+            # invalid input.
+            try:
+                rows = merge_continuations(
+                    tuple(
+                        parse_intervals(states, binding, dt_util.utcnow())
+                        for binding in source.pv.pessimistic
+                    )
+                )
+            except InputError:
+                selected.append("pessimistic_pv_unavailable")
+            else:
+                selected.append(
+                    [
+                        (row.start.isoformat(), row.end.isoformat(), row.value)
+                        for row in rows
+                    ]
+                )
         return json.dumps(selected, sort_keys=True, default=str)
 
     def _inputs(self):

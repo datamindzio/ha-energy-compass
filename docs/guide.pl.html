@@ -826,7 +826,7 @@ witryny), bez restartu jego kolejki wysyłki. <strong>Rekonfiguracja</strong> za
 <strong>Włącz encje okresów</strong>, a głębokość elastycznego zużycia — <strong>Prognoza kosztu zużycia → Włącz
 głębokość elastycznego zużycia</strong>. Balansowanie baterii jest domyślnie wyłączone i włącza się je
 ustawieniem <strong>LFP balance</strong>; jego atrybuty to <code>last_completed</code>, <code>next_due</code>, <code>days_overdue</code>,
-<code>planned_start</code>, <code>planned_end</code>, <code>planned_mode</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code>
+<code>planned_start</code>, <code>planned_end</code>, <code>planned_mode</code>, <code>pv_series</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code>
 i <code>threshold_percent</code>.</p>
 <h3 id="reguła-dostępności">Reguła dostępności</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-2f6bcf12dd4c-dark.svg"><img src="assets/diagrams/diagram-2f6bcf12dd4c.svg" alt="Diagram 3" loading="lazy"></picture></figure>
@@ -1446,15 +1446,45 @@ podczas trzymania w fazie eligible lub due. Okno jest publikowane jako <strong>C
 gdy PV pokrywa zużycie w każdym jego przedziale; w przeciwnym razie (okno mieszane PV/sieć albo
 czysto sieciowe, np. nocne) jako <strong>CHARGE_GRID</strong>, co dodatkowo wymaga, aby ładowanie z sieci było
 dozwolone i (jeśli włączony) sufit ceny ładowania z sieci był zachowany w każdym przedziale — z
-<code>balance_hold: true</code> w każdym wierszu. Od przedziału przed najwcześniejszym
+<code>balance_hold: true</code> w każdym wierszu. Z opcjonalnym
+<a href="#pesymistyczne-pv-dla-okna-balansu">pesymistycznym źródłem PV</a> test PV jest ostrzejszy. Od przedziału przed najwcześniejszym
 kandydującym oknem do końca horyzontu energia baterii może wzrosnąć aż do pełnej pojemności, a nie
 tylko do skonfigurowanego sufitu SOC, więc trzymanie nie jest blokowane przez <code>soc_ceiling</code> poniżej
 100 % — to podniesienie ma znaczenie tylko wtedy, gdy sufit jest poniżej 100 %. Próby zużycia
 utrzymują wybrane okno bez zmian, aby dodatkowe obciążenie wyceniało zużycie, a nie wybór balansu.</p>
 <p>Diagnostyczny sensor <strong>Balansowanie baterii</strong> (<code>sensor.&lt;name&gt;_battery_balance</code>) zgłasza <code>ok</code>,
 <code>eligible</code>, <code>scheduled</code>, <code>holding</code> lub <code>overdue</code>, z atrybutami <code>last_completed</code>, <code>next_due</code>,
-<code>days_overdue</code>, <code>planned_start</code>, <code>planned_end</code>, <code>planned_mode</code>, <code>hold_progress_minutes</code>,
+<code>days_overdue</code>, <code>planned_start</code>, <code>planned_end</code>, <code>planned_mode</code>, <code>pv_series</code>, <code>hold_progress_minutes</code>,
 <code>hold_required_minutes</code>, <code>threshold_percent</code>.</p>
+<h4 id="pesymistyczne-pv-dla-okna-balansu">Pesymistyczne PV dla okna balansu</h4>
+<p>Okno balansu jest wybierane na medianie prognozy PV, więc dzień z niskim PV może zostawić baterię poniżej
+progu i balans znów przepada. <strong>Źródła danych → Dodaj źródło → PV pesymistyczna (opcjonalna)</strong> wiąże
+drugą, niższą prognozę tej samej instalacji (dla Solcast to <code>pv_estimate10</code>; presety Solcast proponują to
+pole). Używa tego samego mapowania prognozy przedziałowej co źródło PV; <strong>Przegląd i edycja źródeł</strong>
+wyświetla je, edytuje, rozszerza o kontynuację i usuwa. Wymaga włączonego PV. Może towarzyszyć każdemu
+rodzajowi źródła PV; prognoza PV z panelu Energia nie ma serii pesymistycznej, więc to źródło wiąże się osobno.</p>
+<p>Po skonfigurowaniu okno <strong>CHARGE_PV</strong> jest proponowane tylko wtedy, gdy na serii pesymistycznej spełnione
+są oba warunki:</p>
+<ol>
+<li>Bateria: ładowanie samą nadwyżką PV (<code>pv − zużycie</code>, ze sprawnością <code>eta_charge</code> i mocą <code>charge_kw</code>,
+   bez rozładowania) podnosi baterię do progu balansu przed początkiem okna.</li>
+<li>Okno: PV pokrywa zużycie w każdym przedziale okna.</li>
+</ol>
+<p>W przeciwnym razie ten start jest proponowany wyłącznie jako <strong>CHARGE_GRID</strong>, według zwykłych zasad
+ładowania z sieci i sufitu ceny, więc solver może wybrać tanie okno sieciowe. Sam plan dyspozycji nadal
+używa serii mediany. Bez tego źródła nic się nie zmienia.</p>
+<p>Uwaga: test baterii liczy wyłącznie nadwyżkę PV. Start, do którego bateria dotarłaby dopiero po
+naładowaniu z sieci przed oknem, jest proponowany tylko jako <strong>CHARGE_GRID</strong> i odpada, gdy sufit ceny
+ładowania z sieci blokuje przedział okna — wtedy może pojawić się <code>balance_no_window_in_horizon</code> tam, gdzie
+bez tego źródła okno istniało.</p>
+<p>Atrybut <code>pv_series</code> sensora Balansowanie baterii oraz atrybut <code>balance_pv_series</code> sensora planu podają,
+która seria zdecydowała o oknach kandydujących: <code>pessimistic</code>, gdy źródło jest skonfigurowane i
+użyteczne, w przeciwnym razie <code>median</code> (także bez źródła); <code>null</code>, gdy <code>lfp_balance</code> jest wyłączone lub
+nie ma baterii. Źródło jest wejściem opcjonalnym i nigdy nie unieważnia planu. Gdy jest niedostępne,
+nieaktualne, błędne, ujemne lub nie pokrywa horyzontu, okna wracają do serii mediany, a plan niesie
+ostrzeżenie <code>balance_pessimistic_pv_unavailable</code>. Zestarzenie się źródła nie wywołuje zmiany stanu, więc
+powrót do mediany następuje przy najbliższym okresowym przeliczeniu (<code>refresh_minutes</code>) lub zmianie
+źródła.</p>
 <h3 id="cost_min--minimalizacja-kosztów"><code>cost_min</code> — minimalizacja kosztów</h3>
 <ul>
 <li><strong>Cel:</strong> najniższy prognozowany koszt: zakupy − sprzedaż + zużycie baterii − wartość końcowa.</li>
@@ -2579,6 +2609,10 @@ bez błędu prognozy. Dla statystyk godzinowych ustaw <code>interval_minutes: 60
 <tr>
 <td><code>balance_overdue</code></td>
 <td>Faza balansu to <code>due</code>, ale w planie nie zmieściło się żadne okno trzymania; balans w tym horyzoncie został pominięty.</td>
+</tr>
+<tr>
+<td><code>balance_pessimistic_pv_unavailable</code></td>
+<td>Pesymistyczne źródło PV jest skonfigurowane, ale niedostępne, nieaktualne lub nie pokrywa horyzontu; okna balansu wybrano na serii mediany PV.</td>
 </tr>
 <tr>
 <td><code>balance_no_window_in_horizon</code></td>
