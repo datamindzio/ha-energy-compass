@@ -5,6 +5,8 @@ of the blueprint harnesses (`data`, `ctx`, `accept`, `decision`, `restart`, ...)
 `controller_profile.decide`, so the scenario tests can run against either engine.
 """
 
+import asyncio
+import copy
 from types import MappingProxyType
 
 from deye_oracle import timestamp
@@ -17,7 +19,9 @@ from deye_oracle_v0137 import (
     EnergyCompassSim,
 )
 
+from custom_components.energy_compass import controller as core
 from custom_components.energy_compass import controller_profile as profile
+from custom_components.energy_compass import controller_run as run_module
 from custom_components.energy_compass import controller_texts as texts
 
 LANGUAGE = "pl"
@@ -158,3 +162,114 @@ class Harness(EnergyCompassSim):
         return decision_dict(
             profile.decide(self.snapshot(), self.limits(), ceiling, base=base)
         )
+
+
+ControllerGone = run_module.ControllerUnavailable
+# The blueprint's own action shapes, so hooks written for it fire at the same points.
+STAGE_ACTIONS = {
+    "target": {"variables": {"target": "", "transaction_attempt": "", "replan": False}},
+    "target_base": {"variables": {"target": ""}},
+    "write_fresh": {"variables": {"fresh": "", "baseline": "", "allowed": ""}},
+    "write_recheck": {"variables": {"fresh": "", "baseline": "", "allowed": ""}},
+    "fresh": {"variables": {"fresh": "", "baseline": "", "profile_confirmed": ""}},
+}
+REPEAT_TRANSACTIONS = {"repeat": {"count": 3, "sequence": []}}
+
+
+class SimPort:
+    """The executor's port over the sample: services act on `Harness` state."""
+
+    def __init__(self, runner):
+        self.runner = runner
+        self.h = runner.h
+        self.targets = 0
+
+    def now(self):
+        return self.h.now
+
+    def snapshot(self, stage):
+        runner = self.runner
+        if runner.before_action:
+            if stage == "start":
+                self.targets = 0
+            if stage == "target":
+                self.targets += 1
+                if self.targets == 1:
+                    runner.before_action(runner, REPEAT_TRANSACTIONS)
+            if stage in STAGE_ACTIONS:
+                runner.before_action(runner, STAGE_ACTIONS[stage])
+        return self.h.snapshot()
+
+    async def persist(self, runtime=None, restore_pending=None, *, durable=False):
+        h = self.h
+        if h.controller_missing:
+            raise ControllerGone("persist")
+        self.runner.runtime_calls.append(
+            {"runtime": runtime, "restore_pending": restore_pending}
+        )
+        store = h.data[RT]["attributes"]
+        if runtime is not None:
+            store["runtime"] = core.validate_runtime(runtime)
+            h.data[RT]["state"] = store["runtime"].get("code", "waiting")
+        if restore_pending is not None:
+            assert isinstance(restore_pending, bool)
+            h.restore_pending = restore_pending
+        return copy.deepcopy(store.get("runtime", {})), h.restore_pending
+
+    async def select_mode(self, mode):
+        self.h.data[MODE]["state"] = mode
+
+    async def write(self, command):
+        runner, h = self.runner, self.h
+        entity, value = command.entity, command.value
+        runner.writes.append((entity, value))
+        h.data[entity]["state"] = str(value)
+        register = h.ctx["registers"][entity]
+        if entity not in runner.drop:
+            runner.raw[register["address"]] = (
+                {"Disabled": 0, "Grid": 1, "Sell": 32}[value]
+                if entity.startswith("select.")
+                else int(float(value) / register["scale"])
+            )
+        if runner.hook:
+            runner.hook(runner, entity, value)
+
+    async def read_registers(self, address, count):
+        self.runner.reads.append(address)
+        return {
+            a: raw
+            for a, raw in self.runner.raw.items()
+            if address <= a < address + count
+        }
+
+
+class Runner:
+    """Same API as the blueprint harness' runner, over `DeyeExecutor`."""
+
+    def __init__(self, h):
+        self.h = h
+        self.ctx = {"trigger": {"id": "change"}}
+        self.writes = []
+        self.reads = []
+        self.raw = {}
+        self.drop = set()
+        self.hook = None
+        self.before_action = None
+        self.delays = []
+        self.runtime_calls = []
+        self.outcomes = []
+        for entity, reg in h.ctx["registers"].items():
+            value = h.data[entity]["state"]
+            self.raw[reg["address"]] = (
+                {"Disabled": 0, "Grid": 1, "Sell": 32}.get(value, 0)
+                if entity.startswith("select.")
+                else round(float(value) / reg["scale"])
+            )
+        self.executor = run_module.DeyeExecutor(
+            SimPort(self), h.limits, language=LANGUAGE
+        )
+
+    def run(self):
+        # Energy Compass processes every publication before the controller runs.
+        self.h.accept()
+        self.outcomes.append(asyncio.run(self.executor.run()))

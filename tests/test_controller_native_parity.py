@@ -6,9 +6,12 @@ and through `controller_profile.decide`, and requires every field of the decisio
 dict to be equal. Reasons are compared as the Polish text of the native reason code.
 """
 
+import itertools
 import random
 
+import deye_engines
 import pytest
+import test_deye_controller as scenarios
 from deye_native_harness import (
     decision_dict,
     entities_of,
@@ -97,7 +100,29 @@ def render(h, name, **extra):
     return h.render(h.expression(name), **extra)
 
 
-def scenario(h, rng: random.Random):
+LIMIT_OPTIONS = {
+    "commissioned_battery_modes": [
+        ["Capacity", "Voltage"],
+        ["Capacity", "Voltage"],
+        ["Capacity"],
+    ],
+    "max_current": [18, 5, 350],
+    "max_power_w": [8000, 1000, 30000],
+    "hold_grid_current": [1, 3],
+    "reached_discharge_current": [0, 1, 50],
+    "balance_grid_current": [0, 2, 5],
+    "voltage_grid_charge_ceiling": [55.2, 57, 49, 54.1],
+    "relinquish_current": [18, 0, 100],
+    "max_grid_current": [16, 3],
+    "discharge_energy_entity": [COUNTER, COUNTER, ""],
+}
+
+
+def limit_choices(rng):
+    return {key: rng.choice(options) for key, options in LIMIT_OPTIONS.items()}
+
+
+def scenario(h, rng: random.Random, apply_limits=True):
     """Vary one sample in place."""
     row = h.data[P]["attributes"]["intervals"][0]
     row.update(
@@ -116,24 +141,22 @@ def scenario(h, rng: random.Random):
         ["Capacity", "Capacity", "Voltage", "Voltage", "Voltage", "No Battery"]
     )
     h.data[MODE]["state"] = rng.choice(["Auto", "Auto", "Auto", "Off", "Simulation"])
-    for key, options in {
-        "commissioned_battery_modes": [
-            ["Capacity", "Voltage"],
-            ["Capacity", "Voltage"],
-            ["Capacity"],
-        ],
-        "max_current": [18, 5, 350],
-        "max_power_w": [8000, 1000, 30000],
-        "hold_grid_current": [1, 3],
-        "reached_discharge_current": [0, 1, 50],
-        "balance_grid_current": [0, 2, 5],
-        "voltage_grid_charge_ceiling": [55.2, 57, 49, 54.1],
-        "relinquish_current": [18, 0, 100],
-        "max_grid_current": [16, 3],
-        "discharge_energy_entity": [COUNTER, COUNTER, ""],
-    }.items():
-        h.ctx[key] = rng.choice(options)
-    h.set(COUNTER, rng.choice(["5600.0", "5601.9", "5601.96", "unavailable", "5599"]))
+    if apply_limits:
+        h.ctx.update(limit_choices(rng))
+    h.set(
+        COUNTER,
+        rng.choice(
+            [
+                "5600.0",
+                "5601.9",
+                "5601.945",
+                "5601.95",
+                "5601.96",
+                "unavailable",
+                "5599",
+            ]
+        ),
+    )
     for entity in (h.ctx["charge_entity"], h.ctx["discharge_entity"]):
         h.data[entity]["state"] = rng.choice(HELD)
     if rng.random() < 0.08:
@@ -198,7 +221,7 @@ def scenario(h, rng: random.Random):
 
 def runtime_variant(h, rng, first):
     """Optionally seed the stored runtime with a latch or the previous decision."""
-    choice = rng.choice(["none", "none", "latch", "hold", "slot", "slot_old"])
+    choice = rng.choice(["none", "none", "latch", "hold", "slot", "slot", "slot_old"])
     runtime = {}
     if choice == "latch":
         runtime = {"reached_key": first["reached_key"]}
@@ -208,7 +231,12 @@ def runtime_variant(h, rng, first):
             "desired": first["desired"],
         }
     elif choice == "slot":
-        runtime = {"slot_energy": {"key": first["reached_key"], "discharge": 5590.0}}
+        runtime = {
+            "slot_energy": {
+                "key": first["reached_key"],
+                "discharge": rng.choice([5590.0, 5600.0, 5600.0]),
+            }
+        }
     elif choice == "slot_old":
         runtime = {"slot_energy": {"key": ["old"], "discharge": 5590.0}}
     h.data[RT]["attributes"]["runtime"] = runtime
@@ -551,3 +579,149 @@ def test_observation_and_confirmation_parity(seed):
                 assert profile.confirms(
                     response, profile.Command(**command), register
                 ) == bool(confirmed), (seed, case, entity, value)
+
+
+def scenario_cases():
+    """Every parametrized case of the scenario tests that does not pin the blueprint."""
+    cases = []
+    for name, function in vars(scenarios).items():
+        if not name.startswith("test_") or not callable(function):
+            continue
+        marks = getattr(function, "pytestmark", [])
+        if any(mark.name == "blueprint_only" for mark in marks):
+            continue
+        axes = []
+        for mark in marks:
+            if mark.name != "parametrize":
+                continue
+            names = mark.args[0]
+            names = (
+                [n.strip() for n in names.split(",")]
+                if isinstance(names, str)
+                else names
+            )
+            values = [[v] if len(names) == 1 else list(v) for v in mark.args[1]]
+            axes.append([dict(zip(names, value, strict=True)) for value in values])
+        for combination in itertools.product(*axes):
+            kwargs = {k: v for part in combination for k, v in part.items()}
+            label = "-".join(str(v) for v in kwargs.values())
+            cases.append(pytest.param(function, kwargs, id=f"{name}[{label}]"))
+    return cases
+
+
+def record(engine, function, kwargs):
+    arguments = dict(kwargs)
+    deye_engines.use(engine)
+    deye_engines.TRACE = []
+    try:
+        names = function.__code__.co_varnames[: function.__code__.co_argcount]
+        if "h" in names:
+            arguments["h"] = deye_engines.Harness()
+        if "engine" in names:
+            arguments["engine"] = "native"
+        function(**arguments)
+        return deye_engines.TRACE
+    finally:
+        deye_engines.TRACE = None
+        deye_engines.use("blueprint")
+
+
+SCENARIOS = scenario_cases()
+
+
+def test_every_scenario_is_compared():
+    assert len(SCENARIOS) >= 255
+
+
+@pytest.mark.parametrize("function,kwargs", SCENARIOS)
+def test_scenario_parity_with_the_frozen_blueprint(function, kwargs):
+    """Same decisions, same ordered writes, same reads, same final runtime."""
+    if kwargs.get("missing") in ("schema", "no_mode_entity"):
+        pytest.skip("the native controller has no schema or mode entity to lose")
+    oracle_trace = record("oracle", function, kwargs)
+    native_trace = record("native", function, kwargs)
+    assert native_trace == oracle_trace
+
+
+def fuzzed_run(engine, seed):
+    """Several runs over a random sample with lost writes and mid-run changes."""
+    rng = random.Random(seed)
+    deye_engines.use(engine)
+    deye_engines.TRACE = []
+    try:
+        h = deye_engines.Harness(INPUTS | limit_choices(rng))
+        h.set(COUNTER, "5600.0")
+        runner = deye_engines.Runner(h)
+        scenario(h, rng, apply_limits=False)
+        for _ in range(rng.randint(1, 4)):
+            entities = list(runner.raw)
+            runner.drop.clear()
+            for entity in h.ctx["registers"]:
+                if rng.random() < 0.04:
+                    runner.drop.add(entity)
+            if rng.random() < 0.15:
+                address = rng.choice(entities)
+                runner.raw[address] = rng.choice([0, 1, 45, 32, 4960])
+            target_write = rng.randint(0, 6)
+            seen = []
+
+            def hook(r, entity, value, seen=seen, target_write=target_write):
+                seen.append(entity)
+                if len(seen) == target_write:
+                    mutate_after_target(h, rng)
+
+            runner.hook = hook if rng.random() < 0.7 else None
+            runner.run()
+            if rng.random() < 0.4:
+                mutate_after_target(h, rng)
+            if rng.random() < 0.3:
+                h.data[RT]["attributes"]["runtime"] = {}
+        return deye_engines.TRACE
+    finally:
+        deye_engines.TRACE = None
+        deye_engines.use("blueprint")
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_fuzzed_run_parity_with_the_frozen_blueprint(seed):
+    oracle_trace = fuzzed_run("oracle", 5000 + seed)
+    native_trace = fuzzed_run("native", 5000 + seed)
+    assert native_trace == oracle_trace
+
+
+def test_fuzzed_runs_write_abort_and_restore():
+    writes = restored = 0
+    for seed in range(60):
+        trace = fuzzed_run("native", 5000 + seed)
+        for entry in trace:
+            if entry[0] == "run":
+                writes += len(entry[1])
+                restored += entry[4].get("code") == "restored"
+    assert writes > 200 and restored > 5, (writes, restored)
+
+
+@pytest.mark.parametrize("planned", [2.0, 0.025, 0.3])
+def test_discharge_energy_boundary_parity(planned):
+    """The reached test of an energy-counted sell row, around its 0.05 kWh margin."""
+    deye_engines.use("oracle")
+    try:
+        h = scenarios.voltage_sell()
+    finally:
+        deye_engines.use("blueprint")
+    h.data[P]["attributes"]["intervals"][0].update(discharge_kwh=planned)
+    h.accept()
+    runtime = h.data[RT]["attributes"]
+    runtime["runtime"] = {
+        "slot_energy": {
+            "key": render(h, "decision")["reached_key"],
+            "discharge": 5600.0,
+        }
+    }
+    seen = set()
+    for margin in (-0.2, -0.06, -0.0501, -0.05, -0.0499, -0.04, 0, 0.1):
+        h.set(COUNTER, str(5600.0 + planned + margin))
+        want = render(h, "decision")
+        got = native(h)
+        assert got == want, margin
+        seen.add(got["target_reached"])
+    assert seen == ({True, False} if planned > 0.1 else {True})
