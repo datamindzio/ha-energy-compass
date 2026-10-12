@@ -1757,12 +1757,15 @@ są oba warunki:</p>
 używa serii mediany. Bez tego źródła nic się nie zmienia.</p>
 <p>Solver wycenia każde okno na serii mediany, gdzie nadwyżka PV może pokryć odrzucone okno
 <strong>CHARGE_GRID</strong>, więc kilka startów kosztowałoby tyle samo. Żeby o wyborze nie decydował przypadek
-kończący się w drogim przedziale, każde takie okno ma koszt rankingowy: energia, którą seria
-pesymistyczna zostawia sieci, czyli to, czego bateria nadal brakuje do progu na starcie okna, plus
+kończący się w drogim przedziale, każde okno <strong>CHARGE_GRID</strong> proponowane przy obecnej serii
+pesymistycznej (także takie, które jest <strong>CHARGE_GRID</strong> już na samej serii mediany) ma koszt rankingowy: energia, którą seria
+pesymistyczna zostawia sieci, czyli to, czego baterii nadal brakuje do progu na starcie okna, plus
 zużycie niepokryte przez PV w obrębie okna, po cenach zakupu z okna. Solver dolicza do kosztu okna 5 %
-jego nadwyżki ponad najtańsze okno, więc okno, które seria pesymistyczna nadal wspiera
+jego nadwyżki ponad najtańsze okno, które solver może wybrać, więc okno, które seria pesymistyczna nadal wspiera
 (<strong>CHARGE_PV</strong>), wygrywa z odrzuconym, a wśród odrzuconych wygrywa najtańsze. Dopłata nie przekracza
-połowy kosztu pominięcia balansu, więc sama nie sprawi, że solver go pominie. To preferencja, nie ścisły
+połowy kosztu pominięcia balansu. Okno ze startem 0, do którego bateria nie dotrze (zaczyna poniżej
+progu), jest pomijane w tym porównaniu, więc nie przesuwa pozostałych okien w stronę pominięcia;
+ranking może jednak przeważyć w bliskim przypadku przeciw balansowi. To preferencja, nie ścisły
 rozstrzygacz remisów: start tańszy na serii mediany o więcej niż 5 % różnicy kosztu rankingowego nadal
 wygrywa. Nie wchodzi do kosztu planu.</p>
 <p>Uwaga: test baterii liczy wyłącznie nadwyżkę PV. Start, do którego bateria dotarłaby dopiero po

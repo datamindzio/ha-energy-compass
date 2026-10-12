@@ -1744,12 +1744,15 @@ rules, so the solver can pick a cheap grid window instead. The dispatch plan its
 series. Without the source nothing changes.</p>
 <p>The solver prices every window on the median series, where PV surplus can pay for a vetoed
 <strong>CHARGE_GRID</strong> window, so several starts would cost the same. To avoid a tie-break landing on an
-expensive slot, each such window carries a ranking cost: the energy the pessimistic series leaves to the
+expensive slot, every <strong>CHARGE_GRID</strong> window offered while the pessimistic series is present (also one
+that is <strong>CHARGE_GRID</strong> on the median series alone) carries a ranking cost: the energy the pessimistic series leaves to the
 grid, that is what the pack still lacks to reach the threshold at the window start plus the load PV does
 not cover inside the window, at the window's buy prices. The solver adds 5 % of each window's excess over
-the cheapest window to that window's cost, so a window the pessimistic series still supports
+the cheapest window the solver can pick to that window's cost, so a window the pessimistic series still supports
 (<strong>CHARGE_PV</strong>) beats a vetoed one and, among vetoed ones, the cheapest wins. The addition never exceeds
-half the cost of skipping the balance, so it cannot make the solver skip it. It is a preference, not a
+half the cost of skipping the balance. A start-0 window the pack cannot reach (it starts below the
+threshold) is left out of that comparison, so it never shifts the other windows towards a skip; the
+ranking can still tip a close call against the balance. It is a preference, not a
 strict tie-break: a start that is cheaper on the median series by more than 5 % of the difference in
 ranking cost still wins. It is not part of the plan's cost.</p>
 <p>Trade-off: the pack test counts PV surplus only. A start the pack would reach only by charging from the

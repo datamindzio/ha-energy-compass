@@ -148,7 +148,12 @@ def _constrain_balance(
         return [], None
     threshold = problem.balance_threshold_kwh
     choices: list[int] = []
-    ranking = fallback_costs(problem.balance_windows, problem.balance_miss_cost)
+    ranking = fallback_costs(
+        problem.balance_windows,
+        problem.balance_miss_cost,
+        initial_kwh=battery.initial_kwh,
+        threshold_kwh=threshold,
+    )
     for number, window in enumerate(problem.balance_windows):
         chosen = model.variable(binary=True, cost=ranking[number])
         # Registered in the slot vectors so the variable-count check covers it.
