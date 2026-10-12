@@ -11,6 +11,9 @@ DUE_LOOKAHEAD = timedelta(hours=24)
 # the ranking alone never makes the solver skip the balance.
 FALLBACK_WEIGHT = 0.05
 FALLBACK_MISS_SHARE = 0.5
+# Slack (kWh) when comparing pack energy with the balance threshold; the same
+# slack the solver uses to decide whether a start-0 window can be picked.
+REACH_TOL = 1e-6
 
 
 def _aligned(moment: datetime) -> bool:
@@ -66,7 +69,7 @@ def candidate_windows(
         if all(slots[i].pv_kwh >= slots[i].load_kwh for i in members) and (
             not pessimistic
             or (
-                reach[first] >= threshold_kwh - 1e-6
+                reach[first] >= threshold_kwh - REACH_TOL
                 and all(pessimistic_pv_kwh[i] >= slots[i].load_kwh for i in members)
             )
         ):
@@ -111,7 +114,7 @@ def fallback_costs(
     pickable = [
         initial_kwh is None
         or window.slots[0] > 0
-        or initial_kwh >= threshold_kwh - 1e-6
+        or initial_kwh >= threshold_kwh - REACH_TOL
         for window in windows
     ]
     costs = [w.fallback_cost for w, ok in zip(windows, pickable, strict=True) if ok]

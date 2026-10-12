@@ -9,6 +9,7 @@ from custom_components.energy_compass.config_models import (
     validate_sources,
 )
 from custom_components.energy_compass.engine.balance import (
+    REACH_TOL,
     candidate_windows,
     fallback_costs,
 )
@@ -19,7 +20,7 @@ from custom_components.energy_compass.engine.models import (
     SiteLimits,
     Slot,
 )
-from custom_components.energy_compass.engine.optimize import solve
+from custom_components.energy_compass.engine.optimize import _TOL, solve
 from custom_components.energy_compass.runtime import (
     available_forecasts,
     build_problem,
@@ -307,6 +308,40 @@ def test_unpickable_start_window_does_not_shift_the_ranking_towards_a_miss():
     assert max(fallback_costs(windows, 0.12)) > 0
     plan = solve(_balance_problem(rows, windows, miss=0.12))
     assert plan.balance_start in (1, 2, 3)
+
+
+def test_unpickable_start_window_leaves_the_ranking_of_unequal_pickable_windows():
+    # Start 0 (buy 20) cannot be picked at 24.0 of 25 kWh. Windows 1-3 differ in
+    # cost (fallback 139.5 / 77.5 / 139.5), so the ranking is the spread over
+    # the pickable ones: floor at start 2, dearest at half the miss cost.
+    rows = [(20.0, 3.0, 1.0), (90.0, 3.0, 1.0), (50.0, 3.0, 1.0), (90.0, 3.0, 1.0)]
+    windows = _windows(_slots(rows), (0.2,) * 4, initial=24.0)
+    assert [w.fallback_cost for w in windows] == pytest.approx([31, 139.5, 77.5, 139.5])
+    threshold = 0.99 * CAP
+    ranking = fallback_costs(windows, 0.12, initial_kwh=24.0, threshold_kwh=threshold)
+    assert ranking == pytest.approx((0.0, 0.06, 0.0, 0.06))
+    # A dear miss leaves the weight at its 0.05 cap; the spread stays proportional.
+    ranking = fallback_costs(windows, 100.0, initial_kwh=24.0, threshold_kwh=threshold)
+    assert ranking == pytest.approx((0.0, 3.1, 0.0, 3.1))
+    assert solve(_balance_problem(rows, windows, miss=0.12)).balance_start == 2
+
+
+def test_reach_tolerance_is_the_one_the_solver_uses_for_start_zero():
+    assert REACH_TOL == _TOL
+
+
+@pytest.mark.parametrize(
+    ("shortfall", "mode"),
+    [
+        (0.0, "CHARGE_PV"),
+        (REACH_TOL / 2, "CHARGE_PV"),
+        (REACH_TOL * 2, "CHARGE_GRID"),
+    ],
+)
+def test_charge_pv_reach_tolerance_boundary(shortfall, mode):
+    slots = _slots(MEDIAN)
+    windows = _windows(slots, (3.0,) * 4, initial=0.99 * CAP - shortfall)
+    assert windows[0].mode == mode
 
 
 def test_start_zero_window_stays_in_the_floor_when_the_pack_is_at_the_threshold():
