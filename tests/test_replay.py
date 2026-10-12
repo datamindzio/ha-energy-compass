@@ -19,18 +19,28 @@ SAMPLE = ROOT / "tools/replay_sample.json"
 # HiGHS picks per platform (T-035: at 75c6870 macOS arm64 priced 2026-09-21 at 2.6375,
 # the Linux CI image at 2.7562; every solve was proven optimal, none time limited), and
 # the tied plans realise anything from 2.48 to 2.76. A pin or a range on that column
-# is a pin of the platform's pick, so the shipped sample is only held to what is true
-# of every tied optimum (and to the self-use cost, a simulation without a solve).
+# is a pin of the platform's pick, so the shipped sample is held to the self-use cost (a
+# simulation without a solve), `hindsight <= plan`, and `plan <= self_use`. The last is
+# a property of this sample at default settings, not an invariant of every tied
+# optimum: its margin is >= 1.22 PLN over 9 measured tie picks, and it is false with
+# allow_grid_charge=false + allow_battery_export=false (plan 4.078 > self_use 3.977)
+# and with terminal_mode=value.
 #
 # `untied_sample` adds a distinct price offset to every interval, so the optimum is
 # unique and the plan pins below name it. That is not true by construction: replay
 # solves the base plan at HiGHS' default mip_rel_gap (1e-4, ADR-0003) and accepts the
 # incumbent, and the offsets move the objective by less than that. The pick is stable
 # because every solve ends optimal with a measured gap of ~1e-15 (forcing
-# mip_rel_gap=0 gives the same plan costs). Measured margin: macOS arm64 and the Linux
-# CI image agree on every cost for offset scales from 1e-4 down to 1e-7 and diverge
-# again at 1e-8 (2.6375 vs 2.7562), so 1e-4 keeps 1000x. If a pin here fails on one
-# platform only, suspect a changed tie-break or a solve that stopped inside the gap
+# mip_rel_gap=0 gives the same plan costs). Measured margin (macOS arm64 py3.14.8 scipy
+# 1.18.1 and the Linux CI image, identical on both; same offset pattern; total plan cost
+# of the base run / of the low-export run, deposit_model=manual, export_value_factor=0.3):
+# 1e-3: 1.8119 / 2.3453, 1e-4: 1.8113 / 2.3450 (the pins), 1e-5: 1.8112 / 2.3449. The
+# pick is offset-determined only from 1e-5 up: at 1e-6 another plan wins the base run
+# (1.7542), at 1e-7 another wins the low-export run (2.4351), and at 1e-8 the platforms
+# diverge (2026-09-21: 2.6375 vs 2.7562). Offsets below ~1e-6 are at HiGHS tolerance
+# level, so agreement there is not evidence of margin: the margin of 1e-4 is about 10x.
+# Do not move _TIE_OFFSET without numbers from both platforms. If a pin here fails on
+# one platform only, suspect a changed tie-break or a solve that stopped inside the gap
 # before touching the pin.
 _TIE_OFFSET = 1e-4
 # `index * 37 % 101` repeats at index + 101: the fixture refuses a longer sample.
