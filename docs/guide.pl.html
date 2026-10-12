@@ -2088,7 +2088,7 @@ parametrów baterii (pojemność, sprawność) w planie</code>.</p>
 <td>wszystkie Disabled, SOC 10 %</td>
 </tr>
 <tr>
-<td><code>HOLD</code>, <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> przy SOC ≥ 100 % w trybie Voltage</td>
+<td><code>HOLD</code>, <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> przy SOC ≥ 100 % w trybie Voltage (<code>HOLD</code>: utrzymany do SOC ≤ 99 %)</td>
 <td>limit / 0 A w <code>HOLD</code>, limit w pozostałych</td>
 <td>0 A</td>
 <td>wszystkie Disabled, SOC 10 %</td>
@@ -2123,7 +2123,7 @@ parametrów baterii (pojemność, sprawność) w planie</code>.</p>
 przy rozładowaniu. Limit ma histerezę: prąd już ustawiony w falowniku zostaje, dopóki mieści się
 w limicie mocy, a wyższy krok o 1 A wchodzi dopiero z 2 % zapasem napięcia (ok. 10 V przy 530 V), więc
 napięcie pakietu przechodzące przez granicę kroku nie przepisuje limitu przy każdym spadku i odbiciu.
-Limit mocy nigdy nie jest przekroczony. Przy SOC 100 % prąd ładowania spada do 0 A, z wyjątkiem trybu pracy baterii <code>Voltage</code> (następny akapit). Prądy z planu przeliczają kWh
+Limit mocy nigdy nie jest przekroczony. Przy SOC 100 % prąd ładowania w <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> i <code>CHARGE_GRID</code> spada do 0 A; w trybie pracy baterii <code>Voltage</code> dotyczy to tylko <code>CHARGE_GRID</code>, bo pozostałe dwa stany podlegają regule pełnego pakietu z końca tego akapitu. Prądy z planu przeliczają kWh
 przedziału przez <code>eta_charge</code> (ładowanie) lub <code>eta_discharge</code> (rozładowanie) w pełnej długości przedziału. Cel SOC używa <code>capacity_kwh</code> zaakceptowanego planu; cel napięcia wynika
 ze stałej krzywej wysokonapięciowej baterii LFP (496–536 V dla 10–90 %, przy 100 % 584 V przy
 ładowaniu albo 544 V przy rozładowaniu). Osiągnięty cel w <code>CHARGE_GRID</code>/<code>DISCHARGE_GRID</code> jest
@@ -2138,7 +2138,13 @@ liczniku może pokazać 100 % przed pełnym naładowaniem. Dlatego przy SOC ≥ 
 <code>SELF_CONSUME</code> sterownik zostawia zwykły limit prądu ładowania (z tą samą histerezą, więc bez zapisów 0 A
 wokół granicy) zamiast 0 A (lub <code>hold_grid_current</code> w <code>HOLD</code>). Prąd sieciowy wynosi 0 A, więc jedynym
 źródłem jest PV, rozładowanie wynika z wiersza planu (0 A w <code>HOLD</code>), nie jest zapisywany cel SOC ani
-zatrzaskiwany stan „osiągnięto”. <code>CHARGE_GRID</code> (zachowuje <code>voltage_grid_charge_ceiling</code>), <code>CURTAIL</code>,
+zatrzaskiwany stan „osiągnięto”. W <code>HOLD</code> przełączenie ma histerezę: profil pełnego pakietu zaczyna się przy SOC ≥ 100 %
+i zostaje w kolejnych przebiegach <code>HOLD</code>, dopóki SOC nie spadnie do 99 % lub niżej, więc źródło SOC drgające między
+99,9 % a 100 % nie przepisuje profilu przy każdym przejściu. Każde przełączenie to jedna transakcja zapisu, która
+zaczyna się od ładowania 0 A, i przypada najwyżej jedna na punkt procentowy zmiany SOC; bez PV pakiet opada na
+poborze własnym falownika, a <code>HOLD</code> doładowuje go z sieci, w cyklu liczonym w godzinach. <code>CHARGE_PV</code> i <code>SELF_CONSUME</code>
+nie potrzebują histerezy, bo poniżej 100 % zapisują te same wartości. <code>CHARGE_GRID</code> (zachowuje
+<code>voltage_grid_charge_ceiling</code> i prąd ładowania 0 A przy 100 %), <code>CURTAIL</code>,
 trzymanie balansu i tryb <code>Capacity</code> działają jak dotąd. <code>CURTAIL</code> wykonuje profil <code>HOLD</code> z ostrzeżeniem, bo sterownik nie ogranicza PV.</p>
 <p>Sterowane są tylko tryby baterii z listy <code>commissioned_battery_modes</code>; każdy inny tryb (np. Voltage
 przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Voltage cel poza zakresem
