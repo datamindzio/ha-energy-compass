@@ -17,12 +17,24 @@ SAMPLE = ROOT / "tools/replay_sample.json"
 # The shipped sample has flat price blocks, so the base plan has tied optima: equal
 # objective, different flows (which of two equal-priced hours charges, or exports).
 # HiGHS picks per platform (T-035: at 75c6870 macOS arm64 priced 2026-09-21 at 2.6375,
-# the Linux CI image at 2.7562, both solved to gap 0 and none time limited), and the
-# realised cost of the tied plans differs by up to 4 %. A pin of that column is a pin
-# of the platform's pick. `untied_sample` breaks every tie with a distinct price
-# offset far below the prices' resolution, so the optimum is unique and the pinned
-# plan costs hold on every platform. The shipped sample is only held to invariants.
+# the Linux CI image at 2.7562; every solve was proven optimal, none time limited), and
+# the tied plans realise anything from 2.48 to 2.76. A pin or a range on that column
+# is a pin of the platform's pick, so the shipped sample is only held to what is true
+# of every tied optimum (and to the self-use cost, a simulation without a solve).
+#
+# `untied_sample` adds a distinct price offset to every interval, so the optimum is
+# unique and the plan pins below name it. That is not true by construction: replay
+# solves the base plan at HiGHS' default mip_rel_gap (1e-4, ADR-0003) and accepts the
+# incumbent, and the offsets move the objective by less than that. The pick is stable
+# because every solve ends optimal with a measured gap of ~1e-15 (forcing
+# mip_rel_gap=0 gives the same plan costs). Measured margin: macOS arm64 and the Linux
+# CI image agree on every cost for offset scales from 1e-4 down to 1e-7 and diverge
+# again at 1e-8 (2.6375 vs 2.7562), so 1e-4 keeps 1000x. If a pin here fails on one
+# platform only, suspect a changed tie-break or a solve that stopped inside the gap
+# before touching the pin.
 _TIE_OFFSET = 1e-4
+# `index * 37 % 101` repeats at index + 101: the fixture refuses a longer sample.
+_MAX_UNTIED_INTERVALS = 101
 
 
 @pytest.fixture(scope="module")
@@ -34,6 +46,7 @@ def untied_sample(tmp_path_factory):
             interval["buy"] += _TIE_OFFSET * (index * 37 % 101) / 101
             interval["sell"] += _TIE_OFFSET * (index * 53 % 103) / 103
             index += 1
+    assert index <= _MAX_UNTIED_INTERVALS, "buy offsets repeat, ties come back"
     path = tmp_path_factory.mktemp("untied") / "replay_sample_untied.json"
     path.write_text(json.dumps(document))
     return path
@@ -53,21 +66,14 @@ def run(capsys, *args, sample=SAMPLE):
     return code, (json.loads(out.out) if out.out else None), out.err
 
 
-# Realised cost of 2026-09-21 over the tied optimal plans seen so far (T-035): macOS
-# arm64 2.6375, Linux (CI image) 2.7562, and 2.6933 on both once T-012 changed the model.
-_TIED_PLAN_COST = {"2026-09-20": (-0.7249, -0.7249), "2026-09-21": (2.6375, 2.7562)}
-
-
-def test_shipped_sample_plan_is_bounded_whichever_tied_optimum_the_platform_picks(
-    capsys,
-):
+def test_shipped_sample_holds_the_invariants_whichever_tied_optimum_is_picked(capsys):
     code, days, _ = run(capsys)
 
     assert code == 0
     assert [day["date"] for day in days] == ["2026-09-20", "2026-09-21"]
+    self_use = {"2026-09-20": 0.7308, "2026-09-21": 3.9765}
     for day in days:
-        low, high = _TIED_PLAN_COST[day["date"]]
-        assert low - 1e-3 <= day["plan"] <= high + 1e-3
+        assert day["self_use"] == pytest.approx(self_use[day["date"]], abs=1e-3)
         assert day["hindsight"] <= day["plan"] + 1e-6
         assert day["plan"] <= day["self_use"] + 1e-6
         assert day["solve_failures"] == 0
