@@ -13,8 +13,7 @@ from typing import Any
 from . import controller_profile as profile
 from .controller import TouFact, is_number
 
-ENGINES = ("blueprint", "native")
-DEFAULT_ENGINE = "blueprint"
+READ_SERVICE = ("solarman", "read_holding_registers")
 # Lowest pack voltage the controller accepts: the power cap in amperes at that voltage.
 MIN_PACK_VOLTS = 400
 ROLES: Mapping[str, tuple[str, str]] = {
@@ -40,12 +39,6 @@ LIMIT_FIELDS = (
     "telemetry_entities",
     "discharge_energy_entity",
 )
-
-
-def controller_engine(options: Mapping | None) -> str:
-    """`blueprint` unless the stored controller options say `native`."""
-    engine = (options or {}).get("engine", DEFAULT_ENGINE)
-    return engine if engine in ENGINES else DEFAULT_ENGINE
 
 
 @dataclass(frozen=True)

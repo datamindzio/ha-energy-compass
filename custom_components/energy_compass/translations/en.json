@@ -1002,10 +1002,29 @@
       },
       "deye_controller": {
         "title": "Deye controller",
-        "description": "Energy Compass keeps the controller's mode, accepted plan, session and runtime; the Deye (Solarman) controller blueprint executes the plan and writes the inverter. Choose the Solarman inverter device; its six TOU programs are found automatically.\n\n{status}",
+        "description": "Energy Compass keeps the controller's mode, accepted plan, session and runtime. The native engine executes the plan itself and writes the inverter through Solarman; the blueprint engine (deprecated) leaves that to the Deye controller blueprint. Choose the Solarman inverter device; its TOU programs and battery entities are found automatically. High-voltage packs (400–610 V) only. Under Expert settings the “Limits and takeover” fields hold the current limits, previous automations and entity overrides; an empty field keeps its default.\n\n{status}",
         "data": {
           "enabled": "Enable the Deye controller",
-          "device_id": "Solarman inverter device"
+          "device_id": "Solarman inverter device",
+          "engine": "Controller engine",
+          "max_power_w": "Maximum battery power (W)",
+          "max_current": "Maximum battery current (A)",
+          "relinquish_current": "Relinquish current (A)",
+          "max_grid_current": "Maximum grid charging current (A)",
+          "hold_grid_current": "Grid charging current in HOLD (A)",
+          "reached_discharge_current": "Discharge current after a target is reached (A)",
+          "balance_grid_current": "Balance grid current (A)",
+          "voltage_grid_charge_ceiling": "Grid-charge voltage ceiling (V)",
+          "commissioned_battery_modes": "Commissioned battery modes",
+          "old_writers": "Previous battery automations",
+          "telemetry_entities": "Telemetry entities",
+          "discharge_energy_entity": "Discharge energy counter",
+          "charge_entity": "Charge current entity",
+          "discharge_entity": "Discharge current entity",
+          "grid_entity": "Grid charging current entity",
+          "operation_entity": "Battery operation mode entity",
+          "soc_entity": "Battery SOC entity",
+          "voltage_entity": "Battery voltage entity"
         }
       }
     },
@@ -1030,7 +1049,9 @@
       "controller_tou_incomplete": "The device does not have all six TOU programs (time, power, voltage, SOC, charging).",
       "controller_tou_prefix": "The TOU program entity IDs do not share one prefix; restore their default IDs.",
       "controller_device_in_use": "Another Energy Compass entry already controls this device.",
-      "controller_not_released": "Select the Deye mode Off and wait until the base profile is restored (restore pending off) before disabling the controller or changing its device."
+      "controller_not_released": "Select the Deye mode Off and wait until the base profile is restored (restore pending off) before disabling the controller or changing its device.",
+      "controller_entity_missing": "The device lacks what the native controller needs: {missing}.",
+      "controller_low_voltage_pack": "This controller supports high-voltage packs (400–610 V). Measured: {voltage} V. 48 V Deye models are not supported yet."
     },
     "abort": {
       "site_not_registered": "This site was forgotten in another window; re-enable Energy Atlas to register a new one."
@@ -1493,6 +1514,14 @@
     },
     "package_import_refused": {
       "message": "The package state was already imported; set force to import again."
+    }
+  },
+  "selector": {
+    "deye_engine": {
+      "options": {
+        "native": "Native (Energy Compass writes through Solarman)",
+        "blueprint": "Blueprint (deprecated)"
+      }
     }
   }
 }

@@ -1290,6 +1290,23 @@ refuses the device when a program is missing or disabled, when the entity IDs do
 prefix, or when another Energy Compass entry already controls it. Enabling reloads the entry once;
 moving the controller to another device applies live. Both are refused while the mode is not `Off` or a restore is pending: select `Off` and wait until `restore_pending` is off first, otherwise nothing could restore the base profile. The step is visible without the expert toggle.
 
+**Engine.** The step has an **Engine** field. `native` (the default for a new enable) lets Energy Compass
+execute the plan itself and write the inverter through the Solarman entities and the
+`solarman.read_holding_registers` service; no blueprint or automation is needed. `blueprint` (deprecated;
+the value of every entry created before 0.1.38) keeps the Deye controller blueprint as the executor. Changing the
+engine reloads the entry and is refused while the mode is not `Off` or a restore is pending. The native engine finds
+the battery currents, operation mode, SOC, voltage and discharge counter on the same device by the Solarman keys
+`battery_max_charging_current`, `battery_max_discharging_current`, `battery_grid_charging_current`,
+`battery_operation_mode`, `battery`, `battery_voltage` and `total_battery_discharge`, and names what is missing.
+Only high-voltage packs (400–610 V) are supported: a pack measured below 400 V is refused.
+
+**Limits and takeover** (expert settings). The maximum battery power defaults to the smaller of the
+charge and discharge power in the Energy Compass settings; the currents default to the entity's own maximum, capped at
+that power divided by 400 V. Hold, reached-discharge and balance currents, the grid-charge voltage ceiling, the commissioned
+battery modes, the previous automations to wait for, the telemetry entities, the discharge counter and an override for
+each entity can be set; an empty field keeps its default. Limits apply on the next run without a reload. When one
+blueprint automation exists, its inputs are loaded into these fields for you to review before saving.
+
 An installation that ran the 0.1.36 package, has one Energy Compass entry and exactly one Solarman device
 with all six programs gets the controller enabled automatically at the first start of 0.1.37. The mode
 starts at `Off`, so nothing is written until you choose one; see

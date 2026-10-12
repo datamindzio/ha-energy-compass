@@ -30,14 +30,13 @@ from homeassistant.util import dt as dt_util
 from . import controller_profile as profile
 from .controller import TouFact
 from .controller_run import ControllerUnavailable, DeyeExecutor
-from .controller_setup import derive_limits, entities_of, resolve
+from .controller_setup import READ_SERVICE, derive_limits, entities_of, resolve
 
 if TYPE_CHECKING:
     from .controller_ha import DeyeController
 
 _LOGGER = logging.getLogger(__name__)
 
-READ_SERVICE = ("solarman", "read_holding_registers")
 ATTRIBUTES = ("min", "max", "step", "options", "current")
 NO_ATTRIBUTES: Mapping[str, Any] = MappingProxyType({})
 

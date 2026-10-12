@@ -21,8 +21,9 @@ from homeassistant.util import dt as dt_util
 
 from . import controller as core
 from . import controller_hardware as hardware
+from .controller_profile import PACK_VOLTAGE_RANGE
 from .controller_run import ControllerUnavailable
-from .controller_setup import controller_engine
+from .controller_setup import LIMIT_FIELDS, READ_SERVICE, ROLES, resolve
 from .settings import DOMAIN, NUMBERS
 
 _LOGGER = logging.getLogger(__name__)
@@ -103,6 +104,97 @@ def device_in_use(hass: HomeAssistant, entry_id: str, device_id: str) -> bool:
     )
 
 
+BLUEPRINT_PATH = "energy_compass/deye_solarman_controller.yaml"
+
+
+def blueprint_automations(hass: HomeAssistant) -> list:
+    """Automation entities that use the Deye blueprint, switched on or off."""
+    from homeassistant.components import automation
+
+    if automation.DOMAIN not in hass.data:
+        return []
+    return [
+        entity
+        for entity in hass.data[automation.DATA_COMPONENT].entities
+        if entity.referenced_blueprint == BLUEPRINT_PATH
+    ]
+
+
+def active_blueprint_automations(hass: HomeAssistant) -> list[str]:
+    """Entity ids of blueprint automations that are on; `off` ones cannot write."""
+    return [
+        entity.entity_id
+        for entity in blueprint_automations(hass)
+        if (state := hass.states.get(entity.entity_id)) is not None
+        and state.state == "on"
+    ]
+
+
+def blueprint_prefill(hass: HomeAssistant, resolved) -> dict[str, dict]:
+    """Limits and entity overrides of the one blueprint automation, for the options form.
+
+    Entity inputs only where they differ from what the device resolves to. Nothing is
+    applied until the user confirms the form.
+    """
+    found = blueprint_automations(hass)
+    if len(found) != 1:
+        return {}
+    # The blueprint's first action copies every input, defaults included, into
+    # variables: they are what this automation actually runs with.
+    actions = (found[0].raw_config or {}).get("actions") or [{}]
+    inputs = actions[0].get("variables") or {}
+    limits = {
+        key: inputs[key]
+        for key in LIMIT_FIELDS
+        if inputs.get(key) not in (None, "", []) and inputs.get(key) != resolved.energy
+    }
+    entities = {
+        role: inputs[f"{role}_entity"]
+        for role in ROLES
+        if inputs.get(f"{role}_entity")
+        and inputs[f"{role}_entity"] != resolved.entities.get(role)
+    }
+    return {"limits": limits, "entities": entities}
+
+
+def resolve_device(hass: HomeAssistant, device_id: str, overrides=None):
+    """The native controller's entities on one device."""
+    return resolve(
+        (
+            core.TouFact(
+                item.entity_id,
+                item.domain,
+                item.platform,
+                item.translation_key,
+                item.disabled,
+            )
+            for item in er.async_entries_for_device(
+                er.async_get(hass), device_id, include_disabled_entities=True
+            )
+        ),
+        overrides,
+    )
+
+
+def native_problem(
+    hass: HomeAssistant, device_id: str, overrides=None
+) -> tuple[str, dict[str, str]] | None:
+    """Why the native controller cannot run on this device: (error key, placeholders)."""
+    resolved = resolve_device(hass, device_id, overrides)
+    missing = list(resolved.missing)
+    if not hass.services.has_service(*READ_SERVICE):
+        missing.append(".".join(READ_SERVICE))
+    if missing:
+        return "controller_entity_missing", {"missing": ", ".join(missing)}
+    voltage = hass.states.get(resolved.entities["voltage"])
+    if voltage is not None and core.is_number(voltage.state):
+        # Only high-voltage packs are supported (design DD-15).
+        low = float(voltage.state) < PACK_VOLTAGE_RANGE[0]
+        if low:
+            return "controller_low_voltage_pack", {"voltage": voltage.state}
+    return None
+
+
 def async_auto_enable(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Enable the controller for a lone installation that already ran the package."""
     if "controller" in entry.options:
@@ -143,7 +235,7 @@ class DeyeController:
         self.state = core.ControllerState()
         self.session = 0.0
         self.device_id: str | None = None
-        self.engine = controller_engine(entry.options.get("controller"))
+        self.engine = core.controller_engine(entry.options.get("controller"))
         self.host = None
         self.resolution = core.TouResolution(None, (), None)
         self._store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.controller")

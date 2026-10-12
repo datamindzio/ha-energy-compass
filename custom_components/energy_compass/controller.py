@@ -35,6 +35,8 @@ ROW_NUMBERS = (
 )
 SIGNED_ROW_NUMBERS = frozenset({"buy_per_kwh", "sell_per_kwh"})
 MODES = ("Off", "Simulation", "Auto")
+ENGINES = ("blueprint", "native")
+DEFAULT_ENGINE = "blueprint"
 PLAN_REASONS = ("ok", "session", "revoked", "sources")
 BATTERY_KEYS = (
     "capacity_kwh",
@@ -705,11 +707,19 @@ def import_package(
     return PackageImport(state, session, dropped, kept)
 
 
+def controller_engine(options: Mapping | None) -> str:
+    """`blueprint` unless the stored controller options say `native`."""
+    engine = (options or {}).get("engine", DEFAULT_ENGINE)
+    return engine if engine in ENGINES else DEFAULT_ENGINE
+
+
 def controller_options_change(
     old: Mapping | None, new: Mapping | None
 ) -> Literal["none", "live", "reload"]:
     old, new = old or {}, new or {}
     if bool(old.get("enabled")) != bool(new.get("enabled")):
+        return "reload"
+    if new.get("enabled") and controller_engine(old) != controller_engine(new):
         return "reload"
     if new.get("enabled") and old.get("device_id") != new.get("device_id"):
         return "live"

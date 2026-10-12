@@ -9,6 +9,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.energy_compass import controller as core
+from custom_components.energy_compass.controller_setup import LIMIT_FIELDS, ROLES
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
 from custom_components.energy_compass.settings import (
     default_configuration,
@@ -342,8 +343,16 @@ def test_option_texts_exist_in_every_translation_file(path):
     assert options["step"]["menu"]["menu_options"]["deye_controller"]
     step = options["step"]["deye_controller"]
     assert "{status}" in step["description"]
-    assert set(step["data"]) == {"enabled", "device_id"}
+    assert set(step["data"]) == {
+        "enabled",
+        "device_id",
+        "engine",
+        *LIMIT_FIELDS,
+        *(f"{role}_entity" for role in ROLES),
+    }
     assert set(options["error"]) >= {
+        "controller_entity_missing",
+        "controller_low_voltage_pack",
         "controller_device_required",
         "controller_tou_incomplete",
         "controller_tou_prefix",

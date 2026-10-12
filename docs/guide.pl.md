@@ -1310,6 +1310,22 @@ wspólnego prefiksu albo gdy inny wpis Energy Compass już steruje tym urządzen
 wpis raz; przeniesienie sterownika na inne urządzenie działa na żywo. Oba są odrzucane, gdy tryb nie jest `Off` albo oczekuje przywrócenie: najpierw wybierz `Off` i poczekaj, aż `restore_pending` wygaśnie, bo inaczej nic nie przywróci profilu bazowego. Krok jest widoczny bez przełącznika
 ustawień eksperckich.
 
+**Silnik.** Krok ma pole **Silnik**. `native` (domyślny przy nowym włączeniu) pozwala Energy Compass samemu
+wykonywać plan i zapisywać falownik przez encje Solarman oraz usługę `solarman.read_holding_registers`; blueprint ani
+automatyzacja nie są potrzebne. `blueprint` (przestarzały; wartość każdego wpisu utworzonego przed 0.1.38) zostawia
+wykonanie blueprintowi sterownika Deye. Zmiana silnika przeładowuje wpis i jest odrzucana, gdy tryb nie jest `Off` albo
+oczekuje przywrócenie. Silnik natywny znajduje prądy baterii, tryb pracy, SOC, napięcie i licznik rozładowania na tym samym
+urządzeniu po kluczach Solarman `battery_max_charging_current`, `battery_max_discharging_current`,
+`battery_grid_charging_current`, `battery_operation_mode`, `battery`, `battery_voltage` i `total_battery_discharge` oraz
+wskazuje, czego brakuje. Obsługiwane są tylko pakiety wysokonapięciowe (400–610 V): pakiet zmierzony poniżej 400 V jest odrzucany.
+
+**Limity i przejęcie** (ustawienia eksperckie). Maksymalna moc baterii domyślnie to mniejsza z mocy ładowania
+i rozładowania z ustawień Energy Compass; prądy domyślnie wynoszą maksimum encji, ograniczone tą mocą podzieloną przez 400 V.
+Można ustawić prądy HOLD, po osiągnięciu celu rozładowania i balansowania, sufit napięcia ładowania z sieci, zatwierdzone tryby
+baterii, dawne automatyzacje, na które sterownik czeka, encje telemetrii, licznik rozładowania i nadpisanie każdej encji; puste
+pole zachowuje wartość domyślną. Limity działają od następnego przebiegu bez przeładowania. Gdy istnieje jedna automatyzacja
+blueprintu, jej wejścia są wczytywane do tych pól do sprawdzenia przed zapisem.
+
 Instalacja, która używała pakietu 0.1.36, ma jeden wpis Energy Compass i dokładnie jedno urządzenie Solarman
 ze wszystkimi sześcioma programami, dostaje sterownik włączony automatycznie przy pierwszym starcie
 0.1.37. Tryb zaczyna od `Off`, więc nic się nie zapisuje, dopóki go nie wybierzesz; zob.
