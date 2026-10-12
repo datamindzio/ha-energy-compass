@@ -11,6 +11,7 @@ import random
 import pytest
 from deye_native_harness import (
     decision_dict,
+    entities_of,
     limits_of,
     snapshot_of,
 )
@@ -271,3 +272,282 @@ def test_corpus_covers_every_state_reason_and_branch():
     assert {"ok", "telemetria", "plan", "nastawy", "bateria", "napięcie"} <= reasons
     assert all(count >= 20 for count in seen.values()), seen
     assert warnings == {"", "CURTAIL nieobsługiwany: zastosowano HOLD"}
+
+
+def decide_now(h, *, base=False, ceiling=None):
+    runtime = h.data[RT]["attributes"].get("runtime", {})
+    return profile.decide(
+        snapshot_of(h, h.ctx, runtime), limits_of(h.ctx), ceiling, base=base
+    )
+
+
+def perturb(h, rng, desired):
+    """Move some live entity states away from (or onto) the desired profile."""
+    for entity, value in desired.items():
+        roll = rng.random()
+        if roll < 0.55:
+            h.data[entity]["state"] = str(value)
+        elif roll < 0.7:
+            h.data[entity]["state"] = rng.choice(["0", "1", "unknown", "Grid", "Sell"])
+        elif roll < 0.8:
+            h.data[entity]["state"] = str(value)[:-1] or "0"
+
+
+def command_tuples(commands):
+    return [
+        (c.entity, c.value, c.phase)
+        if isinstance(c, profile.Command)
+        else (c["entity"], c["value"], c["phase"])
+        for c in commands
+    ]
+
+
+def random_runtime(rng, desired):
+    entities = list(desired)
+    runtime = {}
+    if rng.random() < 0.4:
+        runtime["uncertain"] = rng.sample(entities, rng.randint(1, 3))
+    if rng.random() < 0.5:
+        runtime["confirmed"] = {
+            e: desired[e] if rng.random() < 0.8 else 0
+            for e in entities
+            if rng.random() < 0.9
+        }
+    return runtime
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_command_list_parity_on_the_scenario_corpus(seed):
+    rng = random.Random(1000 + seed)
+    produced = 0
+    for case in range(25):
+        h = oracle()
+        scenario(h, rng)
+        target = decide_now(h, base=rng.random() < 0.3)
+        perturb(h, rng, target.desired)
+        runtime = random_runtime(rng, target.desired)
+        h.data[RT]["attributes"]["runtime"] = runtime
+        want = render(h, "commands", target=decision_dict(target))
+        got = profile.diff(snapshot_of(h, h.ctx, runtime), target)
+        assert command_tuples(got) == command_tuples(want), (seed, case)
+        produced += bool(want)
+    assert produced
+
+
+def mutate_after_target(h, rng):
+    """A change between the target and the re-check, as the mid-run tests make."""
+    kind = rng.choice(
+        [
+            "none",
+            "none",
+            "mode",
+            "writer",
+            "stale",
+            "voltage",
+            "soc",
+            "row",
+            "expiry",
+            "generation",
+            "operation",
+            "time",
+        ]
+    )
+    if kind == "mode":
+        h.data[MODE]["state"] = rng.choice(["Off", "Simulation", "Auto"])
+    elif kind == "writer":
+        h.data[h.ctx["old_writers"][0]]["state"] = "on"
+    elif kind == "stale":
+        h.data[rng.choice(TELEMETRY)]["last_reported"] = "2026-09-19T09:00:00+00:00"
+    elif kind == "voltage":
+        h.data[h.ctx["voltage_entity"]]["state"] = rng.choice(["516.6", "521.1", "560"])
+    elif kind == "soc":
+        h.data[h.ctx["soc_entity"]]["state"] = rng.choice(["20", "100", "50"])
+    elif kind == "row":
+        snapshot = h.data[CACHE]["attributes"].get("snapshot") or {}
+        for row in snapshot.get("intervals", [])[:1]:
+            row["state"] = rng.choice(ROW_STATES)
+    elif kind == "expiry":
+        snapshot = h.data[CACHE]["attributes"].get("snapshot") or {}
+        if snapshot:
+            snapshot["valid_until"] = h.now.isoformat()
+    elif kind == "generation":
+        snapshot = h.data[CACHE]["attributes"].get("snapshot") or {}
+        if snapshot:
+            snapshot["generated_at"] = "2026-09-19T09:41:59+00:00"
+    elif kind == "operation":
+        h.data[h.ctx["operation_entity"]]["state"] = rng.choice(["Voltage", "Capacity"])
+    elif kind == "time":
+        h.data["time.inverter_deye_program_2_time"]["state"] = "07:00:00"
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_guard_and_cap_only_replan_parity_on_the_scenario_corpus(seed):
+    rng = random.Random(2000 + seed)
+    for case in range(25):
+        h = oracle()
+        scenario(h, rng)
+        ceiling = ceilings(h, rng)
+        target = decide_now(h, ceiling=ceiling)
+        runtime = random_runtime(rng, target.desired)
+        h.data[RT]["attributes"]["runtime"] = runtime
+        mutate_after_target(h, rng)
+        fresh = decide_now(h, ceiling=ceiling)
+        baseline = decide_now(h, base=True, ceiling=ceiling)
+        snapshot = snapshot_of(h, h.ctx, runtime)
+        command = profile.Command(
+            *rng.choice(
+                [
+                    (e, v, rng.choice(["disable", "limits", "enable"]))
+                    for e, v in target.desired.items()
+                ]
+            )
+        )
+        cleanup, failed = rng.random() < 0.3, rng.random() < 0.2
+        attempt = rng.choice([1, 1, 2])
+        kwargs = {
+            "runtime": runtime,
+            "target": decision_dict(target),
+            "fresh": decision_dict(fresh),
+            "baseline": decision_dict(baseline),
+        }
+        want = render(
+            h,
+            "allowed",
+            command=command._asdict(),
+            cleanup=cleanup,
+            failed=failed,
+            **kwargs,
+        )
+        got = profile.guard(
+            snapshot,
+            command,
+            target=target,
+            fresh=fresh,
+            baseline=baseline,
+            cleanup=cleanup,
+            failed=failed,
+        )
+        assert got == bool(want), (seed, case)
+        want = render(
+            h, "replan", cleanup=cleanup, transaction_attempt=attempt, **kwargs
+        )
+        got = profile.cap_only_replan(
+            snapshot, target, fresh, cleanup=cleanup, transaction_attempt=attempt
+        )
+        assert got == bool(want), (seed, case)
+
+
+def test_guard_and_cap_only_replan_corpus_reaches_both_outcomes():
+    rng = random.Random(77)
+    outcomes = {"guard": set(), "replan": set()}
+    for _ in range(400):
+        h = oracle()
+        scenario(h, rng)
+        ceiling = ceilings(h, rng)
+        target = decide_now(h, ceiling=ceiling)
+        runtime = random_runtime(rng, target.desired)
+        h.data[RT]["attributes"]["runtime"] = runtime
+        mutate_after_target(h, rng)
+        fresh = decide_now(h, ceiling=ceiling)
+        baseline = decide_now(h, base=True, ceiling=ceiling)
+        snapshot = snapshot_of(h, h.ctx, runtime)
+        command = profile.Command(
+            *rng.choice(
+                [
+                    (e, v, rng.choice(["disable", "limits", "enable"]))
+                    for e, v in target.desired.items()
+                ]
+            )
+        )
+        cleanup = rng.random() < 0.3
+        outcomes["guard"].add(
+            profile.guard(
+                snapshot,
+                command,
+                target=target,
+                fresh=fresh,
+                baseline=baseline,
+                cleanup=cleanup,
+                failed=False,
+            )
+        )
+        outcomes["replan"].add(
+            profile.cap_only_replan(
+                snapshot, target, fresh, cleanup=cleanup, transaction_attempt=1
+            )
+        )
+    assert outcomes == {"guard": {True, False}, "replan": {True, False}}
+
+
+def raw_bank(h, rng):
+    """A holding-register answer around the sample's own values, with faults."""
+    registers = profile.register_map(entities_of(h.ctx, h.prefix))
+    raw = {}
+    for entity, register in registers.items():
+        state = h.data[entity]["state"]
+        if entity.startswith("select."):
+            value = {"Disabled": 0, "Grid": 1, "Sell": 32}.get(state, 0)
+        else:
+            value = round(profile._float(state) / register.scale)
+        roll = rng.random()
+        if roll < 0.6:
+            raw[register.address] = value
+        elif roll < 0.7:
+            raw[register.address] = value + rng.choice([-1, 1, 2, 45])
+        elif roll < 0.78:
+            raw[str(register.address)] = value
+        elif roll < 0.84:
+            raw[register.address] = rng.choice(["x", None, float("nan"), 7.9, "12"])
+        elif roll < 0.9:
+            raw[register.address] = rng.choice([2, 3, 33, 31])
+    return raw
+
+
+def test_register_map_parity_with_the_blueprint():
+    h = oracle()
+    got = profile.register_map(entities_of(h.ctx, h.prefix))
+    assert [(e, r.address, r.scale) for e, r in got.items()] == [
+        (e, r["address"], r["scale"]) for e, r in h.ctx["registers"].items()
+    ]
+    assert len(got) == 27
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_observation_and_confirmation_parity(seed):
+    rng = random.Random(3000 + seed)
+    for case in range(25):
+        h = oracle()
+        scenario(h, rng)
+        registers = profile.register_map(entities_of(h.ctx, h.prefix))
+        raw = rng.choice([raw_bank(h, rng), raw_bank(h, rng), None, "bad", {}])
+        want = render(h, "observed", raw_response=raw if raw is not None else {})
+        got = profile.observe(raw, registers)
+        if raw is None:
+            want = render(h, "observed", raw_response=None)
+        assert got == want, (seed, case)
+        for entity, register in registers.items():
+            for value in rng.sample(
+                [0, 1, 14, 14.0, 49.6, "Grid", "Sell", "Disabled", "Other"], 3
+            ):
+                if entity.startswith("select.") != isinstance(value, str):
+                    continue
+                command = {"entity": entity, "value": value, "phase": "enable"}
+                response = raw if isinstance(raw, dict) else {}
+                raw_value = render(
+                    h,
+                    "raw_value",
+                    raw_response=response,
+                    command=command,
+                    registers=h.ctx["registers"],
+                )
+                confirmed = render(
+                    h,
+                    "confirmed_write",
+                    raw_response=response,
+                    raw_value=raw_value,
+                    command=command,
+                    registers=h.ctx["registers"],
+                )
+                assert profile.confirms(
+                    response, profile.Command(**command), register
+                ) == bool(confirmed), (seed, case, entity, value)
