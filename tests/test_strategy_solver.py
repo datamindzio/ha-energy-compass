@@ -249,7 +249,9 @@ def test_autonomy_floor_slack_is_zero_when_floor_met():
 
 def test_peak_import_weight_flattens_import_profile():
     rows = [(0.30, 0.20, 0.0, 0.0), (0.30, 0.20, 0.0, 4.0)]
-    b = battery()
+    # SELF_CONSUME imports only beside a discharge at its power limit, so the
+    # 2 kW battery is what leaves 2 kWh of the 4 kWh hour to the grid.
+    b = battery(discharge_kw=2)
     baseline = solve(problem(rows, battery=b))
     assert baseline.flows[0].grid_import_kwh == pytest.approx(0.0, abs=1e-6)
     assert baseline.flows[1].grid_import_kwh == pytest.approx(4.0, abs=1e-6)

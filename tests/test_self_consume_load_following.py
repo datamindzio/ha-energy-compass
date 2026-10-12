@@ -9,8 +9,8 @@ from test_dispatch_policy import dispatch
 from custom_components.energy_compass.engine.dispatch_policy import validate_modes
 from custom_components.energy_compass.engine.machine_state import machine_state
 from custom_components.energy_compass.engine.models import (
-    Flow,
     FlexibleLoadRequest,
+    Flow,
     SolveError,
 )
 from custom_components.energy_compass.engine.optimize import (

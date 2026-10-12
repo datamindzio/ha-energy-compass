@@ -5,6 +5,7 @@ from datetime import UTC, timedelta
 import numpy as np
 
 from .charge_price import price_allows_grid_charge
+from .idle_drain import drain_schedule
 from .machine_state import machine_state
 from .models import Problem, SolveError
 
@@ -84,49 +85,74 @@ def _initial(problem):
     ), problem.initial_dispatch_mode_since
 
 
-def _follow_load(model, problem, v, x, slot, hours, extra_load_max) -> None:
-    """Allow import in SELF_CONSUME only when the battery can give no more.
+def _follow_load(model, problem, v, x, slot, hours, flex_max, can_empty) -> None:
+    """Make SELF_CONSUME discharge what the house draws, up to what the battery gives.
 
     The inverter discharges whatever the house draws, so a partial discharge
     next to grid import is not a state a controller can hold. Import needs the
     discharge at its interval power limit or the battery emptied to its reserve.
+    Written on the discharge, not on the import: the bound is the (small) load,
+    not the (large) grid connection, which keeps the relaxation tight.
     """
     battery = problem.battery
-    import_max = model.upper[v["gin"]]
     power_limit = min(
         model.upper[v["bd"]], problem.site.inverter_kw * hours - slot.pv_kwh
     )
-    demand_max = slot.load_kwh + extra_load_max - slot.pv_kwh
+    demand = max(slot.load_kwh - slot.pv_kwh, 0)
+    demand_max = demand + flex_max
     reserve = battery.capacity_kwh * battery.minimum_soc_fraction
     spare = model.upper[v["energy"]] - reserve
-    limits = []
-    # Below the demand the power limit binds; above it discharge covers the
-    # load before the limit is reached.
-    if power_limit <= demand_max + 1e-9:
-        power = v["self_consume_power"] = model.variable(binary=True)
-        model.constrain({v["bd"]: 1, power: -power_limit}, 0, np.inf)
-        limits.append(power)
-    # Any discharge ends at or above the reserve, so a battery that ends on it
-    # has just been emptied.
-    if spare > 0:
+    x_sc = x["SELF_CONSUME"]
+    # `relief` is the share of the obligation an emptied battery is excused from.
+    relief = {}
+    if can_empty and spare > 0:
         empty = v["self_consume_empty"] = model.variable(binary=True)
+        # Any discharge ends at or above the reserve, so a battery that ends on
+        # it has just been emptied.
         model.constrain(
             {v["energy"]: 1, empty: spare}, -np.inf, model.upper[v["energy"]]
         )
-        limits.append(empty)
-    model.constrain(
-        {
-            v["gin"]: 1,
-            x["SELF_CONSUME"]: import_max,
-            **{index: -import_max for index in limits},
-        },
-        -np.inf,
-        import_max,
-    )
-    if limits:
+        relief[empty] = 1
+    flexible = flex_max > 0
+    flex = {v["flex_load"]: -1} if flexible else {}
+    if power_limit >= demand_max - 1e-9:
+        # Discharge reaches the load before its own limit: cover all of it.
         model.constrain(
-            {**{index: 1 for index in limits}, x["SELF_CONSUME"]: -1}, -np.inf, 0
+            {v["bd"]: 1, **flex, x_sc: -demand_max, **{e: demand_max for e in relief}},
+            -flex_max,
+            np.inf,
         )
+        coupled = {**relief}
+    elif not flexible:
+        # The limit binds: discharge it all.
+        model.constrain(
+            {v["bd"]: 1, x_sc: -power_limit, **{e: power_limit for e in relief}},
+            0,
+            np.inf,
+        )
+        coupled = {**relief}
+    else:
+        # Either the limit binds or the (variable) load is covered.
+        power = v["self_consume_power"] = model.variable(binary=True)
+        model.constrain(
+            {v["bd"]: 1, power: -power_limit, **{e: power_limit for e in relief}},
+            0,
+            np.inf,
+        )
+        model.constrain(
+            {
+                v["bd"]: 1,
+                **flex,
+                x_sc: -demand_max,
+                power: demand_max,
+                **{e: demand_max for e in relief},
+            },
+            -flex_max,
+            np.inf,
+        )
+        coupled = {**relief, power: 1}
+    if coupled:
+        model.constrain({**coupled, x_sc: -1}, -np.inf, 0)
 
 
 def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) -> None:
@@ -138,7 +164,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
     starts = [s.start.astimezone(UTC) for s in problem.slots]
     coverage_end = problem.slots[-1].end.astimezone(UTC)
     previous, since = _initial(problem)
-    for slot, v in zip(problem.slots, vectors, strict=True):
+    drains = drain_schedule(problem)
+    lowest = battery.initial_kwh
+    for slot, v, drain in zip(problem.slots, vectors, drains, strict=True):
         hours = (
             slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
         ).total_seconds() / 3600
@@ -269,8 +297,12 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             -np.inf,
             model.upper[v["gout"]],
         )
+        # Even discharging at full power from the start, the pack may not reach
+        # its reserve yet; then it cannot be emptied in this interval.
+        lowest -= model.upper[v["bd"]] / battery.eta_discharge + drain
         if available["SELF_CONSUME"]:
-            _follow_load(model, problem, v, x, slot, hours, extra_load_max)
+            can_empty = lowest <= battery.capacity_kwh * battery.minimum_soc_fraction
+            _follow_load(model, problem, v, x, slot, hours, extra_load_max, can_empty)
     if problem.initial_battery_mode is not None:
         held_until = problem.initial_battery_mode_since.astimezone(UTC) + dwell
         for start, v in zip(starts, vectors, strict=True):

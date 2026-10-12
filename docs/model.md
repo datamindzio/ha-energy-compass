@@ -25,9 +25,11 @@ For each interval of `h` hours, `activity = minimum_mode_power_kw × h` and `sur
 | CHARGE_GRID | Charge at least surplus + activity; discharge and curtailment zero |
 | CHARGE_PV | Charge between activity and surplus; discharge and curtailment zero |
 | DISCHARGE_GRID | Discharge and grid export each at least activity; charge and curtailment zero |
-| SELF_CONSUME | Discharge at least activity; charge, grid export and curtailment zero |
+| SELF_CONSUME | Discharge at least activity; charge, grid export and curtailment zero; grid import only while the battery can give no more (see below) |
 | HOLD | Charge, discharge and curtailment zero |
 | CURTAIL | Curtailment at least activity; charge and discharge zero |
+
+SELF_CONSUME is load-following: the inverter discharges whatever the house draws, so the plan cannot hold a small discharge next to grid import. In a SELF_CONSUME interval the discharge covers the whole demand `max(load - PV, 0)`. Grid import is possible only when the discharge is at its interval power limit (`discharge_kw × h`, also bounded by `inverter_kw × h - PV`) or when the battery has been emptied down to its operating reserve in that interval. Otherwise the interval is HOLD with full import. The model writes this as a lower bound on the discharge (`bd >= demand × x_SELF_CONSUME`, relaxed by one binary for the emptied battery), and `validate_modes` re-checks it on the solved flows. A flexible-load probe adds its load to the demand, so in a SELF_CONSUME interval it must be discharged as well or the mode changes. The rule belongs to the mode model, so it applies only while `minimum_mode_minutes` is above zero.
 
 The CURTAIL restriction is deliberately conservative: curtailment cannot mask a battery mode transition. Duration zero retains the previous simultaneous-curtailment behavior. Tiny intervals whose activity is at or below 2e-6 kWh cannot carry a material mode because the classifier cannot reliably resolve it; only truthful HOLD is available, or the plan is infeasible.
 

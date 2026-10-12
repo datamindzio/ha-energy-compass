@@ -120,7 +120,9 @@ def test_arbitrage_still_charges_through_the_drain():
     plan = solve(_problem(rows, battery))
     assert sum(flow.charge_kwh for flow in plan.flows[:2]) > 0
     assert sum(flow.discharge_kwh for flow in plan.flows[2:]) > 0
-    assert plan.flows[1].end_soc_kwh > plan.flows[0].end_soc_kwh
+    # Full less the standby loss of both cheap hours. SELF_CONSUME cannot spend a
+    # partial discharge beside import, so the cheap hours are not topped up twice.
+    assert plan.flows[1].end_soc_kwh == pytest.approx(8.0 - 2 * 0.13)
 
 
 def test_terminal_preserve_is_relaxed_only_by_the_modelled_drain():

@@ -538,7 +538,7 @@ hours: `activity = minimum_mode_power_kw × h` (default 0.1 kW) and
 | `CHARGE_GRID` | Charge from grid | Battery charge ≥ surplus + activity — more is charged than PV surplus can supply, so the grid feeds the battery. No discharge, no curtailment. | `allow_grid_charge` on; price ≤ grid-charge ceiling when that limit is on. |
 | `CHARGE_PV` | Charge from PV | activity ≤ charge ≤ surplus — only solar surplus charges. No discharge, no curtailment. | PV surplus exists. |
 | `DISCHARGE_GRID` | Discharge with export | Discharge ≥ activity **and** grid export ≥ activity — the battery sells energy. | `allow_battery_export` on; grid export capacity > 0; Sell only PV budget and export-benefit hurdle allow it. |
-| `SELF_CONSUME` | Self-consumption | Discharge ≥ activity, no charge, no export, no curtailment — the battery covers the house. | SOC above operating reserve. |
+| `SELF_CONSUME` | Self-consumption | Discharge ≥ activity, no charge, no export, no curtailment — the battery covers the house. Load-following: grid import only while the discharge is at its power limit or the battery is emptied to its reserve. | SOC above operating reserve. |
 | `HOLD` | Hold | No charge, no discharge, no curtailment — the battery idles; the grid/PV cover load. | Always available. |
 | `CURTAIL` | Curtail PV | Curtailment ≥ activity, no battery activity. | `allow_curtailment` on. |
 
@@ -577,6 +577,11 @@ Rules (defaults: 60 min, 0.1 kW):
 - **Every newly started mode — including HOLD and CURTAIL — lasts at least
   `minimum_mode_minutes`.** Only a final passive HOLD/CURTAIL run may be clipped by coverage. The coordinator persists the
   accepted mode and its start; recalculation and restart preserve the clock.
+- **`SELF_CONSUME` follows the load.** The inverter discharges whatever the house draws, so the
+  plan never pairs a small discharge with grid import: in a `SELF_CONSUME` interval the battery
+  covers the whole demand, and import appears only once the discharge is at its interval power
+  limit or the battery has been emptied to its reserve. Otherwise the row is `HOLD` with full
+  import. Applies while `minimum_mode_minutes` is above 0.
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
