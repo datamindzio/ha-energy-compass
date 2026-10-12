@@ -11,8 +11,9 @@ The snapshot is rebuilt after every await, at the points where the blueprint
 renders its templates again: a change that lands between two writes (a newer
 plan, a mode switch, an old automation starting) must be seen by the next guard.
 
-Not here yet: the run lock with its re-run flag, triggers, the pause switch and the
-layout probe. Their seams are marked in `run`.
+The run lock with its re-run flag and the triggers live in `controller_native`. The
+register layout probe runs here, once per session, before the first write and in
+Simulation.
 """
 
 import logging
@@ -21,6 +22,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Protocol
 
+from . import controller_hardware as hardware
 from . import controller_profile as profile
 from . import controller_texts as texts
 
@@ -84,10 +86,13 @@ class DeyeExecutor:
         port: ExecutorPort,
         limits: Callable[[], profile.Limits],
         language: str = "en",
+        probe_layout: bool = True,
     ) -> None:
         self.port = port
+        self.probe_layout = probe_layout
         self._limits = limits
         self.language = language
+        self._layout_session: Any = None
 
     def _snapshot(self, run: _Run, stage: str) -> profile.Snapshot:
         """A fresh snapshot carrying the runtime this executor last stored.
@@ -185,14 +190,17 @@ class DeyeExecutor:
             await self._persist(run, self._outcome_runtime(run, "simulation_blocked"))
             return "simulation_rejected"
         if snapshot.mode == "Simulation":
+            if not await self._layout_holds(run, snapshot):
+                return "layout_mismatch"
             return "simulation"
         if snapshot.paused:
             return await self._paused(run)
         if snapshot.mode == "Off" and not run.pending:
             return "released"
-        # The layout probe (DD-13) belongs here, before takeover.
         if not decision.writers_safe:
             return "takeover_blocked"
+        if not await self._layout_holds(run, snapshot):
+            return "layout_mismatch"
         session = (snapshot.controller or {}).get("session")
         cleanup = (
             not decision.valid
@@ -200,6 +208,41 @@ class DeyeExecutor:
             or (run.pending and run.runtime.get("owned_session") != session)
         )
         return await self._transactions(run, cleanup)
+
+    async def _layout_holds(self, run: _Run, snapshot: profile.Snapshot) -> bool:
+        """The register layout probe, once per session; a mismatch blocks every write."""
+        session = (snapshot.controller or {}).get("session")
+        if not self.probe_layout or self._layout_session == session:
+            return True
+        try:
+            response = await self.port.read_registers(
+                profile.READ_ADDRESS, profile.READ_COUNT
+            )
+        except Exception:
+            _LOGGER.debug("Deye layout probe read failed", exc_info=True)
+            response = None
+        snapshot = self._snapshot(run, "probe")
+        mismatched = hardware.probe(
+            response,
+            run.registers,
+            {entity: snapshot.state(entity) for entity in run.registers},
+        )
+        if not mismatched:
+            self._layout_session = session
+            return True
+        reason = self._text(
+            "layout_mismatch", {"entities": hardware.listed(mismatched)}
+        )
+        await self._persist(
+            run,
+            {
+                **run.runtime,
+                "code": "blocked",
+                "reason_code": "layout_mismatch",
+                "reason": reason,
+            },
+        )
+        return False
 
     async def _paused(self, run: _Run) -> str:
         """Hold every write; `restore_pending` and `uncertain` stay as they are."""

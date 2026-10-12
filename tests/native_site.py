@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from controller_support import PREFIX, START, register_solarman
 from homeassistant.core import ServiceCall, SupportsResponse
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -17,7 +18,17 @@ from custom_components.energy_compass import controller_profile as profile
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
 from custom_components.energy_compass.settings import default_configuration
 
+DEVICE_TYPE = "HV 3-Phase Hybrid Inverter"
+DEVICE_ATTRIBUTES = {
+    "Protocol Version": "1.4",
+    "Control Board Firmware Version": "0000-0000-00000",
+    "Communication Board Firmware Version": "0000-0000-0000",
+    "Rated Power": 8000,
+    "Serial Number": "SN-REDACTED",
+    "Modbus Address": 1,
+}
 SENSORS = {
+    "device": ("sensor", "inverter_deye_device", DEVICE_TYPE, DEVICE_ATTRIBUTES),
     "battery": ("sensor", "inverter_deye_battery", "51", {}),
     "battery_voltage": ("sensor", "inverter_deye_battery_voltage", "537.1", {}),
     "total_battery_discharge": (
@@ -127,9 +138,10 @@ class Inverter:
         self.gate = None
 
 
-def register_inverter(hass):
+def register_inverter(hass, device_type=DEVICE_TYPE, protocol="1.4"):
     """The Solarman device with the 30 TOU entities and the controller's own."""
     device = register_solarman(hass)
+    dr.async_get(hass).async_update_device(device.id, model="SG0*HP3")
     registry = er.async_get(hass)
     solarman = next(iter(hass.config_entries.async_entries("solarman")))
     for key, (domain, object_id, state, attributes) in SENSORS.items():
@@ -142,6 +154,9 @@ def register_inverter(hass):
             translation_key=key,
             suggested_object_id=object_id,
         )
+        if key == "device":
+            state = device_type
+            attributes = {**attributes, "Protocol Version": protocol}
         hass.states.async_set(entry.entity_id, state, attributes)
     for number in range(1, 7):
         for name, (state, attributes) in PROGRAM_ATTRIBUTES.items():
@@ -159,11 +174,13 @@ def refresh_telemetry(hass):
         )
 
 
-async def native_site(hass, freezer, *, controller=None, extra_options=None):
+async def native_site(
+    hass, freezer, *, controller=None, extra_options=None, **hardware
+):
     """A loaded native entry; returns (entry, inverter)."""
     freezer.move_to(START)
     await hass.config.async_set_time_zone("Europe/Warsaw")
-    device = register_inverter(hass)
+    device = register_inverter(hass, **hardware)
     inverter = Inverter(hass)
     entry = MockConfigEntry(
         domain="energy_compass",

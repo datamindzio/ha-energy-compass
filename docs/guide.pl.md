@@ -1347,6 +1347,7 @@ sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.
 | `next_tou` | najbliższa lokalna granica programu TOU |
 | `accepted` | zaakceptowany plan (wiersze, polityka dyspozycji, bateria); nie jest zapisywany w historii |
 | `tou` | stany 30 encji TOU; zmiana uruchamia blueprint ponownie; nie jest zapisywany w historii |
+| `hardware` | falownik według sensora `device` Solarman: typ urządzenia, protokół, oprogramowanie płyty sterującej i komunikacyjnej, moc znamionowa, model z rejestru urządzeń oraz `verified` (para typ i protokół jest na liście przetestowanych); bez numeru seryjnego. Nieznany egzemplarz zgłasza problem „Falownik Deye niezweryfikowany” i nadal działa; przed pierwszym zapisem silnik natywny porównuje rejestry ze stanami encji i zatrzymuje się z `layout_mismatch`, jeśli się różnią (także w Simulation) |
 
 Sensor stanu pracy ma zapisywane atrybuty `restore_pending`, `reason`, `state`, `requested_mode`,
 `confirmed_mode`, `since`, `warning`, `takeover_blocked` i `accepted_generation` oraz `runtime`
@@ -1499,6 +1500,7 @@ ustawia progi, na końcu włącza kierunek.
 | `write_failed` | rejestr nie potwierdził się po ponowieniach; przywrócenie pozostaje wymagane |
 | `simulation_blocked` | Simulation odrzucone przy wymaganym przywróceniu |
 | `paused` | przełącznik wstrzymania jest włączony (silnik natywny): decyzja jest liczona, nic nie jest zapisywane |
+| `layout_mismatch` | rejestry falownika nie zgadzają się ze stanami encji (kod powodu przy `blocked`, silnik natywny); `runtime.reason` wymienia encje, nic nie jest zapisywane, kontrola powtarza się w kolejnym przebiegu |
 
 Teksty `runtime.reason` są w tej wersji po polsku. Każda zmiana stanu pracy przechodzi przez `energy_compass.controller_runtime`; gdy to wywołanie się nie powiedzie, przebieg zatrzymuje się przed zapisem kolejnego rejestru.
 

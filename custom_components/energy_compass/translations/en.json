@@ -1413,6 +1413,10 @@
     }
   },
   "issues": {
+    "deye_hardware_unverified": {
+      "title": "Deye inverter not verified",
+      "description": "The inverter reports \"{device_type}\" with protocol {protocol}, which Energy Compass has not been verified on. The controller still works: it checks the register layout against the entity states before its first write, and Simulation shows the result. Try Simulation first."
+    },
     "source_removed": {
       "title": "Source removed",
       "description": "Reconfigure the selected sources for {name}."

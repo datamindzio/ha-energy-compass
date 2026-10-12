@@ -1327,6 +1327,7 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.
 | `next_tou` | next local TOU program boundary |
 | `accepted` | the accepted plan snapshot (rows, dispatch policy, battery); not recorded |
 | `tou` | state of the 30 TOU entities; a change re-runs the blueprint; not recorded |
+| `hardware` | the inverter as the Solarman `device` sensor reports it: device type, protocol, control and communication board firmware, rated power, registry model and `verified` (the type and protocol pair is on the tested list); no serial number. An unlisted unit raises the repair issue "Deye inverter not verified" and still runs; before its first write the native engine compares the registers with the entity states and stops with `layout_mismatch` if they differ (also in Simulation) |
 
 The runtime sensor carries the recorded attributes `restore_pending`, `reason`, `state`, `requested_mode`,
 `confirmed_mode`, `since`, `warning`, `takeover_blocked` and `accepted_generation`, plus `runtime` and
@@ -1478,6 +1479,7 @@ then sets thresholds, then enables the direction.
 | `write_failed` | a register did not confirm after retries; restore stays pending |
 | `simulation_blocked` | Simulation was refused while a restore was pending |
 | `paused` | the pause switch is on (native engine): the decision is computed, nothing is written |
+| `layout_mismatch` | the inverter registers disagree with the entity states (reason code of `blocked`, native engine); `runtime.reason` lists the entities, nothing is written, the check repeats on the next run |
 
 `runtime.reason` texts are in Polish in this release. Every runtime update goes through `energy_compass.controller_runtime`; when that call fails, the run stops before the next register is written.
 

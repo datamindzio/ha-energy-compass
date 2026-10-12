@@ -248,7 +248,7 @@ class SimPort:
 class Runner:
     """Same API as the blueprint harness' runner, over `DeyeExecutor`."""
 
-    def __init__(self, h):
+    def __init__(self, h, probe_layout=False):
         self.h = h
         self.ctx = {"trigger": {"id": "change"}}
         self.writes = []
@@ -268,7 +268,7 @@ class Runner:
                 else round(float(value) / reg["scale"])
             )
         self.executor = run_module.DeyeExecutor(
-            SimPort(self), h.limits, language=LANGUAGE
+            SimPort(self), h.limits, language=LANGUAGE, probe_layout=probe_layout
         )
 
     def run(self):

@@ -9,7 +9,9 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import (
     async_track_point_in_utc_time,
     async_track_state_change_event,
@@ -18,6 +20,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import controller as core
+from . import controller_hardware as hardware
 from .controller_run import ControllerUnavailable
 from .controller_setup import controller_engine
 from .settings import DOMAIN, NUMBERS
@@ -154,6 +157,8 @@ class DeyeController:
         self._unsub_registry: CALLBACK_TYPE | None = None
         self._timer: CALLBACK_TYPE | None = None
         self._stopped = False
+        self._device_sensor: str | None = None
+        self.hardware = hardware.HardwareFacts()
 
     async def async_start(self) -> None:
         """Restore the store, resolve the TOU entities and begin listening."""
@@ -199,6 +204,7 @@ class DeyeController:
             await self.host.async_stop()
             self.host = None
         self._stopped = True
+        ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
         for unsubscribe in (
             self._unsub_coordinator,
             self._unsub_tou,
@@ -417,6 +423,8 @@ class DeyeController:
             "device_id": self.device_id,
             "program_prefix": self.resolution.prefix,
             "tou_problem": self.resolution.problem,
+            "engine": self.engine,
+            "hardware": self.hardware.as_attribute(),
             "session": self.session,
             "mode": self.state.mode,
             "restore_pending": self.state.restore_pending,
@@ -486,6 +494,7 @@ class DeyeController:
             return
         now = now or dt_util.utcnow()
         prefix = self.resolution.prefix
+        self._read_hardware()
         times = [
             self._tou_values.get(f"time.{prefix}{number}_time")
             for number in range(1, 7)
@@ -506,6 +515,7 @@ class DeyeController:
                 program_prefix=prefix,
                 tou_problem=self.resolution.problem,
                 next_tou_at=self._next_tou,
+                hardware=self.hardware.as_attribute() if self.hardware.known else None,
             ),
         )
         if self._timer:
@@ -535,17 +545,74 @@ class DeyeController:
 
     def _resolve(self) -> None:
         resolution = device_resolution(self.hass, self.device_id)
-        changed = resolution.entities != self.resolution.entities
+        sensor = self._find_device_sensor()
+        changed = (
+            resolution.entities != self.resolution.entities
+            or sensor != self._device_sensor
+        )
         self.resolution = resolution
+        self._device_sensor = sensor
         if changed or self._unsub_tou is None:
             if self._unsub_tou:
                 self._unsub_tou()
                 self._unsub_tou = None
-            if resolution.entities:
+            watched = [*resolution.entities, *([sensor] if sensor else [])]
+            if watched:
                 self._unsub_tou = async_track_state_change_event(
-                    self.hass, list(resolution.entities), self._tou_changed
+                    self.hass, watched, self._tou_changed
                 )
         self._read_tou()
+
+    def _find_device_sensor(self) -> str | None:
+        if not self.device_id:
+            return None
+        return next(
+            (
+                item.entity_id
+                for item in er.async_entries_for_device(
+                    er.async_get(self.hass), self.device_id
+                )
+                if item.platform == "solarman"
+                and item.domain == "sensor"
+                and item.translation_key == hardware.DEVICE_KEY
+            ),
+            None,
+        )
+
+    @property
+    def _issue_id(self) -> str:
+        return f"deye_hardware_unverified_{self.entry.entry_id}"
+
+    def _read_hardware(self) -> None:
+        state = (
+            self.hass.states.get(self._device_sensor) if self._device_sensor else None
+        )
+        device = (
+            dr.async_get(self.hass).async_get(self.device_id)
+            if self.device_id
+            else None
+        )
+        self.hardware = hardware.facts_from(
+            state.state if state else None,
+            state.attributes if state else None,
+            device.model if device else None,
+        )
+        facts = self.hardware
+        if self.engine == "native" and facts.known and not facts.verified:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                self._issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="deye_hardware_unverified",
+                translation_placeholders={
+                    "device_type": facts.device_type or "?",
+                    "protocol": facts.protocol or "?",
+                },
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
 
     def _read_tou(self) -> None:
         values: dict[str, Any] = {}

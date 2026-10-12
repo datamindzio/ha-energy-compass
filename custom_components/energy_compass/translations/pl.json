@@ -1427,6 +1427,10 @@
     }
   },
   "issues": {
+    "deye_hardware_unverified": {
+      "title": "Falownik Deye niezweryfikowany",
+      "description": "Falownik zgłasza \"{device_type}\" z protokołem {protocol}, na którym Energy Compass nie był sprawdzany. Sterownik nadal działa: przed pierwszym zapisem porównuje układ rejestrów ze stanami encji, a Simulation pokazuje wynik. Najpierw wypróbuj Simulation."
+    },
     "source_removed": {
       "title": "Źródło zostało usunięte",
       "description": "Zmień źródła instalacji {name}."

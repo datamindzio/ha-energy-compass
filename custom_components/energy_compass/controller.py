@@ -107,6 +107,7 @@ CONTROLLER_ATTRIBUTES = (
     "next_tou",
     "accepted",
     "tou",
+    "hardware",
 )
 RUNTIME_SUMMARY_KEYS = (
     "reason",
@@ -728,6 +729,7 @@ def controller_attributes(
     program_prefix: str | None,
     tou_problem: str | None,
     next_tou_at: datetime | None,
+    hardware: Mapping[str, Any] | None = None,
 ) -> dict:
     """The controller sensor attributes, in `CONTROLLER_ATTRIBUTES` order."""
     accepted = state.accepted or {}
@@ -761,5 +763,6 @@ def controller_attributes(
         "next_tou": None if next_tou_at is None else next_tou_at.isoformat(),
         "accepted": dict(accepted),
         "tou": dict(tou),
+        "hardware": None if hardware is None else dict(hardware),
     }
     return {key: values[key] for key in CONTROLLER_ATTRIBUTES}

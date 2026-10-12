@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from controller_support import START, controller_of, publication, publish
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.helpers import issue_registry as ir
 from native_site import (
     CHARGE,
     DISCHARGE,
@@ -19,8 +20,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.energy_compass import controller as core
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
-from custom_components.energy_compass.settings import default_configuration
+from custom_components.energy_compass.settings import DOMAIN, default_configuration
 
+ISSUE = "deye_hardware_unverified_{}"
 PAUSE = "switch.synthetic_pause_inverter_writes"
 PROGRAM_4 = "select.inverter_deye_program_4_charging"
 pytestmark = pytest.mark.usefixtures("recorder_mock", "enable_custom_integrations")
@@ -257,3 +259,66 @@ async def test_the_pause_survives_a_reload(hass, hass_storage, site):
     await hass.async_block_till_done()
     assert controller_of(entry).state.paused is True
     assert hass.states.get(PAUSE).state == "on"
+
+
+async def test_the_verified_unit_publishes_its_facts_and_raises_no_issue(hass, site):
+    entry, _ = site
+    hardware = hass.states.get("sensor.synthetic_deye_controller").attributes[
+        "hardware"
+    ]
+    assert hardware["verified"] is True
+    assert hardware["device_type"] == "HV 3-Phase Hybrid Inverter"
+    assert hardware["protocol"] == "1.4"
+    assert hardware["model"] == "SG0*HP3"
+    assert "SN-REDACTED" not in str(hardware)
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, ISSUE.format(entry.entry_id)) is None
+    )
+    assert controller_of(entry).diagnostics()["hardware"]["verified"] is True
+
+
+async def test_an_unlisted_unit_raises_a_dismissible_warning_and_still_runs(
+    hass, freezer
+):
+    entry, inverter = await native_site(hass, freezer, protocol="2.0")
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, ISSUE.format(entry.entry_id))
+    assert issue.severity is ir.IssueSeverity.WARNING
+    assert issue.is_fixable is False
+    assert issue.translation_placeholders["protocol"] == "2.0"
+    attributes = hass.states.get("sensor.synthetic_deye_controller").attributes
+    assert attributes["hardware"]["verified"] is False
+    controller = controller_of(entry)
+    publish(entry, publication())
+    refresh_telemetry(hass)
+    controller.async_set_mode("Auto")
+    await controller.host.async_wait_idle()
+    assert inverter.writes
+    await hass.config_entries.async_unload(entry.entry_id)
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, ISSUE.format(entry.entry_id)) is None
+    )
+
+
+async def test_a_shifted_register_bank_blocks_the_first_write(hass, site):
+    entry, inverter = site
+    controller = controller_of(entry)
+    inverter.raw = {address + 1: raw for address, raw in inverter.raw.items()}
+    publish(entry, publication())
+    refresh_telemetry(hass)
+    controller.async_set_mode("Auto")
+    await controller.host.async_wait_idle()
+    assert inverter.writes == []
+    runtime = controller.state.runtime
+    assert runtime["code"] == "blocked"
+    assert runtime["reason_code"] == "layout_mismatch"
+    assert controller.state.restore_pending is False
+
+
+async def test_the_layout_probe_also_runs_in_simulation(hass, site):
+    entry, inverter = site
+    controller = controller_of(entry)
+    inverter.raw = {address + 1: raw for address, raw in inverter.raw.items()}
+    controller.async_set_mode("Simulation")
+    await controller.host.async_wait_idle()
+    assert controller.state.runtime["reason_code"] == "layout_mismatch"
+    assert inverter.writes == []
