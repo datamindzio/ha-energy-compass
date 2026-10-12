@@ -48,16 +48,18 @@ docker run --rm -v "$PWD":/workspace:ro ha-energy-compass-test:2026.9.1 -m bench
 
 ## Consumption probes at 96 and 192 intervals
 
-`benchmarks.optimizer --probes 96` solves the base plan and then the consumption probes of one 24 h hourly display/reference horizon (`--probes N` is the number of quarter-hour probes, a multiple of 4) and applies the acceptance rule: result `optimal`, every probe complete, base plus probes within 60 s. Probes keep the base plan's operating modes (`docs/model.md`, *Probe operating modes*). Before that every probe of `self_sufficiency` and `backup_ready` timed out at 96 and 192 intervals (0/96 at 192 for both minimum durations) and the levels fell back to `absolute_fallback`. These runs used a native macOS arm64 Python 3.13 with SciPy 1.18.1 and 10 s base limit, one run each, with `minimum_mode_minutes` at the default 60 and at 0 (a wrapper passing `minimum_mode_minutes=0` to the problem):
+`benchmarks.optimizer --probes 96` solves the base plan and then the consumption probes of one 24 h hourly display/reference horizon (`--probes N` is the number of quarter-hour probes, a multiple of 4) and applies the acceptance rule: result `optimal`, every probe complete, base plus probes within 60 s. A probe is a full solve while that finishes within the probe limit; the first full solve that times out hands the rest of the analysis to windows around the probed intervals, widened as far as the time budget allows (`docs/model.md`, *Probe operating modes*, states the remaining error). Before this, every probe of `self_sufficiency` and `backup_ready` timed out at 96 and 192 intervals (0/96) and the levels fell back to `absolute_fallback`.
 
-| Intervals | Strategy | Minimum mode | Probes complete | Base solve | Probes |
-| ---: | --- | ---: | ---: | ---: | ---: |
-| 192 | `self_sufficiency` | 60 min | 96/96 | 3.6 s | 7.4 s |
-| 192 | `self_sufficiency` | 0 | 96/96 | 2.6 s | 8.3 s |
-| 192 | `backup_ready` | 60 min | 96/96 | 6.9 s | 4.1 s |
-| 192 | `backup_ready` | 0 | 96/96 | 4.5 s | 4.1 s |
+These runs used a native macOS arm64 Python 3.13 with SciPy 1.18.1, one run each, `minimum_mode_minutes` at the default 60 and at 0 (a wrapper passing `minimum_mode_minutes=0` to the problem). **The host was oversubscribed** (16 cores, load average 90-140 throughout), so every time below is inflated several-fold against an idle machine and, at 10 s, the base solve of three of the four 192-interval cases hit its own limit (`result: timeout`, no probes started). Those three were therefore run with `--time-limit 30`; the base solve is not what this section measures.
 
-`--strategy all` completes 96/96 for all six strategies at 96 intervals (probes 1.9-2.3 s) and at 192 intervals (probes 4.3-6.5 s). `tests/test_consumption_pinned.py` asserts the 96-interval case for both strategies and both durations. Repeat on Raspberry Pi 5 hardware before setting limits.
+| Intervals | Strategy | Minimum mode | Base limit | Probes complete | Base solve | Probes |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 192 | `self_sufficiency` | 60 min | 30 s | 96/96 | 10.7 s | 41.4 s |
+| 192 | `self_sufficiency` | 0 | 10 s | 96/96 | 8.9 s | 36.9 s |
+| 192 | `backup_ready` | 60 min | 30 s | 96/96 | 23.4 s | 31.7 s |
+| 192 | `backup_ready` | 0 | 30 s | 96/96 | 15.4 s | 36.3 s |
+
+Base plus probes stays within 60 s in all four rows (45.8-55.1 s). `--strategy all --time-limit 30` completes 96/96 for all six strategies within the 60 s rule at 96 intervals (probes 23-59 s) and at 192 intervals (probes 26-51 s). The pre-change code on the same host at 96 intervals completed 93/96 (`cost_min`), 0/96 (`self_sufficiency`, `backup_ready`), 75/96 (`pv_swap`), 96/96 (`max_export`) and 83/96 (`grid_friendly`), with `absolute_fallback` levels for all but `max_export`; this is the same overloaded host, so the comparison holds even though the absolute times do not. `tests/test_consumption_windows.py` asserts the 96-interval case for both strategies and both durations under the CI per-test timeout of 45 s, and compares every hourly windowed probe with the full solve where that finishes. Repeat on Raspberry Pi 5 hardware before setting limits.
 
 ## Incremental consumption benchmark
 

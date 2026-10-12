@@ -75,7 +75,8 @@ Każde obliczenie przebiega tak:
    oznaczone `time_limited` razem z jego `mip_gap`.
 4. **Próby zużycia.** Dla każdego przedziału wyświetlania solver liczy plan jeszcze raz z
    dodatkowym 1 kWh obciążenia; różnica kosztu to *koszt krańcowy jednej kWh więcej*, klasyfikowany
-   na poziom zużycia. Próby zachowują tryby pracy planu bazowego (patrz *Poziomy zużycia*).
+   na poziom zużycia. Gdy pełne rozwiązanie jest za wolne, próby ograniczają tryby pracy do okna wokół
+   sondowanego przedziału (patrz *Poziomy zużycia*).
 5. **Profile elastycznego zużycia.** Osobne rozwiązania dla bloków 3, 5, 10, 15 i 20 kWh mierzą, ile
    elastycznej energii można zaplanować, zanim cena się pogorszy.
 6. **Publikacja.** Jedna spójna generacja aktualizuje wszystkie encje; niezmienione encje nie są
@@ -838,12 +839,20 @@ z próbą − koszt planu bazowego) ÷ dodana energia. Bateria i sieć są przy 
 nowa, więc to prawdziwy koszt krańcowy — może różnić się od ceny taryfowej (np. energia z PV,
 którą inaczej by sprzedano, kosztuje utraconą wartość eksportu).
 
-Aby próby były szybkie przy 96–192 przedziałach z regułą podążania SELF_CONSUME za obciążeniem,
-oba plany w różnicy zachowują tryby pracy planu bazowego i optymalizują od nowa tylko przepływy;
-tryby sondowanych przedziałów są wolne, a gdy dodatkowe obciążenie nie mieści się w planie, uwalniane
-są kolejne przedziały (najpierw 4, potem 16 z każdej strony). Dopiero gdy to zawiedzie, próba liczy pełne
-rozwiązanie. Próba nigdy więc nie podaje kosztu niższego niż pełne rozwiązanie i może podać nieco
-wyższy koszt krańcowy tam, gdzie dla dodatkowego obciążenia tańszy byłby inny tryb.
+**Długie horyzonty.** Próba to pełne rozwiązanie horyzontu i tam, gdzie mieści się w
+`probe_time_limit_s` (domyślnie 2 s), jej koszt jest dokładny. Przy regule podążania SELF_CONSUME za
+obciążeniem (`self_sufficiency` i `backup_ready`) pełne rozwiązanie 96–192 przedziałów trwa 8–15 s,
+więc przekracza limit. Pierwsza próba, której pełne rozwiązanie przekroczy limit, przełącza resztę
+tego przeliczenia na *okna*: poza oknem wokół sondowanych przedziałów tryby pracy zostają takie jak w
+planie bazowym i optymalizowane są tylko przepływy. Okno rośnie (sondowane przedziały, potem 4, 16 i 48
+przedziałów z każdej strony), dopóki pozwala na to udział próby w budżecie czasu, a koszt daje
+najszersze okno, które się policzyło. Próba nie zawodzi więc z powodu wolnego pełnego
+rozwiązania, ale jej koszt jest dokładny tylko dla trybów, które okno zostawia wolne. Pomiar dla
+`self_sufficiency` i `backup_ready` przy 96 przedziałach (`minimum_mode_minutes` 60 i 0, 24 próby
+godzinowe, domyślne limity): 21–24 z 24 prób mieściło się w 0,005 waluty/kWh od pełnego rozwiązania;
+najgorsza była o 0,32 wyższa (jedna próba), żadna nie była niższa o więcej niż 0,005, a poziom zmienił
+się najwyżej w jednej. Koszt okna nie jest ograniczeniem kosztu pełnego rozwiązania: solver minimalizuje
+ważony cel strategii, a próba mierzy koszt rzeczywisty.
 
 ```mermaid
 flowchart TD

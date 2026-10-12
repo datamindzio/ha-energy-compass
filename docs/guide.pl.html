@@ -195,7 +195,8 @@ Solarman: zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika 
    oznaczone <code>time_limited</code> razem z jego <code>mip_gap</code>.</li>
 <li><strong>Próby zużycia.</strong> Dla każdego przedziału wyświetlania solver liczy plan jeszcze raz z
    dodatkowym 1 kWh obciążenia; różnica kosztu to <em>koszt krańcowy jednej kWh więcej</em>, klasyfikowany
-   na poziom zużycia. Próby zachowują tryby pracy planu bazowego (patrz <em>Poziomy zużycia</em>).</li>
+   na poziom zużycia. Gdy pełne rozwiązanie jest za wolne, próby ograniczają tryby pracy do okna wokół
+   sondowanego przedziału (patrz <em>Poziomy zużycia</em>).</li>
 <li><strong>Profile elastycznego zużycia.</strong> Osobne rozwiązania dla bloków 3, 5, 10, 15 i 20 kWh mierzą, ile
    elastycznej energii można zaplanować, zanim cena się pogorszy.</li>
 <li><strong>Publikacja.</strong> Jedna spójna generacja aktualizuje wszystkie encje; niezmienione encje nie są
@@ -1420,12 +1421,20 @@ liczy plan z dodatkowym obciążeniem <code>probe_kwh</code> (domyślnie 1 kWh).
 z próbą − koszt planu bazowego) ÷ dodana energia. Bateria i sieć są przy tym optymalizowane od
 nowa, więc to prawdziwy koszt krańcowy — może różnić się od ceny taryfowej (np. energia z PV,
 którą inaczej by sprzedano, kosztuje utraconą wartość eksportu).</p>
-<p>Aby próby były szybkie przy 96–192 przedziałach z regułą podążania SELF_CONSUME za obciążeniem,
-oba plany w różnicy zachowują tryby pracy planu bazowego i optymalizują od nowa tylko przepływy;
-tryby sondowanych przedziałów są wolne, a gdy dodatkowe obciążenie nie mieści się w planie, uwalniane
-są kolejne przedziały (najpierw 4, potem 16 z każdej strony). Dopiero gdy to zawiedzie, próba liczy pełne
-rozwiązanie. Próba nigdy więc nie podaje kosztu niższego niż pełne rozwiązanie i może podać nieco
-wyższy koszt krańcowy tam, gdzie dla dodatkowego obciążenia tańszy byłby inny tryb.</p>
+<p><strong>Długie horyzonty.</strong> Próba to pełne rozwiązanie horyzontu i tam, gdzie mieści się w
+<code>probe_time_limit_s</code> (domyślnie 2 s), jej koszt jest dokładny. Przy regule podążania SELF_CONSUME za
+obciążeniem (<code>self_sufficiency</code> i <code>backup_ready</code>) pełne rozwiązanie 96–192 przedziałów trwa 8–15 s,
+więc przekracza limit. Pierwsza próba, której pełne rozwiązanie przekroczy limit, przełącza resztę
+tego przeliczenia na <em>okna</em>: poza oknem wokół sondowanych przedziałów tryby pracy zostają takie jak w
+planie bazowym i optymalizowane są tylko przepływy. Okno rośnie (sondowane przedziały, potem 4, 16 i 48
+przedziałów z każdej strony), dopóki pozwala na to udział próby w budżecie czasu, a koszt daje
+najszersze okno, które się policzyło. Próba nie zawodzi więc z powodu wolnego pełnego
+rozwiązania, ale jej koszt jest dokładny tylko dla trybów, które okno zostawia wolne. Pomiar dla
+<code>self_sufficiency</code> i <code>backup_ready</code> przy 96 przedziałach (<code>minimum_mode_minutes</code> 60 i 0, 24 próby
+godzinowe, domyślne limity): 21–24 z 24 prób mieściło się w 0,005 waluty/kWh od pełnego rozwiązania;
+najgorsza była o 0,32 wyższa (jedna próba), żadna nie była niższa o więcej niż 0,005, a poziom zmienił
+się najwyżej w jednej. Koszt okna nie jest ograniczeniem kosztu pełnego rozwiązania: solver minimalizuje
+ważony cel strategii, a próba mierzy koszt rzeczywisty.</p>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-510177a65394-dark.svg"><img src="assets/diagrams/diagram-510177a65394.svg" alt="Diagram 8" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>

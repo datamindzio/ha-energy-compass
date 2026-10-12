@@ -72,8 +72,8 @@ def test_exhausted_optional_probes_do_not_discard_valid_base_plan(monkeypatch):
     clock = [0.0]
     original = consumption.solve
 
-    def late_probe(problem, *, time_limit_s, **kwargs):
-        result = original(problem, time_limit_s=time_limit_s, **kwargs)
+    def late_probe(problem, *, time_limit_s):
+        result = original(problem, time_limit_s=time_limit_s)
         clock[0] += time_limit_s + 0.02
         return result
 
@@ -144,11 +144,10 @@ def test_five_minute_budget_supports_longer_consumption_probes(monkeypatch):
     clock = [0.0]
     original = consumption.solve
 
-    def slow_probe(problem, *, time_limit_s, **kwargs):
+    def slow_probe(problem, *, time_limit_s):
         assert time_limit_s > 20
-        result = original(problem, time_limit_s=time_limit_s, **kwargs)
-        if "unpinned_slots" in kwargs:  # a probe, not the pinned reference solve
-            clock[0] += 20
+        result = original(problem, time_limit_s=time_limit_s)
+        clock[0] += 20
         return result
 
     monkeypatch.setattr(runtime, "perf_counter", lambda: clock[0])
