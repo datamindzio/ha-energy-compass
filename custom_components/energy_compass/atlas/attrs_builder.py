@@ -1,4 +1,4 @@
-"""AttrsV1 builder (ADR-0019 §6). Location only as H3 res 6; no tariff text or inverter model."""
+"""AttrsV1 builder (ADR-0019 §6). Location only as a municipality id; no tariff text or inverter model."""
 
 import json
 from pathlib import Path
@@ -11,15 +11,15 @@ def _compass_version() -> str:
 
 
 def build_attrs(
-    config: dict, atlas_settings: dict, location_h3_res6: str | None = None
+    config: dict, atlas_settings: dict, municipality: str | None = None
 ) -> dict:
     """`pv_kwp` comes from the Atlas settings step; battery figures from the installation.
 
     `grid_connection_kw` is optional there: the key is omitted when unset (the contract has
     no null).
 
-    `location_h3_res6` is the home zone's res-6 cell (`atlas.location`); without it the
-    `location` key is omitted, exactly as before.
+    `municipality` is the 7-digit id of the home's municipality (`atlas.location`); without
+    it the `location` key is omitted.
     """
     settings = config.get("settings", {})
     battery_enabled = config.get("sources", {}).get("battery_enabled", False)
@@ -44,6 +44,6 @@ def build_attrs(
     grid_connection_kw = atlas_settings.get("grid_connection_kw")
     if grid_connection_kw is not None:
         attrs["grid_connection_kw"] = grid_connection_kw
-    if location_h3_res6:
-        attrs["location"] = {"h3_res6": location_h3_res6}
+    if municipality:
+        attrs["location"] = {"municipality": municipality}
     return attrs

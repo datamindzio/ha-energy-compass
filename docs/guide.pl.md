@@ -1697,11 +1697,22 @@ rejestratora), SOC baterii oraz liczniki energii PV/importu/eksportu (tylko licz
 atrybut Home Assistant `state_class` to `total`/`total_increasing`);
 plan każdego rozwiązania Compass wraz z wejściami cen/PV/zużycia; kilka atrybutów instalacji (moc PV
 w kWp, moc przyłączeniowa w kW, jeśli ją podasz, pojemność baterii nominalna i użyteczna, próg SOC,
-wersja Compass) oraz przybliżona
-lokalizacja strefy domowej Home Assistant jako komórka H3 o rozdzielczości 6 (sześciokąt o
-powierzchni ok. 36 km², dzięki czemu Atlas zalicza Twoją instalację do właściwego województwa).
-Komórka jest liczona raz, przy starcie wysyłki, a dokładne współrzędne nigdy nie są zapisywane ani
-wysyłane. Nic więcej — brak tekstu taryfy czy modelu falownika, a samo poświadczenie rejestracyjne
+wersja Compass) oraz gmina,
+w której leży strefa domowa Home Assistant, jako jej 7-cyfrowy identyfikator. Atlas pokazuje gminę
+**z nazwy** obok wartości Twojego domu. Compass znajduje gminę wewnątrz Home Assistant: pobiera
+publiczne pliki z granicami, które serwuje Atlas (te same dla każdego domu, wskazane przez
+`GET /v1/public/geo`), i porównuje je z położeniem Twojego domu na miejscu, więc Twoje
+współrzędne zostają w Home Assistant, a żadne żądanie ich nie zawiera. Poza Home Assistant trafiają
+tylko dwie rzeczy z nich wynikające: identyfikator województwa w nazwie pobieranego pliku gmin oraz
+identyfikator gminy w atrybutach. Dom położony do 50 m od granicy gminy może zostać pokazany
+w sąsiedniej gminie, bo granice są uproszczone. Dom poza każdą polską gminą (za granicą, na morzu)
+lub bez współrzędnych nie wysyła lokalizacji i jest liczony tylko w sumie floty. Pliki są pobierane
+ponownie tylko wtedy, gdy Atlas opublikuje nową wersję albo dom się przeniesie (o wersję Atlas jest
+pytany przy starcie i najwyżej raz na 24 h); gdy Atlas jest nieosiągalny, zachowana zostaje ostatnio
+znaleziona gmina — także po restarcie Home Assistant, w pamięci integracji obok klucza witryny, razem
+ze współrzędnymi i wersją granic, dla których ją znaleziono, nigdy niewysyłana — a wyszukiwanie jest
+ponawiane najwyżej raz na godzinę, bez opóźniania telemetrii.
+Nic więcej — brak tekstu taryfy czy modelu falownika, a samo poświadczenie rejestracyjne
 **nigdy nie jest zapisywane** — przechowywany jest tylko klucz witryny wydany w zamian za nie.
 
 **Jak wysyłane są wartości**: moce w W. Powiąż **Moc baterii** tak, by + oznaczał rozładowanie (jak

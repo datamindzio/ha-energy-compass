@@ -87,9 +87,9 @@ def test_S215_snapshot_carries_the_saved_value_and_is_valid_attrs_v1(value):
 
 
 def test_S215_snapshot_with_location_and_grid_connection_is_valid_attrs_v1():
-    attrs = build_attrs(_config(), {"pv_kwp": 6.5, FIELD: 11.0}, "861f8d947ffffff")
+    attrs = build_attrs(_config(), {"pv_kwp": 6.5, FIELD: 11.0}, "2264011")
     assert attrs[FIELD] == 11.0
-    assert attrs["location"] == {"h3_res6": "861f8d947ffffff"}
+    assert attrs["location"] == {"municipality": "2264011"}
     assert attrs_errors(attrs) == []
 
 
