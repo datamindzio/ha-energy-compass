@@ -240,3 +240,57 @@ def test_rows_the_blueprint_cannot_process_are_invalid(state, key, value):
 )
 def test_fields_the_blueprint_never_reads_do_not_invalidate_a_row(state, key, value):
     assert malformed(state, key, value)["valid"] is True
+
+
+def pause_runner():
+    h = native.Harness()
+    h.data[P]["attributes"]["intervals"][0].update(CHARGE_GRID)
+    return h, native.Runner(h)
+
+
+def test_paused_computes_and_publishes_but_writes_nothing():
+    h, runner = pause_runner()
+    h.paused = True
+    runner.run()
+    assert runner.outcomes == ["paused"]
+    assert runner.writes == [] and runner.reads == []
+    runtime = h.stored_runtime()
+    assert runtime["code"] == "paused"
+    assert runtime["reason_code"] == "paused"
+    assert runtime["state"] == "CHARGE_GRID"
+    assert h.restore_pending is False
+
+
+def test_pausing_leaves_the_restore_obligation_and_uncertain_registers_alone():
+    h, runner = pause_runner()
+    h.data[RT]["attributes"]["runtime"] = {
+        "uncertain": ["number.x"],
+        "owned_session": 1,
+    }
+    h.restore_pending = True
+    h.paused = True
+    runner.run()
+    assert h.restore_pending is True
+    assert h.stored_runtime()["uncertain"] == ["number.x"]
+    assert runner.writes == []
+
+
+def test_a_run_in_flight_stops_before_its_next_write_and_resumes_later():
+    h, runner = pause_runner()
+
+    def pause_after_two(r, entity, value):
+        if len(r.writes) == 2:
+            h.paused = True
+
+    runner.hook = pause_after_two
+    runner.run()
+    assert len(runner.writes) == 2
+    assert runner.outcomes == ["paused"]
+    runtime = h.stored_runtime()
+    assert runtime["code"] == "paused"
+    assert h.restore_pending is True
+    h.paused = False
+    runner.hook = None
+    runner.run()
+    assert runner.outcomes[-1] == "run_finished"
+    assert h.stored_runtime()["confirmed_mode"] == "CHARGE_GRID"

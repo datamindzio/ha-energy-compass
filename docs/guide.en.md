@@ -413,6 +413,7 @@ reloads.
 | `sensor.<name>_deye_controller` | Deye controller | Sterownik Deye | timestamp of the next controller run; only with the [Deye controller](#deye-inverter-controller-solarman) enabled |
 | `select.<name>_deye_mode` | Deye mode | Tryb sterownika Deye | `Off` / `Simulation` / `Auto`; only with the controller enabled |
 | `sensor.<name>_deye_controller_runtime` | Deye controller runtime | Stan pracy sterownika Deye | runtime code; only with the controller enabled |
+| `switch.<name>_deye_pause` | Pause inverter writes | Wstrzymaj zapisy do falownika | `on` / `off`; only with the native engine |
 
 Cost sensors can be disabled with **Presentation → Expose costs**, window timestamps with
 **Expose windows**, and flexible depth with **Consumption outlook → Enable flexible energy depth**.
@@ -1304,6 +1305,7 @@ Three entities exist only while the controller is enabled; they sit on the Energ
 | `deye_controller` | `sensor.<name>_deye_controller` (timestamp) | the state is the next instant the blueprint must run (the earliest row end, `valid_until`, `coverage_end` or TOU program boundary); the attributes are the contract below |
 | `deye_mode` | `select.<name>_deye_mode` | **Off** / **Simulation** / **Auto**; the only switch you operate; the options are not translated |
 | `deye_runtime` | `sensor.<name>_deye_controller_runtime` | runtime code (below); attribute `runtime` holds state, reason, confirmed values and uncertain registers |
+| `deye_pause` | `switch.<name>_deye_pause` | **Pause inverter writes**; only with the native engine. While on, the controller computes and publishes the decision but sends no write; `restore_pending` and the uncertain registers stay as they are and the runtime code is `paused`. A run in flight stops before its next write; turning the switch off requests a run |
 
 The IDs depend on the entry name and the language the entities were created in (a Polish instance gets
 names such as `…_sterownik_deye`); read them from the device page. The blueprint needs only the controller
@@ -1475,6 +1477,7 @@ then sets thresholds, then enables the direction.
 | `verification_required` | writes finished but not every register confirmed |
 | `write_failed` | a register did not confirm after retries; restore stays pending |
 | `simulation_blocked` | Simulation was refused while a restore was pending |
+| `paused` | the pause switch is on (native engine): the decision is computed, nothing is written |
 
 `runtime.reason` texts are in Polish in this release. Every runtime update goes through `energy_compass.controller_runtime`; when that call fails, the run stops before the next register is written.
 

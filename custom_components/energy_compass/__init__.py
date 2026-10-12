@@ -12,7 +12,12 @@ from .controller_services import async_register as async_register_controller_ser
 from .coordinator import EnergyCompassCoordinator
 from .settings import DOMAIN, default_configuration, explicit_strategy_fields
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT]
+PLATFORMS = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.SELECT,
+    Platform.SWITCH,
+]
 
 # hassfest requires CONFIG_SCHEMA once a domain defines async_setup; this integration is
 # config-entry only (no YAML), same rule as e.g. `config_entry_only_config_schema` users.

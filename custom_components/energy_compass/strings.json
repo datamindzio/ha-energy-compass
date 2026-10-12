@@ -1383,6 +1383,11 @@
         "name": "Deye mode"
       }
     },
+    "switch": {
+      "deye_pause": {
+        "name": "Pause inverter writes"
+      }
+    },
     "binary_sensor": {
       "forecast_valid": {
         "name": "Forecast valid",

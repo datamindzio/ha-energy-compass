@@ -264,6 +264,23 @@ class DeyeController:
         self._evaluate()
 
     @callback
+    def async_set_paused(self, paused: bool) -> None:
+        """Hold (or release) every inverter write; takes effect before the next write."""
+        if paused == self.state.paused:
+            return
+        event = core.Event(
+            dt_util.utcnow().isoformat(), "mode", None, f"paused {paused}"
+        )
+        self._replace(
+            replace(
+                self.state,
+                paused=paused,
+                history=(*self.state.history, event)[-core.HISTORY_LIMIT :],
+            )
+        )
+        self._publish()
+
+    @callback
     def async_update_runtime(
         self, runtime: Mapping | None, restore_pending: bool | None
     ) -> dict:

@@ -139,6 +139,7 @@ class HassPort:
             entities=setup.entities if setup else _NO_ENTITIES,
             states=facts,
             controller=view if view and setup is not None else None,
+            paused=self.controller.state.paused,
         )
 
     async def persist(

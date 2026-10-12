@@ -417,6 +417,7 @@ witryny), bez restartu jego kolejki wysyłki. **Rekonfiguracja** zawsze przeład
 | `sensor.<name>_deye_controller` | Deye controller | Sterownik Deye | znacznik czasu następnego przebiegu sterownika; tylko przy włączonym [sterowniku Deye](#sterownik-falownika-deye-solarman) |
 | `select.<name>_deye_mode` | Deye mode | Tryb sterownika Deye | `Off` / `Simulation` / `Auto`; tylko przy włączonym sterowniku |
 | `sensor.<name>_deye_controller_runtime` | Deye controller runtime | Stan pracy sterownika Deye | kod przebiegu; tylko przy włączonym sterowniku |
+| `switch.<name>_deye_pause` | Pause inverter writes | Wstrzymaj zapisy do falownika | `on` / `off`; tylko przy silniku natywnym |
 
 Sensory kosztów można wyłączyć opcją **Prezentacja → Włącz encje kosztów**, znaczniki okien —
 **Włącz encje okresów**, a głębokość elastycznego zużycia — **Prognoza kosztu zużycia → Włącz
@@ -1324,6 +1325,7 @@ Trzy encje istnieją tylko przy włączonym sterowniku; należą do urządzenia 
 | `deye_controller` | `sensor.<name>_deye_controller` (znacznik czasu) | stan to najbliższa chwila, w której blueprint musi działać (najwcześniejszy koniec wiersza, `valid_until`, `coverage_end` albo granica programu TOU); atrybuty to poniższy kontrakt |
 | `deye_mode` | `select.<name>_deye_mode` | **Off** / **Simulation** / **Auto**; jedyny przełącznik obsługiwany ręcznie; opcje nie są tłumaczone |
 | `deye_runtime` | `sensor.<name>_deye_controller_runtime` | kod przebiegu (niżej); atrybut `runtime` zawiera stan, powód, potwierdzone wartości i niepewne rejestry |
+| `deye_pause` | `switch.<name>_deye_pause` | **Wstrzymaj zapisy do falownika**; tylko przy silniku natywnym. Gdy włączony, sterownik liczy i publikuje decyzję, ale nie wysyła żadnego zapisu; `restore_pending` i niepewne rejestry pozostają bez zmian, a kod stanu to `paused`. Przebieg w toku zatrzymuje się przed kolejnym zapisem; wyłączenie przełącznika zleca przebieg |
 
 Identyfikatory zależą od nazwy wpisu i języka, w którym encje utworzono (instalacja polska dostaje nazwy
 w rodzaju `…_sterownik_deye`); odczytaj je ze strony urządzenia. Blueprint potrzebuje tylko sensora
@@ -1496,6 +1498,7 @@ ustawia progi, na końcu włącza kierunek.
 | `verification_required` | zapisy zakończone, ale nie każdy rejestr potwierdzony |
 | `write_failed` | rejestr nie potwierdził się po ponowieniach; przywrócenie pozostaje wymagane |
 | `simulation_blocked` | Simulation odrzucone przy wymaganym przywróceniu |
+| `paused` | przełącznik wstrzymania jest włączony (silnik natywny): decyzja jest liczona, nic nie jest zapisywane |
 
 Teksty `runtime.reason` są w tej wersji po polsku. Każda zmiana stanu pracy przechodzi przez `energy_compass.controller_runtime`; gdy to wywołanie się nie powiedzie, przebieg zatrzymuje się przed zapisem kolejnego rejestru.
 

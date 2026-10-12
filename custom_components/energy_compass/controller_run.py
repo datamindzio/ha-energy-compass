@@ -186,9 +186,11 @@ class DeyeExecutor:
             return "simulation_rejected"
         if snapshot.mode == "Simulation":
             return "simulation"
+        if snapshot.paused:
+            return await self._paused(run)
         if snapshot.mode == "Off" and not run.pending:
             return "released"
-        # Pause (DD-10) and the layout probe (DD-13) belong here, before takeover.
+        # The layout probe (DD-13) belongs here, before takeover.
         if not decision.writers_safe:
             return "takeover_blocked"
         session = (snapshot.controller or {}).get("session")
@@ -199,10 +201,17 @@ class DeyeExecutor:
         )
         return await self._transactions(run, cleanup)
 
+    async def _paused(self, run: _Run) -> str:
+        """Hold every write; `restore_pending` and `uncertain` stay as they are."""
+        await self._persist(run, self._outcome_runtime(run, "paused"))
+        return "paused"
+
     async def _transactions(self, run: _Run, cleanup: bool) -> str:
         aborted = False
         for attempt in range(1, TRANSACTIONS + 1):
             snapshot = self._snapshot(run, "target")
+            if snapshot.paused:
+                return await self._paused(run)
             target = profile.decide(snapshot, run.limits, run.ceiling)
             replan: bool = False
             if cleanup or aborted:
@@ -305,6 +314,8 @@ class DeyeExecutor:
                 return "run_finished"
             cleanup = not replan
             aborted = False
+        if self._snapshot(run, "end").paused:
+            return await self._paused(run)
         await self._persist(
             run,
             self._outcome_runtime(run, "write_failed", confirmed_mode="unconfirmed"),

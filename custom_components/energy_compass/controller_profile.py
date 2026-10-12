@@ -128,7 +128,7 @@ class Snapshot:
 
     `controller` is the attribute view of the Energy Compass controller (`accepted`,
     `session`, `plan_reason`, `retained`) or None when it is missing. `mode` is the
-    requested controller mode.
+    requested controller mode; `paused` is the pause-writes switch.
     """
 
     now: datetime
@@ -137,6 +137,7 @@ class Snapshot:
     states: Mapping[str, Fact]
     controller: Mapping[str, Any] | None
     runtime: Mapping[str, Any] = MappingProxyType({})
+    paused: bool = False
 
     def state(self, entity: str) -> str:
         fact = self.states.get(entity)
@@ -726,6 +727,8 @@ def guard(
     failed: bool,
 ) -> bool:
     """Whether `command` may still be sent (GUARD); re-evaluated before every write."""
+    if snapshot.paused:
+        return False
     confirmed = snapshot.runtime.get("confirmed", {})
     current = baseline if cleanup else fresh
     prerequisites = True

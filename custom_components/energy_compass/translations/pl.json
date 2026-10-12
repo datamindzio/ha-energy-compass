@@ -1383,6 +1383,11 @@
         "name": "Tryb sterownika Deye"
       }
     },
+    "switch": {
+      "deye_pause": {
+        "name": "Wstrzymaj zapisy do falownika"
+      }
+    },
     "binary_sensor": {
       "forecast_valid": {
         "name": "Poprawna prognoza",

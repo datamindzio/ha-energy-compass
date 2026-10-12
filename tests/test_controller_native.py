@@ -21,6 +21,7 @@ from custom_components.energy_compass import controller as core
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
 from custom_components.energy_compass.settings import default_configuration
 
+PAUSE = "switch.synthetic_pause_inverter_writes"
 PROGRAM_4 = "select.inverter_deye_program_4_charging"
 pytestmark = pytest.mark.usefixtures("recorder_mock", "enable_custom_integrations")
 
@@ -207,3 +208,52 @@ async def test_a_durable_persist_is_saved_at_once(hass, hass_storage, site):
     await controller.async_persist({"code": "ok"}, True, durable=True)
     assert hass_storage[key]["data"]["restore_pending"] is True
     assert hass_storage[key]["data"]["runtime"] == {"code": "ok"}
+
+
+async def test_the_pause_switch_exists_only_for_the_native_engine(
+    hass, controller_site
+):
+    assert hass.states.get(PAUSE) is None
+
+
+async def test_the_pause_switch_is_stored_and_holds_the_writes(
+    hass, hass_storage, site
+):
+    entry, inverter = site
+    controller = controller_of(entry)
+    assert hass.states.get(PAUSE).state == "off"
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": PAUSE}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(PAUSE).state == "on"
+    assert controller.state.paused is True
+    publish(entry, publication())
+    refresh_telemetry(hass)
+    controller.async_set_mode("Auto")
+    await controller.host.async_wait_idle()
+    assert inverter.writes == []
+    assert controller.state.runtime["code"] == "paused"
+    assert controller.state.restore_pending is False
+    # Turning it off requests a run, which then writes.
+    await hass.services.async_call(
+        "switch",
+        "turn_off",
+        {"entity_id": PAUSE},
+        blocking=True,
+    )
+    await controller.host.async_wait_idle()
+    assert inverter.writes
+    assert controller.state.runtime["code"] == "ok"
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert controller_of(entry).state.paused is False
+
+
+async def test_the_pause_survives_a_reload(hass, hass_storage, site):
+    entry, _ = site
+    controller_of(entry).async_set_paused(True)
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert controller_of(entry).state.paused is True
+    assert hass.states.get(PAUSE).state == "on"

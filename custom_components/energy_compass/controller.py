@@ -164,6 +164,7 @@ class ControllerState:
     runtime_written_at: str | None = None
     imported_at: str | None = None
     history: tuple[Event, ...] = field(default=())
+    paused: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -180,6 +181,7 @@ class ControllerState:
             "runtime": dict(self.runtime),
             "runtime_written_at": self.runtime_written_at,
             "imported_at": self.imported_at,
+            "paused": self.paused,
             "history": [
                 {
                     "at": event.at,
@@ -526,6 +528,7 @@ def load_state(
         runtime_written_at=raw.get("runtime_written_at"),
         imported_at=raw.get("imported_at"),
         history=tuple(history[-HISTORY_LIMIT:]),
+        paused=raw.get("paused") is True,
     )
     if state.accepted is not None and state.accepted["session"] != session:
         state = replace(
