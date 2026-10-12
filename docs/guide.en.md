@@ -653,7 +653,8 @@ Rules (defaults: 60 min, 0.1 kW):
   import. The rule also holds with `minimum_mode_minutes = 0`: there are no modes then, and the
   discharge in any interval the flows label `SELF_CONSUME` is bound the same way. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is executed the same way. If the battery runs out before
-  it ends, the rest of the commitment is `HOLD` with full import (a new `HOLD` clock starts). The
+  it ends, the rest of the commitment is `HOLD` with full import (it starts no clock of its own: the
+  commitment's deadline stays the only one). The
   same happens — from the first interval if need be — when the battery cannot cover the house
   and still keep the inverter standby loss (`idle_drain_kw`) of the later intervals, with no PV
   or grid charge to pay it in time. `HOLD` starts only in an interval without a PV surplus the
@@ -675,14 +676,21 @@ Rules (defaults: 60 min, 0.1 kW):
   `CHARGE_PV`. Applies while `minimum_mode_minutes` is above 0. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is held to the same rule. If the battery is full before it
   ends (the next interval could not take even the minimum activity above the upper bound), the
-  rest of the commitment is `HOLD` with the surplus exported (a new `HOLD` clock starts). A first
-  committed interval that already has less room than the minimum activity is not covered: the
-  plan is `infeasible` until the commitment ends.
+  rest of the commitment is `HOLD` with the surplus exported, or `CURTAIL` where the site cannot
+  pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
+  pack. The released `HOLD` starts no clock of its own — the commitment's deadline stays the only
+  one — so it may turn to `CURTAIL` (which starts its own clock) before then; it does not go back
+  to `CHARGE_PV`/`SELF_CONSUME`. Two cases are not covered, and the plan is `infeasible` until the
+  commitment ends: a first committed interval that already has less room than the minimum
+  activity, and a committed interval in which the pack fills while the rest of the surplus is
+  still above the export cap or the inverter rating (`CHARGE_PV` cannot fill the pack and curtail
+  in the same interval).
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
-- **Any other change** (source, destination, HOLD or CURTAIL) starts a new clock. Idle HOLD cannot
-  fund an active run.
+- **Any other change** (source, destination, HOLD or CURTAIL) starts a new clock, except the `HOLD`
+  released from a full pack or an empty battery above, which has none. Idle HOLD cannot fund an
+  active run.
 - **Coverage:** a new active mode needs a full duration of forecast coverage remaining.
 - **Safety exception (pause, not reset):** during an unexpired active commitment the current row
   shows HOLD when the observed SOC is already at the upper bound (charging modes —
@@ -867,6 +875,55 @@ flowchart TD
 Percentiles come from successful probe costs across the reference horizon (default 24 h) using
 linear interpolation. If a full reference probe fails, `short_coverage` decides: `absolute_fallback`
 (default: keep BOOST/LIMIT absolute rules and the minimum-tariff CHEAP rule) or `unavailable`.
+
+**Limit: probes that do not finish in time.** Every probe is a full, exact solve of the whole
+planning horizon and is known only when it finishes within `probe_time_limit_s` (default 2 s); the
+probes run one after another inside `total_time_limit_s` (default 60 s). A probe that does not finish
+stays unknown — it is never replaced by an approximate cost. One unknown full reference probe is
+enough for `short_coverage` (`reason` is `reference_probe_failed`), and an interval whose own probe is
+unknown has no level.
+
+How long a probe takes depends on the strategy and on the number of intervals in the planning
+horizon. `self_sufficiency` and `backup_ready` keep `SELF_CONSUME` on through the night, and the
+load-following rule makes their probes many times slower. Probes with a known cost at the default
+limits, quarter-hour prices and hourly display intervals, measured on a fast desktop CPU (Apple M4
+Max):
+
+| Planning horizon | `cost_min`, `pv_swap`, `max_export`, `grid_friendly` | `self_sufficiency` | `backup_ready` |
+| --- | --- | --- | --- |
+| 12 h (48 intervals), 12 probes | 12 of 12 | 12 of 12 | 12 of 12 |
+| 24 h (96 intervals, the default), 24 probes | 24 of 24 | 0 of 24 | 2 of 24 |
+| 48 h (192 intervals), 24 probes | 7–23 of 24 | none | none |
+
+So with `self_sufficiency` or `backup_ready` the consumption levels are unknown for nearly every
+interval already on the default 24 h horizon, and on a 48 h horizon no strategy completes its probes
+(with a 15-minute display interval 18–67 of 96 are known). At 48 h the base plan of these two
+strategies also runs into `solve_time_limit_s` and is published as `time_limited`.
+`minimum_mode_minutes = 0` does not lift the limit: at 24 h 13 of 24 (`self_sufficiency`) and 20 of 24
+(`backup_ready`) probes are known, which is still `short_coverage`. A slower host, such as a
+Raspberry Pi, reaches each limit at a shorter horizon.
+
+The [flexible energy depth](#flexible-energy-depth) is bound by the same two settings: each of its
+five solves gets `probe_time_limit_s`, inside what the probes left of `total_time_limit_s`. With
+`self_sufficiency` or `backup_ready` at 24 h none of the five finished within the default 2 s, so the
+depth is unknown (profiles `UNKNOWN`, reason `timeout`); `cost_min` at 24 h and `self_sufficiency` at
+12 h got all five.
+
+What was measured to help on the same host, at the default 24 h horizon:
+
+- `backup_ready`: `probe_time_limit_s` 10 and `total_time_limit_s` 120 gave all 24 probes (47 s of
+  probing per recalculation) and, with the same probe limit, all five flexible-depth solves (21 s
+  more). With `probe_time_limit_s` 5 one probe was still late and the levels
+  stayed on `short_coverage`.
+- `self_sufficiency`: only the maximum of both settings, `probe_time_limit_s` 30 and
+  `total_time_limit_s` 300, gave all 24 probes, after 199 s of probing per recalculation, and the
+  five flexible-depth solves took 48 s more. That leaves no headroom for a slower host or a harder
+  day.
+- A 12 h planning horizon gave all 12 probes for both strategies at the default limits, with the
+  slowest `self_sufficiency` probe at 1.5 s of the 2 s limit; the plan then looks 12 h ahead only.
+
+The table, the per-probe times and the command that reproduces them are in
+[`docs/runtime-validation.md`](runtime-validation.md#consumption-probe-limits).
 
 ## Windows and flexible energy depth
 

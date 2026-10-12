@@ -663,7 +663,7 @@ Zasady (domyślnie 60 min, 0,1 kW):
   a rozładowanie w każdym przedziale, który przepływy oznaczają jako `SELF_CONSUME`, jest związane
   tak samo. Przeniesione zobowiązanie `CHARGE_PV`/`SELF_CONSUME` jest wykonywane tak samo. Jeśli
   bateria wyczerpie się przed jego końcem, reszta zobowiązania to `HOLD` z pełnym importem
-  (startuje nowy zegar `HOLD`). Tak samo — w razie potrzeby już od pierwszego przedziału — gdy
+  (bez własnego zegara: jedynym zegarem jest termin zobowiązania). Tak samo — w razie potrzeby już od pierwszego przedziału — gdy
   bateria nie może pokryć domu i zarazem zachować poboru czuwania falownika (`idle_drain_kw`)
   z późniejszych przedziałów, a PV ani ładowanie z sieci nie uzupełnią go na czas. `HOLD` zaczyna
   się tylko w przedziale bez nadwyżki PV, którą bateria mogłaby przyjąć, w każdym przedziale
@@ -685,13 +685,20 @@ Zasady (domyślnie 60 min, 0,1 kW):
   `CHARGE_PV`. Dotyczy przypadku, gdy `minimum_mode_minutes` jest większe od 0. Przeniesione
   zobowiązanie `CHARGE_PV`/`SELF_CONSUME` podlega tej samej regule. Jeśli bateria zapełni się przed
   jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
-  granicy), reszta zobowiązania to `HOLD` z eksportem nadwyżki (startuje nowy zegar `HOLD`).
-  Nie obejmuje to pierwszego przedziału zobowiązania, który ma już mniej miejsca niż minimalna
-  aktywność: plan jest `infeasible` (niewykonalny) do końca zobowiązania.
+  granicy), reszta zobowiązania to `HOLD` z eksportem nadwyżki albo `CURTAIL` tam, gdzie
+  instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
+  falownik przy pełnej baterii. Zwolniony `HOLD` nie ma własnego zegara — jedynym zegarem jest
+  termin zobowiązania — więc może przejść w `CURTAIL` (który startuje własny zegar) przed tym
+  terminem; nie wraca do `CHARGE_PV`/`SELF_CONSUME`. Dwa przypadki nie są objęte, a plan jest
+  `infeasible` (niewykonalny) do końca zobowiązania: pierwszy przedział zobowiązania, który ma już
+  mniej miejsca niż minimalna aktywność, oraz przedział zobowiązania, w którym bateria się
+  napełnia, a reszta nadwyżki nadal przekracza limit eksportu lub moc falownika (`CHARGE_PV` nie
+  napełni baterii i nie przytnie nadwyżki w tym samym przedziale).
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.
-- **Każda inna zmiana** (źródło, cel, HOLD lub CURTAIL) uruchamia nowy zegar. Bezczynny HOLD nie
+- **Każda inna zmiana** (źródło, cel, HOLD lub CURTAIL) uruchamia nowy zegar, poza `HOLD`
+  zwolnionym przy pełnej lub pustej baterii (wyżej), który go nie ma. Bezczynny HOLD nie
   „odlicza” czasu dla aktywnego przebiegu.
 - **Pokrycie:** nowy aktywny tryb wymaga pełnego minimalnego czasu pokrycia prognozą.
 - **Wyjątek bezpieczeństwa (pauza, nie reset):** w trakcie niewygasłego aktywnego zobowiązania
@@ -884,6 +891,56 @@ Percentyle liczone są z udanych prób w całym horyzoncie odniesienia (domyśln
 liniową. Gdy nie powiedzie się pełna próba odniesienia, decyduje `short_coverage`:
 `absolute_fallback` (domyślnie: zostają bezwzględne reguły BOOST/LIMIT i reguła CHEAP wg minimalnej
 taryfy) albo `unavailable`.
+
+**Ograniczenie: próby, które nie kończą się na czas.** Każda próba to pełne, dokładne obliczenie
+całego horyzontu planowania i jest znana tylko wtedy, gdy skończy się w `probe_time_limit_s`
+(domyślnie 2 s); próby liczone są jedna po drugiej w ramach `total_time_limit_s` (domyślnie 60 s).
+Próba, która nie zdąży, pozostaje nieznana — nigdy nie jest zastępowana kosztem przybliżonym. Jedna
+nieznana próba pełnego przedziału odniesienia wystarcza do użycia `short_coverage` (`reason` to
+`reference_probe_failed`), a przedział, którego własna próba jest nieznana, nie ma poziomu.
+
+Czas jednej próby zależy od strategii i od liczby przedziałów w horyzoncie planowania.
+`self_sufficiency` i `backup_ready` utrzymują `SELF_CONSUME` przez całą noc, a reguła podążania za
+obciążeniem wielokrotnie wydłuża ich próby. Próby ze znanym kosztem przy domyślnych limitach, cenach
+kwadransowych i godzinnym przedziale wyświetlania, zmierzone na szybkim komputerze biurkowym (Apple
+M4 Max):
+
+| Horyzont planowania | `cost_min`, `pv_swap`, `max_export`, `grid_friendly` | `self_sufficiency` | `backup_ready` |
+| --- | --- | --- | --- |
+| 12 h (48 przedziałów), 12 prób | 12 z 12 | 12 z 12 | 12 z 12 |
+| 24 h (96 przedziałów, domyślnie), 24 próby | 24 z 24 | 0 z 24 | 2 z 24 |
+| 48 h (192 przedziały), 24 próby | 7–23 z 24 | żadna | żadna |
+
+Przy `self_sufficiency` albo `backup_ready` poziomy zużycia są więc nieznane dla prawie każdego
+przedziału już na domyślnym horyzoncie 24 h, a na horyzoncie 48 h żadna strategia nie kończy swoich
+prób (przy przedziale wyświetlania 15 minut znanych jest 18–67 z 96). Przy 48 h plan bazowy tych
+dwóch strategii dochodzi też do `solve_time_limit_s` i jest publikowany jako `time_limited`.
+`minimum_mode_minutes = 0` nie znosi ograniczenia: przy 24 h znanych jest 13 z 24 (`self_sufficiency`)
+i 20 z 24 (`backup_ready`) prób, czyli nadal `short_coverage`. Wolniejszy komputer, na przykład
+Raspberry Pi, dochodzi do każdego z tych ograniczeń przy krótszym horyzoncie.
+
+[Głębokość elastycznego zużycia](#głębokość-elastycznego-zużycia) podlega tym samym dwóm ustawieniom:
+każde z jej pięciu obliczeń dostaje `probe_time_limit_s`, w ramach tego, co próby zostawiły z
+`total_time_limit_s`. Przy `self_sufficiency` albo `backup_ready` i 24 h żadne z pięciu nie skończyło
+się w domyślnych 2 s, więc głębokość jest nieznana (profile `UNKNOWN`, powód `timeout`); `cost_min`
+przy 24 h i `self_sufficiency` przy 12 h dostały wszystkie pięć.
+
+Co według pomiarów pomaga na tym samym komputerze, przy domyślnym horyzoncie 24 h:
+
+- `backup_ready`: `probe_time_limit_s` 10 i `total_time_limit_s` 120 dały wszystkie 24 próby (47 s
+  liczenia prób na każde przeliczenie) oraz, przy tym samym limicie próby, wszystkie pięć obliczeń
+  głębokości elastycznego zużycia (kolejne 21 s). Przy `probe_time_limit_s` 5 jedna próba nadal się spóźniała
+  i poziomy zostawały przy `short_coverage`.
+- `self_sufficiency`: dopiero maksimum obu ustawień, `probe_time_limit_s` 30 i
+  `total_time_limit_s` 300, dało wszystkie 24 próby, po 199 s liczenia prób na każde przeliczenie, a
+  pięć obliczeń głębokości elastycznego zużycia zajęło kolejne 48 s. Nie zostawia to zapasu na
+  wolniejszy komputer ani trudniejszy dzień.
+- Horyzont planowania 12 h dał wszystkie 12 prób dla obu strategii przy domyślnych limitach, przy
+  czym najwolniejsza próba `self_sufficiency` zajęła 1,5 s z limitu 2 s; plan patrzy wtedy tylko
+  12 h naprzód.
+
+Tabela, czasy poszczególnych prób i polecenie, które je odtwarza, są w
+[`docs/runtime-validation.md`](runtime-validation.md#consumption-probe-limits).
 
 ## Okna i głębokość elastycznego zużycia
 

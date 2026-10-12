@@ -36,7 +36,8 @@ Keep the release mechanism and make its threshold, the lock floor, aware of the 
 4. `validate_modes` uses the same two helpers, so it accepts the released rows and no other.
 
 The released rows are `HOLD` with full import, the mode the unlocked solver picks in the same state, and
-`HOLD` starts its own minimum duration, as with the existing release.
+`HOLD` starts its own minimum duration, as with the existing release. (Amended by
+[ADR-0005](0005-full-pack-curtail-in-a-carried-commitment.md): the released `HOLD` starts no clock of its own.)
 
 ## Alternatives rejected
 
@@ -75,9 +76,9 @@ The released rows are `HOLD` with full import, the mode the unlocked solver pick
    activity (`_follow_open`: the bounds `constrain_modes` puts on both modes, taken from the problem) is `HOLD` by
    classification, and that alone is not leaving the commitment. The model gives each such interval a binary
    `hold_run`. 0 is a *bridge*: the interval continues the commitment, needs no release, carries PV-follow in the
-   duration rows and starts no `HOLD` clock. 1 is a real `HOLD` run with its own minimum duration; it needs what any
-   `HOLD` needs (a release flag, a `HOLD` already under way, or in the first interval the observed pack already
-   spent). A first version had only the bridge, so an idle first interval lost the spent-pack release and the
+   duration rows and starts no `HOLD` clock. 1 is a real `HOLD` run (it starts no minimum duration of its own, see
+   [ADR-0005](0005-full-pack-curtail-in-a-carried-commitment.md)); it needs what any `HOLD` needs (a release flag,
+   a `HOLD` already under way, or in the first interval the observed pack already spent). A first version had only the bridge, so an idle first interval lost the spent-pack release and the
    problem was `infeasible`; the run reading is what keeps the sweep at zero newly infeasible problems.
    The solver reports which rows it bridged (`Plan.carried_bridges`) and hands them to
    `validate_modes(problem, flows, bridges)`. A bridge row must be `HOLD` in an interval `idle_slots` lists; every
@@ -91,8 +92,8 @@ The released rows are `HOLD` with full import, the mode the unlocked solver pick
    rows.
 2. **HOLD never *starts* on a chargeable surplus inside the commitment.** The release (`lock_depleted`, or the
    observed SoC in the first interval) allows `HOLD` to start only in an interval where `_takes_surplus` is false;
-   in the first interval that was already so. A `HOLD` run that began earlier goes on through a surplus, since it
-   holds its own minimum duration. The validator applies the same test at every committed interval. The full-pack
+   in the first interval that was already so. A `HOLD` run that began earlier goes on through a surplus, since a
+   released `HOLD` stays `HOLD` until the commitment's deadline (ADR-0005). The validator applies the same test at every committed interval. The full-pack
    release of T-010 (`lock_full`) is not bound by it: a pack too full to charge has nothing to take.
 3. Only the carried commitment is covered. A PV-follow mode the solver starts itself still needs its next
    intervals to offer a member (no `HOLD` bridge); changing that is a separate decision.
