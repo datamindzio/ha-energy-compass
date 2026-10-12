@@ -18,6 +18,7 @@ BALANCE_ATTRIBUTES = (
     "planned_start",
     "planned_end",
     "planned_mode",
+    "pv_series",
     "hold_progress_minutes",
     "hold_required_minutes",
     "threshold_percent",

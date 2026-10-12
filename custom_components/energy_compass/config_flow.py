@@ -631,6 +631,7 @@ class Editor(SourceEditor):
             if not user_input["pv_enabled"]:
                 candidate["sources"]["pv"]["arrays"] = []
                 candidate["sources"]["pv"].pop("solar_forecasts", None)
+                candidate["sources"]["pv"].pop("pessimistic", None)
             if not user_input["battery_enabled"]:
                 candidate["sources"].update(soc=None, bms_soc=None)
             currency_changed = candidate["currency"] != self._draft["currency"]

@@ -403,7 +403,7 @@ Cost sensors can be disabled with **Presentation → Expose costs**, window time
 **Expose windows**, and flexible depth with **Consumption outlook → Enable flexible energy depth**.
 Battery balance is disabled by default and enabled with the **LFP balance** setting; its
 attributes carry `last_completed`, `next_due`, `days_overdue`, `planned_start`, `planned_end`,
-`planned_mode`, `hold_progress_minutes`, `hold_required_minutes` and `threshold_percent`.
+`planned_mode`, `pv_series`, `hold_progress_minutes`, `hold_required_minutes` and `threshold_percent`.
 
 ### Availability rule
 
@@ -821,7 +821,8 @@ during a hold that is eligible or due. A window is published as **CHARGE_PV**
 only when PV covers load in every one of its slots; otherwise (mixed PV/grid or
 pure grid, such as a night window) it is **CHARGE_GRID**, which additionally
 requires grid charging to be allowed and the grid-charge price ceiling (if any)
-to pass in every slot — with `balance_hold: true` on every row. From the slot before the earliest candidate
+to pass in every slot — with `balance_hold: true` on every row. With an optional
+[pessimistic PV source](#pessimistic-pv-for-the-balance-window) the PV test is stricter. From the slot before the earliest candidate
 window to the horizon end, the battery's energy may rise up to full capacity
 instead of the configured SOC ceiling, so a hold is never blocked by
 `soc_ceiling` below 100 %; that lift only matters when the ceiling is below
@@ -831,8 +832,33 @@ prices the load, not the balance choice.
 The **Battery balance** diagnostic sensor (`sensor.<name>_battery_balance`)
 reports `ok`, `eligible`, `scheduled`, `holding` or `overdue`, with
 `last_completed`, `next_due`, `days_overdue`, `planned_start`, `planned_end`,
-`planned_mode`, `hold_progress_minutes`, `hold_required_minutes`,
+`planned_mode`, `pv_series`, `hold_progress_minutes`, `hold_required_minutes`,
 `threshold_percent`.
+
+#### Pessimistic PV for the balance window
+
+The balance window is chosen on the median PV forecast, so a low-PV day can leave the pack short of the
+threshold and the balance missed again. **Sources → Add source → PV pessimistic (optional)** binds a
+second, lower forecast of the same site (for Solcast, `pv_estimate10`; the Solcast presets propose that
+field). It takes the same interval-forecast mapping as a PV source; **Review and edit sources** lists,
+edits, extends with a continuation and removes it. It needs PV enabled and is not available with the
+Energy dashboard solar forecast, which has no pessimistic series.
+
+With it configured, a **CHARGE_PV** window is offered only if both hold on the pessimistic series:
+
+1. Pack: charging from PV surplus alone (`pv − load`, at `eta_charge` and `charge_kw`, no discharge)
+   lifts the pack to the balance threshold by the window start.
+2. Window: PV covers load in every slot of the window.
+
+Otherwise the start is offered only as **CHARGE_GRID**, subject to the usual grid-charge and price-ceiling
+rules, so the solver can pick a cheap grid window instead. The dispatch plan itself keeps using the median
+series. Without the source nothing changes.
+
+The `pv_series` attribute of the Battery balance sensor, and `balance_pv_series` in the plan's attributes
+(also `quality.balance_pv_series`), say which series decided the candidate windows: `pessimistic` when the
+source is configured and usable, `median` otherwise. If the source is configured but unavailable, stale,
+negative or does not cover the horizon, the windows fall back to the median series and the plan carries
+the `balance_pessimistic_pv_unavailable` warning.
 
 ### `cost_min` — cost minimisation
 
@@ -1452,4 +1478,5 @@ These are raw codes, not translated.
 | Code | Meaning |
 | --- | --- |
 | `balance_overdue` | The balance phase is `due` but no hold window could be fit into the plan; a balance was missed this horizon. |
+| `balance_pessimistic_pv_unavailable` | A pessimistic PV source is configured but unavailable, stale or does not cover the horizon; the balance windows were chosen on the median PV series. |
 | `balance_no_window_in_horizon` | The balance phase is `eligible` or `due` but no candidate hold window exists in the horizon at all (no aligned start satisfies PV/grid-charge feasibility). |

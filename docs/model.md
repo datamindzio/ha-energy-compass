@@ -127,6 +127,17 @@ are offered; an `eligible` balance may take a start anywhere in the horizon. A w
 `CHARGE_PV` if PV covers load in every one of its slots, else `CHARGE_GRID` if grid charging is
 allowed and passes the price ceiling in every slot; otherwise the start is dropped.
 
+With an optional pessimistic PV series (`pv.pessimistic` in the source configuration, e.g. Solcast
+`pv_estimate10`) `CHARGE_PV` needs two more conditions, both on that series `p_t`. The pack energy at
+the window start `s`, simulated without any discharge, is `E_s ≥ θ` where `E_0 = initial energy`,
+`E_{t+1} = min(capacity, E_t + min(max(0, p_t − load_t) × η_charge, charge_kw × hours_t))`; and
+`p_t ≥ load_t` for every slot `t` of the window. A start failing either is offered as `CHARGE_GRID`
+only. The solver, the dispatch plan and the probes keep using the median PV series; only the candidate
+modes depend on `p`. If the series is configured but unavailable, stale, negative or short of the
+horizon, candidates use the median series and `balance_pessimistic_pv_unavailable` is reported.
+`quality.balance_pv_series` / plan attribute `balance_pv_series` (`median` or `pessimistic`) and the
+`pv_series` attribute of the balance sensor record which series decided.
+
 For each candidate window `c` the solver adds one binary `y_c` (`_constrain_balance` in
 `engine/optimize.py`) and, unless the dispatch plan already pinned the choice for a consumption
 probe, one continuous `miss ∈ [0, 1]`:

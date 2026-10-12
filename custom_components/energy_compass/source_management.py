@@ -11,6 +11,7 @@ _LABELS = {
         "buy": "Buy",
         "sell": "Sell",
         "pv": "PV",
+        "pv_pessimistic": "PV pessimistic (optional)",
         "load": "Load",
         "soc": "SOC",
         "bms_soc": "BMS SOC",
@@ -52,6 +53,7 @@ _LABELS = {
         "buy": "Zakup",
         "sell": "Sprzedaż",
         "pv": "PV",
+        "pv_pessimistic": "PV pesymistyczna (opcjonalna)",
         "load": "Zużycie",
         "soc": "SOC",
         "bms_soc": "SOC BMS",
@@ -225,6 +227,13 @@ def source_inventory(config, registry=None, language="en"):
                     f"{labels['group']} {group_index + 1} · {labels['continuation']} {binding_index + 1} · {describe(binding)}",
                 )
             )
+    for index, binding in enumerate(sources["pv"].get("pessimistic", ())):
+        result.append(
+            (
+                SourceRef("pv_pessimistic", "interval", binding_index=index),
+                f"{labels['pv_pessimistic']} · {labels['continuation']} {index + 1} · {describe(binding)}",
+            )
+        )
     for index, forecast in enumerate(sources["pv"].get("solar_forecasts", ())):
         result.append(
             (
@@ -277,6 +286,8 @@ def selected_source(config, ref):
             )
         if ref.role == "pv" and ref.kind == "solar_forecast":
             return sources["pv"]["solar_forecasts"][ref.binding_index]
+        if ref.role == "pv_pessimistic":
+            return sources["pv"]["pessimistic"][ref.binding_index]
         if ref.role == "pv":
             group = sources["pv"]["arrays"][ref.group_index]
             return group if ref.kind == "group" else group[ref.binding_index]
@@ -302,6 +313,8 @@ def replace_source(config, ref, original, replacement):
     sources = candidate["sources"]
     if ref.role in ("buy", "sell") and ref.kind == "interval":
         sources[ref.role]["forecast"][ref.binding_index] = replacement
+    elif ref.role == "pv_pessimistic":
+        sources["pv"]["pessimistic"][ref.binding_index] = replacement
     elif ref.role == "pv" and ref.kind == "interval":
         sources["pv"]["arrays"][ref.group_index][ref.binding_index] = replacement
     elif ref.role == "load":
@@ -330,6 +343,11 @@ def remove_source(config, ref, original, *, cycles_active=False):
                 rows.pop(ref.binding_index)
                 return candidate
         raise InputError("replace or disable the required source before removing it")
+    if ref.role == "pv_pessimistic":
+        sources["pv"]["pessimistic"].pop(ref.binding_index)
+        if not sources["pv"]["pessimistic"]:
+            sources["pv"].pop("pessimistic")
+        return candidate
     if ref.role == "pv" and ref.kind == "solar_forecast":
         forecasts = sources["pv"]["solar_forecasts"]
         if sources["pv"]["enabled"] and len(forecasts) == 1:

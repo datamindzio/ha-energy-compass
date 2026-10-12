@@ -196,7 +196,9 @@ def available_forecasts(source, states):
         buy=replace(source.buy, forecast=select(source.buy.forecast)),
         sell=replace(source.sell, forecast=select(source.sell.forecast)),
         pv=replace(
-            source.pv, arrays=tuple(select(group) for group in source.pv.arrays)
+            source.pv,
+            arrays=tuple(select(group) for group in source.pv.arrays),
+            pessimistic=select(source.pv.pessimistic),
         ),
     ), sorted(missing)
 
@@ -267,6 +269,7 @@ def freshness_deadline(config, states, values, now):
         *source.buy.forecast,
         *source.sell.forecast,
         *(binding for group in source.pv.arrays for binding in group),
+        *source.pv.pessimistic,
     ]
     if source.load.forecast:
         bindings.append(source.load.forecast)
@@ -412,9 +415,9 @@ def build_problem(
     """Preserve native boundaries and stop at actual contiguous source coverage."""
     values = effective_settings(config, states, now)
     pv_today, export_today, _ = daily_export_observations(config, states, values, now)
-    source, missing = available_forecasts(
-        SourceConfig.from_dict(config["sources"]), states
-    )
+    configured = SourceConfig.from_dict(config["sources"])
+    configured_pessimistic = bool(configured.pv.pessimistic)
+    source, missing = available_forecasts(configured, states)
     requested_end = now + timedelta(hours=values["horizon_hours"])
     groups = []
     for price in (source.buy, source.sell):
@@ -791,9 +794,21 @@ def build_problem(
         **weights,
     )
     balance_phase = None
+    balance_series = None
     balance_warnings: list[str] = []
     if battery and values["lfp_balance"]:
         tracker = balance_settings(values)
+        threshold_kwh = battery.capacity_kwh * tracker.threshold_percent / 100
+        balance_series = "median"
+        pessimistic_pv = None
+        if source.pv.enabled and configured_pessimistic:
+            try:
+                pessimistic_pv = _pessimistic_pv(
+                    source.pv.pessimistic, states, now, intervals
+                )
+                balance_series = "pessimistic"
+            except InputError:
+                balance_warnings.append("balance_pessimistic_pv_unavailable")
         report = balance_status(balance_state or empty_state(), now, tracker)
         balance_phase = report["phase"]
         # A hold right after a completion is still tracked (and completes), but
@@ -809,15 +824,16 @@ def build_problem(
                 battery.allow_grid_charge and price_allows_grid_charge(problem, slot)
                 for slot in slots
             ),
+            pessimistic_pv_kwh=pessimistic_pv,
+            battery=battery,
+            threshold_kwh=threshold_kwh,
         )
         if balance_phase in ("eligible", "due") and not windows:
             balance_warnings.append("balance_no_window_in_horizon")
         problem = replace(
             problem,
             balance_windows=windows,
-            balance_threshold_kwh=battery.capacity_kwh
-            * tracker.threshold_percent
-            / 100,
+            balance_threshold_kwh=threshold_kwh,
             balance_miss_cost=miss_cost(
                 window_phase, values["balance_value"], report["days_overdue"]
             ),
@@ -837,6 +853,7 @@ def build_problem(
         "load": _load_quality(source.load.mode, load_result),
         "soc_observation": soc_observation,
         "balance_phase": balance_phase,
+        "balance_pv_series": balance_series,
         "warnings": ["unvalidated_tariff"]
         if values["calibration"] != "verified"
         else [],
@@ -852,6 +869,18 @@ def build_problem(
     quality["warnings"].extend(autonomy_warnings)
     quality["warnings"].extend(balance_warnings)
     return problem, values, quality
+
+
+def _pessimistic_pv(bindings, states, now, intervals):
+    """Pessimistic PV per slot; any gap or fault means the series is unusable."""
+    if not bindings:
+        raise InputError("pessimistic PV source unavailable")
+    rows = merge_continuations(
+        tuple(parse_intervals(states, binding, now) for binding in bindings)
+    )
+    if any(row.value < 0 for row in rows):
+        raise InputError("PV energy must be nonnegative")
+    return tuple(row.value for row in sum_pv_arrays((rows,), intervals))
 
 
 async def async_fetch_solar_forecast(hass, binding: SolarForecastBinding) -> dict:
@@ -1215,6 +1244,7 @@ def compute(
         / 3600,
         "monthly_charge_reporting_only": values["monthly_charge"],
         "quality": quality,
+        "balance_pv_series": quality.get("balance_pv_series"),
         "dispatch_policy": {
             "limit_grid_charge_price": values["limit_grid_charge_price"],
             "maximum_grid_charge_price": problem.maximum_grid_charge_price,

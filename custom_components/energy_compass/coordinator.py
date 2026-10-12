@@ -275,6 +275,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             "planned_start": window["start"] if window else None,
             "planned_end": window["end"] if window else None,
             "planned_mode": window["mode"] if window else None,
+            "pv_series": self.data.get("balance_pv_series"),
         }
 
     def _subscribe(self):
@@ -400,6 +401,8 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             if price.mode == "forecast"
         ]
         groups.extend(source.pv.arrays)
+        if source.pv.pessimistic:
+            groups.append(source.pv.pessimistic)
         if source.load.forecast:
             groups.append((source.load.forecast,))
         for group in groups:

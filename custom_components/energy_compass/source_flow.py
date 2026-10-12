@@ -72,7 +72,16 @@ MEASUREMENTS = (
     "throughput_today",
     *DAILY_EXPORT_MEASUREMENTS,
 )
-TARGETS = ("buy", "sell", "pv", "load", "soc", "bms_soc", *MEASUREMENTS)
+TARGETS = (
+    "buy",
+    "sell",
+    "pv",
+    "pv_pessimistic",
+    "load",
+    "soc",
+    "bms_soc",
+    *MEASUREMENTS,
+)
 
 
 class SourceEditor:
@@ -136,7 +145,8 @@ class SourceEditor:
             ["source_append", "source_remove_group"]
             if ref.kind == "group"
             else ["source_edit", "source_append", "source_remove"]
-            if ref.kind == "interval" and ref.role in ("buy", "sell", "pv")
+            if ref.kind == "interval"
+            and ref.role in ("buy", "sell", "pv", "pv_pessimistic")
             else ["source_edit", "source_remove"]
         )
         options.extend(["source_inventory", "sources"])
@@ -187,6 +197,8 @@ class SourceEditor:
             return modes
         if target == "pv":
             return ["forecast", "solar_forecast"]
+        if target == "pv_pessimistic":
+            return ["forecast"]
         if target == "load":
             return ["fixed", "forecast", "statistic", "power_history"]
         if target in ("soc", "bms_soc", "throughput_today", *DAILY_EXPORT_MEASUREMENTS):
@@ -205,7 +217,7 @@ class SourceEditor:
             if mode not in choices:
                 errors["base"] = "invalid_input"
             elif (
-                target == "pv"
+                target in ("pv", "pv_pessimistic")
                 and not self._draft["sources"]["pv"]["enabled"]
                 or target in ("soc", "bms_soc", "throughput_today")
                 and not self._draft["sources"]["battery_enabled"]
@@ -933,9 +945,14 @@ class SourceEditor:
                     unit=preset.price_unit or defaults["unit"],
                     interval_minutes=preset.price_interval_minutes or 60,
                 )
-            elif target == "pv":
+            elif target in ("pv", "pv_pessimistic"):
                 defaults.update(
-                    value_path=preset.pv_value_field or "value",
+                    value_path=(
+                        preset.pv_pessimistic_value_field
+                        if target == "pv_pessimistic"
+                        else preset.pv_value_field
+                    )
+                    or "value",
                     start_path=preset.pv_start_field or "start",
                     unit=preset.pv_unit or "kWh",
                     interval_minutes=preset.pv_interval_minutes or 60,
@@ -1053,7 +1070,7 @@ class SourceEditor:
             self._source["operation"] == "edit"
             and self._source_ref is not None
             and self._source_ref.kind == "interval"
-            and target in ("buy", "sell", "pv")
+            and target in ("buy", "sell", "pv", "pv_pessimistic")
         )
         candidate = (
             replace_source(self._draft, self._source_ref, self._source_original, data)
@@ -1091,6 +1108,14 @@ class SourceEditor:
                 power=None,
                 daily_estimate=None,
             )
+        elif target == "pv_pessimistic":
+            pv = candidate["sources"]["pv"]
+            if editing_interval:
+                pass
+            elif self._source["operation"] == "append" and pv.get("pessimistic"):
+                pv["pessimistic"].append(data)
+            else:
+                pv["pessimistic"] = [data]
         else:
             candidate["sources"]["pv"].pop("solar_forecasts", None)
             groups = candidate["sources"]["pv"]["arrays"]

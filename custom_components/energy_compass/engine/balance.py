@@ -21,8 +21,18 @@ def candidate_windows(
     hold_minutes: float,
     remaining_minutes: float,
     grid_charge_ok: tuple[bool, ...],
+    pessimistic_pv_kwh: tuple[float, ...] | None = None,
+    battery: Battery | None = None,
+    threshold_kwh: float = 0.0,
 ) -> tuple[BalanceWindow, ...]:
-    """Offer hour-aligned hold windows the inverter can execute."""
+    """Offer hour-aligned hold windows the inverter can execute.
+
+    With a pessimistic PV series (and the battery to simulate on it) a
+    CHARGE_PV window is offered only if the pack still reaches the threshold by
+    the window start and PV still covers load inside the window on that series.
+    """
+    pessimistic = pessimistic_pv_kwh is not None and battery is not None
+    reach = _best_case_energy(slots, battery, pessimistic_pv_kwh) if pessimistic else ()
     if phase == "ok" or not slots:
         return ()
     if phase == "holding":
@@ -44,7 +54,13 @@ def candidate_windows(
         )
         if not members or slots[members[-1]].end < end:
             continue
-        if all(slots[i].pv_kwh >= slots[i].load_kwh for i in members):
+        if all(slots[i].pv_kwh >= slots[i].load_kwh for i in members) and (
+            not pessimistic
+            or (
+                reach[first] >= threshold_kwh - 1e-9
+                and all(pessimistic_pv_kwh[i] >= slots[i].load_kwh for i in members)
+            )
+        ):
             mode = "CHARGE_PV"
         elif all(grid_charge_ok[i] for i in members):
             mode = "CHARGE_GRID"
@@ -52,6 +68,28 @@ def candidate_windows(
             continue
         windows.append(BalanceWindow(members, mode))
     return tuple(windows)
+
+
+def _best_case_energy(
+    slots: tuple[Slot, ...], battery: Battery, pv_kwh: tuple[float, ...]
+) -> tuple[float, ...]:
+    """Pack energy at each slot start when only PV surplus charges it.
+
+    The pack never discharges (the grid covers load), so this is the most the
+    given PV series can deliver before a window. The ceiling lift lets a hold
+    window go up to capacity, so that is the cap.
+    """
+    energy = battery.initial_kwh
+    result = []
+    for slot, pv in zip(slots, pv_kwh):
+        result.append(energy)
+        hours = (slot.end - slot.start).total_seconds() / 3600
+        gain = min(
+            max(0.0, pv - slot.load_kwh) * battery.eta_charge,
+            battery.charge_kw * hours,
+        )
+        energy = min(max(energy, battery.capacity_kwh), energy + gain)
+    return tuple(result)
 
 
 def miss_cost(phase: str, value: float, days_overdue: int) -> float:

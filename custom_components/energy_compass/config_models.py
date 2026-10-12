@@ -157,6 +157,7 @@ class PvSource:
     enabled: bool
     arrays: tuple[tuple[IntervalBinding, ...], ...] = ()
     solar_forecasts: tuple[SolarForecastBinding, ...] = ()
+    pessimistic: tuple[IntervalBinding, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize explicit additive arrays and continuation groups."""
@@ -164,6 +165,8 @@ class PvSource:
             "enabled": self.enabled,
             "arrays": [[item.to_dict() for item in group] for group in self.arrays],
         }
+        if self.pessimistic:
+            data["pessimistic"] = [item.to_dict() for item in self.pessimistic]
         if self.solar_forecasts:
             data["solar_forecasts"] = [item.to_dict() for item in self.solar_forecasts]
         return data
@@ -180,6 +183,9 @@ class PvSource:
             tuple(
                 SolarForecastBinding.from_dict(item)
                 for item in value.get("solar_forecasts", ())
+            ),
+            tuple(
+                IntervalBinding.from_dict(item) for item in value.get("pessimistic", ())
             ),
         )
 
@@ -320,7 +326,8 @@ def validate_sources(config: SourceConfig, own_entity_ids: set[str]) -> None:
         dependencies.extend(
             binding.entity for group in config.pv.arrays for binding in group
         )
-    elif config.pv.arrays or config.pv.solar_forecasts:
+        dependencies.extend(binding.entity for binding in config.pv.pessimistic)
+    elif config.pv.arrays or config.pv.solar_forecasts or config.pv.pessimistic:
         raise InputError("disabled PV cannot have active bindings")
     if config.load.mode == "forecast":
         if config.load.forecast is None:
