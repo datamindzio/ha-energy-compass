@@ -57,7 +57,6 @@ async def async_setup_entry(hass, entry) -> bool:
             # the coordinator so the first solve (dispatched by async_start) carries
             # the payload builder.
             from .atlas import AtlasBridge, build_attrs
-            from .atlas.location import home_h3_res6
 
             coordinator.atlas = AtlasBridge(
                 hass, entry, coordinator.configuration, atlas_settings
@@ -66,7 +65,7 @@ async def async_setup_entry(hass, entry) -> bool:
                 build_attrs(
                     coordinator.configuration,
                     atlas_settings,
-                    home_h3_res6(hass),
+                    coordinator.atlas.municipality,
                 )
             )
         await coordinator.async_start()

@@ -5,20 +5,31 @@ does `from .atlas import AtlasBridge` inside the `if enabled` branch.
 """
 
 import logging
+from datetime import timedelta
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.util import dt as dt_util
 
 from ..atlas_env import BASE_URLS
 from ..atlas_sink.sink import SinkThread
 from ..flow_schema import snapshot
+from ..settings import DOMAIN
+from . import location
+from .attrs_builder import build_attrs
 from .mapping import resolve_feed, tracked_entity_ids
 from .solve_builder import build_solve_payload
 from .storage import environment_dir, is_registered
 
 _LOGGER = logging.getLogger(__name__)
+
+# One attribute check: the lookup keeps its own 24 h / 1 h limits (`atlas.location`), so a
+# check that has nothing to do makes no request.
+MUNICIPALITY_CHECK_INTERVAL = timedelta(minutes=15)
 
 
 class AtlasBridge:
@@ -29,6 +40,10 @@ class AtlasBridge:
         self.entry = entry
         self.config = config
         self._attrs: dict | None = None
+        self._atlas_settings = atlas_settings
+        self.municipality: str | None = None
+        self._unsub_check = None
+        self._check_task = None
         self.environment = atlas_settings["environment"]
         self.dir = environment_dir(hass, entry.entry_id, self.environment)
         self.sink: SinkThread | None = None
@@ -58,6 +73,31 @@ class AtlasBridge:
         feed = resolve_feed(self.config, states, dt_util.utcnow())
         if feed:
             self.sink.feed(dt_util.utcnow(), feed)
+        # Telemetry never waits for the lookup: it runs in the background and the
+        # attributes follow when it finds the municipality.
+        self._unsub_check = async_track_time_interval(
+            self.hass, self._municipality_tick, MUNICIPALITY_CHECK_INTERVAL
+        )
+        self._start_check()
+
+    @callback
+    def _municipality_tick(self, now) -> None:
+        self._start_check()
+
+    @callback
+    def _start_check(self) -> None:
+        if self._check_task is not None and not self._check_task.done():
+            return
+        self._check_task = self.hass.async_create_background_task(
+            self._check_municipality(), f"{DOMAIN} atlas municipality"
+        )
+
+    async def _check_municipality(self) -> None:
+        found = await location.home_municipality(self.hass, BASE_URLS[self.environment])
+        if self.sink is None or found == self.municipality:
+            return
+        self.municipality = found
+        self.update(self.config, build_attrs(self.config, self._atlas_settings, found))
 
     @callback
     def update(self, config: dict, attrs: dict) -> None:
@@ -100,6 +140,12 @@ class AtlasBridge:
             await self.hass.async_add_executor_job(self.sink.stop, 5)
 
     async def async_stop(self) -> None:
+        if self._unsub_check is not None:
+            self._unsub_check()
+            self._unsub_check = None
+        if self._check_task is not None:
+            self._check_task.cancel()
+            self._check_task = None
         if self._unsub_state is not None:
             self._unsub_state()
             self._unsub_state = None

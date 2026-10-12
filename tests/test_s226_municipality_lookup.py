@@ -46,17 +46,6 @@ from custom_components.energy_compass.atlas.storage import environment_dir
 from custom_components.energy_compass.atlas_env import BASE_URLS
 from custom_components.energy_compass.settings import DOMAIN, default_configuration
 
-# Red until the dev ticket T-894 lands. `tests/conftest.py` marks every test of this module that is
-# not listed here as strict xfail: once the behaviour exists it XPASSes and fails CI, so T-894 must
-# delete the `S226` block in `pytest_collection_modifyitems`
-# when it implements the story. These four are invariant guards, green today and after.
-GREEN_GUARDS = {
-    "test_s226_shared_points_cover_land_none_and_all_voivodeships",
-    "test_s226_build_attrs_without_municipality_has_no_location",
-    "test_s226_no_requirement_is_added_and_the_lookup_is_standard_library_only",
-    "test_s226_readmes_match_and_do_not_mention_h3",
-}
-
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "custom_components" / "energy_compass"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"

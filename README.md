@@ -64,7 +64,8 @@ Under **Planning**, **Sell only PV** defaults to on and limits total grid export
 
 
 **Energy Atlas** (optional, off by default) sends telemetry and solves to Datamindz's Energy Atlas
-service for cross-site research, once opted in under **Configure → Energy Atlas**. No secret to
+service for cross-site research (including the municipality your home lies in, found inside Home
+Assistant, never its coordinates), once opted in under **Configure → Energy Atlas**. No secret to
 type: this release registers with a shared public credential baked into the integration, so a site
 is unverified until you send **Energy Atlas: show ownership proof** to the Energy Atlas bot; only
 the resulting site key is stored, kept per environment under `.storage/energy_compass_atlas/`.

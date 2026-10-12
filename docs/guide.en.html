@@ -2700,10 +2700,20 @@ import/export and battery power, household load power (recorder mode only), batt
 PV/import/export energy counters (only counters
 whose Home Assistant <code>state_class</code> is <code>total</code>/<code>total_increasing</code>); each Compass solve's plan and
 its price/PV/load inputs; a handful of installation attributes (PV kWp, grid connection power in kW
-if you entered it, battery capacity and usable capacity, SOC floor, the Compass version) and the coarse location of your Home Assistant home zone
-as an H3 resolution-6 cell (a hexagon of roughly 36 km², so Atlas can count your site in its
-voivodeship). The cell is computed once, when delivery starts, and your exact coordinates are never
-stored or sent. Nothing else — no tariff text or inverter model, and the enrollment credential
+if you entered it, battery capacity and usable capacity, SOC floor, the Compass version) and the municipality
+(gmina) your Home Assistant home zone lies in, as its 7-digit id. Atlas shows the municipality <strong>by
+name</strong> next to your home's values. Compass finds the municipality inside Home Assistant: it reads
+the public outline files that Atlas serves (the same files for every home, found through
+<code>GET /v1/public/geo</code>) and compares them with your home's position there, so your coordinates stay
+in Home Assistant and no request carries them. The only things derived from them that leave are the
+voivodeship id in the name of the municipalities file Compass fetches and the municipality id in
+the attributes. A home within about 50 m of a municipal border may be shown in the neighbouring
+municipality, because the outlines are simplified. A home outside every Polish municipality
+(abroad, at sea) or without coordinates sends no location and is counted in the fleet total only.
+The files are fetched again only when Atlas publishes a new version or your home moves (Atlas is
+asked for the version at start and at most once per 24 h); if Atlas cannot be reached, the last
+municipality found is kept and the lookup is retried at most once per hour, without ever delaying
+telemetry. Nothing else is sent — no tariff text or inverter model, and the enrollment credential
 itself is <strong>never stored</strong>, only the site key issued in exchange for it.</p>
 <p><strong>How values are sent</strong>: powers in W. Bind <strong>Battery power</strong> with + = discharge (as in the
 dashboard examples); Atlas receives it as + = charge. Readings outside the collector's ranges are

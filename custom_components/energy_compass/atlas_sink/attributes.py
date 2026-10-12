@@ -81,7 +81,7 @@ def attrs_hash(attrs: dict) -> str:
 class AttributeTracker:
     """Queues an attribute snapshot at start and whenever the settings hash changes.
 
-    `read_settings` returns the current attrs dict (supplied by the glue; H3 res 6 cell only).
+    `read_settings` returns the current attrs dict (supplied by the glue; the municipality id only).
     valid_from is the detection time. The first check after start always queues: the collector
     answers 200 when unchanged, so a restart is harmless.
     """

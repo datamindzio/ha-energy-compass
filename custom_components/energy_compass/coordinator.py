@@ -193,7 +193,6 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             if not is_registered(self.hass, self.entry.entry_id, environment):
                 return
             from .atlas import AtlasBridge, build_attrs
-            from .atlas.location import home_h3_res6
 
             bridge = AtlasBridge(
                 self.hass, self.entry, self.configuration, new_settings
@@ -203,7 +202,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                     build_attrs(
                         self.configuration,
                         new_settings,
-                        home_h3_res6(self.hass),
+                        bridge.municipality,
                     )
                 )
             except Exception:
@@ -374,14 +373,13 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         if self.atlas is None or self.atlas.sink is None:
             return
         from .atlas import build_attrs
-        from .atlas.location import home_h3_res6
 
         self.atlas.update(
             self.configuration,
             build_attrs(
                 self.configuration,
                 self.entry.options.get("atlas", {}),
-                home_h3_res6(self.hass),
+                self.atlas.municipality,
             ),
         )
 
