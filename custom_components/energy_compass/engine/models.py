@@ -78,6 +78,9 @@ class BalanceWindow:
 
     slots: tuple[int, ...]
     mode: Literal["CHARGE_PV", "CHARGE_GRID"]
+    # Load the pessimistic PV series leaves to the grid inside the window, at the
+    # slot buy prices; 0 without that series. Only ranks windows (see balance.py).
+    fallback_cost: float = 0.0
 
 
 @dataclass(frozen=True)

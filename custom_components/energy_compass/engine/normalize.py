@@ -308,6 +308,7 @@ def validate_problem(problem: Problem) -> None:
                 != tuple(range(window.slots[0], window.slots[0] + len(window.slots)))
                 or window.slots[0] < 0
                 or window.slots[-1] >= count
+                or finite(window.fallback_cost, "balance fallback_cost") < 0
             ):
                 raise InputError("invalid balance window")
         if any(

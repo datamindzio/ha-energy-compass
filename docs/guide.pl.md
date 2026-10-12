@@ -1043,6 +1043,12 @@ W przeciwnym razie ten start jest proponowany wyłącznie jako **CHARGE_GRID**, 
 ładowania z sieci i sufitu ceny, więc solver może wybrać tanie okno sieciowe. Sam plan dyspozycji nadal
 używa serii mediany. Bez tego źródła nic się nie zmienia.
 
+Solver wycenia każde okno na serii mediany, gdzie nadwyżka PV może pokryć odrzucone okno
+**CHARGE_GRID**, więc kilka startów kosztowałoby tyle samo. Żeby o wyborze nie decydował przypadek
+kończący się w drogim przedziale, każde takie okno ma koszt rankingowy: zużycie, które seria
+pesymistyczna zostawia sieci w obrębie okna, po cenach zakupu z przedziałów. Solver dolicza do wyboru
+okna 5 % jego nadwyżki ponad najtańsze okno. To tylko preferencja; nie wchodzi do kosztu planu.
+
 Uwaga: test baterii liczy wyłącznie nadwyżkę PV. Start, do którego bateria dotarłaby dopiero po
 naładowaniu z sieci przed oknem, jest proponowany tylko jako **CHARGE_GRID** i odpada, gdy sufit ceny
 ładowania z sieci blokuje przedział okna — wtedy może pojawić się `balance_no_window_in_horizon` tam, gdzie

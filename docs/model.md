@@ -175,7 +175,11 @@ the window start `s`, simulated without any discharge, is `E_s ≥ θ` where `E_
 `E_{t+1} = min(capacity, E_t + min(max(0, p_t − load_t) × η_charge, charge_kw × hours_t))`; and
 `p_t ≥ load_t` for every slot `t` of the window. A start failing either is offered as `CHARGE_GRID`
 only. The solver, the dispatch plan and the probes keep using the median PV series; only the candidate
-modes depend on `p`. If the series is configured but unavailable, stale, negative or short of the
+modes depend on `p`. A `CHARGE_GRID` window offered on `p` carries `fallback_cost = Σ_{t∈c} max(0, load_t − p_t) × buy_t`
+(0 for `CHARGE_PV` and without `p`); the solver prices `y_c` at `0.05 × (fallback_cost_c − min_c fallback_cost)`
+(`balance.fallback_costs`), so among windows the median series prices equally the one cheapest if `p` comes
+true wins instead of a HiGHS tie-break. Like `miss`, this term is not part of `Plan.objective`, and a pinned
+probe (one window) sees 0. If the series is configured but unavailable, stale, negative or short of the
 horizon, candidates use the median series and `balance_pessimistic_pv_unavailable` is reported; the
 source is optional input, so it never makes the plan invalid and is not part of the input freshness
 deadline (the fallback applies at the next recalculation). The plan attribute `balance_pv_series`
