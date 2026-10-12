@@ -1159,7 +1159,8 @@ directly by any other available mode.</p>
   use, so the plan never pairs a partial charge with grid export: in a <code>CHARGE_PV</code> interval the
   battery takes the whole PV surplus, and export appears only once the charge is at its interval
   power limit or the battery has been filled to its upper bound. Otherwise the row is not
-  <code>CHARGE_PV</code>. Applies while <code>minimum_mode_minutes</code> is above 0. A carried
+  <code>CHARGE_PV</code>. The rule also holds with <code>minimum_mode_minutes = 0</code>: there are no modes then, and the
+  charge in any interval the flows label <code>CHARGE_PV</code> is bound the same way. A carried
   <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment is held to the same rule. If the battery is full before it
   ends (the next interval could not take even the minimum activity above the upper bound), the
   rest of the commitment is <code>HOLD</code> with the surplus exported (a new <code>HOLD</code> clock starts). A first

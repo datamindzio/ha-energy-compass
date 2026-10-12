@@ -1169,8 +1169,9 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   nigdy nie łączy częściowego ładowania z eksportem do sieci: w przedziale <code>CHARGE_PV</code> bateria
   przejmuje całą nadwyżkę PV, a eksport pojawia się dopiero, gdy ładowanie jest na limicie mocy
   przedziału albo bateria została napełniona do górnej granicy. W innym wypadku wiersz nie jest
-  <code>CHARGE_PV</code>. Dotyczy przypadku, gdy <code>minimum_mode_minutes</code> jest większe od 0. Przeniesione
-  zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli bateria zapełni się przed
+  <code>CHARGE_PV</code>. Reguła obowiązuje też przy <code>minimum_mode_minutes = 0</code>: nie ma wtedy trybów, a
+  ładowanie w każdym przedziale, który przepływy oznaczają jako <code>CHARGE_PV</code>, jest związane tak
+  samo. Przeniesione zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli bateria zapełni się przed
   jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
   granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki (startuje nowy zegar <code>HOLD</code>).
   Nie obejmuje to pierwszego przedziału zobowiązania, który ma już mniej miejsca niż minimalna

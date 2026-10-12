@@ -370,39 +370,56 @@ def _lock_ceiling(problem, drains, index) -> float:
 
 
 def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
-    """Apply the load-following rule without the mode model.
+    """Apply the load- and surplus-following rules without the mode model.
 
     With no minimum duration there are no mode binaries, but the flows are still
-    labelled SELF_CONSUME and a controller still holds the full discharge cap,
-    so a partial discharge next to import stays unexecutable. One binary per
-    interval stands for "the battery discharges"; it plays the role of the
-    SELF_CONSUME indicator, and the rule on the discharge is the same.
+    labelled SELF_CONSUME or CHARGE_PV and a controller still holds the full
+    discharge or charge cap, so a partial discharge next to import or a partial
+    charge next to export stays unexecutable. One binary per interval and
+    direction stands for "the battery discharges" (`discharging`) or "the battery
+    charges" (`charging_pv`); it plays the role of the mode indicator, and the rule
+    is the same. A charge above the PV surplus is CHARGE_GRID and already takes
+    the whole surplus, so the rule does not touch it.
     """
     battery = problem.battery
     reserve = battery.capacity_kwh * battery.minimum_soc_fraction
     lowest = battery.initial_kwh
+    highest = battery.initial_kwh
     for slot, v, drain in zip(
         problem.slots, vectors, drain_schedule(problem), strict=True
     ):
-        hours = (
-            slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
-        ).total_seconds() / 3600
+        hours = _hours(slot)
+        flex_max = model.upper[v["flex_load"]] if flexible_load else 0
         discharge_max = model.upper[v["bd"]]
         lowest -= discharge_max / battery.eta_discharge + drain
-        if discharge_max <= 0:
+        if discharge_max > 0:
+            discharging = v["discharging"] = model.variable(binary=True)
+            model.constrain({v["bd"]: 1, discharging: -discharge_max}, -np.inf, 0)
+            _follow_load(
+                model,
+                problem,
+                v,
+                {"SELF_CONSUME": discharging},
+                slot,
+                hours,
+                flex_max,
+                lowest <= reserve,
+            )
+        charge_max = model.upper[v["bc"]]
+        ceiling = model.upper[v["energy"]]
+        highest = min(ceiling, highest + battery.eta_charge * charge_max - drain)
+        surplus = max(slot.pv_kwh - slot.load_kwh, 0)
+        if charge_max <= 0 or surplus <= 0:
             continue
-        discharging = v["discharging"] = model.variable(binary=True)
-        model.constrain({v["bd"]: 1, discharging: -discharge_max}, -np.inf, 0)
-        flex_max = model.upper[v["flex_load"]] if flexible_load else 0
-        _follow_load(
+        charging = v["charging_pv"] = model.variable(binary=True)
+        model.constrain({v["bc"]: 1, charging: -charge_max}, -np.inf, 0)
+        _follow_surplus(
             model,
-            problem,
             v,
-            {"SELF_CONSUME": discharging},
-            slot,
-            hours,
+            {"CHARGE_PV": charging},
+            surplus,
             flex_max,
-            lowest <= reserve,
+            highest >= ceiling - 1e-9,
         )
 
 
@@ -772,8 +789,10 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
     if not problem.battery:
         return
     if not problem.minimum_mode_minutes:
-        for slot, flow in zip(problem.slots, flows, strict=True):
-            _check_load_following(problem, slot, flow, machine_state(slot, flow))
+        for index, (slot, flow) in enumerate(zip(problem.slots, flows, strict=True)):
+            mode = machine_state(slot, flow)
+            _check_load_following(problem, slot, flow, mode)
+            _check_surplus_following(problem, slot, flow, mode, index)
         return
     previous, since = _initial(problem)
     dwell = timedelta(minutes=problem.minimum_mode_minutes)

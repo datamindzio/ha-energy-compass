@@ -672,7 +672,8 @@ Rules (defaults: 60 min, 0.1 kW):
   use, so the plan never pairs a partial charge with grid export: in a `CHARGE_PV` interval the
   battery takes the whole PV surplus, and export appears only once the charge is at its interval
   power limit or the battery has been filled to its upper bound. Otherwise the row is not
-  `CHARGE_PV`. Applies while `minimum_mode_minutes` is above 0. A carried
+  `CHARGE_PV`. The rule also holds with `minimum_mode_minutes = 0`: there are no modes then, and the
+  charge in any interval the flows label `CHARGE_PV` is bound the same way. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is held to the same rule. If the battery is full before it
   ends (the next interval could not take even the minimum activity above the upper bound), the
   rest of the commitment is `HOLD` with the surplus exported (a new `HOLD` clock starts). A first

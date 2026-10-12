@@ -682,8 +682,9 @@ Zasady (domyślnie 60 min, 0,1 kW):
   nigdy nie łączy częściowego ładowania z eksportem do sieci: w przedziale `CHARGE_PV` bateria
   przejmuje całą nadwyżkę PV, a eksport pojawia się dopiero, gdy ładowanie jest na limicie mocy
   przedziału albo bateria została napełniona do górnej granicy. W innym wypadku wiersz nie jest
-  `CHARGE_PV`. Dotyczy przypadku, gdy `minimum_mode_minutes` jest większe od 0. Przeniesione
-  zobowiązanie `CHARGE_PV`/`SELF_CONSUME` podlega tej samej regule. Jeśli bateria zapełni się przed
+  `CHARGE_PV`. Reguła obowiązuje też przy `minimum_mode_minutes = 0`: nie ma wtedy trybów, a
+  ładowanie w każdym przedziale, który przepływy oznaczają jako `CHARGE_PV`, jest związane tak
+  samo. Przeniesione zobowiązanie `CHARGE_PV`/`SELF_CONSUME` podlega tej samej regule. Jeśli bateria zapełni się przed
   jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
   granicy), reszta zobowiązania to `HOLD` z eksportem nadwyżki (startuje nowy zegar `HOLD`).
   Nie obejmuje to pierwszego przedziału zobowiązania, który ma już mniej miejsca niż minimalna
