@@ -1140,7 +1140,7 @@ powrót do mediany następuje przy najbliższym okresowym przeliczeniu (`refresh
 | `autonomy_shortfall_kwh` | Łączny niedobór poniżej progu autonomii; `0` = próg spełniony. |
 | `peak_reserve_shortfall_kwh` | Łączny niedobór poniżej [zapasu na drogie okresy](#zapas-na-drogie-okresy); `0` = spełniony lub wyłączony. |
 | `time_limited` | `true`, gdy rozwiązanie bazowe osiągnęło `solve_time_limit_s` i zamiast udowodnionego optimum opublikowano najlepsze dotąd znalezione, zwalidowane rozwiązanie. |
-| `mip_gap` | Względna luka MIP zgłoszona przez solver dla opublikowanego planu: `0` = udowodnione optimum; dla planu `time_limited` górna granica odległości jego celu od optimum (np. `0.017` = 1,7 %). |
+| `mip_gap` | Względna luka MIP zgłoszona przez solver dla opublikowanego planu: `0` = udowodnione optimum (udowodniony plan ma `0` albo najwyżej `0.0001`, gdy żaden próg epizodu nie jest aktywny); dla planu `time_limited` górna granica odległości jego celu od optimum (np. `0.017` = 1,7 %). |
 | `cap_violation_kwh` | Łączna energia ponad miękkie limity `grid_friendly`; `0` = limity spełnione. |
 
 ### Zwolnienie przy zmianie strategii
