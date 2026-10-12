@@ -87,11 +87,13 @@ def pytest_collection_modifyitems(items):
     # S226: red until T-894 implements the story; T-894 deletes this block (and GREEN_GUARDS).
     for item in items:
         module = item.module
-        if module.__name__.endswith("test_s226_municipality_lookup"):
-            if item.originalname not in module.GREEN_GUARDS:
-                item.add_marker(
-                    pytest.mark.xfail(
-                        strict=True,
-                        reason="S-226 not implemented yet (T-894 removes this marker)",
-                    )
+        if (
+            module.__name__.endswith("test_s226_municipality_lookup")
+            and item.originalname not in module.GREEN_GUARDS
+        ):
+            item.add_marker(
+                pytest.mark.xfail(
+                    strict=True,
+                    reason="S-226 not implemented yet (T-894 removes this marker)",
                 )
+            )
