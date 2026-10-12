@@ -1373,7 +1373,7 @@ baterii (pojemność, sprawność) w planie`.
 | Plan state | Charge / discharge current | Grid charge current | TOU direction, target |
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | cap / cap | 0 A | all Disabled, SOC 10 % |
-| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` at SOC ≥ 100 % in Voltage mode | cap / 0 A in `HOLD`, cap otherwise | 0 A | all Disabled, SOC 10 % |
+| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` at SOC ≥ 100 % in Voltage mode (`HOLD`: kept until SOC ≤ 99 %) | cap / 0 A in `HOLD`, cap otherwise | 0 A | all Disabled, SOC 10 % |
 | `CHARGE_GRID` | cap / 0 A | planned grid share, ≤ `max_grid_current` | Grid on the active program, target SOC from the plan; in Voltage mode TOU voltage `voltage_grid_charge_ceiling` |
 | `DISCHARGE_GRID` | 0 A / planned, ≤ cap; after the target is reached `reached_discharge_current`, ≤ cap | 0 A | Sell on the active program, target SOC from the plan, power = planned, ≤ `max_power_w`; Disabled after the target is reached |
 | `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, target SOC = planned end SOC rounded down |
@@ -1383,7 +1383,7 @@ The cap is `min(max_current, max_power_w / V)` for charging and `min(max_current
 for discharging. The cap has hysteresis: the current already on the inverter is kept while it still fits
 the power cap, and the next ampere step is taken only with 2 % voltage headroom (about 10 V at 530 V), so
 a pack voltage crossing a step boundary does not rewrite the ceiling on every sag and rebound. The
-power cap is never exceeded. At 100 % SOC the charge current becomes 0 A, except in battery operation mode `Voltage` (next paragraph). Planned currents convert interval kWh with
+power cap is never exceeded. At 100 % SOC the charge current of `CHARGE_PV`, `SELF_CONSUME` and `CHARGE_GRID` becomes 0 A; in battery operation mode `Voltage` only `CHARGE_GRID` does, because the other two follow the full-pack rule at the end of this paragraph. Planned currents convert interval kWh with
 `eta_charge` (charging) or `eta_discharge` (discharging) over the full interval. Target SOC uses the accepted plan's `capacity_kwh`; target voltage follows a fixed
 high-voltage LFP curve (496–536 V for 10–90 %, 584 V charging or 544 V discharging at 100 %). A reached
 target in `CHARGE_GRID`/`DISCHARGE_GRID` is latched for that plan interval. A reached `DISCHARGE_GRID`
@@ -1398,8 +1398,13 @@ counter-based SOC source can read 100 % before the pack is full. So at SOC ≥ 1
 `SELF_CONSUME` the controller keeps the normal charge current cap (with the same hysteresis, so there are no 0 A
 rewrites around the ceiling) instead of 0 A (or the `hold_grid_current` of `HOLD`). The grid current is 0 A,
 so PV is the only source, discharge follows the plan row (0 A in `HOLD`), and no SOC target is written and
-no "reached" state is latched. `CHARGE_GRID` (it keeps `voltage_grid_charge_ceiling`), `CURTAIL`, the
-balance hold and `Capacity` mode behave as before. `CURTAIL` runs the `HOLD` profile with a warning, because the
+no "reached" state is latched. In `HOLD` the switch has hysteresis: the full-pack profile starts at SOC ≥ 100 % and
+stays through the following `HOLD` runs until SOC is 99 % or lower, so an SOC source that dithers between 99.9 %
+and 100 % does not rewrite the profile on every crossing. Each switch is one write transaction that begins with
+charge 0 A, and there is at most one per percentage point of SOC movement; without PV the pack drifts down on the
+inverter's own draw and `HOLD` tops it up from the grid, a cycle of hours. `CHARGE_PV` and `SELF_CONSUME` need no
+hysteresis, because below 100 % they write the same values. `CHARGE_GRID` (it keeps `voltage_grid_charge_ceiling`
+and its 0 A charge current at 100 %), `CURTAIL`, the balance hold and `Capacity` mode behave as before. `CURTAIL` runs the `HOLD` profile with a warning, because the
 controller cannot limit PV.
 
 Only battery modes listed in `commissioned_battery_modes` are controlled; any other mode (for example
@@ -1692,9 +1697,10 @@ into days by the local date of `start`; settings come only from `--set`.
 - The executed plan follows the controller (`tools/deye_controller/build.py`) against realized data.
   `SELF_CONSUME` and `CHARGE_PV` follow the load: all PV surplus charges the battery and a deficit is
   covered from it. In `CHARGE_GRID` only the grid share follows the plan — the planned charge minus the
-  surplus the forecast promised — and the grid stops at the row's planned end SOC, as the controller
-  does; the realized PV surplus charges on top. PV above the forecast therefore shrinks the grid
-  import (the SOC may end above plan, by PV only), and PV below it charges less — a shortfall is never
+  surplus the forecast promised. Grid and the realized PV surplus charge together until the row's
+  planned end SOC; then the grid stops, as the controller does, and PV keeps charging for the rest of
+  the slot. PV above the forecast therefore shrinks the grid import (the SOC may end above plan, by PV
+  only), and PV below it charges less — a shortfall is never
   bought from the grid, nor a start SOC below plan caught up. `DISCHARGE_GRID`
   discharges the planned energy, `HOLD` parks the battery. Grid export beyond `grid_export_kw` is
   curtailed, and stored energy is not exported beyond the PV produced so far when **Sell only PV**

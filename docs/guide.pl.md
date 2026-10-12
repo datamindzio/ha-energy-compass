@@ -1391,7 +1391,7 @@ parametrów baterii (pojemność, sprawność) w planie`.
 | Stan planu | Prąd ładowania / rozładowania | Prąd ładowania z sieci | Kierunek TOU, cel |
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | limit / limit | 0 A | wszystkie Disabled, SOC 10 % |
-| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` przy SOC ≥ 100 % w trybie Voltage | limit / 0 A w `HOLD`, limit w pozostałych | 0 A | wszystkie Disabled, SOC 10 % |
+| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` przy SOC ≥ 100 % w trybie Voltage (`HOLD`: utrzymany do SOC ≤ 99 %) | limit / 0 A w `HOLD`, limit w pozostałych | 0 A | wszystkie Disabled, SOC 10 % |
 | `CHARGE_GRID` | limit / 0 A | planowana część sieciowa, ≤ `max_grid_current` | Grid w aktywnym programie, cel SOC z planu; w trybie Voltage napięcie TOU `voltage_grid_charge_ceiling` |
 | `DISCHARGE_GRID` | 0 A / z planu, ≤ limit; po osiągnięciu celu `reached_discharge_current`, ≤ limit | 0 A | Sell w aktywnym programie, cel SOC z planu, moc z planu, ≤ `max_power_w`; po osiągnięciu celu Disabled |
 | `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, cel SOC = końcowy SOC planu zaokrąglony w dół |
@@ -1401,7 +1401,7 @@ Limit to `min(max_current, max_power_w / V)` przy ładowaniu i `min(max_current,
 przy rozładowaniu. Limit ma histerezę: prąd już ustawiony w falowniku zostaje, dopóki mieści się
 w limicie mocy, a wyższy krok o 1 A wchodzi dopiero z 2 % zapasem napięcia (ok. 10 V przy 530 V), więc
 napięcie pakietu przechodzące przez granicę kroku nie przepisuje limitu przy każdym spadku i odbiciu.
-Limit mocy nigdy nie jest przekroczony. Przy SOC 100 % prąd ładowania spada do 0 A, z wyjątkiem trybu pracy baterii `Voltage` (następny akapit). Prądy z planu przeliczają kWh
+Limit mocy nigdy nie jest przekroczony. Przy SOC 100 % prąd ładowania w `CHARGE_PV`, `SELF_CONSUME` i `CHARGE_GRID` spada do 0 A; w trybie pracy baterii `Voltage` dotyczy to tylko `CHARGE_GRID`, bo pozostałe dwa stany podlegają regule pełnego pakietu z końca tego akapitu. Prądy z planu przeliczają kWh
 przedziału przez `eta_charge` (ładowanie) lub `eta_discharge` (rozładowanie) w pełnej długości przedziału. Cel SOC używa `capacity_kwh` zaakceptowanego planu; cel napięcia wynika
 ze stałej krzywej wysokonapięciowej baterii LFP (496–536 V dla 10–90 %, przy 100 % 584 V przy
 ładowaniu albo 544 V przy rozładowaniu). Osiągnięty cel w `CHARGE_GRID`/`DISCHARGE_GRID` jest
@@ -1416,7 +1416,13 @@ liczniku może pokazać 100 % przed pełnym naładowaniem. Dlatego przy SOC ≥ 
 `SELF_CONSUME` sterownik zostawia zwykły limit prądu ładowania (z tą samą histerezą, więc bez zapisów 0 A
 wokół granicy) zamiast 0 A (lub `hold_grid_current` w `HOLD`). Prąd sieciowy wynosi 0 A, więc jedynym
 źródłem jest PV, rozładowanie wynika z wiersza planu (0 A w `HOLD`), nie jest zapisywany cel SOC ani
-zatrzaskiwany stan „osiągnięto”. `CHARGE_GRID` (zachowuje `voltage_grid_charge_ceiling`), `CURTAIL`,
+zatrzaskiwany stan „osiągnięto”. W `HOLD` przełączenie ma histerezę: profil pełnego pakietu zaczyna się przy SOC ≥ 100 %
+i zostaje w kolejnych przebiegach `HOLD`, dopóki SOC nie spadnie do 99 % lub niżej, więc źródło SOC drgające między
+99,9 % a 100 % nie przepisuje profilu przy każdym przejściu. Każde przełączenie to jedna transakcja zapisu, która
+zaczyna się od ładowania 0 A, i przypada najwyżej jedna na punkt procentowy zmiany SOC; bez PV pakiet opada na
+poborze własnym falownika, a `HOLD` doładowuje go z sieci, w cyklu liczonym w godzinach. `CHARGE_PV` i `SELF_CONSUME`
+nie potrzebują histerezy, bo poniżej 100 % zapisują te same wartości. `CHARGE_GRID` (zachowuje
+`voltage_grid_charge_ceiling` i prąd ładowania 0 A przy 100 %), `CURTAIL`,
 trzymanie balansu i tryb `Capacity` działają jak dotąd. `CURTAIL` wykonuje profil `HOLD` z ostrzeżeniem, bo sterownik nie ogranicza PV.
 
 Sterowane są tylko tryby baterii z listy `commissioned_battery_modes`; każdy inny tryb (np. Voltage
@@ -1717,9 +1723,9 @@ grupowane w dni według lokalnej daty `start`; ustawienia podaje się tylko prze
 - Wykonany plan podąża za sterownikiem (`tools/deye_controller/build.py`) względem rzeczywistych
   danych. `SELF_CONSUME` i `CHARGE_PV` podążają za obciążeniem: cała nadwyżka PV ładuje baterię, a
   niedobór jest pokrywany z niej. W `CHARGE_GRID` za planem idzie tylko udział sieci — zaplanowane
-  ładowanie minus nadwyżka obiecana przez prognozę — a sieć przestaje ładować po osiągnięciu
-  planowanego końcowego SOC wiersza, tak jak w sterowniku; rzeczywista nadwyżka PV ładuje ponad to.
-  PV powyżej prognozy zmniejsza więc import z sieci (SOC może skończyć powyżej planu, wyłącznie dzięki
+  ładowanie minus nadwyżka obiecana przez prognozę. Sieć i rzeczywista nadwyżka PV ładują razem aż do
+  planowanego końcowego SOC wiersza; potem sieć przestaje, tak jak w sterowniku, a PV ładuje dalej do
+  końca slotu. PV powyżej prognozy zmniejsza więc import z sieci (SOC może skończyć powyżej planu, wyłącznie dzięki
   PV), a poniżej prognozy ładuje mniej — niedoboru nie kupuje się z sieci, a startowy SOC poniżej planu
   nie jest nadrabiany. `DISCHARGE_GRID` rozładowuje zaplanowaną energię, `HOLD` zatrzymuje baterię. Eksport ponad
   `grid_export_kw` jest ucinany (curtailment), a zmagazynowana energia nie jest eksportowana ponad

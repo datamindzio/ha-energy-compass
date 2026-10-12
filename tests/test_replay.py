@@ -363,9 +363,10 @@ def _grid_flow(start_soc=5.0, charge=2.0):
     [
         # forecast 1.0 PV / 0.5 load: surplus 0.5, so the grid share of 2.0 is 1.5
         (1.0, 0.5, 2.0, 1.5, 6.8),  # as forecast
-        # PV above forecast: the grid stops at the planned SOC, PV charges on top
-        (1.5, 0.5, 2.0, 1.0, 6.8),
-        (2.5, 0.5, 2.0, 0.0, 6.8),  # PV alone reaches the target: no grid at all
+        # PV above forecast: grid and PV charge together until the planned SOC, then
+        # the grid stops and PV charges on, so the SOC ends above plan
+        (1.5, 0.5, 2.2, 1.2, 6.98),  # grid 1.5 * 2.0 / (1.5 + 1.0)
+        (2.5, 0.5, 2.0 + 6 / 7, 6 / 7, 5.0 + 0.9 * (2.0 + 6 / 7)),  # 1.5 * 2.0 / 3.5
         (3.5, 0.5, 3.0, 0.0, 7.7),  # PV beyond the target, up to the power limit
         # PV below forecast: no shortfall bought from the grid, no catch-up either
         (0.2, 0.5, 1.5, 1.8, 6.35),
@@ -409,6 +410,34 @@ def test_charge_grid_below_plan_start_is_not_caught_up():
 
     assert flow.grid_import_kwh == pytest.approx(1.5)
     assert end_soc == pytest.approx(4.0 + 2.0 * 0.9)
+
+
+@pytest.mark.parametrize(
+    ("start", "charge", "grid_import", "end"),
+    [
+        # 1.0 kWh over plan: headroom 0.8 / 0.9, the grid fills 1.5 * H / (1.5 + 0.5)
+        (6.0, 0.5 + 2 / 3, 2 / 3, 6.0 + 0.9 * (0.5 + 2 / 3)),
+        # at or over the planned end SOC: no grid, PV still charges
+        (6.8, 0.5, 0.0, 6.8 + 0.9 * 0.5),
+        (7.5, 0.5, 0.0, 7.5 + 0.9 * 0.5),
+    ],
+)
+def test_charge_grid_above_plan_start_buys_less_grid(start, charge, grid_import, end):
+    flow, end_soc = replay.realize(
+        "CHARGE_GRID",
+        _grid_flow(),
+        1.0,
+        0.5,
+        1.0,
+        start,
+        _values(),
+        100.0,
+        forecast=(1.0, 0.5),
+    )
+
+    assert flow.charge_kwh == pytest.approx(charge)
+    assert flow.grid_import_kwh == pytest.approx(grid_import)
+    assert end_soc == pytest.approx(end)
 
 
 _DEPOSIT = ("--set", "deposit_model=manual")

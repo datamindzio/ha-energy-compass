@@ -413,7 +413,19 @@ DECISION = r"""
    rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
    pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
    balansowanie i tryb Capacity bez zmian. #}
-{% set full_pv = states(operation_entity)=='Voltage' and soc >= 100 and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+{# Histereza pelnego pakietu w HOLD: profil HOLD i profil pelnego pakietu to dwie
+   rozne transakcje (6 zapisow, pierwszy to ladowanie 0 A), a bez PV ciagna SOC
+   w przeciwne strony (pobor wlasny ~140 W w dol, 1 A z sieci w gore). Zrodlo SOC
+   z ulamkami drgajace 99,9 <-> 100,0 przelaczaloby profil co kilka minut. Wejscie
+   przy SOC >= 100, wyjscie dopiero przy SOC <= 99: jedna zmiana profilu na 1 pkt
+   proc. SOC. Zrodlo calkowite zachowuje sie jak dotad (99 = profil HOLD). Stan to
+   poprzednia decyzja z runtime (state HOLD, zaden program TOU w kierunku Grid —
+   zwykly HOLD zawsze ma Grid w aktywnym programie), bez nowego klucza runtime.
+   CHARGE_PV i SELF_CONSUME nie potrzebuja histerezy: ponizej 100 % maja te same
+   nastawy. #}
+{% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
+{% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
+{% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
 {% if full_pv %}
   {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
   {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
