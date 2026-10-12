@@ -421,7 +421,9 @@ def _check_load_following(problem: Problem, slot, flow, mode) -> None:
     """Reject import beside a partial discharge in a SELF_CONSUME interval."""
     if mode != "SELF_CONSUME" or flow.grid_import_kwh <= _IMPORT_TOLERANCE:
         return
-    hours = (slot.end - slot.start).total_seconds() / 3600
+    hours = (
+        slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
+    ).total_seconds() / 3600
     power_limit = min(
         problem.battery.discharge_kw * hours,
         problem.site.inverter_kw * hours - slot.pv_kwh,

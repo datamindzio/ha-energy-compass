@@ -1,7 +1,8 @@
 """SELF_CONSUME follows the load: no grid import beside a spare discharge power."""
 
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from test_dispatch_policy import dispatch
@@ -41,7 +42,9 @@ def assert_load_following(problem, plan):
     battery = problem.battery
     reserve = battery.capacity_kwh * battery.minimum_soc_fraction
     for slot, flow in zip(problem.slots, plan.flows, strict=True):
-        hours = (slot.end - slot.start).total_seconds() / 3600
+        hours = (
+            slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
+        ).total_seconds() / 3600
         if machine_state(slot, flow) != "SELF_CONSUME" or flow.grid_import_kwh < 1e-5:
             continue
         limit = min(
@@ -432,3 +435,37 @@ def test_validator_rejects_partial_discharge_with_import_without_a_duration():
     with pytest.raises(SolveError, match="self-consume imports"):
         validate_modes(problem, rows(4.5, 0.5))
     validate_modes(problem, rows(1, 4))
+
+
+@pytest.mark.parametrize("minimum_mode_minutes", [0, 60])
+def test_load_following_counts_local_slots_across_spring_forward_in_utc(
+    minimum_mode_minutes,
+):
+    # Aware datetimes sharing one tzinfo subtract as wall clock: the slot from
+    # 01:00 CET to 03:00 CEST read as 2 h and its power limit as 8 kWh, not 4.
+    zone = ZoneInfo("Europe/Warsaw")
+    first = datetime(2026, 3, 28, 23, 0, tzinfo=UTC)
+    problem = dispatch(
+        ((3, 0, 0, 6),) * 4, minutes=60, minimum_mode_minutes=minimum_mode_minutes
+    )
+    slots = tuple(
+        replace(
+            slot,
+            start=(first + timedelta(hours=i)).astimezone(zone),
+            end=(first + timedelta(hours=i + 1)).astimezone(zone),
+        )
+        for i, slot in enumerate(problem.slots)
+    )
+    problem = replace(
+        problem,
+        slots=slots,
+        timezone="Europe/Warsaw",
+        battery=replace(problem.battery, initial_kwh=10, discharge_kw=4),
+    )
+    plan = solve(problem)
+    assert_load_following(problem, plan)
+    # The second slot is the 01:00 CET - 03:00 CEST one: 4 kWh at the power limit.
+    for flow in plan.flows[:2]:
+        assert flow.discharge_kwh == pytest.approx(4)
+        assert flow.grid_import_kwh == pytest.approx(2)
+    assert sum(f.discharge_kwh for f in plan.flows) == pytest.approx(10)
