@@ -1688,8 +1688,9 @@ municipality, because the outlines are simplified. A home outside every Polish m
 (abroad, at sea) or without coordinates sends no location and is counted in the fleet total only.
 The files are fetched again only when Atlas publishes a new version or your home moves (Atlas is
 asked for the version at start and at most once per 24 h); if Atlas cannot be reached, the last
-municipality found is kept and the lookup is retried at most once per hour, without ever delaying
-telemetry. Nothing else is sent — no tariff text or inverter model, and the enrollment credential
+municipality found is kept — also across a Home Assistant restart, in the integration's storage
+next to the site key together with the coordinates and the geometry version it was found for, never
+sent — and the lookup is retried at most once per hour, without ever delaying telemetry. Nothing else is sent — no tariff text or inverter model, and the enrollment credential
 itself is **never stored**, only the site key issued in exchange for it.
 
 **How values are sent**: powers in W. Bind **Battery power** with + = discharge (as in the

@@ -8,16 +8,24 @@ second request and, in the attributes, the municipality id.
 
 `home_municipality` is one "attribute check": it keeps the municipality last found per
 coordinates, reads the geometry version at most once per 24 h, and after a failure waits an
-hour before trying again. Standard library plus Home Assistant's own aiohttp session.
+hour before trying again. State is kept per Atlas host. Given a `directory`, the result is
+also written there (the coordinates, the geometry version, the municipality or null) and
+`stored_municipality` reads it back after a restart, so a restart neither fetches the files
+again nor loses the municipality while Atlas cannot be reached. Standard library plus Home
+Assistant's own aiohttp session.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
+import os
 import re
+import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -33,6 +41,7 @@ _VERSION = re.compile(r"^[0-9a-f]{12}$")
 _VOIVODESHIP = re.compile(r"^[0-9]{2}$")
 _MUNICIPALITY = re.compile(r"^[0-9]{7}$")
 _KEPT_HOMES = 8
+STORE_FILE = "municipality.json"
 
 
 class _LookupError(Exception):
@@ -59,24 +68,117 @@ def _valid(latitude, longitude) -> bool:
     return -90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0
 
 
-async def home_municipality(hass: HomeAssistant, base_url: str) -> str | None:
-    """Municipality id (7 digits) of Home Assistant's home, or None.
+def _state(hass: HomeAssistant, base_url: str) -> _State:
+    return hass.data.setdefault(_DATA_KEY, {}).setdefault(base_url, _State())
 
-    None means no land municipality or nothing found yet. Never raises for bad
-    coordinates or an Atlas that cannot be reached or read.
-    """
+
+def _home(hass: HomeAssistant):
     latitude, longitude = hass.config.latitude, hass.config.longitude
     if not _valid(latitude, longitude):
         return None
-    state = hass.data.setdefault(_DATA_KEY, _State())
-    key = (float(latitude), float(longitude))
+    return float(latitude), float(longitude)
+
+
+async def stored_municipality(
+    hass: HomeAssistant, base_url: str, directory: Path
+) -> str | None:
+    """Municipality stored in `directory` for the home's current coordinates, or None.
+
+    Reads one small local file, never the network and never waits for a running lookup. A missing, unreadable or malformed file,
+    or one stored for other coordinates, is nothing found.
+    """
+    key = _home(hass)
+    if key is None:
+        return None
+    known = await _adopt_stored(hass, _state(hass, base_url), key, directory)
+    return known[1] if known else None
+
+
+async def _adopt_stored(hass, state: _State, key, directory: Path) -> tuple | None:
+    """What this home last found: in memory, else what `directory` holds for these coordinates."""
+    known = state.found.get(key)
+    if known is None:
+        stored = await hass.async_add_executor_job(_load, directory)
+        if stored is not None and stored[0] == key:
+            known = state.found.setdefault(key, stored[1])
+    return known
+
+
+async def home_municipality(
+    hass: HomeAssistant, base_url: str, directory: Path | None = None
+) -> str | None:
+    """Municipality id (7 digits) of Home Assistant's home, or None.
+
+    None means no land municipality or nothing found yet. Never raises for bad
+    coordinates or an Atlas that cannot be reached or read. With a `directory` a new
+    result is stored there.
+    """
+    key = _home(hass)
+    if key is None:
+        return None
+    state = _state(hass, base_url)
     async with state.lock:
+        before = (
+            state.found.get(key)
+            if directory is None
+            else await _adopt_stored(hass, state, key, directory)
+        )
         try:
-            return await _check(hass, base_url, state, key)
+            found = await _check(hass, base_url, state, key)
         except _LookupError:
             state.failed_at = time.time()
             known = state.found.get(key)
             return known[1] if known else None
+        after = state.found.get(key)
+        if directory is not None and after is not None and after != before:
+            await hass.async_add_executor_job(_save, directory, key, after)
+        return found
+
+
+def _load(directory: Path) -> tuple | None:
+    """`((latitude, longitude), (version, municipality or None))` stored in `directory`."""
+    try:
+        record = json.loads((directory / STORE_FILE).read_bytes())
+        latitude, longitude = record["latitude"], record["longitude"]
+        version, municipality = record["version"], record["municipality"]
+        if not (
+            _valid(latitude, longitude)
+            and isinstance(version, str)
+            and _VERSION.match(version)
+            and (
+                municipality is None
+                or (isinstance(municipality, str) and _MUNICIPALITY.match(municipality))
+            )
+        ):
+            return None
+    except OSError, ValueError, KeyError, TypeError:
+        return None
+    return (float(latitude), float(longitude)), (version, municipality)
+
+
+def _save(directory: Path, key, found: tuple) -> None:
+    """Write the result atomically; a directory that is gone or unwritable is skipped."""
+    record = {
+        "latitude": key[0],
+        "longitude": key[1],
+        "version": found[0],
+        "municipality": found[1],
+    }
+    path = directory / STORE_FILE
+    try:
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=f".{STORE_FILE}.")
+    except OSError:
+        _LOGGER.debug("Energy Atlas municipality not stored: %s", directory)
+        return
+    try:
+        with os.fdopen(fd, "w") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            json.dump(record, handle)
+        os.replace(tmp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        _LOGGER.debug("Energy Atlas municipality not stored: %s", directory)
 
 
 async def _check(hass, base_url, state: _State, key) -> str | None:
@@ -151,7 +253,10 @@ async def _resolve(hass, base_url, state: _State, key) -> str | None:
 async def _fetch(hass: HomeAssistant, url: str) -> bytes:
     try:
         session = async_get_clientsession(hass)
-        async with session.get(url, timeout=REQUEST_TIMEOUT) as response:
+        # A redirect could send the second request (it names the voivodeship) to another host.
+        async with session.get(
+            url, timeout=REQUEST_TIMEOUT, allow_redirects=False
+        ) as response:
             if response.status != 200:
                 raise _LookupError(f"HTTP {response.status}")
             return await response.read()

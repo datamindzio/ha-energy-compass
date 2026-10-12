@@ -51,15 +51,24 @@ class AtlasBridge:
         self._unsub_state = None
         self._unsub_stop = None
 
-    async def async_start(self, attrs: dict) -> None:
+    def _build_attrs(self, config: dict) -> dict:
+        """The one place the attributes are built: this bridge's settings and municipality."""
+        return build_attrs(config, self._atlas_settings, self.municipality)
+
+    async def async_start(self) -> None:
         if not is_registered(self.hass, self.entry.entry_id, self.environment):
             _LOGGER.warning(
                 "Energy Atlas enabled but not registered for %s; open Options → Energy Atlas",
                 self.environment,
             )
             return
-        self._attrs = attrs
-        self.sink = SinkThread(self.dir, BASE_URLS[self.environment], attrs)
+        # Only a local file read precedes the sink: with the municipality found before the
+        # restart the first attributes already carry it (no new attribute version).
+        self.municipality = await location.stored_municipality(
+            self.hass, BASE_URLS[self.environment], self.dir
+        )
+        self._attrs = self._build_attrs(self.config)
+        self.sink = SinkThread(self.dir, BASE_URLS[self.environment], self._attrs)
         await self.hass.async_add_executor_job(self.sink.start)
         ids = tracked_entity_ids(self.config)
         if ids:
@@ -93,14 +102,16 @@ class AtlasBridge:
         )
 
     async def _check_municipality(self) -> None:
-        found = await location.home_municipality(self.hass, BASE_URLS[self.environment])
+        found = await location.home_municipality(
+            self.hass, BASE_URLS[self.environment], self.dir
+        )
         if self.sink is None or found == self.municipality:
             return
         self.municipality = found
-        self.update(self.config, build_attrs(self.config, self._atlas_settings, found))
+        self.update(self.config)
 
     @callback
-    def update(self, config: dict, attrs: dict) -> None:
+    def update(self, config: dict) -> None:
         """Follow a live configuration change without restarting the sink thread.
 
         The state subscription moves only when the tracked entities differ, and the
@@ -120,6 +131,7 @@ class AtlasBridge:
                 self._unsub_state = async_track_state_change_event(
                     self.hass, ids, self._state_changed
                 )
+        attrs = self._build_attrs(config)
         if attrs != self._attrs:
             self._attrs = attrs
             self.sink.set_attrs(attrs)

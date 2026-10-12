@@ -1709,7 +1709,9 @@ w sąsiedniej gminie, bo granice są uproszczone. Dom poza każdą polską gmin�
 lub bez współrzędnych nie wysyła lokalizacji i jest liczony tylko w sumie floty. Pliki są pobierane
 ponownie tylko wtedy, gdy Atlas opublikuje nową wersję albo dom się przeniesie (o wersję Atlas jest
 pytany przy starcie i najwyżej raz na 24 h); gdy Atlas jest nieosiągalny, zachowana zostaje ostatnio
-znaleziona gmina, a wyszukiwanie jest ponawiane najwyżej raz na godzinę, bez opóźniania telemetrii.
+znaleziona gmina — także po restarcie Home Assistant, w pamięci integracji obok klucza witryny, razem
+ze współrzędnymi i wersją granic, dla których ją znaleziono, nigdy niewysyłana — a wyszukiwanie jest
+ponawiane najwyżej raz na godzinę, bez opóźniania telemetrii.
 Nic więcej — brak tekstu taryfy czy modelu falownika, a samo poświadczenie rejestracyjne
 **nigdy nie jest zapisywane** — przechowywany jest tylko klucz witryny wydany w zamian za nie.
 
