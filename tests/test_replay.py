@@ -28,7 +28,7 @@ def test_sample_prices_plan_between_self_use_and_hindsight(capsys):
     assert [day["date"] for day in days] == ["2026-09-20", "2026-09-21"]
     expected = {
         "2026-09-20": (-0.7249, 0.7308, -0.7249),
-        "2026-09-21": (2.4791, 3.9765, 2.0073),
+        "2026-09-21": (2.6314, 3.9765, 2.0073),
     }
     for day in days:
         plan, self_use, hindsight = expected[day["date"]]
@@ -44,7 +44,7 @@ def test_table_prints_the_three_costs_and_totals(capsys):
 
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].split()[:4] == ["date", "plan", "self_use", "hindsight"]
-    assert lines[-1].split()[:4] == ["total", "1.754", "4.707", "1.282"]
+    assert lines[-1].split()[:4] == ["total", "1.907", "4.707", "1.282"]
 
 
 def test_set_overrides_a_setting_so_runs_compare(capsys):

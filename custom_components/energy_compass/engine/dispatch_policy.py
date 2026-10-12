@@ -375,11 +375,12 @@ def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
     With no minimum duration there are no mode binaries, but the flows are still
     labelled SELF_CONSUME or CHARGE_PV and a controller still holds the full
     discharge or charge cap, so a partial discharge next to import or a partial
-    charge next to export stays unexecutable. One binary per interval and
-    direction stands for "the battery discharges" (`discharging`) or "the battery
-    charges" (`charging_pv`); it plays the role of the mode indicator, and the rule
-    is the same. A charge above the PV surplus is CHARGE_GRID and already takes
-    the whole surplus, so the rule does not touch it.
+    charge next to export stays unexecutable. A binary per interval stands for
+    "the battery discharges" (`discharging`, added here) or "the battery charges"
+    (`battery_mode`, which `optimize` already holds per interval and ties to `bc`
+    and `bd`); it plays the role of the mode indicator, and the rule is the same.
+    A charge above the PV surplus is CHARGE_GRID and already takes the whole
+    surplus, so the rule does not touch it.
     """
     battery = problem.battery
     reserve = battery.capacity_kwh * battery.minimum_soc_fraction
@@ -395,6 +396,7 @@ def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
         if discharge_max > 0:
             discharging = v["discharging"] = model.variable(binary=True)
             model.constrain({v["bd"]: 1, discharging: -discharge_max}, -np.inf, 0)
+            model.constrain({discharging: 1, v["battery_mode"]: 1}, -np.inf, 1)
             _follow_load(
                 model,
                 problem,
@@ -411,12 +413,10 @@ def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
         surplus = max(slot.pv_kwh - slot.load_kwh, 0)
         if charge_max <= 0 or surplus <= 0:
             continue
-        charging = v["charging_pv"] = model.variable(binary=True)
-        model.constrain({v["bc"]: 1, charging: -charge_max}, -np.inf, 0)
         _follow_surplus(
             model,
             v,
-            {"CHARGE_PV": charging},
+            {"CHARGE_PV": v["battery_mode"]},
             surplus,
             flex_max,
             highest >= ceiling - 1e-9,

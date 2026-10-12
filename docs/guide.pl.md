@@ -684,11 +684,18 @@ Zasady (domyślnie 60 min, 0,1 kW):
   przedziału albo bateria została napełniona do górnej granicy. W innym wypadku wiersz nie jest
   `CHARGE_PV`. Reguła obowiązuje też przy `minimum_mode_minutes = 0`: nie ma wtedy trybów, a
   ładowanie w każdym przedziale, który przepływy oznaczają jako `CHARGE_PV`, jest związane tak
-  samo. Przeniesione zobowiązanie `CHARGE_PV`/`SELF_CONSUME` podlega tej samej regule. Jeśli bateria zapełni się przed
-  jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
-  granicy), reszta zobowiązania to `HOLD` z eksportem nadwyżki (startuje nowy zegar `HOLD`).
-  Nie obejmuje to pierwszego przedziału zobowiązania, który ma już mniej miejsca niż minimalna
-  aktywność: plan jest `infeasible` (niewykonalny) do końca zobowiązania.
+  samo. Przeniesione zobowiązanie `CHARGE_PV`/`SELF_CONSUME` podlega tej samej regule. Jeśli
+  bateria zapełni się przed jego końcem (następny przedział nie przyjąłby nawet minimalnej
+  aktywności powyżej górnej granicy), reszta zobowiązania to `HOLD` z eksportem nadwyżki
+  (startuje nowy zegar `HOLD`). Nie obejmuje to pierwszego przedziału zobowiązania, który ma
+  już mniej miejsca niż minimalna aktywność: plan jest `infeasible` (niewykonalny) do końca
+  zobowiązania. Przy `minimum_mode_minutes = 0` reguła kosztuje czas obliczeń (tabela w
+  [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget), EN) i jeden
+  przypadek więcej nie ma planu: gdy eksport do sieci jest ograniczony (albo falownik ma moc
+  poniżej PV), a ograniczanie produkcji PV (`allow_curtailment`) jest wyłączone, bateria zapełniona przed ostatnią
+  nadwyżką zostawia tę nadwyżkę bez miejsca. Model z trybami ma to samo ograniczenie; plan
+  powstaje po włączeniu ograniczania produkcji PV albo przy wyższym limicie eksportu lub mocy
+  falownika.
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.
@@ -704,8 +711,8 @@ Zasady (domyślnie 60 min, 0,1 kW):
 - **Zmiana strategii (reset):** zapis nowej strategii zrywa przeniesione zobowiązanie dla
   następnego planu, który startuje bez blokady (patrz [zwolnienie przy zmianie
   strategii](#zwolnienie-przy-zmianie-strategii)).
-- `minimum_mode_minutes = 0` wyłącza reguły czasu i minimalnej mocy; reguła podążania
-  `SELF_CONSUME` za obciążeniem pozostaje włączona.
+- `minimum_mode_minutes = 0` wyłącza reguły czasu i minimalnej mocy; reguły podążania
+  `SELF_CONSUME` za obciążeniem i `CHARGE_PV` za nadwyżką pozostają włączone.
 
 ### Polityki ograniczające tryby
 

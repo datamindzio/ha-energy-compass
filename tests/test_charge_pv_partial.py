@@ -288,15 +288,42 @@ def test_charge_pv_without_a_duration_exports_once_the_pack_is_full():
     assert_pv_following(problem, plan)
 
 
-def test_flexible_load_probe_keeps_charge_pv_following_without_a_duration():
-    problem = sunny(slots=12, pv=0.8, load=0.1, lock=False, minimum_mode_minutes=0)
-    plan = solve_flexible_load(problem, FlexibleLoadRequest(1.0, 2.0))
-    assert sum(plan.schedule_kwh) == pytest.approx(1.0)
+@pytest.mark.parametrize(
+    ("pv", "request_"),
+    (
+        # The surplus (1.7 and 1.2 kWh) is above the 1 kWh charge limit, so the rule is
+        # "charge 1 kWh or none" less whatever the probe takes of the surplus.
+        (2.0, FlexibleLoadRequest(0.3, 1.0)),
+        (2.0, FlexibleLoadRequest(0.5, 4.0)),
+        (1.5, FlexibleLoadRequest(0.3, 1.0)),
+    ),
+)
+def test_flexible_load_probe_keeps_charge_pv_following_without_a_duration(pv, request_):
+    # Without the rule the probe's plan charged 0.6-0.65 kWh of the surplus at the
+    # first quarter and exported the rest, a state a controller holding the charge
+    # cap cannot produce.
+    problem = partial_need(
+        slots=(
+            (3.0, 0.1, pv, 0.3),
+            (2.0, 0.9, 0.0, 1.0),
+            (1.0, 0.1, 0.0, 0.8),
+            (0.5, 0.0, 0.0, 0.8),
+        )
+    )
+    result = solve_flexible_load(problem, request_)
+    assert sum(result.schedule_kwh) == pytest.approx(request_.energy_kwh)
     slots = tuple(
         replace(slot, load_kwh=slot.load_kwh + extra)
-        for slot, extra in zip(problem.slots, plan.schedule_kwh, strict=True)
+        for slot, extra in zip(problem.slots, result.schedule_kwh, strict=True)
     )
-    assert_pv_following(replace(problem, slots=slots), plan.plan)
+    assert_pv_following(replace(problem, slots=slots), result.plan)
+    first = result.plan.flows[0]
+    # The 4 kW battery takes 1 kWh a quarter hour: charge it all or not at all, unless
+    # the probe's own load leaves less surplus than that.
+    assert (
+        first.charge_kwh == pytest.approx(0)
+        or first.charge_kwh >= min(1.0, pv - 0.3 - result.schedule_kwh[0]) - 1e-5
+    )
 
 
 def test_validator_rejects_partial_charge_with_export_without_a_duration():

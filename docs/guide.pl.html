@@ -1171,11 +1171,18 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   przedziału albo bateria została napełniona do górnej granicy. W innym wypadku wiersz nie jest
   <code>CHARGE_PV</code>. Reguła obowiązuje też przy <code>minimum_mode_minutes = 0</code>: nie ma wtedy trybów, a
   ładowanie w każdym przedziale, który przepływy oznaczają jako <code>CHARGE_PV</code>, jest związane tak
-  samo. Przeniesione zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli bateria zapełni się przed
-  jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
-  granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki (startuje nowy zegar <code>HOLD</code>).
-  Nie obejmuje to pierwszego przedziału zobowiązania, który ma już mniej miejsca niż minimalna
-  aktywność: plan jest <code>infeasible</code> (niewykonalny) do końca zobowiązania.</li>
+  samo. Przeniesione zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli
+  bateria zapełni się przed jego końcem (następny przedział nie przyjąłby nawet minimalnej
+  aktywności powyżej górnej granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki
+  (startuje nowy zegar <code>HOLD</code>). Nie obejmuje to pierwszego przedziału zobowiązania, który ma
+  już mniej miejsca niż minimalna aktywność: plan jest <code>infeasible</code> (niewykonalny) do końca
+  zobowiązania. Przy <code>minimum_mode_minutes = 0</code> reguła kosztuje czas obliczeń (tabela w
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN) i jeden
+  przypadek więcej nie ma planu: gdy eksport do sieci jest ograniczony (albo falownik ma moc
+  poniżej PV), a ograniczanie produkcji PV (<code>allow_curtailment</code>) jest wyłączone, bateria zapełniona przed ostatnią
+  nadwyżką zostawia tę nadwyżkę bez miejsca. Model z trybami ma to samo ograniczenie; plan
+  powstaje po włączeniu ograniczania produkcji PV albo przy wyższym limicie eksportu lub mocy
+  falownika.</li>
 <li><strong>Grupa podążania za PV:</strong> <code>CHARGE_PV</code> i <code>SELF_CONSUME</code> dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.</li>
@@ -1191,8 +1198,8 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <li><strong>Zmiana strategii (reset):</strong> zapis nowej strategii zrywa przeniesione zobowiązanie dla
   następnego planu, który startuje bez blokady (patrz <a href="#zwolnienie-przy-zmianie-strategii">zwolnienie przy zmianie
   strategii</a>).</li>
-<li><code>minimum_mode_minutes = 0</code> wyłącza reguły czasu i minimalnej mocy; reguła podążania
-  <code>SELF_CONSUME</code> za obciążeniem pozostaje włączona.</li>
+<li><code>minimum_mode_minutes = 0</code> wyłącza reguły czasu i minimalnej mocy; reguły podążania
+  <code>SELF_CONSUME</code> za obciążeniem i <code>CHARGE_PV</code> za nadwyżką pozostają włączone.</li>
 </ul>
 <h3 id="polityki-ograniczające-tryby">Polityki ograniczające tryby</h3>
 <section class="table-scroll"><table>

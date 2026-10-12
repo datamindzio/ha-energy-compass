@@ -678,7 +678,12 @@ Rules (defaults: 60 min, 0.1 kW):
   ends (the next interval could not take even the minimum activity above the upper bound), the
   rest of the commitment is `HOLD` with the surplus exported (a new `HOLD` clock starts). A first
   committed interval that already has less room than the minimum activity is not covered: the
-  plan is `infeasible` until the commitment ends.
+  plan is `infeasible` until the commitment ends. With `minimum_mode_minutes = 0` the rule costs
+  solve time (see the table in [model and limitations](model.md#operating-mode-duration-and-pv-export-budget)),
+  and one more case has no plan: with grid export capped (or the inverter rated below the PV) and
+  curtailment (`allow_curtailment`) off, a pack that fills before the last surplus leaves that surplus nowhere to go.
+  The mode model has the same limit; curtailment on, or a higher export cap or inverter rating,
+  gives a plan.
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
@@ -694,7 +699,7 @@ Rules (defaults: 60 min, 0.1 kW):
 - **Strategy change (reset):** writing a new strategy drops the carried commitment for the next
   plan, which starts unlocked (see [strategy-switch release](#strategy-switch-release)).
 - Setting `minimum_mode_minutes = 0` disables duration and minimum-power rules; the
-  `SELF_CONSUME` load-following rule stays on.
+  `SELF_CONSUME` and `CHARGE_PV` load-following rules stay on.
 
 ### Policies that gate modes
 
