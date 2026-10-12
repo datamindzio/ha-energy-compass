@@ -663,10 +663,13 @@ Zasady (domyślnie 60 min, 0,1 kW):
   a rozładowanie w każdym przedziale, który przepływy oznaczają jako `SELF_CONSUME`, jest związane
   tak samo. Przeniesione zobowiązanie `CHARGE_PV`/`SELF_CONSUME` jest wykonywane tak samo. Jeśli
   bateria wyczerpie się przed jego końcem, reszta zobowiązania to `HOLD` z pełnym importem
-  (startuje nowy zegar `HOLD`). Plan jest `infeasible` (niewykonalny) do końca zobowiązania tylko
-  wtedy, gdy potem nie da się spełnić reguły końcowej (`preserve_initial` bez późniejszego PV lub
-  ładowania z sieci, które uzupełniłyby to, co zużył dom), albo przy rezerwie 0 % i poborze
-  czuwania falownika (`idle_drain_kw`).
+  (startuje nowy zegar `HOLD`). Tak samo — w razie potrzeby już od pierwszego przedziału — gdy
+  bateria nie może pokryć domu i zarazem zachować poboru czuwania falownika (`idle_drain_kw`)
+  z późniejszych przedziałów, a PV ani ładowanie z sieci nie uzupełnią go na czas. Plan jest
+  `infeasible` (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
+  (`preserve_initial` bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
+  dom); rzadkie pozostałe przypadki opisuje
+  [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget) (EN).
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.

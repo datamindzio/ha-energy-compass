@@ -654,9 +654,12 @@ Rules (defaults: 60 min, 0.1 kW):
   discharge in any interval the flows label `SELF_CONSUME` is bound the same way. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is executed the same way. If the battery runs out before
   it ends, the rest of the commitment is `HOLD` with full import (a new `HOLD` clock starts). The
-  plan is `infeasible` until the commitment ends only when the terminal rule cannot be met
-  afterwards (`preserve_initial` with no later PV or grid charge to refill what the house drew),
-  or with a 0 % reserve and an inverter standby loss (`idle_drain_kw`).
+  same happens — from the first interval if need be — when the battery cannot cover the house
+  and still keep the inverter standby loss (`idle_drain_kw`) of the later intervals, with no PV
+  or grid charge to pay it in time. The plan is `infeasible` until the commitment ends when the
+  terminal rule cannot be met afterwards (`preserve_initial` with no later PV or grid charge to
+  refill what the house drew); the rare remaining cases are listed in
+  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget).
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
