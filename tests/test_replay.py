@@ -3,6 +3,8 @@
 import csv
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -491,3 +493,34 @@ def test_ignored_distribution_settings_warn(capsys):
 
         assert "buy_energy" in err
         assert "buy_distribution_rate" in err
+
+
+def test_runs_without_home_assistant():
+    """The guide promises SciPy is enough: `import homeassistant` fails in this process."""
+    shim = (
+        "import runpy, sys\n"
+        "sys.modules['homeassistant'] = None\n"
+        "script = sys.argv[1]\n"
+        "sys.argv = sys.argv[1:]\n"
+        "runpy.run_path(script, run_name='__main__')\n"
+    )
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            shim,
+            str(ROOT / "tools/replay.py"),
+            str(SAMPLE),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert [day["date"] for day in json.loads(done.stdout)] == [
+        "2026-09-20",
+        "2026-09-21",
+    ]
