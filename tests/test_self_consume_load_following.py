@@ -165,3 +165,62 @@ def test_flexible_load_probe_stays_feasible_in_self_consume():
         for slot, extra in zip(problem.slots, plan.schedule_kwh, strict=True)
     )
     assert_load_following(replace(problem, slots=slots), plan.plan)
+
+
+def surplus_hours(**battery):
+    """Two hours with 0.5 kWh of PV surplus; a 2 kW flexible load tips each over."""
+    problem = dispatch(((1.0, 0.0, 1.0, 0.5),) * 2, minutes=60, minimum_mode_minutes=60)
+    return replace(problem, battery=replace(problem.battery, initial_kwh=8, **battery))
+
+
+def assert_flexible_follows_net_load(problem, plan):
+    for flow in plan.plan.flows:
+        # Load 0.5 + flexible 2 - PV 1: the battery covers the whole 1.5 kWh.
+        assert flow.dispatch_mode == "SELF_CONSUME"
+        assert flow.discharge_kwh == pytest.approx(1.5)
+        assert flow.grid_import_kwh == pytest.approx(0)
+    assert plan.schedule_kwh == pytest.approx((2.0, 2.0))
+
+
+def test_flexible_load_above_pv_surplus_is_covered_by_the_battery():
+    problem = surplus_hours()
+    plan = solve_flexible_load(problem, FlexibleLoadRequest(4.0, 2.0))
+    assert_flexible_follows_net_load(problem, plan)
+
+
+def test_flexible_load_above_pv_surplus_with_a_carried_lock():
+    problem = surplus_hours()
+    problem = replace(
+        problem,
+        initial_dispatch_mode="SELF_CONSUME",
+        initial_dispatch_mode_since=problem.slots[0].start - timedelta(minutes=15),
+    )
+    plan = solve_flexible_load(problem, FlexibleLoadRequest(4.0, 2.0))
+    assert_flexible_follows_net_load(problem, plan)
+
+
+def test_flexible_load_above_pv_surplus_without_battery_export_or_grid_charge():
+    problem = surplus_hours(allow_battery_export=False, allow_grid_charge=False)
+    plan = solve_flexible_load(problem, FlexibleLoadRequest(4.0, 2.0))
+    assert_flexible_follows_net_load(problem, plan)
+
+
+def test_carried_lock_without_a_way_to_refill_has_no_plan():
+    # A carried PV-follow commitment makes the inverter drain the battery for
+    # the house. With no PV and no grid charge the preserve_initial terminal
+    # cannot be met, so the answer is "infeasible" rather than a trickle plan
+    # the inverter would not follow.
+    problem = flat_night(slots=8)
+    problem = replace(
+        problem, battery=replace(problem.battery, allow_grid_charge=False)
+    )
+    with pytest.raises(SolveError) as caught:
+        solve(problem)
+    assert caught.value.reason == "infeasible"
+    # Once the commitment has run out the same problem is plannable again.
+    expired = replace(
+        problem,
+        initial_dispatch_mode_since=problem.slots[0].start - timedelta(hours=2),
+    )
+    plan = solve(expired)
+    assert [flow.dispatch_mode for flow in plan.flows] == ["HOLD"] * 8

@@ -98,8 +98,8 @@ def _follow_load(model, problem, v, x, slot, hours, flex_max, can_empty) -> None
     power_limit = min(
         model.upper[v["bd"]], problem.site.inverter_kw * hours - slot.pv_kwh
     )
-    demand = max(slot.load_kwh - slot.pv_kwh, 0)
-    demand_max = demand + flex_max
+    # Signed: PV above the house lowers what a flexible load asks of the battery.
+    demand_max = slot.load_kwh - slot.pv_kwh + flex_max
     reserve = battery.capacity_kwh * battery.minimum_soc_fraction
     spare = model.upper[v["energy"]] - reserve
     x_sc = x["SELF_CONSUME"]

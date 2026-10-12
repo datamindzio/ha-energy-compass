@@ -587,7 +587,10 @@ Zasady (domyślnie 60 min, 0,1 kW):
   nigdy nie łączy małego rozładowania z importem z sieci: w przedziale `SELF_CONSUME` bateria
   pokrywa całe zapotrzebowanie, a import pojawia się dopiero, gdy rozładowanie sięga limitu mocy
   w przedziale albo bateria została opróżniona do rezerwy. W przeciwnym razie wiersz to `HOLD`
-  z pełnym importem. Obowiązuje, gdy `minimum_mode_minutes` jest większe od 0.
+  z pełnym importem. Obowiązuje, gdy `minimum_mode_minutes` jest większe od 0. Przeniesione
+  zobowiązanie `CHARGE_PV`/`SELF_CONSUME` jest wykonywane tak samo: przy `preserve_initial`,
+  wyłączonym ładowaniu z sieci i braku PV, który uzupełniłby to, co w tym czasie zużywa dom,
+  plan jest `infeasible` (niewykonalny) do końca tego zobowiązania.
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.

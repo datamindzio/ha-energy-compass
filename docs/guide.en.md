@@ -581,7 +581,9 @@ Rules (defaults: 60 min, 0.1 kW):
   plan never pairs a small discharge with grid import: in a `SELF_CONSUME` interval the battery
   covers the whole demand, and import appears only once the discharge is at its interval power
   limit or the battery has been emptied to its reserve. Otherwise the row is `HOLD` with full
-  import. Applies while `minimum_mode_minutes` is above 0.
+  import. Applies while `minimum_mode_minutes` is above 0. A carried `CHARGE_PV`/`SELF_CONSUME`
+  commitment is executed the same way: with `preserve_initial`, grid charging off and no PV to
+  refill what the house draws meanwhile, the plan is `infeasible` until that commitment ends.
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
