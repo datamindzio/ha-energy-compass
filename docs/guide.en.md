@@ -680,13 +680,17 @@ Rules (defaults: 60 min, 0.1 kW):
   pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
   pack. The released `HOLD` starts no clock of its own — the commitment's deadline stays the only
   one — so it may turn to `CURTAIL` (which starts its own clock) before then; it does not go back
-  to `CHARGE_PV`/`SELF_CONSUME`. A first committed interval that already has less room than the
-  minimum activity is not covered: the plan is `infeasible` until the commitment ends.
+  to `CHARGE_PV`/`SELF_CONSUME`. Two cases are not covered, and the plan is `infeasible` until the
+  commitment ends: a first committed interval that already has less room than the minimum
+  activity, and a committed interval in which the pack fills while the rest of the surplus is
+  still above the export cap or the inverter rating (`CHARGE_PV` cannot fill the pack and curtail
+  in the same interval).
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
-- **Any other change** (source, destination, HOLD or CURTAIL) starts a new clock. Idle HOLD cannot
-  fund an active run.
+- **Any other change** (source, destination, HOLD or CURTAIL) starts a new clock, except the `HOLD`
+  released from a full pack or an empty battery above, which has none. Idle HOLD cannot fund an
+  active run.
 - **Coverage:** a new active mode needs a full duration of forecast coverage remaining.
 - **Safety exception (pause, not reset):** during an unexpired active commitment the current row
   shows HOLD when the observed SOC is already at the upper bound (charging modes —

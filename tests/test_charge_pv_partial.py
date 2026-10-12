@@ -227,7 +227,7 @@ def test_flexible_load_probe_keeps_charge_pv_following():
     assert_pv_following(replace(problem, slots=slots), plan.plan)
 
 
-def full_pack_problem(pv, *, initial, export_cap=None, **site):
+def full_pack_problem(pv, *, initial, export_cap=None, lead=15, drain=0.0, **site):
     problem = dispatch(
         tuple((1.0, 0.9, value, 0.1) for value in pv), minimum_mode_minutes=60
     )
@@ -236,9 +236,9 @@ def full_pack_problem(pv, *, initial, export_cap=None, **site):
     return replace(
         problem,
         site=replace(problem.site, **site),
-        battery=replace(problem.battery, initial_kwh=initial),
+        battery=replace(problem.battery, initial_kwh=initial, idle_drain_kw=drain),
         initial_dispatch_mode="CHARGE_PV",
-        initial_dispatch_mode_since=problem.slots[0].start - timedelta(minutes=15),
+        initial_dispatch_mode_since=problem.slots[0].start - timedelta(minutes=lead),
     )
 
 
@@ -264,6 +264,66 @@ def test_full_pack_in_a_carried_commitment_curtails_above_the_inverter(initial):
     modes = [flow.dispatch_mode for flow in plan.flows]
     assert modes[3:] == ["CURTAIL"] * 3
     assert modes[0] == ("CHARGE_PV" if initial < 10 else "HOLD")
+
+
+def test_full_pack_curtails_inside_the_commitment_above_the_export_cap():
+    # The commitment is slots 0-3. The pack fills in slot 0 and the 0.8 kWh
+    # surplus beside it is 0.3 kWh above the 0.5 kWh cap: CURTAIL, inside the
+    # commitment, not after its deadline.
+    problem = full_pack_problem((0.5, *(0.9,) * 7), initial=9.7, export_cap=2, lead=0)
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == [
+        "CHARGE_PV",
+        *("CURTAIL",) * 7,
+    ]
+    assert plan.flows[1].curtail_kwh == pytest.approx(0.3)
+
+
+def test_released_hold_turns_to_curtail_inside_the_commitment():
+    # Slot 1 has no surplus to curtail (HOLD, released by the full pack); slot 2 is
+    # still inside the commitment and has, so the released HOLD ends in CURTAIL
+    # without waiting for the commitment's deadline.
+    problem = full_pack_problem(
+        (0.5, 0.3, *(0.9,) * 6), initial=9.7, export_cap=2, lead=0
+    )
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == [
+        "CHARGE_PV",
+        "HOLD",
+        *("CURTAIL",) * 6,
+    ]
+
+
+def test_full_pack_curtails_inside_the_commitment_above_the_inverter_rating():
+    # 2.2 kWh of PV against 2 kWh the 8 kW inverter passes per interval.
+    problem = full_pack_problem((0.5, *(2.2,) * 7), initial=9.7, lead=0)
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == [
+        "CHARGE_PV",
+        *("CURTAIL",) * 7,
+    ]
+    assert plan.flows[1].curtail_kwh == pytest.approx(0.2)
+
+
+def test_released_hold_does_not_go_back_to_the_commitment():
+    # An empty pack and no surplus in slot 0 end the commitment in HOLD. The
+    # surplus after it would pay to store (sells at 0.1, dear import after the
+    # commitment), but a member mode after the released HOLD is a second change
+    # inside the minimum duration: the plan holds until the commitment's deadline.
+    rows = (
+        (1.0, 0.1, 0.0, 0.1),
+        *((1.0, 0.1, 0.9, 0.1),) * 3,
+        *((2.0, 1.9, 0.0, 0.5),) * 4,
+    )
+    problem = dispatch(rows, minimum_mode_minutes=60)
+    problem = replace(
+        problem,
+        battery=replace(problem.battery, initial_kwh=0.0),
+        initial_dispatch_mode="CHARGE_PV",
+        initial_dispatch_mode_since=problem.slots[0].start,
+    )
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows[:4]] == ["HOLD"] * 4
 
 
 def test_a_pack_with_room_keeps_the_commitment_instead_of_curtailing():

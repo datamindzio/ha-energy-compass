@@ -2,6 +2,7 @@
 
 Status: accepted
 Date: 2026-10-12
+Amends: [ADR-0004](0004-carried-lock-release-for-standby-loss.md) (the released `HOLD` clock)
 
 ## Context
 
@@ -37,8 +38,20 @@ the inverter).
 - Seeded sweep against the code before this change, 3 seeds × 700 random problems (export cap 8/2/0 kW,
   PV up to 2.2 kWh per interval, carried `CHARGE_PV`/`SELF_CONSUME`/`HOLD`/`CURTAIL`): 0 newly infeasible,
   9 newly feasible, 23 changed objectives, none worse.
+- The review's sweep (3 seeds × 700, same families plus an idle drain, against the code before T-010, T-010
+  and this change): 0 newly infeasible, 36 newly feasible, 84 better objectives, none worse beyond 1e-6. Of
+  the 27 problems T-010 made infeasible, this change fixes 17; 10 remain (4 carried, 5 with a
+  post-deadline clock, 1 free plan).
 - `benchmarks/optimizer.py` (96 slots, all strategies) unchanged within noise: the rows exist only inside a
   carried commitment.
 - The empty-battery `HOLD` also loses its own clock; its plans can only get cheaper.
-- Not changed: a free plan (no carried lock) with PV dropping inside a `CURTAIL`'s minimum duration on an
-  export-capped site can still be `infeasible` (T-030 body, "Free plans"); it needs its own decision.
+- Not changed, one decision for both (T-037): `CHARGE_PV` cannot fill the pack and curtail in the same
+  interval, and `CURTAIL` cannot last its minimum duration when PV drops.
+  - A **carried** commitment, a committed interval in which the pack fills while the rest of the surplus is
+    still above the export cap or the inverter rating, stays `infeasible` until the commitment ends. Repro:
+    `pv = (0.5, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9)`, load 0.1, `grid_export_kw = 2`, `initial_kwh = 9.5`,
+    carried `CHARGE_PV` since 15 min before the first slot. Slot 1 has 0.1 kWh of room (above the minimum
+    activity, so `lock_full` is not set) and 0.8 kWh of surplus: `CHARGE_PV` fills the pack, 0.7 kWh stays
+    above the 0.5 kWh cap, and neither `HOLD` nor `CURTAIL` is open yet. It was `ok` before T-010.
+  - A **free** plan (no carried lock) with PV dropping inside a `CURTAIL`'s minimum duration on an
+    export-capped site can still be `infeasible`.

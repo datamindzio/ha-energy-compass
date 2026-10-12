@@ -36,7 +36,8 @@ Keep the release mechanism and make its threshold, the lock floor, aware of the 
 4. `validate_modes` uses the same two helpers, so it accepts the released rows and no other.
 
 The released rows are `HOLD` with full import, the mode the unlocked solver picks in the same state, and
-`HOLD` starts its own minimum duration, as with the existing release.
+`HOLD` starts its own minimum duration, as with the existing release. (Amended by
+[ADR-0005](0005-full-pack-curtail-in-a-carried-commitment.md): the released `HOLD` starts no clock of its own.)
 
 ## Alternatives rejected
 

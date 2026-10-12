@@ -1167,13 +1167,17 @@ directly by any other available mode.</p>
   pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
   pack. The released <code>HOLD</code> starts no clock of its own — the commitment's deadline stays the only
   one — so it may turn to <code>CURTAIL</code> (which starts its own clock) before then; it does not go back
-  to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>. A first committed interval that already has less room than the
-  minimum activity is not covered: the plan is <code>infeasible</code> until the commitment ends.</li>
+  to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>. Two cases are not covered, and the plan is <code>infeasible</code> until the
+  commitment ends: a first committed interval that already has less room than the minimum
+  activity, and a committed interval in which the pack fills while the rest of the surplus is
+  still above the export cap or the inverter rating (<code>CHARGE_PV</code> cannot fill the pack and curtail
+  in the same interval).</li>
 <li><strong>PV-follow group:</strong> <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.</li>
-<li><strong>Any other change</strong> (source, destination, HOLD or CURTAIL) starts a new clock. Idle HOLD cannot
-  fund an active run.</li>
+<li><strong>Any other change</strong> (source, destination, HOLD or CURTAIL) starts a new clock, except the <code>HOLD</code>
+  released from a full pack or an empty battery above, which has none. Idle HOLD cannot fund an
+  active run.</li>
 <li><strong>Coverage:</strong> a new active mode needs a full duration of forecast coverage remaining.</li>
 <li><strong>Safety exception (pause, not reset):</strong> during an unexpired active commitment the current row
   shows HOLD when the observed SOC is already at the upper bound (charging modes —

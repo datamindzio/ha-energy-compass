@@ -689,13 +689,16 @@ Zasady (domyślnie 60 min, 0,1 kW):
   instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
   falownik przy pełnej baterii. Zwolniony `HOLD` nie ma własnego zegara — jedynym zegarem jest
   termin zobowiązania — więc może przejść w `CURTAIL` (który startuje własny zegar) przed tym
-  terminem; nie wraca do `CHARGE_PV`/`SELF_CONSUME`. Nie obejmuje to pierwszego przedziału
-  zobowiązania, który ma już mniej miejsca niż minimalna aktywność: plan jest `infeasible`
-  (niewykonalny) do końca zobowiązania.
+  terminem; nie wraca do `CHARGE_PV`/`SELF_CONSUME`. Dwa przypadki nie są objęte, a plan jest
+  `infeasible` (niewykonalny) do końca zobowiązania: pierwszy przedział zobowiązania, który ma już
+  mniej miejsca niż minimalna aktywność, oraz przedział zobowiązania, w którym bateria się
+  napełnia, a reszta nadwyżki nadal przekracza limit eksportu lub moc falownika (`CHARGE_PV` nie
+  napełni baterii i nie przytnie nadwyżki w tym samym przedziale).
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.
-- **Każda inna zmiana** (źródło, cel, HOLD lub CURTAIL) uruchamia nowy zegar. Bezczynny HOLD nie
+- **Każda inna zmiana** (źródło, cel, HOLD lub CURTAIL) uruchamia nowy zegar, poza `HOLD`
+  zwolnionym przy pełnej lub pustej baterii (wyżej), który go nie ma. Bezczynny HOLD nie
   „odlicza” czasu dla aktywnego przebiegu.
 - **Pokrycie:** nowy aktywny tryb wymaga pełnego minimalnego czasu pokrycia prognozą.
 - **Wyjątek bezpieczeństwa (pauza, nie reset):** w trakcie niewygasłego aktywnego zobowiązania

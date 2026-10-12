@@ -652,7 +652,8 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     kept[v["mode_CURTAIL"]] = 1
                 model.constrain(kept, 1, 1)
                 if follows_pv:
-                    # A released HOLD does not go back to the commitment, and starts no
+                    # A released HOLD does not go back to the commitment (a released
+                    # CURTAIL is held by its own minimum duration), and it starts no
                     # clock of its own: the commitment's deadline is the only one, so it
                     # may end in CURTAIL at once.
                     if released:
