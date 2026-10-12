@@ -14,12 +14,13 @@ Use `--set key=value` (repeatable) to override a planner setting, so two runs ca
 be compared. The input format is described in docs/guide.en.md#offline-replay-tool.
 
     python tools/replay.py tools/replay_sample.json
-    python tools/replay.py tools/replay_sample.json --set import_penalty_per_kwh=0.1
+    python tools/replay.py tools/replay_sample.json --set allow_grid_charge=false
 """
 
 import argparse
 import csv
 import json
+import math
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -49,6 +50,10 @@ from custom_components.energy_compass.engine.models import (
     SolveError,
 )
 from custom_components.energy_compass.engine.optimize import solve
+from custom_components.energy_compass.engine.peak_reserve import (
+    peak_reserve_targets,
+    peak_reserve_weight,
+)
 from custom_components.energy_compass.engine.strategy import (
     STRATEGY_OWNED_KEYS,
     resolve_flags,
@@ -62,10 +67,9 @@ from custom_components.energy_compass.settings import (
 
 _TOL = 1e-9
 _HINDSIGHT_TIME_LIMIT_S = 60.0
-_UNSUPPORTED = (
-    ("lfp_balance", "LFP balance windows"),
-    ("peak_reserve_margin_kwh", "peak reserve"),
-)
+_UNSUPPORTED = (("lfp_balance", "LFP balance windows"),)
+_VALUES = ("buy", "sell", "pv_forecast", "load_forecast", "pv", "load")
+_NON_NEGATIVE = ("pv_forecast", "load_forecast", "pv", "load")
 
 
 class ReplayError(ValueError):
@@ -160,19 +164,28 @@ def parse_overrides(items) -> dict:
     return overrides
 
 
-def _interval(start: datetime, row: dict, where: str) -> Interval:
+def _number(raw, where: str, name: str, *, non_negative: bool = False) -> float:
     try:
-        return Interval(
-            start,
-            float(row["buy"]),
-            float(row["sell"]),
-            float(row["pv_forecast"]),
-            float(row["load_forecast"]),
-            float(row["pv"]),
-            float(row["load"]),
-        )
-    except (KeyError, TypeError, ValueError) as err:
-        raise ReplayError(f"{where}: bad or missing value ({err})") from err
+        value = float(raw)
+    except (TypeError, ValueError) as err:
+        raise ReplayError(f"{where}: {name} must be a number, got {raw!r}") from err
+    if not math.isfinite(value):
+        raise ReplayError(f"{where}: {name} must be finite, got {raw!r}")
+    if non_negative and value < 0:
+        raise ReplayError(f"{where}: {name} must not be negative, got {raw!r}")
+    return value
+
+
+def _interval(start: datetime, row, where: str) -> Interval:
+    if not isinstance(row, dict):
+        raise ReplayError(f"{where}: expected an object with {', '.join(_VALUES)}")
+    return Interval(
+        start,
+        *(
+            _number(row.get(name), where, name, non_negative=name in _NON_NEGATIVE)
+            for name in _VALUES
+        ),
+    )
 
 
 def _aware(text: str, zone: ZoneInfo, where: str) -> datetime:
@@ -181,6 +194,13 @@ def _aware(text: str, zone: ZoneInfo, where: str) -> datetime:
     except (TypeError, ValueError) as err:
         raise ReplayError(f"{where}: bad timestamp {text!r}") from err
     return value if value.tzinfo else value.replace(tzinfo=zone)
+
+
+def _zone(name) -> ZoneInfo:
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, TypeError) as err:
+        raise ReplayError(f"unknown timezone {name!r}") from err
 
 
 def _check_day(day: Day) -> Day:
@@ -197,51 +217,65 @@ def _check_day(day: Day) -> Day:
     return day
 
 
+def _object(value, where: str, key: str) -> dict:
+    if not isinstance(value, dict):
+        raise ReplayError(f"{where}: {key} must be an object")
+    return value
+
+
+def _list(value, where: str, key: str) -> list:
+    if not isinstance(value, list):
+        raise ReplayError(f"{where}: {key} must be a list")
+    return value
+
+
 def load_json(path: Path) -> tuple[list[Day], dict, str]:
     document = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ReplayError("the JSON root must be an object")
     zone_name = document.get("timezone", "UTC")
-    zone = ZoneInfo(zone_name)
-    minutes = float(document.get("interval_minutes", 15))
+    zone = _zone(zone_name)
+    minutes = _number(document.get("interval_minutes", 15), "file", "interval_minutes")
+    if minutes <= 0:
+        raise ReplayError("file: interval_minutes must be positive")
+    file_soc = document.get("initial_soc_percent", 50)
     days = []
-    for number, entry in enumerate(document.get("days", []), 1):
+    for number, entry in enumerate(_list(document.get("days", []), "file", "days"), 1):
         where = f"days[{number}]"
+        entry = _object(entry, where, "the day")
         start = _aware(entry.get("start"), zone, where)
+        rows = _list(entry.get("intervals", []), where, "intervals")
         intervals = tuple(
             _interval(
                 start + timedelta(minutes=minutes * index), row, f"{where}[{index}]"
             )
-            for index, row in enumerate(entry.get("intervals", []))
+            for index, row in enumerate(rows)
         )
-        days.append(
-            _check_day(
-                Day(
-                    entry.get("date") or start.astimezone(zone).date().isoformat(),
-                    float(
-                        entry.get(
-                            "initial_soc_percent",
-                            document.get("initial_soc_percent", 50),
-                        )
-                    ),
-                    intervals,
-                )
-            )
+        soc = _number(
+            entry.get("initial_soc_percent", file_soc), where, "initial_soc_percent"
         )
-    return days, document.get("settings", {}), zone_name
+        date = entry.get("date") or start.astimezone(zone).date().isoformat()
+        days.append(_check_day(Day(str(date), soc, intervals)))
+    settings = _object(document.get("settings", {}), "file", "settings")
+    return days, settings, zone_name
 
 
 def load_csv(
     path: Path, zone_name: str, initial_soc: float
 ) -> tuple[list[Day], dict, str]:
-    zone = ZoneInfo(zone_name)
+    zone = _zone(zone_name)
     by_date: dict[str, list[Interval]] = {}
     socs: dict[str, float] = {}
     with path.open(newline="", encoding="utf-8") as handle:
         for number, row in enumerate(csv.DictReader(handle), 2):
-            start = _aware(row.get("start"), zone, f"line {number}")
+            where = f"line {number}"
+            start = _aware(row.get("start"), zone, where)
             date = start.astimezone(zone).date().isoformat()
-            by_date.setdefault(date, []).append(_interval(start, row, f"line {number}"))
+            by_date.setdefault(date, []).append(_interval(start, row, where))
             if row.get("initial_soc_percent") and date not in socs:
-                socs[date] = float(row["initial_soc_percent"])
+                socs[date] = _number(
+                    row["initial_soc_percent"], where, "initial_soc_percent"
+                )
     days = [
         _check_day(Day(date, socs.get(date, initial_soc), tuple(rows)))
         for date, rows in by_date.items()
@@ -274,6 +308,33 @@ def _autonomy(values: dict, slots, battery: Battery, zone_name: str):
         targets = tuple(max(target, floor_kwh) for target in targets)
         weight = max(weight, values["backup_shortfall_price_per_kwh"])
     return targets, floor.window_ids[: len(slots)], weight
+
+
+def _peak_reserve(values: dict, slots, battery: Battery):
+    """Entry floor before each expensive run, built from the slots at hand.
+
+    Mirrors runtime.py: needs `limit_grid_charge_price` (its ceiling is the cheap
+    price) and stays inactive when no expensive run with a deficit is in view.
+    """
+    margin = values["peak_reserve_margin_kwh"]
+    if margin <= 0 or not values["limit_grid_charge_price"]:
+        return (), (), 0.0
+    buy = tuple(slot.buy_per_kwh for slot in slots)
+    cheap_price = values["maximum_grid_charge_price"]
+    peak = peak_reserve_targets(
+        buy,
+        tuple(slot.load_kwh for slot in slots),
+        tuple(slot.pv_kwh for slot in slots),
+        cheap_price=cheap_price,
+        reserve_kwh=battery.capacity_kwh * battery.minimum_soc_fraction,
+        usable_capacity_kwh=battery.capacity_kwh * battery.maximum_soc_fraction,
+        eta_discharge=battery.eta_discharge,
+        margin_kwh=margin,
+    )
+    weight = peak_reserve_weight(buy, cheap_price=cheap_price)
+    if weight > 0 and any(window != -1 for window in peak.window_ids):
+        return peak.targets_kwh, peak.window_ids, weight
+    return (), (), 0.0
 
 
 def build_problem(
@@ -322,6 +383,7 @@ def build_problem(
         site_export_kw=values["grid_export_kw"],
     )
     targets, windows, target_weight = _autonomy(values, slots, battery, zone_name)
+    peak_kwh, peak_window, peak_weight = _peak_reserve(values, slots, battery)
     return Problem(
         slots,
         SiteLimits(
@@ -354,23 +416,38 @@ def build_problem(
         soc_target_kwh=targets,
         soc_target_window=windows,
         soc_target_weight=target_weight,
+        peak_reserve_kwh=peak_kwh,
+        peak_reserve_window=peak_window,
+        peak_reserve_weight=peak_weight,
         **weights,
     )
 
 
 def realize(
-    mode, flow: Flow | None, pv, load, hours, soc, values, export_room
+    mode,
+    flow: Flow | None,
+    pv,
+    load,
+    hours,
+    soc,
+    values,
+    export_room,
+    forecast: tuple[float, float] | None = None,
 ) -> tuple[Flow, float]:
     """Execute one interval against realized PV/load; returns the flow and end SOC.
 
-    The planned mode and quantities steer the battery, the realized PV and load
-    decide everything else. CHARGE_GRID charges the planned energy from PV first,
-    grid second; CHARGE_PV charges from realized PV surplus up to the planned
-    energy; DISCHARGE_GRID discharges the planned energy to the load and grid;
-    HOLD parks the battery; CURTAIL curtails the planned PV energy; SELF_CONSUME
-    (and every unplanned interval) follows the load. Site limits are applied last:
-    export beyond the grid limit is curtailed, charge beyond the inverter or grid
-    import limit is dropped.
+    Follows the controller (tools/deye_controller/build.py): the planned mode and
+    quantities steer the battery, the realized PV and load decide everything else.
+    CHARGE_PV and SELF_CONSUME (and every unplanned interval) follow the load: all
+    PV surplus charges the battery, a deficit is covered from it. CHARGE_GRID
+    follows the plan only for the grid share (planned charge minus the surplus
+    the forecast `(pv, load)` promised); the realized surplus charges on top, so
+    PV above forecast charges more and PV below forecast charges less, never a
+    shortfall bought from the grid. DISCHARGE_GRID discharges the planned energy
+    to the load and grid; HOLD parks the battery; CURTAIL curtails the planned PV
+    energy. Site limits are applied last: export beyond the grid limit is
+    curtailed, charge beyond the inverter or grid import limit is dropped.
+    Without `forecast` the forecast equals the realized values.
     """
     eta_c, eta_d = values["eta_charge"], values["eta_discharge"]
     capacity = values["capacity_kwh"]
@@ -389,9 +466,11 @@ def realize(
     net = pv - curtail - load
     charge = discharge = 0.0
     if mode == "CHARGE_GRID":
-        charge = min(plan_charge, max_charge)
-    elif mode == "CHARGE_PV":
-        charge = min(plan_charge, max(net, 0.0), max_charge)
+        forecast_pv, forecast_load = forecast or (pv, load)
+        planned_curtail = flow.curtail_kwh if flow else 0.0
+        forecast_surplus = max(0.0, forecast_pv - planned_curtail - forecast_load)
+        grid_share = max(0.0, plan_charge - forecast_surplus)
+        charge = min(max(net, 0.0) + grid_share, max_charge)
     elif mode == "DISCHARGE_GRID":
         discharge = min(plan_discharge, max_discharge)
     elif mode != "HOLD":
@@ -447,6 +526,15 @@ def flow_cost(interval: Interval, flow: Flow, wear_per_kwh: float) -> float:
     )
 
 
+def soc_price(day: Day) -> float:
+    """Price of the day-end SOC drift in the reported cost: the day's mean buy price.
+
+    Fixed by the data, never by a planner setting, so runs with different
+    `terminal_mode` / `terminal_value_per_kwh` stay comparable.
+    """
+    return sum(interval.buy for interval in day.intervals) / len(day.intervals)
+
+
 def _outcome(day: Day, values: dict, flows, failures: int = 0) -> Outcome:
     """Sum a day's executed flows and value the SOC drift from the initial SOC."""
     initial = values["capacity_kwh"] * day.initial_soc_percent / 100
@@ -456,7 +544,7 @@ def _outcome(day: Day, values: dict, flows, failures: int = 0) -> Outcome:
         for interval, flow in zip(day.intervals, flows, strict=True)
     )
     return Outcome(
-        cost + (initial - end) * values["terminal_value_per_kwh"],
+        cost + (initial - end) * soc_price(day),
         sum(flow.grid_import_kwh for flow in flows),
         sum(flow.grid_export_kwh for flow in flows),
         end,
@@ -531,7 +619,7 @@ def run_plan(day: Day, values: dict, zone_name: str) -> Outcome:
                 accept_incumbent=True,
             )
             planned = plan.flows
-        except SolveError, InputError:
+        except SolveError:
             failures += 1
             planned = ()
         for step in range(min(refresh, count - index)):
@@ -552,6 +640,7 @@ def run_plan(day: Day, values: dict, zone_name: str) -> Outcome:
                 soc,
                 values,
                 produced - exported,
+                (interval.pv_forecast, interval.load_forecast),
             )
             exported += flow.grid_export_kwh + flow.curtail_kwh
             throughput += flow.charge_kwh + flow.discharge_kwh
@@ -584,31 +673,38 @@ class DayResult:
 
 
 def day_values(day: Day, values: dict) -> dict:
-    """Settings for one day with the day-end stored energy valued.
+    """Settings the solves of one day use, with the day-end stored energy valued.
 
     A day boundary is arbitrary for the battery, so `preserve_initial` would forbid
-    using stored energy in the last hours of every day. Each solve and the final
-    cost value the end-of-day SOC at `terminal_value_per_kwh` when the terminal mode
-    is `value`, else at the day's mean buy price.
+    using stored energy in the last hours of every day. Each solve values the
+    end-of-day SOC at `terminal_value_per_kwh` when the terminal mode is `value`,
+    else at the day's mean buy price. The reported cost does not follow this
+    choice: it always prices the SOC drift at `soc_price`.
     """
     if values["terminal_mode"] == "value":
         return values
-    mean_buy = sum(interval.buy for interval in day.intervals) / len(day.intervals)
-    return {**values, "terminal_mode": "value", "terminal_value_per_kwh": mean_buy}
+    return {
+        **values,
+        "terminal_mode": "value",
+        "terminal_value_per_kwh": soc_price(day),
+    }
 
 
 def replay(days: list[Day], values: dict, zone_name: str) -> list[DayResult]:
     results = []
     for day in days:
         valued = day_values(day, values)
-        results.append(
-            DayResult(
-                day.date,
-                run_plan(day, valued, zone_name),
-                run_self_use(day, valued),
-                run_hindsight(day, valued, zone_name),
+        try:
+            results.append(
+                DayResult(
+                    day.date,
+                    run_plan(day, valued, zone_name),
+                    run_self_use(day, valued),
+                    run_hindsight(day, valued, zone_name),
+                )
             )
-        )
+        except (SolveError, InputError) as err:
+            raise ReplayError(f"{day.date}: {err}") from err
     return results
 
 
@@ -680,12 +776,22 @@ def main(argv=None) -> int:
         for key, label in _UNSUPPORTED:
             if values[key]:
                 print(f"warning: {label} is not replayed ({key})", file=sys.stderr)
+        if (
+            values["peak_reserve_margin_kwh"] > 0
+            and not values["limit_grid_charge_price"]
+        ):
+            print(
+                "warning: peak reserve needs limit_grid_charge_price (its ceiling is "
+                "the cheap price); it has no effect (peak_reserve_margin_kwh)",
+                file=sys.stderr,
+            )
         results = replay(days, values, zone_name)
     except (
         ReplayError,
         OSError,
+        UnicodeDecodeError,
         json.JSONDecodeError,
-        ZoneInfoNotFoundError,
+        csv.Error,
     ) as err:
         print(f"error: {err}", file=sys.stderr)
         return 2
@@ -698,6 +804,7 @@ def main(argv=None) -> int:
                         "plan": r.plan.cost,
                         "self_use": r.self_use.cost,
                         "hindsight": r.hindsight.cost,
+                        "solve_failures": r.plan.solve_failures,
                     }
                     for r in results
                 ],

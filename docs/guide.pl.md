@@ -1441,13 +1441,15 @@ walucie instalacji:
 
 ```
 python tools/replay.py tools/replay_sample.json --currency PLN
-python tools/replay.py tools/replay_sample.json --set import_penalty_per_kwh=0.1 --set strategy=self_sufficiency
+python tools/replay.py tools/replay_sample.json --set allow_grid_charge=false
 ```
 
 `--set klucz=wartość` (można powtarzać) nadpisuje dowolne ustawienie planera po jego kluczu (klucze
 opcji, jak w `settings.py`; flagi należące do strategii ustawione w ten sposób są traktowane jako
 jawne). Uruchom dwa razy i porównaj kolumnę `plan`, aby zmierzyć zmianę. `--json` wypisuje liczby
-zamiast tabeli; `--timezone` i `--initial-soc` dotyczą tylko wejścia CSV.
+(wraz z `solve_failures`, liczbą nieudanych rozwiązań planu danego dnia) zamiast tabeli; `--timezone`
+i `--initial-soc` dotyczą tylko wejścia CSV. Błędny plik, wartość lub nadpisanie kończy się
+komunikatem `error: …` ze wskazaniem miejsca i kodem wyjścia 2.
 
 ### Format wejścia
 
@@ -1466,7 +1468,13 @@ syntetyczny.
 
 Każdy interwał ma sześć liczb: `buy` i `sell` (waluta/kWh, końcowe ceny taryfy), `pv_forecast` i
 `load_forecast` (kWh w interwale, **jak znane w chwili planowania**) oraz `pv` i `load` (kWh faktycznie
-wyprodukowane i zużyte). Dni są niezależne; każdy kończy się na ostatnim interwale.
+wyprodukowane i zużyte). Sześć wartości musi być skończonych, a cztery energie nieujemne (obetnij
+drobne wartości ujemne, które zaokrąglenia w statystykach mogą zostawić, np. w `pobór + PV − eksport`);
+błąd wskazuje miejsce: `days[n][i]` (dzień `n` od 1, interwał `i` od 0) albo `line n` w CSV.
+
+Dni są niezależne: każdy jest planowany i mierzony osobno i kończy się na ostatnim interwale, nawet
+gdy plik zawiera kolejne dni. Horyzont skraca się więc do końca dnia, więc `horizon_hours` poza dobę
+i przenoszenie energii przez północ nie są mierzone.
 
 CSV ma jeden wiersz na interwał z kolumnami `start`, `buy`, `sell`, `pv_forecast`, `load_forecast`,
 `pv`, `load` i opcjonalnie `initial_soc_percent` (czytaną z pierwszego wiersza dnia). Wiersze są
@@ -1474,22 +1482,37 @@ grupowane w dni według lokalnej daty `start`; ustawienia podaje się tylko prze
 
 ### Jak czytać wynik
 
-- **Energia na koniec dnia jest wyceniana**, bo granica doby jest dla baterii dowolna: różnica
-  końcowego i początkowego SOC jest liczona po `terminal_value_per_kwh`, gdy `terminal_mode` to
-  `value`, a w przeciwnym razie po średniej cenie zakupu danego dnia; każde rozwiązanie w replayu
-  używa tej samej wartości. Plan może więc zakończyć dzień poniżej początkowego SOC.
-- `hindsight` to optimum **ukształtowanego celu** (wraz z wagami strategii i karą za import)
-  wycenione w rzeczywistej walucie. Dla `cost_min` bez kary za import jest dolnym ograniczeniem
-  `plan`; dla innych strategii to najlepszy wynik tej strategii.
-- Wykonany plan podąża za swoim trybem względem rzeczywistych danych: `CHARGE_GRID` ładuje
-  zaplanowaną energię najpierw z PV, potem z sieci; `CHARGE_PV` ładuje z rzeczywistej nadwyżki do
-  zaplanowanej energii; `DISCHARGE_GRID` rozładowuje zaplanowaną energię; `HOLD` zatrzymuje baterię;
-  każdy inny interwał podąża za obciążeniem. Eksport ponad `grid_export_kw` jest ucinany (curtailment),
-  a zmagazynowana energia nie jest eksportowana ponad dotychczasową produkcję PV, gdy włączone jest
-  **Sell only PV** (`limit_export_to_pv`) jest włączone.
-- Nie są odtwarzane: okna balansowania LFP, rezerwa na okres drogi, ogon autonomii poza danymi oraz
-  przenoszone zobowiązania eksportu i ładowania z sieci. Ostrzeżenie wymienia włączone z nich.
-  Nieudane rozwiązanie wykonuje dany krok jako autokonsumpcję i jest zgłaszane pod tabelą.
+- **Energia na koniec dnia jest wyceniana**, bo granica doby jest dla baterii dowolna. Każde
+  rozwiązanie wycenia końcowy SOC po `terminal_value_per_kwh`, gdy `terminal_mode` to `value`, a w
+  przeciwnym razie po średniej cenie zakupu danego dnia, więc plan może zakończyć dzień poniżej
+  początkowego SOC. **Raportowany** koszt wycenia różnicę końcowego i początkowego SOC po średniej
+  cenie zakupu danego dnia, niezależnie od ustawień, więc `terminal_mode` i `terminal_value_per_kwh`
+  zmieniają plan, ale nie miarkę: `self_use` jest w każdym przebiegu identyczny, a dwa przebiegi
+  różniące się wartością końcową są porównywalne.
+- `wear_per_kwh` wchodzi w raportowany koszt (połowa energii ładowanej i rozładowanej łącznie), więc
+  przebiegi z różnym `wear_per_kwh` nie są porównywalne.
+- `hindsight` to optimum **ukształtowanego celu** (wraz z wagami strategii, karą za import i wartością
+  końcową rozwiązań) wycenione w rzeczywistej walucie. Dla `cost_min` bez kary za import i z wartością
+  końcową równą średniej cenie zakupu dnia jest dolnym ograniczeniem `plan`; dla innych strategii to
+  najlepszy wynik tej strategii. Przy `terminal_mode` `value` i wartości niższej niż średnia cena
+  zakupu `hindsight` może wyczerpać baterię i pokazać więcej niż `plan` — to znak, że wartość końcowa
+  zaniża wartość zmagazynowanej energii.
+- Wykonany plan podąża za sterownikiem (`tools/deye_controller/build.py`) względem rzeczywistych
+  danych. `SELF_CONSUME` i `CHARGE_PV` podążają za obciążeniem: cała nadwyżka PV ładuje baterię, a
+  niedobór jest pokrywany z niej. W `CHARGE_GRID` za planem idzie tylko udział sieci — zaplanowane
+  ładowanie minus nadwyżka obiecana przez prognozę — a rzeczywista nadwyżka PV ładuje ponad to, więc
+  PV powyżej prognozy ładuje więcej, a poniżej mniej, nigdy zaś niedoboru nie kupuje się z sieci.
+  `DISCHARGE_GRID` rozładowuje zaplanowaną energię, `HOLD` zatrzymuje baterię. Eksport ponad
+  `grid_export_kw` jest ucinany (curtailment), a zmagazynowana energia nie jest eksportowana ponad
+  dotychczasową produkcję PV, gdy włączone jest **Sell only PV** (`limit_export_to_pv`).
+- [Zapas na drogie okresy](#zapas-na-drogie-okresy) (`peak_reserve_margin_kwh`) jest odtwarzany jak w integracji: wymaga
+  `limit_grid_charge_price` (jego pułap to cena „tania”), w przeciwnym razie ostrzeżenie mówi, że nie
+  ma efektu.
+- Nie są odtwarzane: okna balansowania LFP, ogon autonomii poza danymi oraz przenoszone zobowiązania
+  eksportu i ładowania z sieci. Ostrzeżenie wymienia włączone z nich. Nieudane rozwiązanie planu
+  wykonuje dany krok jako autokonsumpcję i jest zgłaszane pod tabelą oraz jako `solve_failures`;
+  nieudane rozwiązanie `hindsight` albo niespójne ustawienia przerywają przebieg komunikatem
+  `error: <data>: …`.
 
 ### Eksport danych z Home Assistanta
 

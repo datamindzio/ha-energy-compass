@@ -2335,12 +2335,13 @@ in the installation's currency:</p>
 </tbody>
 </table></section>
 <pre><code>python tools/replay.py tools/replay_sample.json --currency PLN
-python tools/replay.py tools/replay_sample.json --set import_penalty_per_kwh=0.1 --set strategy=self_sufficiency
+python tools/replay.py tools/replay_sample.json --set allow_grid_charge=false
 </code></pre>
 <p><code>--set key=value</code> (repeatable) overrides any planner setting by its key (the keys of Options, as in
 <code>settings.py</code>; strategy-owned flags set this way are treated as explicit). Run twice and compare the
-<code>plan</code> column to measure a change. <code>--json</code> prints the numbers instead of the table; <code>--timezone</code> and
-<code>--initial-soc</code> apply to CSV input only.</p>
+<code>plan</code> column to measure a change. <code>--json</code> prints the numbers (with <code>solve_failures</code>, the number of
+failed plan solves of the day) instead of the table; <code>--timezone</code> and <code>--initial-soc</code> apply to CSV
+input only. A bad file, value or override ends with <code>error: …</code> naming the place and exit code 2.</p>
 <h3 id="input-format">Input format</h3>
 <p>One JSON file (or a CSV, below). <code>tools/replay_sample.json</code> is a complete two-day synthetic example.</p>
 <section class="table-scroll"><table>
@@ -2383,27 +2384,45 @@ python tools/replay.py tools/replay_sample.json --set import_penalty_per_kwh=0.1
 </table></section>
 <p>Each interval has six numbers: <code>buy</code> and <code>sell</code> (currency/kWh, the final tariff prices), <code>pv_forecast</code>
 and <code>load_forecast</code> (kWh in the interval, <strong>as known at plan time</strong>) and <code>pv</code> and <code>load</code> (kWh actually
-produced and consumed). Days are independent; each ends at its last interval.</p>
+produced and consumed). The six values must be finite and the four energies not negative (clip the
+small negative values that rounding in statistics can leave, e.g. in <code>import + PV − export</code>); an error
+names the place, <code>days[n][i]</code> (day <code>n</code> from 1, interval <code>i</code> from 0) or <code>line n</code> of a CSV.</p>
+<p>Days are independent: each is planned and measured on its own and ends at its last interval, even
+when the file holds consecutive days. The horizon therefore shrinks to the end of the day, so
+<code>horizon_hours</code> beyond the day and the carry of energy over midnight are not measured.</p>
 <p>CSV has one row per interval with the columns <code>start</code>, <code>buy</code>, <code>sell</code>, <code>pv_forecast</code>, <code>load_forecast</code>,
 <code>pv</code>, <code>load</code> and optionally <code>initial_soc_percent</code> (read on the first row of a day). Rows are grouped
 into days by the local date of <code>start</code>; settings come only from <code>--set</code>.</p>
 <h3 id="reading-the-result">Reading the result</h3>
 <ul>
-<li><strong>Day-end energy is valued</strong>, because a day boundary is arbitrary for a battery: the difference
-  between the final and the initial SOC is priced at <code>terminal_value_per_kwh</code> when <code>terminal_mode</code> is
-  <code>value</code>, else at the day's mean buy price, and every solve of the replay uses the same value. This
-  also means the plan may end a day below its initial SOC.</li>
-<li><code>hindsight</code> is the optimum of the <strong>shaped objective</strong> (strategy weights and import penalty
-  included) priced in real currency. For <code>cost_min</code> with no import penalty it is a lower bound of
-  <code>plan</code>; for other strategies it is the best that strategy could do.</li>
-<li>The executed plan follows its mode against realized data: <code>CHARGE_GRID</code> charges the planned energy
-  from PV first, then the grid; <code>CHARGE_PV</code> charges from realized surplus up to the planned energy;
-  <code>DISCHARGE_GRID</code> discharges the planned energy; <code>HOLD</code> parks the battery; every other interval
-  follows the load. Grid export beyond <code>grid_export_kw</code> is curtailed, and stored energy is not exported
-  beyond the PV produced so far when <strong>Sell only PV</strong> (<code>limit_export_to_pv</code>) is on.</li>
-<li>Not replayed: LFP balance windows, the peak-period reserve, the autonomy tail beyond the data, and
-  carried export or grid-charge commitments. A warning names the enabled ones. A failed solve runs that
-  step as self-consumption and is reported under the table.</li>
+<li><strong>Day-end energy is valued</strong>, because a day boundary is arbitrary for a battery. Every solve values
+  the final SOC at <code>terminal_value_per_kwh</code> when <code>terminal_mode</code> is <code>value</code>, else at the day's mean buy
+  price, so the plan may end a day below its initial SOC. The <strong>reported</strong> cost prices the difference
+  between the final and the initial SOC at the day's mean buy price whatever the settings are, so
+  <code>terminal_mode</code> and <code>terminal_value_per_kwh</code> change the plan but not the measuring stick: <code>self_use</code>
+  is identical in every run, and two runs differing in the terminal value are comparable.</li>
+<li><code>wear_per_kwh</code> is part of the reported cost (half of the charged plus discharged energy), so runs
+  with different <code>wear_per_kwh</code> are not comparable.</li>
+<li><code>hindsight</code> is the optimum of the <strong>shaped objective</strong> (strategy weights, import penalty and the
+  terminal value of the solves included) priced in real currency. For <code>cost_min</code> with no import
+  penalty and a terminal value equal to the day's mean buy price it is a lower bound of <code>plan</code>; for
+  other strategies it is the best that strategy could do. With <code>terminal_mode</code> <code>value</code> and a lower
+  value than the mean buy price, <code>hindsight</code> may drain the battery and report more than <code>plan</code>, which
+  is a sign that the terminal value undervalues stored energy.</li>
+<li>The executed plan follows the controller (<code>tools/deye_controller/build.py</code>) against realized data.
+  <code>SELF_CONSUME</code> and <code>CHARGE_PV</code> follow the load: all PV surplus charges the battery and a deficit is
+  covered from it. In <code>CHARGE_GRID</code> only the grid share follows the plan — the planned charge minus the
+  surplus the forecast promised — and the realized PV surplus charges on top, so PV above the forecast
+  charges more and PV below it charges less, never a shortfall bought from the grid. <code>DISCHARGE_GRID</code>
+  discharges the planned energy, <code>HOLD</code> parks the battery. Grid export beyond <code>grid_export_kw</code> is
+  curtailed, and stored energy is not exported beyond the PV produced so far when <strong>Sell only PV</strong>
+  (<code>limit_export_to_pv</code>) is on.</li>
+<li>The <a href="#peak-period-reserve">peak-period reserve</a> (<code>peak_reserve_margin_kwh</code>) is replayed as in the integration: it needs
+  <code>limit_grid_charge_price</code> (its ceiling is the cheap price), else a warning says it has no effect.</li>
+<li>Not replayed: LFP balance windows, the autonomy tail beyond the data, and carried export or
+  grid-charge commitments. A warning names the enabled ones. A failed plan solve runs that step as
+  self-consumption and is reported under the table and as <code>solve_failures</code>; a failed <code>hindsight</code>
+  solve or inconsistent settings stop the run with <code>error: &lt;date&gt;: …</code>.</li>
 </ul>
 <h3 id="exporting-the-data-from-home-assistant">Exporting the data from Home Assistant</h3>
 <p><code>buy</code> and <code>sell</code> are the final prices the planner sees: from your tariff, or from the history of the
