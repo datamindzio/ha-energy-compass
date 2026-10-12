@@ -195,8 +195,7 @@ Solarman: zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika 
    oznaczone <code>time_limited</code> razem z jego <code>mip_gap</code>.</li>
 <li><strong>Próby zużycia.</strong> Dla każdego przedziału wyświetlania solver liczy plan jeszcze raz z
    dodatkowym 1 kWh obciążenia; różnica kosztu to <em>koszt krańcowy jednej kWh więcej</em>, klasyfikowany
-   na poziom zużycia. Gdy pełne rozwiązanie jest za wolne, próby ograniczają tryby pracy do okna wokół
-   sondowanego przedziału (patrz <em>Poziomy zużycia</em>).</li>
+   na poziom zużycia.</li>
 <li><strong>Profile elastycznego zużycia.</strong> Osobne rozwiązania dla bloków 3, 5, 10, 15 i 20 kWh mierzą, ile
    elastycznej energii można zaplanować, zanim cena się pogorszy.</li>
 <li><strong>Publikacja.</strong> Jedna spójna generacja aktualizuje wszystkie encje; niezmienione encje nie są
@@ -1421,20 +1420,6 @@ liczy plan z dodatkowym obciążeniem <code>probe_kwh</code> (domyślnie 1 kWh).
 z próbą − koszt planu bazowego) ÷ dodana energia. Bateria i sieć są przy tym optymalizowane od
 nowa, więc to prawdziwy koszt krańcowy — może różnić się od ceny taryfowej (np. energia z PV,
 którą inaczej by sprzedano, kosztuje utraconą wartość eksportu).</p>
-<p><strong>Długie horyzonty.</strong> Próba to pełne rozwiązanie horyzontu i tam, gdzie mieści się w
-<code>probe_time_limit_s</code> (domyślnie 2 s), jej koszt jest dokładny. Przy regule podążania SELF_CONSUME za
-obciążeniem (<code>self_sufficiency</code> i <code>backup_ready</code>) pełne rozwiązanie 96–192 przedziałów trwa 8–15 s,
-więc przekracza limit. Pierwsza próba, której pełne rozwiązanie przekroczy limit, przełącza resztę
-tego przeliczenia na <em>okna</em>: poza oknem wokół sondowanych przedziałów tryby pracy zostają takie jak w
-planie bazowym i optymalizowane są tylko przepływy. Okno rośnie (sondowane przedziały, potem 4, 16 i 48
-przedziałów z każdej strony), dopóki pozwala na to udział próby w budżecie czasu, a koszt daje
-najszersze okno, które się policzyło. Próba nie zawodzi więc z powodu wolnego pełnego
-rozwiązania, ale jej koszt jest dokładny tylko dla trybów, które okno zostawia wolne. Pomiar dla
-<code>self_sufficiency</code> i <code>backup_ready</code> przy 96 przedziałach (<code>minimum_mode_minutes</code> 60 i 0, 24 próby
-godzinowe, domyślne limity): 21–24 z 24 prób mieściło się w 0,005 waluty/kWh od pełnego rozwiązania;
-najgorsza była o 0,32 wyższa (jedna próba), żadna nie była niższa o więcej niż 0,005, a poziom zmienił
-się najwyżej w jednej. Koszt okna nie jest ograniczeniem kosztu pełnego rozwiązania: solver minimalizuje
-ważony cel strategii, a próba mierzy koszt rzeczywisty.</p>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-510177a65394-dark.svg"><img src="assets/diagrams/diagram-510177a65394.svg" alt="Diagram 8" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
@@ -1482,6 +1467,18 @@ ważony cel strategii, a próba mierzy koszt rzeczywisty.</p>
 liniową. Gdy nie powiedzie się pełna próba odniesienia, decyduje <code>short_coverage</code>:
 <code>absolute_fallback</code> (domyślnie: zostają bezwzględne reguły BOOST/LIMIT i reguła CHEAP wg minimalnej
 taryfy) albo <code>unavailable</code>.</p>
+<p><strong>Ograniczenie: długie horyzonty ze strategiami <code>self_sufficiency</code> i <code>backup_ready</code>.</strong> Każda próba to
+pełne, dokładne obliczenie całego horyzontu i jest znana tylko wtedy, gdy skończy się w
+<code>probe_time_limit_s</code> (domyślnie 2 s); próba, która nie zdąży, pozostaje nieznana — nigdy nie jest
+zastępowana kosztem przybliżonym. Te dwie strategie utrzymują <code>SELF_CONSUME</code> przez całą noc, a reguła
+podążania za obciążeniem sprawia, że jedna próba horyzontu 192 przedziałów (48 h kwadransów) trwa
+kilka sekund (zmierzono 5–10 s). Przy domyślnych limitach 96 prób kończy się wtedy 0–1 znanymi kosztami po wykorzystaniu
+całego budżetu prób (zmierzono ok. 57 s), poziomy korzystają z <code>short_coverage</code>, a <code>reason</code> to
+<code>reference_probe_failed</code>; dotyczy to <code>minimum_mode_minutes</code> 60 i 0. Plan bazowy
+pozostaje bez zmian. Aby mieć poziomy przy tych strategiach, skróć horyzont planowania albo podnieś
+<code>probe_time_limit_s</code> i <code>total_time_limit_s</code> (do 30 s i 300 s) i ustaw przedział wyświetlania
+60 minut, żeby budżet dzieliło mniej prób. Pozostałe cztery strategie kończyły wszystkie 96 prób przy 192
+przedziałach na tym samym komputerze.</p>
 <h2 id="okna-i-głębokość-elastycznego-zużycia">Okna i głębokość elastycznego zużycia</h2>
 <h3 id="okna">Okna</h3>
 <p>Sąsiednie przedziały tego samego poziomu łączą się w okna. <code>next_boost_start</code>, <code>next_cheap_start</code>

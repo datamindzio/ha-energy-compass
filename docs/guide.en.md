@@ -73,8 +73,7 @@ Each calculation proceeds as follows:
    solution found so far is published instead and marked `time_limited` with its `mip_gap`.
 4. **Probe consumption.** For each display interval, the solver is rerun with 1 kWh of extra load;
    the cost difference is the *incremental cost of one more kWh*, which is classified into a
-   consumption level. Where a full solve is too slow, probes restrict the operating modes to a window
-   around the probed interval (see *Consumption levels*).
+   consumption level.
 5. **Profile flexible loads.** Separate solves for 3, 5, 10, 15 and 20 kWh blocks measure how much
    flexible energy can be scheduled before the price degrades.
 6. **Publish.** One coherent generation updates all entities; unchanged entities are not rewritten.
@@ -823,21 +822,6 @@ each display interval (default 60 min over 24 h) the solver reruns with `probe_k
 the battery and grid are re-optimized, this is the true marginal cost — it can differ from the
 tariff price (e.g. solar that would otherwise be exported costs its lost export value).
 
-**Long horizons.** The probe is a full solve of the horizon and, where it finishes within
-`probe_time_limit_s` (default 2 s), its cost is exact. With the SELF_CONSUME load-following rule
-(`self_sufficiency` and `backup_ready`) the full solve of 96–192 intervals takes 8–15 s, so it times
-out. The first probe whose full solve times out switches the rest of that calculation to *windows*:
-outside a window around the probed intervals the operating modes stay those of the base plan and only
-the flows are re-optimized. The window widens (the probed intervals, then 4, 16 and 48 intervals
-each side) for as long as the probe's share of the time budget allows, and the widest window that
-finished gives the cost. A probe therefore does not fail because the full solve is slow, but its
-cost is exact only for the modes it leaves free. Measured on `self_sufficiency` and
-`backup_ready` at 96 intervals (`minimum_mode_minutes` 60 and 0, 24 hourly probes, shipped limits),
-21–24 of 24 probes were within 0.005 currency/kWh of the full solve; the worst was 0.32 higher
-(one probe), none more than 0.005 lower, and at most one level changed. A window cost is not a
-bound on the full solve's: the solver minimizes the weighted strategy objective while the probe
-measures the real cost.
-
 ```mermaid
 flowchart TD
     P[Probe cost c for interval] --> K{Probe succeeded?}
@@ -862,6 +846,18 @@ flowchart TD
 Percentiles come from successful probe costs across the reference horizon (default 24 h) using
 linear interpolation. If a full reference probe fails, `short_coverage` decides: `absolute_fallback`
 (default: keep BOOST/LIMIT absolute rules and the minimum-tariff CHEAP rule) or `unavailable`.
+
+**Limit: long horizons with `self_sufficiency` and `backup_ready`.** Every probe is a full, exact
+solve of the whole horizon and is known only when it finishes within `probe_time_limit_s` (default
+2 s); a probe that does not finish stays unknown — it is never replaced by an approximate cost. These
+two strategies keep `SELF_CONSUME` on through the night, and its load-following rule makes one probe
+of a 192-interval horizon (48 h of quarter-hours) take several seconds (5–10 s measured). With the default limits, 96 probes
+then end with 0–1 known costs after the whole probe budget (about 57 s measured), the levels use
+`short_coverage` and `reason` is `reference_probe_failed`; this holds for `minimum_mode_minutes` 60
+and 0. The base plan is not affected. To get levels with these strategies,
+shorten the planning horizon, or raise `probe_time_limit_s` and `total_time_limit_s` (up to 30 s and
+300 s) and use a 60-minute display interval so fewer probes share the budget. The other four
+strategies finished all 96 probes at 192 intervals on the same host.
 
 ## Windows and flexible energy depth
 

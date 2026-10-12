@@ -30,18 +30,6 @@ _TOL = 1e-6
 _PRICE_REL_TOL = 1e-12
 _PRICE_ABS_TOL = 1e-12
 _MAX_PROBES = 96
-# Intervals either side of a probe whose operating mode may change once its full
-# solve has timed out, widest the time share allows: the extra load moves the
-# battery's state of charge, and a schedule that cannot absorb it (a terminal
-# rule, a reserve) needs room to recover.
-_WINDOW_MARGINS = (0, 4, 16, 48)
-# Solve time grows about this much per step of `_WINDOW_MARGINS` (measured at
-# 96 intervals: 4.5x, 4.5x, 3.3x); a step that cannot fit is not started.
-_WINDOW_GROWTH = 4.0
-# Part of its equal share of the budget a windowed probe may spend widening past
-# its first result; the rest is slack for probes that run long (a result may use
-# the probe's whole limit) and for the model build after a solve.
-_WINDOW_SHARE = 0.75
 _FLEXIBLE_LOAD_TARGETS = (3.0, 5.0, 10.0, 15.0, 20.0)
 
 
@@ -343,93 +331,6 @@ def _intervals(
     return tuple(intervals)
 
 
-@dataclass
-class _Probing:
-    """How the probes of one analysis solve: in full until one times out.
-
-    A full solve that does not finish within its limit says the problem is too
-    large for it (the load-following rule at 96+ intervals), so every later
-    probe goes straight to windows instead of burning its limit again.
-    """
-
-    deadline: float
-    probe_limit_s: float
-    left: int = 0
-    windowed: bool = False
-
-    def limits(self) -> tuple[float, float]:
-        """When this probe must have a result, and when it stops widening.
-
-        A result may take the probe's whole limit; widening past it only the
-        probe's equal share of the budget still unspent.
-        """
-        now = perf_counter()
-        left = max(self.deadline - now, 0.0)
-        share = min(self.probe_limit_s, _WINDOW_SHARE * left / max(self.left, 1))
-        return min(self.deadline, now + self.probe_limit_s), now + share
-
-
-def _window(changed: list[int], margin: int, count: int) -> frozenset[int]:
-    return frozenset(
-        range(max(0, changed[0] - margin), min(count, changed[-1] + 1 + margin))
-    )
-
-
-def _windowed_cost(
-    problem: Problem,
-    baseline: Plan,
-    loaded: Problem,
-    changed: list[int],
-    actual: float,
-    deadline: float,
-    widen_until: float,
-) -> float | None:
-    """Marginal cost with the operating modes free only near the probe.
-
-    Outside the window both solves keep the base plan's modes and re-optimise
-    the flows, which leaves little integer search. The window widens through
-    `_WINDOW_MARGINS` for as long as the next step fits before `widen_until`
-    (the first result may use up to `deadline`); the widest step that finished
-    is the result, and an infeasible step (the load cannot be absorbed there)
-    just widens. An incumbent base plan is not the optimum of its own window,
-    so the reference is solved in the same window.
-    """
-    cost = None
-    spent = 0.0
-    for margin in _WINDOW_MARGINS:
-        started = perf_counter()
-        limit = deadline if cost is None else widen_until
-        remaining = limit - started
-        if remaining <= 0 or (cost is not None and spent * _WINDOW_GROWTH > remaining):
-            break
-        free = _window(changed, margin, len(problem.slots))
-        try:
-            candidate = solve(
-                loaded, time_limit_s=remaining, pinned_to=baseline, unpinned_slots=free
-            )
-            reference = baseline
-            if baseline.time_limited:
-                reference = solve(
-                    problem,
-                    time_limit_s=max(limit - perf_counter(), _TOL),
-                    pinned_to=baseline,
-                    unpinned_slots=free,
-                )
-        except SolveError as err:
-            if err.reason == "infeasible":
-                spent = perf_counter() - started
-                continue
-            break
-        step = (plan_monetary_cost(candidate) - plan_monetary_cost(reference)) / actual
-        finished = perf_counter()
-        if finished >= deadline:
-            break
-        if isfinite(step):
-            cost = step
-        spent = finished - started
-    return cost
-
-
 def _probe(
     problem: Problem,
     baseline: Plan,
@@ -437,7 +338,6 @@ def _probe(
     end: datetime,
     amount: float,
     deadline: float,
-    probing: _Probing | None = None,
 ) -> float | None:
     """Marginal PLN/kWh cost of adding `amount` kWh of load over [start, end).
 
@@ -446,10 +346,6 @@ def _probe(
     solved from `replace(problem, slots=...)`, which carries every other field
     of `problem` — including `strategy_changed` — unchanged, so baseline and
     candidate always see the same (released or carried) mode-lock state.
-
-    The full solve is exact. When it times out and `probing` is given, this and
-    every later probe use `_windowed_cost`, which is exact only for the modes it
-    leaves free.
     """
     elapsed = (end - start).total_seconds()
     additions = []
@@ -467,26 +363,17 @@ def _probe(
         replace(slot, load_kwh=slot.load_kwh + extra)
         for slot, extra in zip(problem.slots, additions, strict=True)
     )
-    loaded = replace(problem, slots=slots)
-    if probing is None or not probing.windowed:
-        remaining = deadline - perf_counter()
-        if remaining <= 0:
-            return None
-        try:
-            candidate = solve(loaded, time_limit_s=remaining)
-        except SolveError as err:
-            if probing is None or err.reason != "timeout":
-                return None
-            probing.windowed = True
-        else:
-            if perf_counter() >= deadline:
-                return None
-            cost = (
-                plan_monetary_cost(candidate) - plan_monetary_cost(baseline)
-            ) / actual
-            return cost if isfinite(cost) and perf_counter() < deadline else None
-    changed = [index for index, extra in enumerate(additions) if extra > 0]
-    return _windowed_cost(problem, baseline, loaded, changed, actual, *probing.limits())
+    remaining = deadline - perf_counter()
+    if remaining <= 0:
+        return None
+    try:
+        candidate = solve(replace(problem, slots=slots), time_limit_s=remaining)
+    except SolveError:
+        return None
+    if perf_counter() >= deadline:
+        return None
+    cost = (plan_monetary_cost(candidate) - plan_monetary_cost(baseline)) / actual
+    return cost if isfinite(cost) and perf_counter() < deadline else None
 
 
 def analyze_consumption(
@@ -531,14 +418,12 @@ def analyze_consumption(
     zone = ZoneInfo(problem.timezone)
     costs: dict[tuple[datetime, datetime], float | None] = {}
     deadline = perf_counter() + budget
-    probing = _Probing(deadline, settings.probe_time_limit_s)
-    for index, (interval_start, interval_end) in enumerate(requested):
+    for interval_start, interval_end in requested:
         probe_start = perf_counter()
         remaining = deadline - probe_start
         if remaining <= 0:
             costs[(interval_start, interval_end)] = None
             continue
-        probing.left = len(requested) - index
         probe_deadline = min(deadline, probe_start + settings.probe_time_limit_s)
         costs[(interval_start, interval_end)] = _probe(
             problem,
@@ -547,7 +432,6 @@ def analyze_consumption(
             interval_end,
             settings.probe_kwh,
             probe_deadline,
-            probing,
         )
     reference_results = tuple((item, probe, costs[probe]) for item, probe in reference)
     known = tuple(cost for _, _, cost in reference_results if cost is not None)
