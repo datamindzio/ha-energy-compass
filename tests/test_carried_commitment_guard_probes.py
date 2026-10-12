@@ -642,3 +642,144 @@ def test_a_row_idle_under_the_largest_probe_is_a_bridge_without_a_margin(pv):
         assert 2 in result.plan.carried_bridges
         assert result.plan.flows[2].dispatch_mode == "HOLD"
     assert result.plan.flows[0].dispatch_mode == "SELF_CONSUME"
+
+
+# T-038 review, round 4 (after the rebase onto c44e3fb, which brought ADR-0005): planned on
+# main, `infeasible` on 2ff0447. A full pack on a site without export has to curtail, and
+# an idle committed interval offered HOLD only. On main these rows were not idle: the
+# idle set ignored the guard and was read with the largest probe.
+def without_export(problem):
+    return replace(problem, site=SiteLimits(8, 8, 0, True))
+
+
+ELEVEN = datetime(2026, 12, 18, 11, tzinfo=UTC)
+
+
+def guarded_surplus(initial_kwh):
+    # Interval 0 is idle; in 1 to 3 the guard keeps a surplus of 0.28 kWh out of the pack.
+    return without_export(
+        committed(
+            [(0, 0, 1.0, 0.5), *[(0.3, 0.02, 1.0, 0.5)] * 3],
+            Battery(5, 0, 1, initial_kwh, 0.5, 0.5, 0.95, 0.95, 0, False, False, 0),
+            "SELF_CONSUME",
+            120,
+            15,
+            "discharge",
+            15,
+            start=ELEVEN,
+        )
+    )
+
+
+def test_a_surplus_the_guard_keeps_out_of_a_full_pack_is_curtailed():
+    problem = guarded_surplus(5)
+    assert policy.idle_slots(problem) == {0, 1, 2, 3}
+    plan = solve(problem)
+    assert modes(plan) == ["HOLD", "CURTAIL", "CURTAIL", "CURTAIL"]
+    # A CURTAIL row is never a bridge, in the plan's reading or in any other.
+    assert plan.carried_bridges == (0,)
+    policy.validate_modes(problem, plan.flows)
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        policy.validate_modes(problem, plan.flows, (0, 1))
+
+
+def test_a_surplus_the_guard_keeps_out_of_a_full_pack_is_curtailed_under_a_probe():
+    result = solve_flexible_load(guarded_surplus(5), FlexibleLoadRequest(0.02, 0.1))
+    assert modes(result.plan) == ["HOLD", "CURTAIL", "CURTAIL", "CURTAIL"]
+    assert result.plan.carried_bridges == (0,)
+
+
+def test_an_idle_interval_does_not_curtail_while_the_pack_has_room():
+    # The terms of ADR-0005 hold in an idle interval too: the pack was never full, so
+    # the commitment does not end in CURTAIL, and HOLD has nowhere to put the surplus.
+    with pytest.raises(SolveError) as error:
+        solve(guarded_surplus(3))
+    assert error.value.reason == "infeasible"
+
+
+# Sweep t038_review5_full.py, plain-nl seed 11001 #151: no guard and no probe, and no
+# plan on main either. The pack has no room for the surplus of interval 1, so CURTAIL
+# starts there and its minimum duration takes it through interval 2, which is idle.
+CURTAIL_151 = without_export(
+    committed(
+        [(0.03, 0.3, 1.02, 0.8), (0.1, 0, 0.91, 0.75), (0.026, 0.03, 0.94, 0.18)],
+        Battery(5, 0.2, 1, 4.99, 3, 0.08, 0.95, 0.95, 0.01, False, True, 0),
+        "SELF_CONSUME",
+        120,
+        0,
+        start=ELEVEN,
+    )
+)
+
+
+def test_a_curtail_run_goes_on_through_an_idle_interval():
+    assert policy.idle_slots(CURTAIL_151) == {0, 2}
+    plan = solve(CURTAIL_151)
+    assert modes(plan) == ["HOLD", "CURTAIL", "CURTAIL"]
+    assert plan.carried_bridges == (0,)
+
+
+# Sweep t038_review5_full.py, flex-nl seed 9001 #604 (no guard): main planned CHARGE_PV,
+# HOLD, CURTAIL x3. Intervals 2 and 4 are idle without the probe.
+CURTAIL_604 = without_export(
+    probe_problem(
+        quarter(
+            [
+                (1.33, 0.56, 0.1, 0.05),
+                (0.54, 0.41, 0, 0.02),
+                (1.41, 0.04, 0.05, 0.026),
+                (1.31, 0.53, 0.3, 0.1),
+                (0.78, 0.04, 0.3, 0.3),
+            ]
+        ),
+        Battery(5, 0, 1, 4.95, 3, 0.5, 0.95, 0.95, 0, True, True, 0),
+        "preserve_initial",
+        0,
+        "SELF_CONSUME",
+        15,
+        0.1,
+    )
+)
+# Sweep t038_review5_full.py, flex seed 9002 #581 (guard "discharge"): main planned HOLD
+# x6, CURTAIL x3. The guard makes interval 6 (PV 0.1 kWh, load 0.026 kWh) idle.
+CURTAIL_581 = without_export(
+    committed(
+        quarter(
+            [
+                (0.43, 0.32, 0.05, 0.026),
+                (1.09, 0.7, 0.005, 0),
+                (1.46, 0.68, 0.01, 0.02),
+                (1.03, 0.51, 0.01, 0),
+                (0.61, 0.4, 0.024, 0.05),
+                (1.0, 0.62, 0.005, 0.1),
+                (1.11, 0.3, 0.1, 0.026),
+                (0.66, 0.22, 0.3, 0.02),
+                (0.55, 0.13, 0.05, 0.01),
+            ]
+        ),
+        Battery(5, 0, 1, 4.99, 0.5, 0.08, 0.95, 0.95, 0.01, False, False, 0),
+        "SELF_CONSUME",
+        120,
+        15,
+        "discharge",
+        15,
+        start=ELEVEN,
+        terminal_value_per_kwh=0.3,
+    )
+)
+
+
+@pytest.mark.parametrize(
+    ("problem", "request_", "idle", "first"),
+    [
+        (CURTAIL_604, FlexibleLoadRequest(0.02, 2.0), {2, 4}, 2),
+        (CURTAIL_581, FlexibleLoadRequest(0.05, 0.1), {6}, 6),
+    ],
+    ids=["no-guard-604", "guard-581"],
+)
+def test_a_probe_plan_curtails_in_an_idle_interval(problem, request_, idle, first):
+    assert idle <= policy.idle_slots(problem)
+    plan = solve_flexible_load(problem, request_).plan
+    curtailed = range(first, len(problem.slots))
+    assert modes(plan)[first:] == ["CURTAIL"] * len(curtailed)
+    assert not set(plan.carried_bridges).intersection(curtailed)

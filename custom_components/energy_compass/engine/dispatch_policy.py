@@ -463,6 +463,26 @@ def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
         )
 
 
+def _offer_curtail(model, v, seen_full, full, curtailing, released) -> None:
+    """Let a committed interval curtail: the pack has been full, and is full now or was let go.
+
+    `seen_full` is the `lock_full` of every earlier interval; `full`, `curtailing`
+    and `released` are the previous interval's: a pack at its ceiling, a CURTAIL
+    under way, the HOLD released from the commitment.
+    """
+    model.constrain({v["mode_CURTAIL"]: 1, **seen_full}, -np.inf, 0)
+    model.constrain(
+        {
+            v["mode_CURTAIL"]: 1,
+            **full,
+            **curtailing,
+            **{key: -1 for key in released},
+        },
+        -np.inf,
+        0,
+    )
+
+
 def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) -> None:
     """Bind one named state to material flows and forbid premature transitions."""
     if not problem.battery:
@@ -697,12 +717,15 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     if i:
                         model.constrain({release: 1, **depleted}, -np.inf, 0)
                     releases[release] = -1
-            if i in idle and flexible_load:
+            # An idle interval is CURTAIL on the terms of any committed interval: nothing
+            # to follow does not make room in a full pack. A CURTAIL row is not a bridge.
+            curtails = bool(seen_full) and model.upper[v["mode_CURTAIL"]] > 0
+            if i in idle and (flexible_load or curtails):
                 # Idle without a probe. A bridge needs it idle as realised too: the probe
                 # may not put the slot's net load at the activity, or SELF_CONSUME would
                 # be open. Any other row (`run` set) is a normal committed interval.
                 run = runs[i] = v["hold_run"] = model.variable(binary=True)
-                top = model.upper[v["flex_load"]]
+                top = model.upper[v["flex_load"]] if flexible_load else 0
                 room = probe_room(problem, slot) - _PROBE_MARGIN
                 if not _follow_open(
                     problem, replace(slot, load_kwh=slot.load_kwh + top)
@@ -720,9 +743,15 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     )
                 model.constrain({run: 1, **held}, 0, np.inf)
                 model.constrain({v["mode_HOLD"]: 1, run: 1}, 1, np.inf)
-                model.constrain(
-                    {v[f"mode_{mode}"]: 1 for mode in (*members, "HOLD")}, 1, 1
-                )
+                # Without a probe the slot stays idle: no member of the commitment.
+                kept = {
+                    v[f"mode_{mode}"]: 1
+                    for mode in (*(members if flexible_load else ()), "HOLD")
+                }
+                if curtails:
+                    _offer_curtail(model, v, seen_full, full, curtailing, released)
+                    kept[v["mode_CURTAIL"]] = 1
+                model.constrain(kept, 1, 1)
                 if not known:
                     model.constrain(
                         {v["mode_HOLD"]: 1, run: 1, **held, **releases}, -np.inf, 1
@@ -744,7 +773,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                         )
                     free_hold.add(i)
                     released = {real: 1}
-                curtailing = {}
+                curtailing = {v["mode_CURTAIL"]: -1} if curtails else {}
             elif i in idle:
                 # Nothing to follow: the flows are HOLD by classification. Either a HOLD
                 # run is under way or starts here on a release, as in any committed
@@ -771,17 +800,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     held = {v["mode_HOLD"]: -1}
                     kept[v["mode_HOLD"]] = 1
                 if seen_full:
-                    model.constrain({v["mode_CURTAIL"]: 1, **seen_full}, -np.inf, 0)
-                    model.constrain(
-                        {
-                            v["mode_CURTAIL"]: 1,
-                            **full,
-                            **curtailing,
-                            **{key: -1 for key in released},
-                        },
-                        -np.inf,
-                        0,
-                    )
+                    _offer_curtail(model, v, seen_full, full, curtailing, released)
                     kept[v["mode_CURTAIL"]] = 1
                     curtailing = {v["mode_CURTAIL"]: -1}
                 model.constrain(kept, 1, 1)
@@ -834,7 +853,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             modes = {v[f"mode_{mode}"]: 1 for mode in _members(group)}
             if i not in runs:
                 indicators[group].append((modes, 0))
-            elif flexible_load:
+            elif "hold_real" in v:
                 # The row is a bridge when `run` is 0: HOLD with the commitment going on.
                 indicators[group].append(
                     ({**modes, runs[i]: 1}, -1)

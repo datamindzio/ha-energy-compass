@@ -138,6 +138,22 @@ flexible-load probe was held to the tightening without the bridge reading.
    above. `docs/model.md` lists them; the optimizer reports `infeasible` and the last plan is retained.
 4. `validate_modes(problem, flows, bridges=None)` tries the readings above, and a test covers `_publish_current`
    deriving `carried_idle` and `mode_start` from `carried_idle_starts`.
+5. **An idle committed interval may be `CURTAIL`, on the terms of
+   [ADR-0005](0005-full-pack-curtail-in-a-carried-commitment.md).** Points 1 and 2 make more rows idle than main
+   has: a surplus the guard keeps out of the pack, and every row idle without the probe (main read the idle set
+   with the largest probe, so with a probe almost none). An idle row offered `HOLD` only, in the model, while
+   ADR-0005, which landed on main while this task was open, offers `CURTAIL` in every other committed row and
+   `validate_modes` accepts it in any. A full pack on a site without export then had nowhere to put the PV, and a
+   `CURTAIL` under way could not go on through the row (review round 4: four problems planned on main c44e3fb had
+   no plan). Both idle branches of `constrain_modes` now offer `CURTAIL` on the same two rows as the ordinary
+   branch (`_offer_curtail`): the pack has been at the ceiling, and it is there now, a `CURTAIL` is under way or
+   the previous interval's `HOLD` was released. A `CURTAIL` row has `hold_run` = 1 and is never a bridge. Rejected:
+   offering it only in the rows main did not read as idle (guarded and probe rows), which would keep the plain
+   model without a guard exactly main's, but leaves the same hole there: a `CURTAIL` that must go on through an
+   interval with nothing to follow has no plan on main either (plain-nl seed 11001 #151, pinned), and the
+   validator already accepts the plan. Rejected as well: taking these rows out of the idle set, which is what
+   main does and what points 1 and 2 exist to correct. The plain model keeps main's rows wherever `CURTAIL` is
+   not available in the idle interval (no earlier interval, or less PV than the minimum activity to curtail).
 
 Evidence (corrected in T-038): `tests/test_carried_commitment_sweep.py` keeps a seeded corpus of committed problems
 (2 to 16 quarter hours, loads and PV around the minimum activity, both initial modes, 30/60/120 minute durations,
@@ -162,3 +178,22 @@ that is not full, except slots exactly at the activity read by float arithmetic,
 plain-nl seed 2002 #520, #715: `0.03 - 0.005` against `0.025`). The T-038 review found a
 head-versus-main difference this sweep had not been run against (the tolerance above): measure against main as well as
 against the base of the rule being tightened.
+
+After the rebase onto main c44e3fb (ADR-0005 and four other tasks had landed) the statement "no planned problem
+`infeasible` against main" was about a main the sweep had not been run against, and it was false: review round 4
+found four (point 5; `t038_review_sweep.py` flex seed 8002 #592, `t038_review5_full.py` flex seed 9002 #581 and
+flex-nl seed 9001 #604, and the hand-made guard problem G1, which has no probe). `t038_review5_full.py` is a
+second generator aimed at the full-pack release: packs at the ceiling or the floor, no export in half the
+problems, many idle slots. With point 5, against main f0b3618 (its engine is c44e3fb's): `t038_review_sweep.py`
+seeds 10001 and 10002 and `t038_review5_full.py` seeds 11001 and 11002, plain and probes, with and without the
+guard, 1500 problems each (16 corpora, 24000 problems): no planned problem `infeasible`, no `solver_failure`, 77
+to 201 problems per guard or probe corpus planned that main could not (41 to 108 in the plain corpora with a
+guard), and no `HOLD` started on a chargeable surplus except the float-arithmetic slots above, in plans main makes
+too (plain seed 10001 #990, the same problem as plain-nl #986). The plain corpora without a guard are no longer identical
+to main: 14 problems in 6000 are planned that main could not (1, 2, 3 and 8 per corpus), each with a `CURTAIL`
+run (the idle rows are the only ones that changed there); the plans both trees make have the same modes in every interval, and in 16 to 32
+of the 1500 per corpus the solver reads an idle `HOLD` row the other way (bridge or `HOLD` run, same flows, same
+cost; main picks between the two the same way, by the order of the rows, which the `CURTAIL` rows change). The probe-tie sweep
+of round 3 (`t038_review4_tie.py`, seeds 12001 and 12002, 3000 probes) against the same main: no planned problem
+`infeasible`, no `solver_failure`. G1, #151, #581 and #604 are pinned in
+`tests/test_carried_commitment_guard_probes.py`.

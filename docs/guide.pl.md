@@ -673,7 +673,9 @@ Zasady (domyślnie 60 min, 0,1 kW):
   i nie kończy zobowiązania: plan go przemostkowuje (nie startuje zegar `HOLD`, a zapisane
   zobowiązanie zachowuje tryb i start) albo, gdy bateria jest wyczerpana lub pełna, zaczyna tam
   prawdziwy przebieg `HOLD`, tak jak w każdym innym przedziale
-  (`dispatch_policy.carried_idle_starts` wymienia przemostkowane przedziały). Plan jest
+  (`dispatch_policy.carried_idle_starts` wymienia przemostkowane przedziały). Przy pełnej baterii
+  w instalacji, która nie może oddać PV, taki przedział może być też `CURTAIL`, jak każdy inny
+  przedział zobowiązania; nie jest wtedy przemostkowany. Plan jest
   `infeasible` (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
   (`preserve_initial` bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
   dom; sonda obciążenia elastycznego daje plan tylko wtedy, gdy jej obciążenie zostawia każdemu

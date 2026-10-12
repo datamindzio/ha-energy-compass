@@ -664,7 +664,9 @@ Rules (defaults: 60 min, 0.1 kW):
   classification and does not end the commitment: the plan bridges it (no `HOLD` clock starts,
   and the persisted commitment keeps its mode and start) or, when the battery is spent or full,
   starts a real `HOLD` run there as in any other interval
-  (`dispatch_policy.carried_idle_starts` lists the bridged intervals). The plan is
+  (`dispatch_policy.carried_idle_starts` lists the bridged intervals). With a full battery on a
+  site that cannot pass the PV, such an interval may be `CURTAIL` as well, like any other
+  committed interval; it is then not bridged. The plan is
   `infeasible` until the commitment ends when the
   terminal rule cannot be met afterwards (`preserve_initial` with no later PV or grid charge to
   refill what the house drew; a flexible-load probe plans it only if its load leaves every
