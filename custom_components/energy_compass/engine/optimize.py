@@ -225,6 +225,29 @@ def _validate_balance(
     return first
 
 
+def _settle_curtail(
+    values: np.ndarray, v: dict[str, int], model
+) -> tuple[float, float, float]:
+    """Grid import, export and curtailment of a slot, without curtailment noise.
+
+    The row `curt <= M * mode_CURTAIL` lets a binary HiGHS accepts within 1e-6 of 0
+    (and a row it accepts within its 1e-6 feasibility tolerance) release up to
+    1e-6 * (M + 1) kWh on a mode that was not chosen. Once M > 1 that exceeds the
+    1e-6 kWh the display classifier calls zero, so the slot would read CURTAIL while
+    the solver chose another mode. That curtailment is not curtailed: the grid takes
+    the energy back, import first, so the balance still closes.
+    """
+    gin, gout, curt = (float(values[v[name]]) for name in ("gin", "gout", "curt"))
+    if (
+        "mode_CURTAIL" in v
+        and values[v["mode_CURTAIL"]] < 0.5
+        and curt <= _TOL * (model.upper[v["curt"]] + 1)
+    ):
+        returned = min(gin, curt)
+        return gin - returned, gout + curt - returned, 0.0
+    return gin, gout, curt
+
+
 def _validate_solution(
     problem: Problem,
     vectors: list[dict[str, int]],
@@ -897,13 +920,14 @@ def _solve(
     balance_start = _validate_balance(
         problem, vectors, values, balance_choices, balance_miss
     )
+    grid = tuple(_settle_curtail(values, v, model) for v in vectors)
     flows = tuple(
         Flow(
-            float(values[v["gin"]]),
-            float(values[v["gout"]]),
+            gin,
+            gout,
             float(values[v["bc"]]) if battery else 0.0,
             float(values[v["bd"]]) if battery else 0.0,
-            float(values[v["curt"]]),
+            curt,
             float(values[v["energy"]]) if battery else 0.0,
             ("charge" if values[v["battery_mode"]] > 0.5 else "discharge")
             if battery
@@ -917,7 +941,7 @@ def _solve(
                 None,
             ),
         )
-        for v in vectors
+        for v, (gin, gout, curt) in zip(vectors, grid, strict=True)
     )
     mode_problem = (
         replace(
