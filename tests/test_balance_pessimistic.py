@@ -126,7 +126,9 @@ def test_pessimistic_failure_without_grid_charge_leaves_no_window():
 
 
 def test_solver_picks_cheap_grid_window_when_pessimistic_pv_is_insufficient():
-    rows = [(0.9, 3.0, 1.0), (0.2, 3.0, 1.0), (0.2, 3.0, 1.0), (0.9, 3.0, 1.0)]
+    # PV below the load, so the window's price matters: with a PV surplus every
+    # feasible start costs the same and the pick is a solver tie-break.
+    rows = [(0.9, 0.5, 1.0), (0.2, 0.5, 1.0), (0.2, 0.5, 1.0), (0.9, 0.5, 1.0)]
     slots = _slots(rows)
     windows = _windows(slots, (0.2,) * 4, initial=24.0)
     assert all(w.mode == "CHARGE_GRID" for w in windows)
