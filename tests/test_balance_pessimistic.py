@@ -322,7 +322,7 @@ def test_missing_pessimistic_entity_is_not_a_required_input():
         SourceConfig.from_dict(_config()["sources"]), _states(low=None)
     )
     assert source.pv.pessimistic == ()
-    assert missing == ["sensor.pv_low"]
+    assert missing == []
 
 
 # --- configuration -----------------------------------------------------------

@@ -1582,7 +1582,7 @@ bez błędu prognozy. Dla statystyk godzinowych ustaw `interval_minutes: 60`.
 | `reference_probe_failed` | Co najmniej jedna próba odniesienia nie powiodła się lub zabrakło czasu. |
 | `short_source_coverage` | Pokrycie cen/prognoz kończy się przed żądanym horyzontem planowania. |
 | `current_guidance_unavailable` | Próba dla bieżącego przedziału nieznana; późniejsze okna mogą być poprawne. |
-| `missing_forecast_continuation` | Skonfigurowane źródło nie opublikowało jeszcze danych dla części horyzontu (np. jutrzejsze ceny przed ok. 14:00). |
+| `missing_forecast_continuation` | Skonfigurowane źródło (poza opcjonalnym pesymistycznym źródłem PV) nie opublikowało jeszcze danych dla części horyzontu (np. jutrzejsze ceny przed ok. 14:00). |
 | `load_history_fallback` | Część prognozy zużycia używa zapasowego dziennego zużycia, bo historia jest niewystarczająca. |
 | `unvalidated_tariff` | Kalibracja taryfy oznaczona jako `unvalidated`. |
 | `unvalidated_capacity` | Kalibracja pojemności baterii oznaczona jako `unvalidated`. |
@@ -1613,5 +1613,5 @@ To są surowe kody, nietłumaczone.
 | Kod | Znaczenie |
 | --- | --- |
 | `balance_overdue` | Faza balansu to `due`, ale w planie nie zmieściło się żadne okno trzymania; balans w tym horyzoncie został pominięty. |
-| `balance_pessimistic_pv_unavailable` | Pesymistyczne źródło PV jest skonfigurowane, ale niedostępne, nieaktualne lub nie pokrywa horyzontu; okna balansu wybrano na serii mediany PV. |
+| `balance_pessimistic_pv_unavailable` | Pesymistyczne źródło PV jest skonfigurowane, ale niedostępne, nieaktualne, błędnie sformatowane lub ujemne albo nie pokrywa horyzontu; okna balansu wybrano na serii mediany PV. |
 | `balance_no_window_in_horizon` | Faza balansu to `eligible` lub `due`, ale w horyzoncie nie istnieje żadne kandydujące okno trzymania (żaden wyrównany start nie spełnia wymogów PV/ładowania z sieci). |

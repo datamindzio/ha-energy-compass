@@ -167,7 +167,7 @@ def available_forecasts(source, states):
     """Omit unpublished continuations without making any independent source optional."""
     missing = set()
 
-    def select(bindings):
+    def select(bindings, report=True):
         available = []
         for binding in bindings:
             entity = binding.entity
@@ -186,7 +186,8 @@ def available_forecasts(source, states):
                 or isinstance(raw, (list, tuple, dict))
                 and not raw
             ):
-                missing.add(entity.entity_id)
+                if report:
+                    missing.add(entity.entity_id)
             else:
                 available.append(binding)
         return tuple(available)
@@ -198,7 +199,8 @@ def available_forecasts(source, states):
         pv=replace(
             source.pv,
             arrays=tuple(select(group) for group in source.pv.arrays),
-            pessimistic=select(source.pv.pessimistic),
+            # Optional input: balance_pessimistic_pv_unavailable covers it.
+            pessimistic=select(source.pv.pessimistic, report=False),
         ),
     ), sorted(missing)
 

@@ -2534,7 +2534,7 @@ bez błędu prognozy. Dla statystyk godzinowych ustaw <code>interval_minutes: 60
 </tr>
 <tr>
 <td><code>missing_forecast_continuation</code></td>
-<td>Skonfigurowane źródło nie opublikowało jeszcze danych dla części horyzontu (np. jutrzejsze ceny przed ok. 14:00).</td>
+<td>Skonfigurowane źródło (poza opcjonalnym pesymistycznym źródłem PV) nie opublikowało jeszcze danych dla części horyzontu (np. jutrzejsze ceny przed ok. 14:00).</td>
 </tr>
 <tr>
 <td><code>load_history_fallback</code></td>
@@ -2624,7 +2624,7 @@ bez błędu prognozy. Dla statystyk godzinowych ustaw <code>interval_minutes: 60
 </tr>
 <tr>
 <td><code>balance_pessimistic_pv_unavailable</code></td>
-<td>Pesymistyczne źródło PV jest skonfigurowane, ale niedostępne, nieaktualne lub nie pokrywa horyzontu; okna balansu wybrano na serii mediany PV.</td>
+<td>Pesymistyczne źródło PV jest skonfigurowane, ale niedostępne, nieaktualne, błędnie sformatowane lub ujemne albo nie pokrywa horyzontu; okna balansu wybrano na serii mediany PV.</td>
 </tr>
 <tr>
 <td><code>balance_no_window_in_horizon</code></td>
