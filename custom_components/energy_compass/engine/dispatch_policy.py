@@ -173,6 +173,60 @@ def _takes_surplus(problem, slot) -> bool:
     )
 
 
+def _follow_open(problem, slot, extra_load=0.0) -> bool:
+    """Tell whether SELF_CONSUME or CHARGE_PV can reach the minimum activity in a slot.
+
+    The same bounds `constrain_modes` puts on the two modes, from the problem:
+    SELF_CONSUME needs a net load the pack can cover, CHARGE_PV a surplus it can
+    take. `extra_load` is the largest flexible-load probe the model may add.
+    """
+    battery, site = problem.battery, problem.site
+    hours = _hours(slot)
+    activity = problem.minimum_mode_power_kw * hours
+    if activity <= 2e-6:
+        return False
+    surplus = max(slot.pv_kwh - slot.load_kwh, 0)
+    charge_max = min(
+        battery.charge_kw * hours,
+        slot.pv_kwh + site.inverter_kw * hours,
+        surplus + site.grid_import_kw * hours,
+    )
+    net_load = max(slot.load_kwh + extra_load - slot.pv_kwh, 0)
+    discharge_max = max(
+        0,
+        min(
+            battery.discharge_kw * hours,
+            site.inverter_kw * hours - slot.pv_kwh,
+            slot.load_kwh + extra_load - slot.pv_kwh + site.grid_export_kw * hours,
+        ),
+    )
+    return (
+        min(charge_max, surplus) >= activity or min(discharge_max, net_load) >= activity
+    )
+
+
+def idle_slots(problem, extra_loads=None) -> frozenset[int]:
+    """List the committed intervals in which a carried PV-follow commitment has nothing to follow.
+
+    Net load and PV surplus are both below the minimum activity, so neither
+    SELF_CONSUME nor CHARGE_PV exists there and the flows are HOLD by
+    classification. That is not leaving the commitment: it neither needs a
+    release nor starts a HOLD minimum duration.
+    """
+    if not problem.battery or not problem.minimum_mode_minutes:
+        return frozenset()
+    previous, since = _initial(problem)
+    if dwell_group(previous) != "PV_FOLLOW":
+        return frozenset()
+    held_until = since.astimezone(UTC) + timedelta(minutes=problem.minimum_mode_minutes)
+    return frozenset(
+        i
+        for i, slot in enumerate(problem.slots)
+        if slot.start.astimezone(UTC) < held_until
+        and not _follow_open(problem, slot, extra_loads[i] if extra_loads else 0.0)
+    )
+
+
 def _owed(problem, drains, held_until) -> tuple[float, ...]:
     """Energy each slot must end with so the standby loss of later slots stays payable.
 
@@ -432,6 +486,10 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             if start < held_until:
                 blocked = "bd" if problem.initial_battery_mode == "charge" else "bc"
                 model.constrain({v[blocked]: 1}, 0, 0)
+    idle = idle_slots(
+        problem,
+        [model.upper[v["flex_load"]] if flexible_load else 0.0 for v in vectors],
+    )
     if previous is not None:
         held_until = since.astimezone(UTC) + dwell
         members = _members(dwell_group(previous))
@@ -446,16 +504,37 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             and not _takes_surplus(problem, problem.slots[0])
             and battery.initial_kwh <= _lock_floor(problem, drains, owed, 0) + 1e-9
         )
-        release = {}
-        for i, (start, v) in enumerate(zip(starts, vectors, strict=True)):
+        # What lets a committed interval be HOLD: a HOLD run that began earlier goes
+        # on (`held`), or the pack is too empty to go on and HOLD starts where
+        # CHARGE_PV is not open (`freed`; the constant is the first interval's test).
+        held = {}
+        freed = {}
+        freed_now = spent
+        for i, (slot, start, v) in enumerate(
+            zip(problem.slots, starts, vectors, strict=True)
+        ):
             if start >= held_until:
                 break
             kept = {v[f"mode_{mode}"]: 1 for mode in members}
-            if release or (spent and i == 0):
-                if release:
-                    model.constrain({v["mode_HOLD"]: 1, **release}, -np.inf, 0)
-                release = {v["mode_HOLD"]: -1}
+            if i in idle:
+                # Nothing to follow: HOLD by classification, the commitment goes on.
                 kept[v["mode_HOLD"]] = 1
+                freed_now = False
+                freed = {}
+            else:
+                chargeable = _takes_surplus(problem, slot)
+                # The pack is known to be spent: HOLD starts, with nothing to test.
+                known = freed_now and not chargeable
+                starts_hold = {} if chargeable else freed
+                if known or held or starts_hold:
+                    if not known:
+                        model.constrain(
+                            {v["mode_HOLD"]: 1, **held, **starts_hold}, -np.inf, 0
+                        )
+                    held = {v["mode_HOLD"]: -1}
+                    kept[v["mode_HOLD"]] = 1
+                freed_now = False
+                freed = {}
             model.constrain(kept, 1, 1)
             if follows_pv and i + 1 < len(vectors):
                 depleted = v["lock_depleted"] = model.variable(binary=True)
@@ -468,7 +547,22 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                         -np.inf,
                         model.upper[v["energy"]],
                     )
-                release[depleted] = -1
+                freed[depleted] = -1
+    # A committed idle interval carries its neighbour's state: the clocks do not see it.
+    indicators = {group: [] for group in GROUPS}
+    for i, v in enumerate(vectors):
+        for group in GROUPS:
+            if i in idle:
+                indicators[group].append(
+                    indicators[group][-1]
+                    if i
+                    else ({}, int(dwell_group(previous) == group))
+                )
+            else:
+                indicators[group].append(
+                    # Modes are one-hot, so a group's member sum is its binary indicator.
+                    ({v[f"mode_{mode}"]: 1 for mode in _members(group)}, 0)
+                )
     for group in GROUPS:
         members = _members(group)
         # A group's start is a continuous flag: it is at least the rise of the
@@ -477,25 +571,35 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         # gives the relaxation the convex hull of a minimum duration.
         starts_here = []
         for i, v in enumerate(vectors):
-            # Modes are one-hot, so a group's member sum is its binary indicator.
-            current = {v[f"mode_{mode}"]: 1 for mode in members}
-            prior = (
-                {vectors[i - 1][f"mode_{mode}"]: -1 for mode in members} if i else {}
+            current, current_const = indicators[group][i]
+            prior, prior_const = (
+                indicators[group][i - 1]
+                if i
+                else ({}, int(previous is not None and dwell_group(previous) == group))
             )
-            initial = int(previous is not None and dwell_group(previous) == group)
-            if ACTIVE.intersection(members) and coverage_end < starts[i] + dwell:
-                model.constrain({**current, **prior}, -np.inf, initial if i == 0 else 0)
+            rise = {
+                key: current.get(key, 0) - prior.get(key, 0)
+                for key in current.keys() | prior.keys()
+            }
+            rise = {key: value for key, value in rise.items() if value}
+            bound = prior_const - current_const
+            if (
+                rise
+                and ACTIVE.intersection(members)
+                and coverage_end < starts[i] + dwell
+            ):
+                model.constrain(rise, -np.inf, bound)
             started = v[f"start_{group}"] = model.variable(upper=1.0)
             starts_here.append(started)
-            model.constrain(
-                {started: -1, **current, **prior}, -np.inf, initial if i == 0 else 0
-            )
+            if rise:
+                model.constrain({started: -1, **rise}, -np.inf, bound)
         for i, v in enumerate(vectors):
+            current, current_const = indicators[group][i]
             holding = {
                 starts_here[j]: 1 for j in range(i + 1) if starts[i] < starts[j] + dwell
             }
-            holding.update({v[f"mode_{mode}"]: -1 for mode in members})
-            model.constrain(holding, -np.inf, 0)
+            holding.update({key: -value for key, value in current.items()})
+            model.constrain(holding, -np.inf, current_const)
 
 
 def _check_load_following(problem: Problem, slot, flow, mode) -> None:
@@ -534,6 +638,7 @@ def validate_modes(problem: Problem, flows) -> None:
     drains = drain_schedule(problem)
     carried = dwell_group(previous) == "PV_FOLLOW"
     owed = _owed(problem, drains, since.astimezone(UTC) + dwell) if carried else ()
+    idle = idle_slots(problem) if carried else frozenset()
     left = problem.battery.initial_kwh
     for index, (slot, flow) in enumerate(zip(problem.slots, flows, strict=True)):
         start = slot.start.astimezone(UTC)
@@ -582,14 +687,19 @@ def validate_modes(problem: Problem, flows) -> None:
                     "solver_failure", "invalid solver result: legacy direction guard"
                 )
         if dwell_group(mode) != dwell_group(previous):
+            if carried and index in idle:
+                # Nothing to follow: HOLD by classification, the commitment goes on.
+                left = flow.end_soc_kwh
+                continue
             if (
                 previous is not None
                 and start < since.astimezone(UTC) + dwell
-                # A carried PV-follow commitment ends once the battery cannot go on.
+                # A carried PV-follow commitment ends once the battery cannot go on,
+                # and HOLD does not start where CHARGE_PV could take the surplus.
                 and not (
                     carried
                     and mode == "HOLD"
-                    and (index or not _takes_surplus(problem, slot))
+                    and not _takes_surplus(problem, slot)
                     and left
                     <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
                 )

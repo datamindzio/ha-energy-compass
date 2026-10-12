@@ -819,6 +819,11 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         exception = policy.get("safety_exception")
         if exception and now >= parse_timestamp(exception["deadline"]):
             policy["safety_exception"] = None
+        # A HOLD row with nothing for the carried PV-follow commitment to follow is
+        # not a new mode: the commitment and its clock stay as they are.
+        policy["carried_idle"] = rows[current]["start"] in policy.get(
+            "carried_idle_starts", ()
+        )
         self._commit_battery_direction(
             {
                 **result,
@@ -1156,7 +1161,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         mode = rows[0].get("dispatch_mode") if rows else None
         if mode is None or not policy.get("enabled"):
             self._battery_commitment = None
-        elif policy.get("safety_exception"):
+        elif policy.get("safety_exception") or policy.get("carried_idle"):
             return
         elif self._battery_commitment and dwell_group(
             self._battery_commitment["mode"]

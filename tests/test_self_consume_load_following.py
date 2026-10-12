@@ -11,8 +11,12 @@ from test_dispatch_policy import dispatch
 from custom_components.energy_compass.engine.dispatch_policy import validate_modes
 from custom_components.energy_compass.engine.machine_state import machine_state
 from custom_components.energy_compass.engine.models import (
+    Battery,
     FlexibleLoadRequest,
     Flow,
+    Problem,
+    SiteLimits,
+    Slot,
     SolveError,
 )
 from custom_components.energy_compass.engine.optimize import (
@@ -588,3 +592,139 @@ def test_load_following_counts_local_slots_across_spring_forward_in_utc(
         assert flow.discharge_kwh == pytest.approx(4)
         assert flow.grid_import_kwh == pytest.approx(2)
     assert sum(f.discharge_kwh for f in plan.flows) == pytest.approx(10)
+
+
+QUARTER = timedelta(minutes=15)
+DUSK = datetime(2026, 12, 18, 19, tzinfo=UTC)
+
+
+def committed(rows, *, initial_mode="SELF_CONSUME", **changes):
+    """A carried PV-follow commitment with 45 minutes left, rows are (PV, load) kWh."""
+    slots = tuple(
+        Slot(DUSK + i * QUARTER, DUSK + (i + 1) * QUARTER, 1.0, 0.0, pv, load)
+        for i, (pv, load) in enumerate(rows)
+    )
+    problem = Problem(
+        slots,
+        SiteLimits(8, 8, 8, True),
+        Battery(5, 0.1, 1, 3.0, 1, 1, 0.95, 0.95, 0.01, False, False, 0.0),
+        "value",
+        0.3,
+        (),
+        "UTC",
+        minimum_mode_minutes=60,
+        initial_dispatch_mode=initial_mode,
+        initial_dispatch_mode_since=DUSK - QUARTER,
+    )
+    return replace(problem, **changes)
+
+
+def modes(plan):
+    return [flow.dispatch_mode for flow in plan.flows]
+
+
+@pytest.mark.parametrize(
+    "rows",
+    (
+        [(0.0, 0.02)] * 8,  # night base load under the minimum activity
+        [(0.2, 0.2)] + [(0.0, 0.2)] * 7,  # PV equals the load at dusk
+        [(0.0, 0.2)] * 8,  # the committed intervals have a load to follow
+    ),
+    ids=("low load", "pv equals load", "normal"),
+)
+@pytest.mark.parametrize("initial_mode", ("SELF_CONSUME", "CHARGE_PV"))
+def test_carried_commitment_has_a_plan_when_no_pv_follow_mode_is_open(
+    rows, initial_mode
+):
+    # solve() certifies its own rows with validate_modes.
+    assert solve(committed(rows, initial_mode=initial_mode)).flows
+
+
+def test_an_interval_without_a_pv_follow_mode_does_not_start_a_hold_clock():
+    # Dusk: PV equals the load for 15 minutes, then the house draws 0.2 kWh again.
+    # HOLD in the first interval is by classification, not a mode change: the next
+    # committed intervals still have to follow the load.
+    plan = solve(committed([(0.2, 0.2)] + [(0.0, 0.2)] * 7))
+    assert modes(plan)[:3] == ["HOLD", "SELF_CONSUME", "SELF_CONSUME"]
+    for flow in plan.flows[1:3]:
+        assert flow.discharge_kwh == pytest.approx(0.2)
+
+
+def test_a_low_load_night_stays_idle_through_the_commitment():
+    plan = solve(committed([(0.0, 0.02)] * 8))
+    assert modes(plan)[:3] == ["HOLD"] * 3
+    assert all(flow.discharge_kwh == 0 for flow in plan.flows[:3])
+
+
+def test_validator_accepts_an_idle_interval_in_the_commitment_only_when_idle():
+    problem = committed([(0.2, 0.2)] + [(0.0, 0.2)] * 7)
+    hold = Flow(0, 0, 0, 0, 0, 3.0, None, "HOLD")
+    import_hold = Flow(0.2, 0, 0, 0, 0, 3.0, None, "HOLD")
+    follow = Flow(0, 0, 0, 0.2, 0, 3.0 - 0.2 / 0.95, "discharge", "SELF_CONSUME")
+    rest = (import_hold,) * 5
+    # The idle interval may be HOLD and the commitment goes on after it ...
+    validate_modes(problem, (hold, follow, follow, *rest))
+    # ... but HOLD in a committed interval with a load to follow is leaving it.
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (hold, import_hold, follow, *rest))
+
+
+def test_hold_may_not_start_on_a_chargeable_surplus_inside_a_commitment():
+    # Interval 0 takes the pack down to its reserve, which releases HOLD. Interval 1
+    # is still committed and has surplus the pack can take: that is CHARGE_PV, not
+    # a HOLD that would waste it.
+    rows = [(0.0, 0.5), (0.1, 0.05), (0.0, 0.2), (0.0, 0.2)]
+    problem = committed(
+        rows,
+        minimum_mode_minutes=30,
+        initial_dispatch_mode_since=DUSK - timedelta(minutes=1),
+    )
+    problem = replace(
+        problem,
+        battery=replace(problem.battery, minimum_soc_fraction=0.2, initial_kwh=1.05),
+    )
+    plan = solve(problem)
+    assert modes(plan)[:2] == ["SELF_CONSUME", "CHARGE_PV"]
+    validate_modes(problem, plan.flows)
+    # HOLD started in interval 1 is rejected, HOLD that went on from interval 0 is not.
+    sc = Flow(0, 0, 0, 0.05, 0, 1.0, "discharge", "SELF_CONSUME")
+    start = Flow(0, 0.05, 0, 0, 0, 1.0, None, "HOLD")
+    rest = (Flow(0.2, 0, 0, 0, 0, 1.0, None, "HOLD"),) * 2
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (sc, start, *rest))
+
+
+def test_idle_slots_are_the_committed_intervals_with_nothing_to_follow():
+    from custom_components.energy_compass.engine.dispatch_policy import idle_slots
+
+    problem = committed([(0.2, 0.2), (0.0, 0.2), (0.0, 0.02), (0.0, 0.02), (0.0, 0.02)])
+    # The commitment ends at 19:45: the third interval is the last one inside it.
+    assert idle_slots(problem) == {0, 2}
+    assert idle_slots(replace(problem, initial_dispatch_mode="HOLD")) == set()
+    assert idle_slots(replace(problem, initial_dispatch_mode=None)) == set()
+    assert idle_slots(replace(problem, minimum_mode_minutes=0)) == set()
+
+
+def test_an_idle_hold_row_keeps_the_carried_commitment_and_its_clock():
+    from types import SimpleNamespace
+
+    from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
+
+    commitment = {"mode": "SELF_CONSUME", "since": "2026-12-18T18:45:00+00:00"}
+    coordinator = SimpleNamespace(
+        _battery_commitment=dict(commitment),
+        _dispatch_store=SimpleNamespace(async_delay_save=lambda *_: None),
+    )
+    result = {
+        "intervals": [{"dispatch_mode": "HOLD"}],
+        "dispatch_policy": {"enabled": True, "carried_idle": True},
+        "generated_at": "2026-12-18T19:00:00+00:00",
+    }
+    EnergyCompassCoordinator._commit_battery_direction(coordinator, result)
+    assert coordinator._battery_commitment == commitment
+    result["dispatch_policy"]["carried_idle"] = False
+    EnergyCompassCoordinator._commit_battery_direction(coordinator, result)
+    assert coordinator._battery_commitment == {
+        "mode": "HOLD",
+        "since": "2026-12-18T19:00:00+00:00",
+    }

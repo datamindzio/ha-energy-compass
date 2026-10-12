@@ -656,7 +656,12 @@ Rules (defaults: 60 min, 0.1 kW):
   it ends, the rest of the commitment is `HOLD` with full import (a new `HOLD` clock starts). The
   same happens — from the first interval if need be — when the battery cannot cover the house
   and still keep the inverter standby loss (`idle_drain_kw`) of the later intervals, with no PV
-  or grid charge to pay it in time. The plan is `infeasible` until the commitment ends when the
+  or grid charge to pay it in time. `HOLD` starts only in an interval without a PV surplus the
+  pack could take: with one, the row stays `CHARGE_PV`. A committed interval in which neither
+  mode has anything to follow (net load and PV surplus both below `minimum_mode_power_kw × h`,
+  for example a night base load under 100 W) is `HOLD` by classification: it does not end the
+  commitment, starts no `HOLD` clock, and the persisted commitment keeps its mode and start
+  (`dispatch_policy.carried_idle_starts` lists those intervals). The plan is `infeasible` until the commitment ends when the
   terminal rule cannot be met afterwards (`preserve_initial` with no later PV or grid charge to
   refill what the house drew); the rare remaining cases are listed in
   [model and limitations](model.md#operating-mode-duration-and-pv-export-budget).

@@ -62,10 +62,33 @@ The released rows are `HOLD` with full import, the mode the unlocked solver pick
 - `owed` is a best case, so the release never ends a commitment the battery could keep. The price is a rare
   remaining `infeasible`: scattered PV surplus that the minimum mode durations do not let the plan bank.
 - Not changed: `preserve_initial` that cannot be met after the forced discharge stays `infeasible` (T-001).
-- Not changed, and found here: a committed interval in which neither `SELF_CONSUME` nor `CHARGE_PV` reaches
-  the minimum activity (net load and surplus both below it) is `infeasible` unless the interval before left
-  the pack empty; it predates T-001. Requiring `CHARGE_PV` instead of `HOLD` in a released interval with PV
-  surplus was tried and dropped for this reason: it turned plans into `infeasible` when the next committed
-  interval was such an interval. Both go to a follow-up task.
+- Found here, fixed in T-025 (below): a committed interval in which neither `SELF_CONSUME` nor `CHARGE_PV`
+  reaches the minimum activity (net load and surplus both below it) was `infeasible` unless the interval before
+  left the pack empty; it predates T-001. Requiring `CHARGE_PV` instead of `HOLD` in a released interval with PV
+  surplus was tried in T-019 and dropped for this reason.
 - With standby loss off (`idle_drain_kw = 0`) `owed` never exceeds the reserve and the lock floor is the old
   one; the only new row is the first-interval release for a pack within one minimum activity of its reserve.
+
+## Follow-up (T-025): idle committed intervals and HOLD on a chargeable surplus
+
+1. **Idle interval.** A committed interval in which no PV-follow member can reach the minimum activity
+   (`_follow_open`: the bounds `constrain_modes` puts on both modes, taken from the problem) is `HOLD` by
+   classification. The one-hot row lets `HOLD` there without a release, and the duration rows give the interval its
+   neighbour's group indicators, so it starts no `HOLD` clock and does not interrupt the PV-follow one. The
+   validator accepts a `HOLD` row there only when `idle_slots` lists the interval (its bounds are never tighter than
+   the model's, also with a flexible-load probe, whose realised load is at most the largest probe the model allows).
+   The controller writes the `HOLD` registers for such a row, which is what the inverter does anyway with nothing to
+   follow. The coordinator keeps the persisted commitment (mode and start) on such a row, so the next calculation
+   still carries `SELF_CONSUME`/`CHARGE_PV`; `dispatch_policy.carried_idle_starts` lists the intervals.
+2. **HOLD never *starts* on a chargeable surplus inside the commitment.** The release (`lock_depleted`, or the
+   observed SoC in the first interval) allows `HOLD` to start only in an interval where `_takes_surplus` is false;
+   in the first interval that was already so. A `HOLD` run that began earlier goes on through a surplus, since it
+   holds its own minimum duration. The validator applies the same test at every committed interval.
+3. Only the carried commitment is covered. A PV-follow mode the solver starts itself still needs its next
+   intervals to offer a member (no `HOLD` bridge); changing that is a separate decision.
+
+Evidence: 1500 seeded random committed problems (30 minutes to 5 hours, loads and PV around the minimum activity,
+both initial modes, 30/60/120 minute durations, with and without standby loss) against the previous code: no newly
+infeasible problem, 536 newly feasible, and `HOLD` started on a chargeable surplus inside a commitment in 0 plans
+(9 before). What stays `infeasible` there is `preserve_initial` that cannot be met (T-001) and the rare standby
+loss that only scattered PV could pay.

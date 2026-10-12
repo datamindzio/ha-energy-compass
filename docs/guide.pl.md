@@ -665,7 +665,13 @@ Zasady (domyślnie 60 min, 0,1 kW):
   bateria wyczerpie się przed jego końcem, reszta zobowiązania to `HOLD` z pełnym importem
   (startuje nowy zegar `HOLD`). Tak samo — w razie potrzeby już od pierwszego przedziału — gdy
   bateria nie może pokryć domu i zarazem zachować poboru czuwania falownika (`idle_drain_kw`)
-  z późniejszych przedziałów, a PV ani ładowanie z sieci nie uzupełnią go na czas. Plan jest
+  z późniejszych przedziałów, a PV ani ładowanie z sieci nie uzupełnią go na czas. `HOLD` zaczyna
+  się tylko w przedziale bez nadwyżki PV, którą bateria mogłaby przyjąć: przy nadwyżce wiersz
+  zostaje `CHARGE_PV`. Przedział zobowiązania, w którym żaden z trybów nie ma za czym podążać
+  (obciążenie netto i nadwyżka PV poniżej `minimum_mode_power_kw × h`, np. nocny pobór bazowy
+  poniżej 100 W), to z klasyfikacji `HOLD`: nie kończy zobowiązania, nie startuje zegara `HOLD`,
+  a zapisane zobowiązanie zachowuje tryb i start
+  (`dispatch_policy.carried_idle_starts` wymienia takie przedziały). Plan jest
   `infeasible` (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
   (`preserve_initial` bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
   dom); rzadkie pozostałe przypadki opisuje
