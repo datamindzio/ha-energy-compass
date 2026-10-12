@@ -54,6 +54,7 @@ RUNTIME_KEYS = frozenset(
         "retained",
         "code",
         "reason",
+        "reason_code",
         "warning",
         "takeover_blocked",
         "since",

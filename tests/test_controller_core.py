@@ -467,6 +467,7 @@ def test_runtime_allow_list_is_exact():
         "retained",
         "code",
         "reason",
+        "reason_code",
         "warning",
         "takeover_blocked",
         "since",

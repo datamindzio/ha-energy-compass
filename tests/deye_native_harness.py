@@ -96,7 +96,7 @@ def decision_dict(d: profile.Decision, language=LANGUAGE) -> dict:
     """The blueprint's decision dict (`build.py:474-481`) with the reason as text."""
     return {
         "valid": d.valid,
-        "reason": texts.reason_text(d.reason_code, language, d.reason_args),
+        "reason": texts.text(d.reason_code, language, d.reason_args),
         "state": d.state,
         "desired": d.desired,
         "telemetry": d.telemetry,
@@ -121,7 +121,7 @@ def decision_dict(d: profile.Decision, language=LANGUAGE) -> dict:
         "energy_mode": d.energy_mode,
         "discharged_kwh": d.discharged_kwh,
         "slot_energy": d.slot_energy,
-        "warning": texts.warning_text(d.warning_code, language),
+        "warning": texts.text(d.warning_code, language),
     }
 
 

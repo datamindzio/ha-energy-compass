@@ -1,11 +1,44 @@
 """Reason codes of the Deye controller and their texts.
 
-The Polish texts are the strings of the 0.1.37 blueprint, byte for byte. A reason
-is stored in the runtime as a stable code plus the text in the user's language.
+A reason is stored in the runtime as a stable code (`reason_code`) and as the text
+in the user's language (`reason`). The Polish texts are the strings of the 0.1.37
+blueprint, byte for byte; `tests/test_controller_texts.py` compares them with the
+frozen blueprint. Codes marked "run" in `STOPS` are explanations of one run and are
+never stored as the runtime reason.
 """
 
 from collections.abc import Mapping
 from typing import Any
+
+REASONS = (
+    "ok",
+    "telemetry_stale",
+    "tou_times",
+    "session_wait",
+    "plan_revoked",
+    "plan_sources",
+    "battery_params",
+    "plan_expired",
+    "operation_mode",
+    "voltage_range",
+    "mode_not_commissioned",
+    "settings_range",
+    "takeover_blocked",
+    "layout_mismatch",
+    "paused",
+    "verification_required",
+    "write_failed",
+    "simulation_blocked",
+)
+STOPS = (
+    "controller_unavailable",
+    "simulation_rejected",
+    "simulation",
+    "released",
+    "run_finished",
+    "plan_changed",
+)
+WARNINGS = ("curtail_unsupported",)
 
 PL: Mapping[str, str] = {
     "ok": "ok",
@@ -20,6 +53,19 @@ PL: Mapping[str, str] = {
     "voltage_range": "napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS",
     "mode_not_commissioned": "bateria: tryb {operation} niezatwierdzony; przywróć {modes} lub wykonaj odbiór fizycznych progów przed dopuszczeniem tego trybu",
     "settings_range": "nastawy: brak zakresu/kroku lub cel poza zakresem encji",
+    "takeover_blocked": "Przejęcie zablokowane: wyłącz dawne automatyzacje i zatrzymaj wykonania",
+    "layout_mismatch": "układ rejestrów falownika nie zgadza się ze stanami encji: {entities}",
+    "paused": "Zapisy do falownika wstrzymane przełącznikiem",
+    "verification_required": "Wymagane potwierdzenie bazowych nastaw podczas przejęcia sterowania",
+    "write_failed": "Brak potwierdzenia nastaw; zachowano obowiązek przywrócenia",
+    "simulation_blocked": "Najpierw przywróć bazę w Off; po potwierdzeniu wybierz Simulation ponownie",
+    "controller_unavailable": "Energy Compass niedostępny: sterowanie wstrzymane bez zapisów",
+    "simulation_rejected": "Simulation odrzucone: pozostał obowiązek przywrócenia, wybrano Off",
+    "simulation": "Symulacja: profil obliczony, bez zapisów falownika",
+    "released": "Sterowanie zwolnione: pozostaw nastawy ręczne",
+    "run_finished": "Przebieg zakończony: sprawdź stan potwierdzenia w diagnostyce",
+    "plan_changed": "Nowy plan zaakceptowany podczas kontroli bez zapisów: ponowny odczyt w kolejnym przebiegu",
+    "curtail_unsupported": "CURTAIL nieobsługiwany: zastosowano HOLD",
 }
 EN: Mapping[str, str] = {
     "ok": "ok",
@@ -34,20 +80,28 @@ EN: Mapping[str, str] = {
     "voltage_range": "voltage: target outside the approved 495–560 V range; do not change BMS limits",
     "mode_not_commissioned": "battery: mode {operation} not commissioned; restore {modes} or verify the physical thresholds before allowing this mode",
     "settings_range": "settings: entity range/step missing or target outside the entity range",
+    "takeover_blocked": "Takeover blocked: switch off the old automations and stop their runs",
+    "layout_mismatch": "inverter register layout does not match the entity states: {entities}",
+    "paused": "Inverter writes paused by the switch",
+    "verification_required": "Confirmation of the base settings required while taking over control",
+    "write_failed": "Settings not confirmed; the restore obligation is kept",
+    "simulation_blocked": "Restore the base in Off first; select Simulation again after it is confirmed",
+    "controller_unavailable": "Energy Compass unavailable: control held without writes",
+    "simulation_rejected": "Simulation rejected: a restore obligation remains, Off selected",
+    "simulation": "Simulation: profile computed, no inverter writes",
+    "released": "Control released: leave the settings as they are",
+    "run_finished": "Run finished: check the confirmation state in the diagnostics",
+    "plan_changed": "A new plan was accepted during a check without writes: re-reading in the next run",
+    "curtail_unsupported": "CURTAIL is not supported: HOLD applied",
 }
-WARNINGS: Mapping[str, Mapping[str, str]] = {
-    "curtail_unsupported": {
-        "pl": "CURTAIL nieobsługiwany: zastosowano HOLD",
-        "en": "CURTAIL is not supported: HOLD applied",
-    },
-}
+TEXTS: Mapping[str, Mapping[str, str]] = {"pl": PL, "en": EN}
 
 
-def reason_text(code: str, language: str, args: Mapping[str, Any] | None = None) -> str:
-    """The reason in `language` ("pl" or English for anything else)."""
-    table = PL if language == "pl" else EN
-    return table[code].format(**(args or {}))
+def text(code: str, language: str, args: Mapping[str, Any] | None = None) -> str:
+    """The text of `code` in `language`: Polish for "pl", English for anything else.
 
-
-def warning_text(code: str, language: str) -> str:
-    return WARNINGS[code]["pl" if language == "pl" else "en"] if code else ""
+    An empty code (no warning) has no text.
+    """
+    if not code:
+        return ""
+    return TEXTS["pl" if language == "pl" else "en"][code].format(**(args or {}))
