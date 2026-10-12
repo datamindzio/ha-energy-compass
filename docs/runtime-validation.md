@@ -30,21 +30,41 @@ docker run --rm -v "$PWD":/workspace:ro ha-energy-compass-test:2026.9.1 -m bench
 
 | Slots | Time limit | Strategy | Result | Variables / rows | Solve call elapsed | Peak RSS |
 | ---: | ---: | --- | --- | ---: | ---: | ---: |
-| 192 | 10 s | `cost_min` | Optimal | 5,300 / 7,663 | 0.42 s | 264,232 KiB |
-| 192 | 10 s | `self_sufficiency` | Optimal | 5,301 / 7,855 | 5.28 s | 284,848 KiB |
-| 192 | 10 s | `backup_ready` | Optimal | 5,301 / 7,855 | 7.30 s | 284,848 KiB |
-| 192 | 10 s | `pv_swap` | Optimal | 5,301 / 7,855 | 0.33 s | 284,848 KiB |
-| 192 | 10 s | `max_export` | Optimal | 5,108 / 7,084 | 0.36 s | 284,848 KiB |
-| 192 | 10 s | `grid_friendly` | Optimal | 5,685 / 8,239 | 0.77 s | 284,848 KiB |
-| 384 | 10 s | `cost_min` | Optimal | 10,606 / 15,327 | 1.68 s | 301,720 KiB |
-| 384 | 10 s | `self_sufficiency` | Optimal | 10,607 / 15,711 | 8.77 s | 313,008 KiB |
-| 384 | 10 s | `backup_ready` | Optimal | 10,607 / 15,711 | 6.25 s | 316,664 KiB |
-| 384 | 10 s | `pv_swap` | Optimal | 10,607 / 15,711 | 0.71 s | 316,664 KiB |
-| 384 | 10 s | `max_export` | Optimal | 10,222 / 14,170 | 2.99 s | 319,404 KiB |
-| 384 | 10 s | `grid_friendly` | Optimal | 11,375 / 16,479 | 1.28 s | 319,404 KiB |
-| 384 | 0.000001 s | each of the six | `SolveError(reason="timeout")` | as above | 0.05-0.10 s | 261,716-263,532 KiB |
+| 192 | 10 s | `cost_min` | Optimal | 5,368 / 7,799 | 2.8-6.1 s | 277,988-278,808 KiB |
+| 192 | 10 s | `self_sufficiency` | Time limit | 5,369 / 7,991 | 10.0 s | 283,708-284,396 KiB |
+| 192 | 10 s | `backup_ready` | Time limit | 5,369 / 7,991 | 10.0 s | 283,708-284,396 KiB |
+| 192 | 10 s | `pv_swap` | Optimal | 5,369 / 7,991 | 0.4-1.1 s | 283,708-284,396 KiB |
+| 192 | 10 s | `max_export` | Optimal | 5,176 / 7,220 | 1.4-3.0 s | 283,708-284,396 KiB |
+| 192 | 10 s | `grid_friendly` | Optimal | 5,753 / 8,375 | 1.2-1.9 s | 283,708-284,396 KiB |
+| 384 | 10 s | `cost_min` | Time limit | 10,742 / 15,599 | 10.1 s | 343,788-346,024 KiB |
+| 384 | 10 s | `self_sufficiency` | Time limit | 10,743 / 15,983 | 10.1 s | 343,788-346,024 KiB |
+| 384 | 10 s | `backup_ready` | Time limit | 10,743 / 15,983 | 10.1 s | 343,788-346,024 KiB |
+| 384 | 10 s | `pv_swap` | Time limit | 10,743 / 15,983 | 10.1 s | 343,788-346,024 KiB |
+| 384 | 10 s | `max_export` | Optimal | 10,358 / 14,442 | 7.3-7.7 s | 343,788-346,024 KiB |
+| 384 | 10 s | `grid_friendly` | Optimal | 11,511 / 16,751 | 1.9 s | 343,788-346,024 KiB |
+| 384 | 0.000001 s | each of the six | `SolveError(reason="timeout")` | 10,358-11,511 / 14,578-16,887 | 0.05-0.12 s | 262,664-264,256 KiB |
 
-`self_sufficiency` and `backup_ready` are the slow strategies because they make SELF_CONSUME worth using all night: the load-following rule (see `docs/model.md`) then leaves a 0.1 % gap that HiGHS needs a few hundred branch-and-bound nodes to close (the plan itself is found after 2-3 s, the rest is the proof). On a 192-slot horizon they use 50-70 % of the 10 s base-solve limit even on this fast host, so a Raspberry Pi 5 is expected to end `time_limited`; the base plan then publishes its best validated incumbent (`Plan.time_limited`, `Plan.mip_gap`). The other four strategies stay well under a second at 192 slots. The benchmark itself does not pass `accept_incumbent`, so its 0.000001 s rows show the strict solve that probes, flexible-load and configuration checks use: a limit without a proof raises `SolveError("timeout")`. All commands exited successfully; the script reports typed solver outcomes as JSON. The 192-slot case is the two-day quarter-hour representative horizon, and 384 slots stress a four-day horizon. These results should be repeated on actual Raspberry Pi 5 hardware before setting operational time and memory limits.
+"Time limit" is the benchmark's strict solve ending at the limit with no proof (`SolveError(reason="timeout")`); the cells with two numbers are the minimum and maximum of three runs. The host ran other container jobs at the same time (load average about 10), which is why `cost_min` at 192 slots spans 2.8-6.1 s; the results (Optimal / Time limit) were the same in all three runs. Wall time at a limit therefore says little about how far a solve is from finishing, so the next table gives the time to a proven optimum with the limit lifted to 300 s (`time.process_time()` of one `solve()` call, same workload, same host):
+
+| Slots | `cost_min` | `self_sufficiency` | `backup_ready` | `pv_swap` | `max_export` | `grid_friendly` |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 192 | 2.8 s | 34.7 s | 13.7 s | 0.3 s | 1.2 s | 0.9 s |
+| 384 | 12.0 s | 38.8 s | 18.8 s | 19.6 s | 7.6 s | 2.2 s |
+
+These numbers replace the earlier ones, which predate the CHARGE_PV surplus-following rule (T-010; before it every strategy at 192 slots proved within 0.65 s except `self_sufficiency` at about 7 s and `backup_ready` at about 9 s). That rule adds one row per PV interval, and a binary (`charge_pv_full`, "the pack ends on its ceiling") where the pack can reach its ceiling, so a planned CHARGE_PV interval charges all the PV surplus or fills the pack. It is what moved the default `cost_min` 192-slot solve from about 0.6 s to 2-3 s, put `self_sufficiency` and `backup_ready` past the 10 s base-solve limit, and made `cost_min` and `pv_swap` at 384 slots miss it. `self_sufficiency` and `backup_ready` were already the slow strategies because they make SELF_CONSUME worth using all night: the load-following rule (see `docs/model.md`) then leaves a small gap that HiGHS needs a few hundred branch-and-bound nodes to close (the plan itself is found after 2-3 s, the rest is the proof). The model was not changed to recover the time (`docs/model.md` § Cost of the rule lists what was measured).
+
+What the user sees when the base solve ends at its limit (`solve_time_limit_s`, default 10 s) is the plan, not an error. The best validated solution found so far is published, `optimizer_status` reads `ready` as for a proven plan, and the plan carries `time_limited: true` with `mip_gap`, the bound on how far its weighted objective can be from the optimum (`docs/guide.en.md` § Plan attributes for strategies). The same benchmark workload with `accept_incumbent`, which is what the runtime passes for the base plan, ended at the 10 s limit as follows:
+
+| Slots | Strategy | `time_limited` | `mip_gap` at the limit |
+| ---: | --- | --- | ---: |
+| 192 | `self_sufficiency` | yes | 0.70 % |
+| 192 | `backup_ready` | yes | 0.10 % |
+| 384 | `cost_min` | yes | 0.007 % |
+| 384 | `self_sufficiency` | yes | 0.51 % |
+| 384 | `backup_ready` | yes | 0.03 % |
+| 384 | `pv_swap` | yes | 0.10 % |
+
+The other six strategy/horizon cases of the table ended proven. The gap is a bound, not the error: at 192 slots the `backup_ready` plan published at the limit has the optimal objective (11.0419, equal to the proven run) and `self_sufficiency` is 0.16 % above its optimum (8.7172 against 8.7033), inside its 0.70 % bound. A Raspberry Pi 5 is slower than this host, so it publishes `time_limited` plans for more cases than the table shows; raise `solve_time_limit_s` (0.1-30 s, below `total_time_limit_s`, which bounds base solve plus probes at 1-300 s, default 60 s) when a proven optimum matters more than refresh latency. The benchmark itself does not pass `accept_incumbent`, so its 0.000001 s rows show the strict solve that probes, flexible-load and configuration checks use: a limit without a proof raises `SolveError("timeout")`. All commands exited successfully; the script reports typed solver outcomes as JSON. The 192-slot case is the two-day quarter-hour representative horizon, and 384 slots stress a four-day horizon. These results should be repeated on actual Raspberry Pi 5 hardware before setting operational time and memory limits.
 
 ## Incremental consumption benchmark
 
