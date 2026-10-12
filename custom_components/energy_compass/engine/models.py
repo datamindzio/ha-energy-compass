@@ -167,6 +167,8 @@ class Plan:
     peak_reserve_shortfall_kwh: float = 0.0
     time_limited: bool = False
     mip_gap: float | None = 0.0
+    # Rows of a carried PV-follow commitment that are HOLD with nothing to follow.
+    carried_bridges: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
