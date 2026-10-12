@@ -18,6 +18,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import controller as core
+from .controller_run import ControllerUnavailable
+from .controller_setup import controller_engine
 from .settings import DOMAIN, NUMBERS
 
 _LOGGER = logging.getLogger(__name__)
@@ -138,6 +140,8 @@ class DeyeController:
         self.state = core.ControllerState()
         self.session = 0.0
         self.device_id: str | None = None
+        self.engine = controller_engine(entry.options.get("controller"))
+        self.host = None
         self.resolution = core.TouResolution(None, (), None)
         self._store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.controller")
         self._tou_values: dict[str, str] = {}
@@ -183,9 +187,17 @@ class DeyeController:
             )
         self._save()
         self._evaluate()
+        if self.engine == "native":
+            from .controller_native import NativeHost
+
+            self.host = NativeHost(self.hass, self)
+            await self.host.async_start()
 
     async def async_stop(self) -> None:
         """Detach everything and persist the state."""
+        if self.host is not None:
+            await self.host.async_stop()
+            self.host = None
         self._stopped = True
         for unsubscribe in (
             self._unsub_coordinator,
@@ -280,6 +292,28 @@ class DeyeController:
             "restore_pending": self.state.restore_pending,
             "session": self.session,
         }
+
+    async def async_persist(
+        self,
+        runtime: Mapping | None,
+        restore_pending: bool | None,
+        *,
+        durable: bool = False,
+    ) -> tuple[dict, bool]:
+        """`async_update_runtime` for the native executor.
+
+        `durable` saves at once instead of after the one-second delay: the write that
+        follows must not outlive the restore obligation it depends on.
+        """
+        if self._stopped:
+            raise ControllerUnavailable("stopped")
+        result = self.async_update_runtime(runtime, restore_pending)
+        if durable and (runtime is not None or restore_pending is not None):
+            await self._store.async_save(self.state.to_dict())
+        return result["runtime"], result["restore_pending"]
+
+    def fallback_battery(self) -> dict[str, float]:
+        return self._fallback_battery()
 
     async def async_import_package(self, *, force: bool = False) -> dict:
         """One-time copy of the 0.1.36 package helpers into the controller state."""
