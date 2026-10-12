@@ -1528,6 +1528,12 @@
     },
     "package_import_refused": {
       "message": "The package state was already imported; set force to import again."
+    },
+    "controller_blueprint_active": {
+      "message": "The Deye controller blueprint automation {automation} is on. Turn it off and let its run finish before using the native engine, or two writers would fight over the inverter."
+    },
+    "controller_native": {
+      "message": "The native Deye engine does not use the controller runtime service. Turn off the blueprint automation that called it."
     }
   },
   "selector": {

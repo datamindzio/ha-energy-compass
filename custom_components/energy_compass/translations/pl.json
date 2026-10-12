@@ -1528,6 +1528,12 @@
     },
     "package_import_refused": {
       "message": "Stan pakietu został już zaimportowany; ustaw force, aby zaimportować ponownie."
+    },
+    "controller_blueprint_active": {
+      "message": "Automatyzacja blueprintu sterownika Deye {automation} jest włączona. Wyłącz ją i poczekaj na koniec jej przebiegu, zanim użyjesz silnika natywnego, inaczej dwa zapisujące będą walczyć o falownik."
+    },
+    "controller_native": {
+      "message": "Natywny silnik Deye nie używa usługi stanu pracy sterownika. Wyłącz automatyzację blueprintu, która ją wywołała."
     }
   },
   "selector": {

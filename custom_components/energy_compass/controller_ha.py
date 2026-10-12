@@ -9,6 +9,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -346,6 +347,18 @@ class DeyeController:
             raise ValueError(mode)
         if mode == self.state.mode:
             return
+        # Two writers on one inverter would fight; a switched-off automation cannot
+        # write, so only an enabled one blocks.
+        if (
+            self.engine == "native"
+            and mode != "Off"
+            and (active := active_blueprint_automations(self.hass))
+        ):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="controller_blueprint_active",
+                translation_placeholders={"automation": ", ".join(active)},
+            )
         event = core.Event(
             dt_util.utcnow().isoformat(),
             "mode",

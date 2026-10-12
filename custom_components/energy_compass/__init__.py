@@ -1,4 +1,4 @@
-"""Read-only, configurable household energy advice."""
+"""Configurable household energy advice; the optional Deye controller writes the inverter."""
 
 import math
 from copy import deepcopy

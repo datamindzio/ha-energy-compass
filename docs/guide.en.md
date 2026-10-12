@@ -8,9 +8,10 @@ conditions that produce each state, and the six dispatch strategies. It describe
 installation and dashboards are in the [installation guide](installation.md).
 
 Energy Compass is **advisory**. It computes a plan and publishes it as Home Assistant entities. It
-never writes inverter registers and sends no messages by itself; controllers and notification
-blueprints decide whether to act on the plan. The repository ships one such controller, for Deye
-inverters through Solarman: see [Deye inverter controller](#deye-inverter-controller-solarman).
+sends no messages by itself, and it writes inverter settings only when you enable the optional Deye
+controller (off by default), which does so through the Solarman integration; notification blueprints
+and other controllers decide for themselves whether to act on the plan. See
+[Deye inverter controller](#deye-inverter-controller-solarman).
 
 ## Contents
 

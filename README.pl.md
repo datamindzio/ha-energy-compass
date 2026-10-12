@@ -7,7 +7,7 @@
   <img src="custom_components/energy_compass/brand/icon@2x.png" alt="Logo Energy Compass" width="160" height="160">
 </picture>
 
-Energy Compass to doradcza integracja Home Assistant. Szacuje koszt krańcowy jednej kWh więcej zużycia domowego względem zoptymalizowanego planu pracy baterii i sieci, klasyfikuje najbliższe zużycie jako `BOOST`, `CHEAP`, `NORMAL` lub `LIMIT` i udostępnia nadchodzące okna jako natywne encje. Nie zapisuje niczego do falownika i sama nie wysyła powiadomień.
+Energy Compass to doradcza integracja Home Assistant. Szacuje koszt krańcowy jednej kWh więcej zużycia domowego względem zoptymalizowanego planu pracy baterii i sieci, klasyfikuje najbliższe zużycie jako `BOOST`, `CHEAP`, `NORMAL` lub `LIMIT` i udostępnia nadchodzące okna jako natywne encje. Sama nie wysyła powiadomień, a ustawienia falownika zapisuje tylko po włączeniu opcjonalnego sterownika Deye (domyślnie wyłączony), przez integrację Solarman.
 
 ## Instalacja
 

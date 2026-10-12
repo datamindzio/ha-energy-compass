@@ -1,7 +1,7 @@
 {
   "domain": "energy_compass",
   "name": "Energy Compass",
-  "after_dependencies": ["energy"],
+  "after_dependencies": ["energy", "solarman"],
   "codeowners": ["@marino39"],
   "config_flow": true,
   "dependencies": ["recorder"],

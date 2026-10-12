@@ -7,10 +7,10 @@ warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. D
 **0.1.37**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
 instalację i dashboardy — [przewodnik instalacji](installation.md) (EN).
 
-Energy Compass jest **doradczy**. Liczy plan i publikuje go jako encje Home Assistant. Nigdy nie
-zapisuje rejestrów falownika i sam nie wysyła powiadomień; o wykonaniu planu decydują sterowniki
-i blueprinty powiadomień. Repozytorium zawiera jeden taki sterownik, dla falowników Deye przez
-Solarman: zob. [Sterownik falownika Deye](#sterownik-falownika-deye-solarman).
+Energy Compass jest **doradczy**. Liczy plan i publikuje go jako encje Home Assistant. Sam nie wysyła
+powiadomień, a ustawienia falownika zapisuje tylko wtedy, gdy włączysz opcjonalny sterownik Deye
+(domyślnie wyłączony), i robi to przez integrację Solarman; blueprinty powiadomień i inne sterowniki same
+decydują, czy wykonać plan. Zob. [Sterownik falownika Deye](#sterownik-falownika-deye-solarman).
 
 ## Spis treści
 
