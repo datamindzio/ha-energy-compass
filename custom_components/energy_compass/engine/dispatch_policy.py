@@ -7,7 +7,7 @@ import numpy as np
 from .charge_price import price_allows_grid_charge
 from .idle_drain import cumulative, drain_schedule
 from .machine_state import _TOL as _CLASSIFIER_TOLERANCE
-from .machine_state import machine_state
+from .machine_state import activity_tolerance, machine_state
 from .models import Problem, SolveError
 
 MODES = (
@@ -649,7 +649,7 @@ def validate_modes(problem: Problem, flows) -> None:
             / 3600
         )
         mode = machine_state(slot, flow)
-        tolerance = min(1e-7, activity * 1e-4)
+        tolerance = activity_tolerance(activity)
         # A flow the classifier reads as zero is zero: solver noise up to its
         # threshold must not fail a slot it already labelled HOLD or an idle flow.
         noise = max(tolerance, _CLASSIFIER_TOLERANCE)
