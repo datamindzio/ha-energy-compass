@@ -1606,9 +1606,9 @@ grupowane w dni według lokalnej daty `start`; ustawienia podaje się tylko prze
 - Wykonany plan podąża za sterownikiem (`tools/deye_controller/build.py`) względem rzeczywistych
   danych. `SELF_CONSUME` i `CHARGE_PV` podążają za obciążeniem: cała nadwyżka PV ładuje baterię, a
   niedobór jest pokrywany z niej. W `CHARGE_GRID` za planem idzie tylko udział sieci — zaplanowane
-  ładowanie minus nadwyżka obiecana przez prognozę — a sieć przestaje ładować po osiągnięciu
-  planowanego końcowego SOC wiersza, tak jak w sterowniku; rzeczywista nadwyżka PV ładuje ponad to.
-  PV powyżej prognozy zmniejsza więc import z sieci (SOC może skończyć powyżej planu, wyłącznie dzięki
+  ładowanie minus nadwyżka obiecana przez prognozę. Sieć i rzeczywista nadwyżka PV ładują razem aż do
+  planowanego końcowego SOC wiersza; potem sieć przestaje, tak jak w sterowniku, a PV ładuje dalej do
+  końca slotu. PV powyżej prognozy zmniejsza więc import z sieci (SOC może skończyć powyżej planu, wyłącznie dzięki
   PV), a poniżej prognozy ładuje mniej — niedoboru nie kupuje się z sieci, a startowy SOC poniżej planu
   nie jest nadrabiany. `DISCHARGE_GRID` rozładowuje zaplanowaną energię, `HOLD` zatrzymuje baterię. Eksport ponad
   `grid_export_kw` jest ucinany (curtailment), a zmagazynowana energia nie jest eksportowana ponad
