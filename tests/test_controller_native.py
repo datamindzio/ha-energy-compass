@@ -390,3 +390,21 @@ async def test_diagnostics_carry_the_engine_hardware_and_run_history(hass, site)
     assert len(history) == 50
     assert history[-1]["trigger"] == "run-51"
     assert "SN-REDACTED" not in json.dumps(diagnostics, default=str)
+
+
+async def test_the_start_trigger_waits_for_home_assistant_and_unloads_cleanly(
+    hass, freezer
+):
+    from homeassistant.core import CoreState
+
+    hass.set_state(CoreState.starting)
+    entry, _ = await native_site(hass, freezer)
+    host = controller_of(entry).host
+    assert host.runs == 0
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire("homeassistant_started")
+    await hass.async_block_till_done()
+    await host.async_wait_idle()
+    assert host.runs >= 1
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

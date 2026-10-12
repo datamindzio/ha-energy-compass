@@ -203,10 +203,12 @@ class NativeHost:
         self._task: asyncio.Task | None = None
         self._rerun = False
         self._stopped = False
+        self._started_up = False
         self._unsubscribe: list[CALLBACK_TYPE] = []
         self._watched: tuple[str, ...] = ()
         self._unwatch: CALLBACK_TYPE | None = None
         self._logged: tuple[Any, Any] | None = None
+        self._unsub_started: CALLBACK_TYPE | None = None
 
     def _limits(self) -> profile.Limits:
         setup = self.port.setup
@@ -227,12 +229,11 @@ class NativeHost:
             async_track_time_change(self.hass, self._minute, second=0),
         ]
         if self.hass.state is CoreState.running:
+            self._started_up = True
             self.request("start")
         else:
-            self._unsubscribe.append(
-                self.hass.bus.async_listen_once(
-                    EVENT_HOMEASSISTANT_STARTED, self._started
-                )
+            self._unsub_started = self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED, self._started
             )
 
     async def async_stop(self) -> None:
@@ -245,6 +246,9 @@ class NativeHost:
         for unsubscribe in self._unsubscribe:
             unsubscribe()
         self._unsubscribe = []
+        if self._unsub_started is not None:
+            self._unsub_started()
+            self._unsub_started = None
         self._watch(())
         task = self._task
         if task is not None and not task.done():
@@ -255,7 +259,7 @@ class NativeHost:
     @callback
     def request(self, trigger: str) -> None:
         """Ask for a run: at most one runs and one more waits."""
-        if self._stopped:
+        if self._stopped or not self._started_up:
             return
         if self._task is not None and not self._task.done():
             self._rerun = True
@@ -315,6 +319,8 @@ class NativeHost:
 
     @callback
     def _started(self, _event: Event) -> None:
+        self._unsub_started = None
+        self._started_up = True
         self.request("start")
 
     @callback
