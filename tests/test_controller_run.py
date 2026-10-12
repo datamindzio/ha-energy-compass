@@ -355,3 +355,60 @@ def test_the_record_stays_small_for_a_state_attribute():
     runner.executor.history.clear()
     runner.run()
     assert len(json.dumps(runner.executor.history[-1])) < 16000
+
+
+def test_off_without_a_restore_obligation_is_released_not_paused():
+    h = native.Harness()
+    runner = native.Runner(h)
+    h.paused = True
+    h.data[MODE]["state"] = "Off"
+    runner.run()
+    assert runner.outcomes == ["released"]
+    assert h.stored_runtime()["code"] != "paused"
+
+
+def test_off_with_a_restore_obligation_stays_paused_and_writes_nothing():
+    h = native.Harness()
+    h.data[P]["attributes"]["intervals"][0].update(CHARGE_GRID)
+    runner = native.Runner(h)
+    runner.run()
+    assert h.restore_pending
+    written = len(runner.writes)
+    h.paused = True
+    h.data[MODE]["state"] = "Off"
+    runner.run()
+    assert runner.outcomes[-1] == "paused"
+    assert len(runner.writes) == written
+    assert h.restore_pending
+    assert h.stored_runtime()["reason_code"] == "paused"
+
+
+def test_a_running_blueprint_automation_blocks_every_write_with_its_own_reason():
+    h = native.Harness()
+    h.data[P]["attributes"]["intervals"][0].update(CHARGE_GRID)
+    h.blueprint_active = ("automation.old_deye",)
+    runner = native.Runner(h)
+    runner.run()
+    assert runner.outcomes == ["takeover_blocked"]
+    assert runner.writes == []
+    runtime = h.stored_runtime()
+    assert runtime["code"] == "blocked"
+    assert runtime["reason_code"] == "blueprint_active"
+    assert runtime["takeover_blocked"] is True
+    assert "automation.old_deye" in runtime["reason"]
+    assert not h.restore_pending
+
+
+def test_a_blueprint_automation_starting_mid_run_stops_the_next_write():
+    h = native.Harness()
+    h.data[P]["attributes"]["intervals"][0].update(CHARGE_GRID)
+    runner = native.Runner(h)
+
+    def start_automation(runner, entity, value):
+        h.blueprint_active = ("automation.old_deye",)
+
+    runner.hook = start_automation
+    runner.run()
+    assert len(runner.writes) == 1
+    assert h.restore_pending
+    assert h.stored_runtime()["code"] != "ok"

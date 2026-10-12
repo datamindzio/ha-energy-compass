@@ -30,6 +30,8 @@ REASONS = (
     "verification_required",
     "write_failed",
     "simulation_blocked",
+    "blueprint_active",
+    "run_failed",
 )
 STOPS = (
     "controller_unavailable",
@@ -61,6 +63,8 @@ PL: Mapping[str, str] = {
     "verification_required": "Wymagane potwierdzenie bazowych nastaw podczas przejęcia sterowania",
     "write_failed": "Brak potwierdzenia nastaw; zachowano obowiązek przywrócenia",
     "simulation_blocked": "Najpierw przywróć bazę w Off; po potwierdzeniu wybierz Simulation ponownie",
+    "blueprint_active": "Włączona automatyzacja blueprintu pisałaby do tego samego falownika: {automation}. Wyłącz ją i zatrzymaj jej wykonania",
+    "run_failed": "Przebieg sterownika nie powiódł się: szczegóły w dzienniku Home Assistanta",
     "controller_unavailable": "Energy Compass niedostępny: sterowanie wstrzymane bez zapisów",
     "simulation_rejected": "Simulation odrzucone: pozostał obowiązek przywrócenia, wybrano Off",
     "simulation": "Symulacja: profil obliczony, bez zapisów falownika",
@@ -89,6 +93,8 @@ EN: Mapping[str, str] = {
     "verification_required": "Confirmation of the base settings required while taking over control",
     "write_failed": "Settings not confirmed; the restore obligation is kept",
     "simulation_blocked": "Restore the base in Off first; select Simulation again after it is confirmed",
+    "blueprint_active": "A blueprint automation is on and would write to the same inverter: {automation}. Switch it off and stop its runs",
+    "run_failed": "The controller run failed: details are in the Home Assistant log",
     "controller_unavailable": "Energy Compass unavailable: control held without writes",
     "simulation_rejected": "Simulation rejected: a restore obligation remains, Off selected",
     "simulation": "Simulation: profile computed, no inverter writes",

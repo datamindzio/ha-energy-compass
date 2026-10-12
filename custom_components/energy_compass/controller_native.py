@@ -21,6 +21,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import CALLBACK_TYPE, CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_change,
@@ -28,15 +29,19 @@ from homeassistant.helpers.event import (
 from homeassistant.util import dt as dt_util
 
 from . import controller_profile as profile
+from . import controller_texts as texts
 from .controller import TouFact
+from .controller_ha import active_blueprint_automations
 from .controller_run import ControllerUnavailable, DeyeExecutor
 from .controller_setup import READ_SERVICE, derive_limits, entities_of, resolve
+from .settings import DOMAIN
 
 if TYPE_CHECKING:
     from .controller_ha import DeyeController
 
 _LOGGER = logging.getLogger(__name__)
 
+FAILED_RUNS_FOR_ISSUE = 3
 ATTRIBUTES = ("min", "max", "step", "options", "current")
 NO_ATTRIBUTES: Mapping[str, Any] = MappingProxyType({})
 
@@ -111,10 +116,14 @@ class HassPort:
     def now(self) -> datetime:
         return dt_util.now()
 
+    def resolve_setup(self) -> NativeSetup | None:
+        found = native_setup(self.hass, self.controller)
+        self.setup = found if isinstance(found, NativeSetup) else None
+        return self.setup
+
     def snapshot(self, stage: str) -> profile.Snapshot:
         if stage == "start":
-            found = native_setup(self.hass, self.controller)
-            self.setup = found if isinstance(found, NativeSetup) else None
+            self.resolve_setup()
         setup = self.setup
         facts = {}
         if setup is not None:
@@ -139,6 +148,7 @@ class HassPort:
             states=facts,
             controller=view if view and setup is not None else None,
             paused=self.controller.state.paused,
+            blueprint_active=tuple(active_blueprint_automations(self.hass)),
         )
 
     async def persist(
@@ -185,6 +195,7 @@ class HassPort:
 
 _NO_ENTITIES = profile.Entities("", "", "", "", "", "", "")
 _EDGE = (STATE_UNKNOWN, STATE_UNAVAILABLE)
+FAILED_OUTCOMES = ("error", "controller_unavailable")
 
 
 class NativeHost:
@@ -209,6 +220,11 @@ class NativeHost:
         self._unwatch: CALLBACK_TYPE | None = None
         self._logged: tuple[Any, Any] | None = None
         self._unsub_started: CALLBACK_TYPE | None = None
+        self._failures = 0
+
+    @property
+    def _entry_id(self) -> str:
+        return self.controller.entry.entry_id
 
     def _limits(self) -> profile.Limits:
         setup = self.port.setup
@@ -228,6 +244,10 @@ class NativeHost:
             self.controller.async_add_listener(self._controller_changed),
             async_track_time_change(self.hass, self._minute, second=0),
         ]
+        # Listen from the start whenever the setup resolves; requests made before
+        # Home Assistant has started are ignored by `request`.
+        self.port.resolve_setup()
+        self._sync_watch()
         if self.hass.state is CoreState.running:
             self._started_up = True
             self.request("start")
@@ -250,6 +270,8 @@ class NativeHost:
             self._unsub_started()
             self._unsub_started = None
         self._watch(())
+        for issue in ("deye_blueprint_active", "deye_run_failed"):
+            ir.async_delete_issue(self.hass, DOMAIN, f"{issue}_{self._entry_id}")
         task = self._task
         if task is not None and not task.done():
             task.cancel()
@@ -286,13 +308,73 @@ class NativeHost:
                 _LOGGER.exception("Deye controller run failed")
                 outcome = "error"
             self.runs += 1
-            self._sync_watch()
-            self._log_change()
-            self.controller.async_runtime_changed()
+            await self._after_run(outcome)
             _LOGGER.debug("Deye controller run (%s): %s", trigger, outcome)
             if not self._rerun or self._stopped:
                 return
             trigger = "queued"
+
+    async def _after_run(self, outcome: str) -> None:
+        """Everything that follows a run; none of it may end the task or lose a re-run."""
+        failed = outcome in FAILED_OUTCOMES
+        if failed and not self._stopped:
+            await self._report_failure("run_failed" if outcome == "error" else outcome)
+        for step in (
+            lambda: self._track_failures(failed),
+            self._check_writers,
+            self._sync_watch,
+            self._log_change,
+            self.controller.async_runtime_changed,
+        ):
+            try:
+                step()
+            except Exception:
+                _LOGGER.exception("Deye controller post-run step failed")
+
+    async def _report_failure(self, code: str) -> None:
+        """Show on the runtime sensor that the run failed; best effort."""
+        try:
+            await self.controller.async_persist(
+                {
+                    **self.controller.state.runtime,
+                    "code": "error",
+                    "reason_code": code,
+                    "reason": texts.text(code, self.hass.config.language),
+                },
+                None,
+            )
+        except Exception:
+            _LOGGER.exception("Deye controller could not publish its failure")
+
+    def _track_failures(self, failed: bool) -> None:
+        issue = f"deye_run_failed_{self._entry_id}"
+        self._failures = self._failures + 1 if failed else 0
+        if self._failures >= FAILED_RUNS_FOR_ISSUE:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="deye_run_failed",
+            )
+        elif not failed:
+            ir.async_delete_issue(self.hass, DOMAIN, issue)
+
+    def _check_writers(self) -> None:
+        issue = f"deye_blueprint_active_{self._entry_id}"
+        if active := active_blueprint_automations(self.hass):
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="deye_blueprint_active",
+                translation_placeholders={"automation": ", ".join(active)},
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, issue)
 
     def _log_change(self) -> None:
         """One logbook entry whenever the confirmed mode or the runtime code changes."""
@@ -334,6 +416,7 @@ class NativeHost:
     def _sync_watch(self) -> None:
         setup = self.port.setup
         if setup is None:
+            self._watch(())
             return
         e = setup.entities
         self._watch(
@@ -370,8 +453,11 @@ class NativeHost:
             return
         e = setup.entities
         limits = setup.limits
-        edge = (old is not None and old.state in _EDGE) != (
-            new is not None and new.state in _EDGE
+        edge = (
+            old is not None
+            and new is not None
+            and old.state != new.state
+            and (old.state in _EDGE or new.state in _EDGE)
         )
         if entity in (e.soc, e.charge, e.discharge, e.grid):
             # The blueprint reacts to state changes of these, not to attributes.

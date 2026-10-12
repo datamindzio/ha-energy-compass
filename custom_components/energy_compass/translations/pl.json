@@ -1065,7 +1065,9 @@
       "controller_device_in_use": "Inny wpis Energy Compass już steruje tym urządzeniem.",
       "controller_not_released": "Wybierz tryb Deye Off i poczekaj na przywrócenie profilu bazowego (przywrócenie nie oczekuje), zanim wyłączysz sterownik lub zmienisz jego urządzenie.",
       "controller_entity_missing": "Urządzeniu brakuje tego, czego potrzebuje sterownik natywny: {missing}.",
-      "controller_low_voltage_pack": "Ten sterownik obsługuje pakiety wysokonapięciowe (400–610 V). Zmierzono: {voltage} V. Modele Deye 48 V nie są jeszcze obsługiwane."
+      "controller_low_voltage_pack": "Ten sterownik obsługuje pakiety wysokonapięciowe (400–610 V). Zmierzono: {voltage} V. Modele Deye 48 V nie są jeszcze obsługiwane.",
+      "controller_voltage_unavailable": "Czujnik napięcia baterii ({entity}) nie ma odczytu liczbowego, więc nie da się odróżnić pakietu od 48 V. Poczekaj, aż falownik poda napięcie, i zapisz ponownie.",
+      "controller_limits_required": "Nie da się wyliczyć maksymalnej mocy i prądów (moc ładowania lub rozładowania w ustawieniach baterii albo limit prądu falownika wynosi zero). Wpisz je w grupie Limity i przejęcie."
     },
     "abort": {
       "site_not_registered": "Ta witryna została zapomniana w innym oknie; włącz ponownie Energy Atlas, aby zarejestrować nową."
@@ -1451,6 +1453,14 @@
     "deye_hardware_unverified": {
       "title": "Falownik Deye niezweryfikowany",
       "description": "Falownik zgłasza \"{device_type}\" z protokołem {protocol}, na którym Energy Compass nie był sprawdzany. Sterownik nadal działa: przed pierwszym zapisem porównuje układ rejestrów ze stanami encji, a Simulation pokazuje wynik. Najpierw wypróbuj Simulation."
+    },
+    "deye_blueprint_active": {
+      "title": "Automatyzacja blueprintu Deye nadal działa",
+      "description": "Automatyzacja {automation} używa blueprintu sterownika Deye, a wybrany jest silnik wbudowany. Energy Compass nie zapisuje niczego do falownika, dopóki automatyzacja nie zostanie wyłączona, a jej wykonania zatrzymane: dwa zapisujące sterowniki walczyłyby o falownik."
+    },
+    "deye_run_failed": {
+      "title": "Przebiegi sterownika Deye kończą się błędem",
+      "description": "Ostatnie przebiegi sterownika Deye zakończyły się błędem albo nie mogły odczytać stanu sterownika, więc nastawy falownika nie są prowadzone. Powód widać na czujniku runtime, szczegóły są w dzienniku Home Assistanta. Zgłoszenie zniknie po następnym udanym przebiegu."
     },
     "source_removed": {
       "title": "Źródło zostało usunięte",

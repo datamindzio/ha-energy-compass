@@ -33,6 +33,7 @@ CHARGE_KNOTS = (496, 512, 515, 520, 522, 523, 528, 531, 536, 584)
 DISCHARGE_KNOTS = (496, 512, 515, 520, 522, 523, 528, 531, 536, 544)
 SELECT_RAW = {"Disabled": 0, "Grid": 1, "Sell": 32}
 SELECT_NAMES = {raw: name for name, raw in SELECT_RAW.items()}
+UNSUPPORTED_SELECT = "unsupported"
 READ_ADDRESS = 108
 READ_COUNT = 70
 TOU_PROGRAMS = range(1, 7)
@@ -128,7 +129,9 @@ class Snapshot:
 
     `controller` is the attribute view of the Energy Compass controller (`accepted`,
     `session`, `plan_reason`, `retained`) or None when it is missing. `mode` is the
-    requested controller mode; `paused` is the pause-writes switch.
+    requested controller mode; `paused` is the pause-writes switch;
+    `blueprint_active` lists switched-on automations of the retired blueprint, whose
+    writes would collide with ours.
     """
 
     now: datetime
@@ -138,6 +141,7 @@ class Snapshot:
     controller: Mapping[str, Any] | None
     runtime: Mapping[str, Any] = MappingProxyType({})
     paused: bool = False
+    blueprint_active: tuple[str, ...] = ()
 
     def state(self, entity: str) -> str:
         fact = self.states.get(entity)
@@ -281,6 +285,8 @@ def decide(
             or snapshot.attribute(entity, "current") != 0
         ):
             writers = False
+    if snapshot.blueprint_active:
+        writers = False
 
     times: list[int] = []
     for i in TOU_PROGRAMS:
@@ -818,7 +824,7 @@ def observe(response: Any, registers: Mapping[str, Register]) -> dict[str, str |
         raw = _raw(response, register)
         if _is_number(raw):
             observed[entity] = (
-                SELECT_NAMES.get(_int(raw), "unsupported")
+                SELECT_NAMES.get(_int(raw), UNSUPPORTED_SELECT)
                 if entity.startswith("select.")
                 else _round(_float(raw) * register.scale, 6)
             )

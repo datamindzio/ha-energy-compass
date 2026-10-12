@@ -233,6 +233,21 @@ class DeyeExecutor:
             }
 
         snapshot = self._snapshot(run, "mode")
+        if snapshot.blueprint_active:
+            await self._persist(
+                run,
+                {
+                    **run.runtime,
+                    "code": "blocked",
+                    "reason_code": "blueprint_active",
+                    "reason": self._text(
+                        "blueprint_active",
+                        {"automation": ", ".join(snapshot.blueprint_active)},
+                    ),
+                    "takeover_blocked": True,
+                },
+            )
+            return "takeover_blocked"
         if snapshot.mode == "Simulation" and run.pending:
             await port.select_mode("Off")
             await self._persist(run, self._outcome_runtime(run, "simulation_blocked"))
@@ -241,26 +256,39 @@ class DeyeExecutor:
             if not await self._layout_holds(run, snapshot):
                 return "layout_mismatch"
             return "simulation"
-        if snapshot.paused:
-            return await self._paused(run)
         if snapshot.mode == "Off" and not run.pending:
             return "released"
+        if snapshot.paused:
+            return await self._paused(run)
         if not decision.writers_safe:
             return "takeover_blocked"
-        if not await self._layout_holds(run, snapshot):
-            return "layout_mismatch"
         session = (snapshot.controller or {}).get("session")
         cleanup = (
             not decision.valid
             or snapshot.mode == "Off"
             or (run.pending and run.runtime.get("owned_session") != session)
         )
+        # Restoring the base goes through Solarman's own entities and needs no
+        # proven layout; only forcing does, and a blocked restore would leave a
+        # forced plan in place.
+        if not cleanup and not await self._layout_holds(run, snapshot):
+            return "layout_mismatch"
         return await self._transactions(run, cleanup)
 
+    @staticmethod
+    def _layout_key(run: _Run, snapshot: profile.Snapshot) -> tuple:
+        """What a passed probe is valid for: the session, the device and the map read."""
+        controller = snapshot.controller or {}
+        return (
+            controller.get("session"),
+            controller.get("device_id"),
+            tuple((entity, r.address, r.scale) for entity, r in run.registers.items()),
+        )
+
     async def _layout_holds(self, run: _Run, snapshot: profile.Snapshot) -> bool:
-        """The register layout probe, once per session; a mismatch blocks every write."""
-        session = (snapshot.controller or {}).get("session")
-        if not self.probe_layout or self._layout_session == session:
+        """The register layout probe; a mismatch blocks forcing, not the restore."""
+        key = self._layout_key(run, snapshot)
+        if not self.probe_layout or self._layout_session == key:
             return True
         try:
             response = await self.port.read_registers(
@@ -276,7 +304,7 @@ class DeyeExecutor:
             {entity: snapshot.state(entity) for entity in run.registers},
         )
         if not mismatched:
-            self._layout_session = session
+            self._layout_session = key
             return True
         reason = self._text(
             "layout_mismatch", {"entities": hardware.listed(mismatched)}

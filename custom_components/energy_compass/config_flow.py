@@ -20,6 +20,7 @@ from .controller_ha import (
     default_device,
     device_in_use,
     device_resolution,
+    limits_underivable,
     native_problem,
     resolve_device,
 )
@@ -50,6 +51,7 @@ from .settings import (
     DOMAIN,
     EXPERT_GROUPS,
     GROUPS,
+    NUMBERS,
     default_configuration,
     explicit_strategy_fields,
     merged_configuration,
@@ -456,12 +458,28 @@ class Editor(SourceEditor):
                 ):
                     errors["device_id"] = found[0]
                     placeholders |= found[1]
+                elif engine == "native" and limits_underivable(
+                    self.hass,
+                    device_id,
+                    running.fallback_battery()
+                    if running is not None
+                    else {
+                        key: NUMBERS[key][1] for key in ("charge_kw", "discharge_kw")
+                    },
+                    stored_limits,
+                    stored_entities,
+                ):
+                    errors["base"] = "controller_limits_required"
+                    self._show_expert = expert = True
+            # Keys the 0.1.37 form never wrote are stored only for a native
+            # controller, so saving an untouched entry changes nothing.
+            native = enabled and engine == "native"
             new = {"enabled": enabled, "device_id": device_id}
-            if "engine" in user_input or "engine" in current:
+            if native or "engine" in current:
                 new["engine"] = engine
-            if stored_limits:
+            if stored_limits and (native or "limits" in current):
                 new["limits"] = stored_limits
-            if stored_entities:
+            if stored_entities and (native or "entities" in current):
                 new["entities"] = stored_entities
             change = controller_options_change(current, new)
             if (
@@ -550,7 +568,9 @@ class Editor(SourceEditor):
         device_id = current.get("device_id")
         if not device_id:
             return {}
-        found = blueprint_prefill(self.hass, resolve_device(self.hass, device_id))
+        found = blueprint_prefill(
+            self.hass, resolve_device(self.hass, device_id), device_id
+        )
         return found if found.get("limits") or found.get("entities") else {}
 
     @staticmethod

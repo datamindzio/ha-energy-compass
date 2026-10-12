@@ -89,7 +89,9 @@ def probe(
     """Entities whose register disagrees with their state; empty when the layout holds.
 
     An unreadable answer, or an entity with no register value or no numeric state,
-    cannot be compared and counts as a mismatch.
+    cannot be compared and counts as a mismatch. A select whose register holds a value
+    outside the known map says nothing about the layout (the controller rewrites it
+    anyway) and is skipped, unless the entity itself is unknown or unavailable.
     """
     if not isinstance(response, Mapping):
         return ["solarman.read_holding_registers"]
@@ -100,6 +102,12 @@ def probe(
         value = observed.get(entity)
         if value is None:
             equal = False
+        elif (
+            entity.startswith("select.")
+            and value == profile.UNSUPPORTED_SELECT
+            and state not in ("unknown", "unavailable")
+        ):
+            continue
         elif entity.startswith("select."):
             equal = state == value
         else:

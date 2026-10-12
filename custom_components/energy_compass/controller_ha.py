@@ -24,7 +24,13 @@ from . import controller as core
 from . import controller_hardware as hardware
 from .controller_profile import PACK_VOLTAGE_RANGE
 from .controller_run import ControllerUnavailable
-from .controller_setup import LIMIT_FIELDS, READ_SERVICE, ROLES, resolve
+from .controller_setup import (
+    LIMIT_FIELDS,
+    READ_SERVICE,
+    ROLES,
+    derive_limits,
+    resolve,
+)
 from .settings import DOMAIN, NUMBERS
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +112,7 @@ def device_in_use(hass: HomeAssistant, entry_id: str, device_id: str) -> bool:
 
 
 BLUEPRINT_PATH = "energy_compass/deye_solarman_controller.yaml"
+WRITTEN_ROLES = ("charge", "discharge", "grid", "operation")
 
 
 def blueprint_automations(hass: HomeAssistant) -> list:
@@ -131,11 +138,13 @@ def active_blueprint_automations(hass: HomeAssistant) -> list[str]:
     ]
 
 
-def blueprint_prefill(hass: HomeAssistant, resolved) -> dict[str, dict]:
+def blueprint_prefill(hass: HomeAssistant, resolved, device_id: str) -> dict[str, dict]:
     """Limits and entity overrides of the one blueprint automation, for the options form.
 
-    Entity inputs only where they differ from what the device resolves to. Nothing is
-    applied until the user confirms the form.
+    Only when the entities it writes through belong to this Solarman device: another
+    inverter's automation has nothing to say about these limits. Entity inputs only
+    where they differ from what the device resolves to. Nothing is applied until the
+    user confirms the form.
     """
     found = blueprint_automations(hass)
     if len(found) != 1:
@@ -144,6 +153,14 @@ def blueprint_prefill(hass: HomeAssistant, resolved) -> dict[str, dict]:
     # variables: they are what this automation actually runs with.
     actions = (found[0].raw_config or {}).get("actions") or [{}]
     inputs = actions[0].get("variables") or {}
+    owned = {
+        item.entity_id
+        for item in er.async_entries_for_device(
+            er.async_get(hass), device_id, include_disabled_entities=True
+        )
+    }
+    if any(inputs.get(f"{role}_entity") not in owned for role in WRITTEN_ROLES):
+        return {}
     limits = {
         key: inputs[key]
         for key in LIMIT_FIELDS
@@ -188,12 +205,51 @@ def native_problem(
     if missing:
         return "controller_entity_missing", {"missing": ", ".join(missing)}
     voltage = hass.states.get(resolved.entities["voltage"])
-    if voltage is not None and core.is_number(voltage.state):
+    if voltage is None or not core.is_number(voltage.state):
+        # Without a reading the pack cannot be told from a 48 V one.
+        return "controller_voltage_unavailable", {
+            "entity": resolved.entities["voltage"]
+        }
+    if float(voltage.state) < PACK_VOLTAGE_RANGE[0]:
         # Only high-voltage packs are supported (design DD-15).
-        low = float(voltage.state) < PACK_VOLTAGE_RANGE[0]
-        if low:
-            return "controller_low_voltage_pack", {"voltage": voltage.state}
+        return "controller_low_voltage_pack", {"voltage": voltage.state}
     return None
+
+
+def limits_underivable(
+    hass: HomeAssistant,
+    device_id: str,
+    battery: Mapping[str, float],
+    limits: Mapping[str, Any] | None,
+    overrides=None,
+) -> bool:
+    """Whether the power cap or a current limit would come out as zero.
+
+    Zero limits would make every plan invalid, so the user has to enter them.
+    """
+    resolved = resolve_device(hass, device_id, overrides)
+
+    def maximum(role: str) -> Any:
+        state = hass.states.get(resolved.entities.get(role, ""))
+        return state.attributes.get("max") if state else None
+
+    derived = derive_limits(
+        limits,
+        charge_kw=battery["charge_kw"],
+        discharge_kw=battery["discharge_kw"],
+        charge_max=maximum("charge"),
+        grid_max=maximum("grid"),
+        resolved=resolved,
+    )
+    return (
+        min(
+            derived.max_power_w,
+            derived.max_current,
+            derived.max_grid_current,
+            derived.relinquish_current,
+        )
+        <= 0
+    )
 
 
 def async_auto_enable(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -266,6 +322,10 @@ class DeyeController:
         elif any(event.kind == "dropped" for event in self.state.history[-1:]):
             _LOGGER.debug("Dropped the Deye controller plan of an earlier session")
         self.device_id = (self.entry.options.get("controller") or {}).get("device_id")
+        if self.engine != "native" and self.state.paused:
+            # The pause belongs to the native executor; a stale flag must not come
+            # back if the engine is switched again later.
+            self.state = replace(self.state, paused=False)
         self._resolve()
         self._unsub_registry = self.hass.bus.async_listen(
             er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_changed
@@ -397,6 +457,10 @@ class DeyeController:
             )
         )
         self._publish()
+
+    async def async_save_now(self) -> None:
+        """Persist the state at once, e.g. a pause that must survive a crash."""
+        await self._store.async_save(self.state.to_dict())
 
     @callback
     def async_update_runtime(

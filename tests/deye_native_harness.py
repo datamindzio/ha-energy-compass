@@ -40,7 +40,9 @@ DEFAULTS = {
 }
 
 
-def snapshot_of(sim, ctx, runtime, paused=False) -> profile.Snapshot:
+def snapshot_of(
+    sim, ctx, runtime, paused=False, blueprint_active=()
+) -> profile.Snapshot:
     """The profile's view of the sample at this instant; later edits do not reach it."""
     sim.sync()
     states = {
@@ -65,6 +67,7 @@ def snapshot_of(sim, ctx, runtime, paused=False) -> profile.Snapshot:
         controller=controller,
         runtime=dict(runtime),
         paused=paused,
+        blueprint_active=tuple(blueprint_active),
     )
 
 
@@ -140,6 +143,7 @@ class Harness(EnergyCompassSim):
             "device_id": "test_solarman_device",
         }
         self.paused = False
+        self.blueprint_active = ()
         self.sync()
         self.ctx["program_prefix"] = self.prefix
         self.ctx["registers"] = self.register_dicts()
@@ -155,7 +159,9 @@ class Harness(EnergyCompassSim):
         return self.data[RT]["attributes"].get("runtime", {})
 
     def snapshot(self):
-        return snapshot_of(self, self.ctx, self.stored_runtime(), self.paused)
+        return snapshot_of(
+            self, self.ctx, self.stored_runtime(), self.paused, self.blueprint_active
+        )
 
     def limits(self):
         return limits_of(self.ctx)

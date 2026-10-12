@@ -5,6 +5,7 @@ import test_deye_controller_blueprint as blueprint
 from controller_support import controller_of, register_solarman
 from homeassistant.config_entries import ConfigEntryState
 from native_site import (
+    CHARGE,
     SOC,
     VOLTAGE,
     Inverter,
@@ -313,3 +314,127 @@ async def test_two_blueprint_automations_prefill_nothing(hass):
     finally:
         controller_ha.blueprint_automations = real
     assert fields(form) == {"enabled", "device_id", "engine"}
+
+
+async def loaded_blueprint_entry(hass):
+    device = register_inverter(hass)
+    Inverter(hass)
+    entry = await make_entry_with(hass, device.id)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return device, entry
+
+
+async def test_saving_an_untouched_entry_writes_no_new_keys(hass):
+    device, entry = await loaded_blueprint_entry(hass)
+    before = dict(entry.options["controller"])
+    form = await open_step(hass, entry)
+    result = await submit(
+        hass, form, {"enabled": True, "device_id": device.id, "engine": "blueprint"}
+    )
+    assert result["type"] == "create_entry"
+    assert (
+        entry.options["controller"]
+        == before
+        == {
+            "enabled": True,
+            "device_id": device.id,
+        }
+    )
+
+
+async def test_a_prefilled_form_saved_as_blueprint_stores_nothing_new(hass):
+    device = register_inverter(hass)
+    Inverter(hass)
+    await blueprint.setup_controller(hass, max_power_w=7000, max_current=17)
+    entry = await make_entry_with(hass, device.id)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    form = await open_step(hass, entry)
+    assert suggested(form, "max_power_w") == 7000
+    result = await submit(
+        hass,
+        form,
+        {
+            "enabled": True,
+            "device_id": device.id,
+            "engine": "blueprint",
+            "max_power_w": 7000,
+            "max_current": 17,
+        },
+    )
+    assert result["type"] == "create_entry"
+    assert entry.options["controller"] == {"enabled": True, "device_id": device.id}
+
+
+async def test_an_automation_on_another_inverter_prefills_nothing(hass):
+    device = register_inverter(hass)
+    Inverter(hass)
+    await blueprint.setup_controller(
+        hass,
+        max_power_w=7000,
+        charge_entity="number.somewhere_else_charge",
+    )
+    entry = await make_entry_with(hass, device.id)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    form = await open_step(hass, entry)
+    assert fields(form) == {"enabled", "device_id", "engine"}
+
+
+@pytest.mark.parametrize("reading", ["unavailable", "unknown"])
+async def test_native_needs_a_numeric_battery_voltage(hass, reading):
+    device = register_inverter(hass)
+    Inverter(hass)
+    hass.states.async_set(VOLTAGE, reading)
+    entry = await make_entry(hass)
+    form = await open_step(hass, entry)
+    result = await submit(
+        hass, form, {"enabled": True, "device_id": device.id, "engine": "native"}
+    )
+    assert result["errors"] == {"device_id": "controller_voltage_unavailable"}
+    assert result["description_placeholders"]["entity"] == VOLTAGE
+    hass.states.async_remove(VOLTAGE)
+    result = await submit(
+        hass, result, {"enabled": True, "device_id": device.id, "engine": "native"}
+    )
+    assert result["errors"] == {"device_id": "controller_voltage_unavailable"}
+
+
+async def test_zero_limits_are_never_stored_the_user_must_enter_them(hass):
+    device = register_inverter(hass)
+    Inverter(hass)
+    charge = hass.states.get(CHARGE)
+    hass.states.async_set(CHARGE, charge.state, {**charge.attributes, "max": 0})
+    entry = await make_entry(hass)
+    form = await open_step(hass, entry)
+    data = {"enabled": True, "device_id": device.id, "engine": "native"}
+    result = await submit(hass, form, data)
+    assert result["errors"] == {"base": "controller_limits_required"}
+    # The group the user has to fill in is now on the form.
+    assert "max_power_w" in fields(result)
+    result = await submit(hass, result, {**data, "max_power_w": 0})
+    assert result["errors"] == {"base": "controller_limits_required"}
+    result = await submit(
+        hass,
+        result,
+        {
+            **data,
+            "max_power_w": 6000,
+            "max_current": 15,
+            "relinquish_current": 15,
+        },
+    )
+    assert result["type"] == "create_entry"
+    assert entry.options["controller"]["limits"]["max_power_w"] == 6000
+
+
+def test_the_new_option_errors_exist_in_every_translation_file():
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "custom_components/energy_compass"
+    for name in ("strings.json", "translations/en.json", "translations/pl.json"):
+        errors = json.loads((root / name).read_text())["options"]["error"]
+        assert "{entity}" in errors["controller_voltage_unavailable"]
+        assert errors["controller_limits_required"]

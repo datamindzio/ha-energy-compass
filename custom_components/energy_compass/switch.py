@@ -23,6 +23,8 @@ class DeyePauseSwitch(DeyeControllerEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs):
         self.controller.async_set_paused(True)
+        await self.controller.async_save_now()
 
     async def async_turn_off(self, **kwargs):
         self.controller.async_set_paused(False)
+        await self.controller.async_save_now()

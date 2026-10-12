@@ -1051,7 +1051,9 @@
       "controller_device_in_use": "Another Energy Compass entry already controls this device.",
       "controller_not_released": "Select the Deye mode Off and wait until the base profile is restored (restore pending off) before disabling the controller or changing its device.",
       "controller_entity_missing": "The device lacks what the native controller needs: {missing}.",
-      "controller_low_voltage_pack": "This controller supports high-voltage packs (400–610 V). Measured: {voltage} V. 48 V Deye models are not supported yet."
+      "controller_low_voltage_pack": "This controller supports high-voltage packs (400–610 V). Measured: {voltage} V. 48 V Deye models are not supported yet.",
+      "controller_voltage_unavailable": "The battery voltage sensor ({entity}) has no numeric reading, so the pack cannot be told from a 48 V one. Wait until the inverter reports a voltage and save again.",
+      "controller_limits_required": "The maximum power and currents cannot be derived (the charge or discharge power in the battery settings, or the inverter's current limit, is zero). Enter them in the Limits and takeover group."
     },
     "abort": {
       "site_not_registered": "This site was forgotten in another window; re-enable Energy Atlas to register a new one."
@@ -1437,6 +1439,14 @@
     "deye_hardware_unverified": {
       "title": "Deye inverter not verified",
       "description": "The inverter reports \"{device_type}\" with protocol {protocol}, which Energy Compass has not been verified on. The controller still works: it checks the register layout against the entity states before its first write, and Simulation shows the result. Try Simulation first."
+    },
+    "deye_blueprint_active": {
+      "title": "Deye blueprint automation is still on",
+      "description": "The automation {automation} uses the Deye controller blueprint while the native engine is selected. Energy Compass writes nothing to the inverter until the automation is switched off and its runs have stopped, because two writers would fight over the inverter."
+    },
+    "deye_run_failed": {
+      "title": "Deye controller runs are failing",
+      "description": "The last runs of the Deye controller failed or could not read the controller state, so the inverter settings are not being managed. The runtime sensor shows the reason and the Home Assistant log has the details. This issue clears after the next successful run."
     },
     "source_removed": {
       "title": "Source removed",

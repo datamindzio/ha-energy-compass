@@ -6,6 +6,7 @@ from deye_oracle_v0137 import MODE, P
 
 from custom_components.energy_compass import controller_hardware as hardware
 from custom_components.energy_compass import controller_profile as profile
+from custom_components.energy_compass import controller_run as run_module
 
 DEVICE = "HV 3-Phase Hybrid Inverter"
 ATTRIBUTES = {
@@ -140,3 +141,77 @@ def test_a_failed_probe_is_retried_and_a_passed_one_is_not_repeated():
     # Nothing left to write: a proven layout is not read again within the session.
     assert runner.outcomes[-1] == "run_finished"
     assert len(runner.reads) == reads
+
+
+def test_a_select_outside_the_known_map_is_not_evidence_of_a_wrong_layout():
+    _, runner, registers, states = sample()
+    select = next(entity for entity in registers if entity.startswith("select."))
+    odd = {**runner.raw, registers[select].address: 7}
+    assert hardware.probe(odd, registers, states) == []
+    assert hardware.probe(odd, registers, {**states, select: "unavailable"}) == [select]
+    assert hardware.probe(odd, registers, {**states, select: "unknown"}) == [select]
+
+
+def test_numbers_and_mapped_selects_must_still_match():
+    _, runner, registers, states = sample()
+    select = next(entity for entity in registers if entity.startswith("select."))
+    number = next(entity for entity in registers if entity.startswith("number."))
+    mapped = {**runner.raw, registers[select].address: 1}
+    assert hardware.probe(mapped, registers, states) == [select]
+    missing = {k: v for k, v in runner.raw.items() if k != registers[number].address}
+    assert hardware.probe(missing, registers, states) == [number]
+    assert hardware.probe(runner.raw, registers, {**states, number: "unavailable"}) == [
+        number
+    ]
+
+
+def test_a_changed_device_or_entity_map_forces_a_new_probe(monkeypatch):
+    import deye_oracle_v0137
+
+    h, runner, *_ = sample()
+    h.data[MODE]["state"] = "Simulation"
+    runner.run()
+    runner.run()
+    assert len(runner.reads) == 1
+    monkeypatch.setattr(deye_oracle_v0137, "DEVICE", "another_device")
+    runner.run()
+    assert len(runner.reads) == 2
+    runner.run()
+    assert len(runner.reads) == 2
+
+
+def test_an_entity_override_changes_the_layout_key():
+    h, runner, registers, _ = sample()
+    run = run_module._Run(
+        limits=h.limits(), registers=registers, runtime={}, pending=False, ceiling={}
+    )
+    snapshot = h.snapshot()
+    first = runner.executor._layout_key(run, snapshot)
+    renamed = {
+        ("number.other" if entity == next(iter(registers)) else entity): register
+        for entity, register in registers.items()
+    }
+    run.registers = renamed
+    assert runner.executor._layout_key(run, snapshot) != first
+
+
+def test_the_restore_of_the_base_does_not_wait_for_the_probe():
+    h, runner, good = shifted_runner()
+    runner.raw = good
+    runner.run()
+    assert runner.writes and h.restore_pending
+    forced = len(runner.writes)
+    runner.raw = {address + 1: raw for address, raw in runner.raw.items()}
+    runner.executor._layout_session = None
+    h.data[MODE]["state"] = "Off"
+    runner.run()
+    assert runner.outcomes[-1] != "layout_mismatch"
+    assert len(runner.writes) > forced
+
+
+def test_forcing_still_needs_the_probe_after_a_restore():
+    h, runner, _ = shifted_runner()
+    h.data[MODE]["state"] = "Auto"
+    runner.run()
+    assert runner.outcomes == ["layout_mismatch"]
+    assert runner.writes == []
