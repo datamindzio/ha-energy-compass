@@ -14,21 +14,79 @@ _SPEC.loader.exec_module(replay)
 
 SAMPLE = ROOT / "tools/replay_sample.json"
 
+# The shipped sample has flat price blocks, so the base plan has tied optima: equal
+# objective, different flows (which of two equal-priced hours charges, or exports).
+# HiGHS picks per platform (T-035: at 75c6870 macOS arm64 priced 2026-09-21 at 2.6375,
+# the Linux CI image at 2.7562; every solve was proven optimal, none time limited), and
+# the tied plans realise anything from 2.48 to 2.76. A pin or a range on that column
+# is a pin of the platform's pick, so the shipped sample is only held to what is true
+# of every tied optimum (and to the self-use cost, a simulation without a solve).
+#
+# `untied_sample` adds a distinct price offset to every interval, so the optimum is
+# unique and the plan pins below name it. That is not true by construction: replay
+# solves the base plan at HiGHS' default mip_rel_gap (1e-4, ADR-0003) and accepts the
+# incumbent, and the offsets move the objective by less than that. The pick is stable
+# because every solve ends optimal with a measured gap of ~1e-15 (forcing
+# mip_rel_gap=0 gives the same plan costs). Measured margin: macOS arm64 and the Linux
+# CI image agree on every cost for offset scales from 1e-4 down to 1e-7 and diverge
+# again at 1e-8 (2.6375 vs 2.7562), so 1e-4 keeps 1000x. If a pin here fails on one
+# platform only, suspect a changed tie-break or a solve that stopped inside the gap
+# before touching the pin.
+_TIE_OFFSET = 1e-4
+# `index * 37 % 101` repeats at index + 101: the fixture refuses a longer sample.
+_MAX_UNTIED_INTERVALS = 101
 
-def run(capsys, *args):
-    code = replay.main([str(SAMPLE), "--json", *args])
+
+@pytest.fixture(scope="module")
+def untied_sample(tmp_path_factory):
+    document = json.loads(SAMPLE.read_text())
+    index = 0
+    for day in document["days"]:
+        for interval in day["intervals"]:
+            interval["buy"] += _TIE_OFFSET * (index * 37 % 101) / 101
+            interval["sell"] += _TIE_OFFSET * (index * 53 % 103) / 103
+            index += 1
+    assert index <= _MAX_UNTIED_INTERVALS, "buy offsets repeat, ties come back"
+    path = tmp_path_factory.mktemp("untied") / "replay_sample_untied.json"
+    path.write_text(json.dumps(document))
+    return path
+
+
+@pytest.fixture
+def run_untied(untied_sample, capsys):
+    def go(*args):
+        return run(capsys, *args, sample=untied_sample)
+
+    return go
+
+
+def run(capsys, *args, sample=SAMPLE):
+    code = replay.main([str(sample), "--json", *args])
     out = capsys.readouterr()
     return code, (json.loads(out.out) if out.out else None), out.err
 
 
-def test_sample_prices_plan_between_self_use_and_hindsight(capsys):
+def test_shipped_sample_holds_the_invariants_whichever_tied_optimum_is_picked(capsys):
     code, days, _ = run(capsys)
 
     assert code == 0
     assert [day["date"] for day in days] == ["2026-09-20", "2026-09-21"]
+    self_use = {"2026-09-20": 0.7308, "2026-09-21": 3.9765}
+    for day in days:
+        assert day["self_use"] == pytest.approx(self_use[day["date"]], abs=1e-3)
+        assert day["hindsight"] <= day["plan"] + 1e-6
+        assert day["plan"] <= day["self_use"] + 1e-6
+        assert day["solve_failures"] == 0
+
+
+def test_sample_prices_plan_between_self_use_and_hindsight(run_untied):
+    code, days, _ = run_untied()
+
+    assert code == 0
+    assert [day["date"] for day in days] == ["2026-09-20", "2026-09-21"]
     expected = {
-        "2026-09-20": (-0.7249, 0.7308, -0.7249),
-        "2026-09-21": (2.6933, 3.9765, 2.0073),
+        "2026-09-20": (-0.7252, 0.7308, -0.7253),
+        "2026-09-21": (2.5365, 3.9769, 2.0076),
     }
     for day in days:
         plan, self_use, hindsight = expected[day["date"]]
@@ -39,12 +97,12 @@ def test_sample_prices_plan_between_self_use_and_hindsight(capsys):
         assert day["solve_failures"] == 0
 
 
-def test_table_prints_the_three_costs_and_totals(capsys):
-    assert replay.main([str(SAMPLE), "--currency", "PLN"]) == 0
+def test_table_prints_the_three_costs_and_totals(untied_sample, capsys):
+    assert replay.main([str(untied_sample), "--currency", "PLN"]) == 0
 
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].split()[:4] == ["date", "plan", "self_use", "hindsight"]
-    assert lines[-1].split()[:4] == ["total", "1.968", "4.707", "1.282"]
+    assert lines[-1].split()[:4] == ["total", "1.811", "4.708", "1.282"]
 
 
 def test_set_overrides_a_setting_so_runs_compare(capsys):
@@ -454,14 +512,14 @@ def test_default_factor_leaves_the_replay_untouched(capsys):
     assert manual == baseline
 
 
-def test_low_export_factor_moves_the_plan_but_not_the_measuring_stick(capsys):
-    _, baseline, _ = run(capsys)
-    code, low, _ = run(capsys, *_DEPOSIT, "--set", "export_value_factor=0.3")
+def test_low_export_factor_moves_the_plan_but_not_the_measuring_stick(run_untied):
+    _, baseline, _ = run_untied()
+    code, low, _ = run_untied(*_DEPOSIT, "--set", "export_value_factor=0.3")
 
     assert code == 0
     assert _total(low, "self_use") == pytest.approx(_total(baseline, "self_use"))
-    assert _total(low, "plan") == pytest.approx(2.495, abs=1e-3)
-    assert _total(low, "hindsight") == pytest.approx(1.481, abs=1e-3)
+    assert _total(low, "plan") == pytest.approx(2.345, abs=1e-3)
+    assert _total(low, "hindsight") == pytest.approx(1.4806, abs=1e-3)
     assert _total(low, "plan") > _total(baseline, "plan")
 
 
