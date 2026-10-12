@@ -1471,17 +1471,74 @@ tariff price (e.g. solar that would otherwise be exported costs its lost export 
 <p>Percentiles come from successful probe costs across the reference horizon (default 24 h) using
 linear interpolation. If a full reference probe fails, <code>short_coverage</code> decides: <code>absolute_fallback</code>
 (default: keep BOOST/LIMIT absolute rules and the minimum-tariff CHEAP rule) or <code>unavailable</code>.</p>
-<p><strong>Limit: long horizons with <code>self_sufficiency</code> and <code>backup_ready</code>.</strong> Every probe is a full, exact
-solve of the whole horizon and is known only when it finishes within <code>probe_time_limit_s</code> (default
-2 s); a probe that does not finish stays unknown — it is never replaced by an approximate cost. These
-two strategies keep <code>SELF_CONSUME</code> on through the night, and its load-following rule makes one probe
-of a 192-interval horizon (48 h of quarter-hours) take several seconds (5–10 s measured). With the default limits, 96 probes
-then end with 0–1 known costs after the whole probe budget (about 57 s measured), the levels use
-<code>short_coverage</code> and <code>reason</code> is <code>reference_probe_failed</code>; this holds for <code>minimum_mode_minutes</code> 60
-and 0. The base plan is not affected. To get levels with these strategies,
-shorten the planning horizon, or raise <code>probe_time_limit_s</code> and <code>total_time_limit_s</code> (up to 30 s and
-300 s) and use a 60-minute display interval so fewer probes share the budget. The other four
-strategies finished all 96 probes at 192 intervals on the same host.</p>
+<p><strong>Limit: probes that do not finish in time.</strong> Every probe is a full, exact solve of the whole
+planning horizon and is known only when it finishes within <code>probe_time_limit_s</code> (default 2 s); the
+probes run one after another inside <code>total_time_limit_s</code> (default 60 s). A probe that does not finish
+stays unknown — it is never replaced by an approximate cost. One unknown full reference probe is
+enough for <code>short_coverage</code> (<code>reason</code> is <code>reference_probe_failed</code>), and an interval whose own probe is
+unknown has no level.</p>
+<p>How long a probe takes depends on the strategy and on the number of intervals in the planning
+horizon. <code>self_sufficiency</code> and <code>backup_ready</code> keep <code>SELF_CONSUME</code> on through the night, and the
+load-following rule makes their probes many times slower. Probes with a known cost at the default
+limits, quarter-hour prices and hourly display intervals, measured on a fast desktop CPU (Apple M4
+Max):</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Planning horizon</th>
+<th><code>cost_min</code>, <code>pv_swap</code>, <code>max_export</code>, <code>grid_friendly</code></th>
+<th><code>self_sufficiency</code></th>
+<th><code>backup_ready</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>12 h (48 intervals), 12 probes</td>
+<td>12 of 12</td>
+<td>12 of 12</td>
+<td>12 of 12</td>
+</tr>
+<tr>
+<td>24 h (96 intervals, the default), 24 probes</td>
+<td>24 of 24</td>
+<td>0 of 24</td>
+<td>2 of 24</td>
+</tr>
+<tr>
+<td>48 h (192 intervals), 24 probes</td>
+<td>7–23 of 24</td>
+<td>none</td>
+<td>none</td>
+</tr>
+</tbody>
+</table></section>
+<p>So with <code>self_sufficiency</code> or <code>backup_ready</code> the consumption levels are unknown for nearly every
+interval already on the default 24 h horizon, and on a 48 h horizon no strategy completes its probes
+(with a 15-minute display interval 18–67 of 96 are known). At 48 h the base plan of these two
+strategies also runs into <code>solve_time_limit_s</code> and is published as <code>time_limited</code>.
+<code>minimum_mode_minutes = 0</code> does not lift the limit: at 24 h 13 of 24 (<code>self_sufficiency</code>) and 20 of 24
+(<code>backup_ready</code>) probes are known, which is still <code>short_coverage</code>. A slower host, such as a
+Raspberry Pi, reaches each limit at a shorter horizon.</p>
+<p>The <a href="#flexible-energy-depth">flexible energy depth</a> is bound by the same two settings: each of its
+five solves gets <code>probe_time_limit_s</code>, inside what the probes left of <code>total_time_limit_s</code>. With
+<code>self_sufficiency</code> or <code>backup_ready</code> at 24 h none of the five finished within the default 2 s, so the
+depth is unknown (profiles <code>UNKNOWN</code>, reason <code>timeout</code>); <code>cost_min</code> at 24 h and <code>self_sufficiency</code> at
+12 h got all five.</p>
+<p>What was measured to help on the same host, at the default 24 h horizon:</p>
+<ul>
+<li><code>backup_ready</code>: <code>probe_time_limit_s</code> 10 and <code>total_time_limit_s</code> 120 gave all 24 probes (47 s of
+  probing per recalculation) and, with the same probe limit, all five flexible-depth solves (21 s
+  more). With <code>probe_time_limit_s</code> 5 one probe was still late and the levels
+  stayed on <code>short_coverage</code>.</li>
+<li><code>self_sufficiency</code>: only the maximum of both settings, <code>probe_time_limit_s</code> 30 and
+  <code>total_time_limit_s</code> 300, gave all 24 probes, after 199 s of probing per recalculation, and the
+  five flexible-depth solves took 48 s more. That leaves no headroom for a slower host or a harder
+  day.</li>
+<li>A 12 h planning horizon gave all 12 probes for both strategies at the default limits, with the
+  slowest <code>self_sufficiency</code> probe at 1.5 s of the 2 s limit; the plan then looks 12 h ahead only.</li>
+</ul>
+<p>The table, the per-probe times and the command that reproduces them are in
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/runtime-validation.md#consumption-probe-limits"><code>docs/runtime-validation.md</code></a>.</p>
 <h2 id="windows-and-flexible-energy-depth">Windows and flexible energy depth</h2>
 <h3 id="windows">Windows</h3>
 <p>Adjacent intervals of the same level merge into windows. <code>next_boost_start</code>, <code>next_cheap_start</code>

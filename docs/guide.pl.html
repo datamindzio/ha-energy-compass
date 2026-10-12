@@ -1488,18 +1488,75 @@ którą inaczej by sprzedano, kosztuje utraconą wartość eksportu).</p>
 liniową. Gdy nie powiedzie się pełna próba odniesienia, decyduje <code>short_coverage</code>:
 <code>absolute_fallback</code> (domyślnie: zostają bezwzględne reguły BOOST/LIMIT i reguła CHEAP wg minimalnej
 taryfy) albo <code>unavailable</code>.</p>
-<p><strong>Ograniczenie: długie horyzonty ze strategiami <code>self_sufficiency</code> i <code>backup_ready</code>.</strong> Każda próba to
-pełne, dokładne obliczenie całego horyzontu i jest znana tylko wtedy, gdy skończy się w
-<code>probe_time_limit_s</code> (domyślnie 2 s); próba, która nie zdąży, pozostaje nieznana — nigdy nie jest
-zastępowana kosztem przybliżonym. Te dwie strategie utrzymują <code>SELF_CONSUME</code> przez całą noc, a reguła
-podążania za obciążeniem sprawia, że jedna próba horyzontu 192 przedziałów (48 h kwadransów) trwa
-kilka sekund (zmierzono 5–10 s). Przy domyślnych limitach 96 prób kończy się wtedy 0–1 znanymi kosztami po wykorzystaniu
-całego budżetu prób (zmierzono ok. 57 s), poziomy korzystają z <code>short_coverage</code>, a <code>reason</code> to
-<code>reference_probe_failed</code>; dotyczy to <code>minimum_mode_minutes</code> 60 i 0. Plan bazowy
-pozostaje bez zmian. Aby mieć poziomy przy tych strategiach, skróć horyzont planowania albo podnieś
-<code>probe_time_limit_s</code> i <code>total_time_limit_s</code> (do 30 s i 300 s) i ustaw przedział wyświetlania
-60 minut, żeby budżet dzieliło mniej prób. Pozostałe cztery strategie kończyły wszystkie 96 prób przy 192
-przedziałach na tym samym komputerze.</p>
+<p><strong>Ograniczenie: próby, które nie kończą się na czas.</strong> Każda próba to pełne, dokładne obliczenie
+całego horyzontu planowania i jest znana tylko wtedy, gdy skończy się w <code>probe_time_limit_s</code>
+(domyślnie 2 s); próby liczone są jedna po drugiej w ramach <code>total_time_limit_s</code> (domyślnie 60 s).
+Próba, która nie zdąży, pozostaje nieznana — nigdy nie jest zastępowana kosztem przybliżonym. Jedna
+nieznana próba pełnego przedziału odniesienia wystarcza do użycia <code>short_coverage</code> (<code>reason</code> to
+<code>reference_probe_failed</code>), a przedział, którego własna próba jest nieznana, nie ma poziomu.</p>
+<p>Czas jednej próby zależy od strategii i od liczby przedziałów w horyzoncie planowania.
+<code>self_sufficiency</code> i <code>backup_ready</code> utrzymują <code>SELF_CONSUME</code> przez całą noc, a reguła podążania za
+obciążeniem wielokrotnie wydłuża ich próby. Próby ze znanym kosztem przy domyślnych limitach, cenach
+kwadransowych i godzinnym przedziale wyświetlania, zmierzone na szybkim komputerze biurkowym (Apple
+M4 Max):</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Horyzont planowania</th>
+<th><code>cost_min</code>, <code>pv_swap</code>, <code>max_export</code>, <code>grid_friendly</code></th>
+<th><code>self_sufficiency</code></th>
+<th><code>backup_ready</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>12 h (48 przedziałów), 12 prób</td>
+<td>12 z 12</td>
+<td>12 z 12</td>
+<td>12 z 12</td>
+</tr>
+<tr>
+<td>24 h (96 przedziałów, domyślnie), 24 próby</td>
+<td>24 z 24</td>
+<td>0 z 24</td>
+<td>2 z 24</td>
+</tr>
+<tr>
+<td>48 h (192 przedziały), 24 próby</td>
+<td>7–23 z 24</td>
+<td>żadna</td>
+<td>żadna</td>
+</tr>
+</tbody>
+</table></section>
+<p>Przy <code>self_sufficiency</code> albo <code>backup_ready</code> poziomy zużycia są więc nieznane dla prawie każdego
+przedziału już na domyślnym horyzoncie 24 h, a na horyzoncie 48 h żadna strategia nie kończy swoich
+prób (przy przedziale wyświetlania 15 minut znanych jest 18–67 z 96). Przy 48 h plan bazowy tych
+dwóch strategii dochodzi też do <code>solve_time_limit_s</code> i jest publikowany jako <code>time_limited</code>.
+<code>minimum_mode_minutes = 0</code> nie znosi ograniczenia: przy 24 h znanych jest 13 z 24 (<code>self_sufficiency</code>)
+i 20 z 24 (<code>backup_ready</code>) prób, czyli nadal <code>short_coverage</code>. Wolniejszy komputer, na przykład
+Raspberry Pi, dochodzi do każdego z tych ograniczeń przy krótszym horyzoncie.</p>
+<p><a href="#głębokość-elastycznego-zużycia">Głębokość elastycznego zużycia</a> podlega tym samym dwóm ustawieniom:
+każde z jej pięciu obliczeń dostaje <code>probe_time_limit_s</code>, w ramach tego, co próby zostawiły z
+<code>total_time_limit_s</code>. Przy <code>self_sufficiency</code> albo <code>backup_ready</code> i 24 h żadne z pięciu nie skończyło
+się w domyślnych 2 s, więc głębokość jest nieznana (profile <code>UNKNOWN</code>, powód <code>timeout</code>); <code>cost_min</code>
+przy 24 h i <code>self_sufficiency</code> przy 12 h dostały wszystkie pięć.</p>
+<p>Co według pomiarów pomaga na tym samym komputerze, przy domyślnym horyzoncie 24 h:</p>
+<ul>
+<li><code>backup_ready</code>: <code>probe_time_limit_s</code> 10 i <code>total_time_limit_s</code> 120 dały wszystkie 24 próby (47 s
+  liczenia prób na każde przeliczenie) oraz, przy tym samym limicie próby, wszystkie pięć obliczeń
+  głębokości elastycznego zużycia (kolejne 21 s). Przy <code>probe_time_limit_s</code> 5 jedna próba nadal się spóźniała
+  i poziomy zostawały przy <code>short_coverage</code>.</li>
+<li><code>self_sufficiency</code>: dopiero maksimum obu ustawień, <code>probe_time_limit_s</code> 30 i
+  <code>total_time_limit_s</code> 300, dało wszystkie 24 próby, po 199 s liczenia prób na każde przeliczenie, a
+  pięć obliczeń głębokości elastycznego zużycia zajęło kolejne 48 s. Nie zostawia to zapasu na
+  wolniejszy komputer ani trudniejszy dzień.</li>
+<li>Horyzont planowania 12 h dał wszystkie 12 prób dla obu strategii przy domyślnych limitach, przy
+  czym najwolniejsza próba <code>self_sufficiency</code> zajęła 1,5 s z limitu 2 s; plan patrzy wtedy tylko
+  12 h naprzód.</li>
+</ul>
+<p>Tabela, czasy poszczególnych prób i polecenie, które je odtwarza, są w
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/runtime-validation.md#consumption-probe-limits"><code>docs/runtime-validation.md</code></a>.</p>
 <h2 id="okna-i-głębokość-elastycznego-zużycia">Okna i głębokość elastycznego zużycia</h2>
 <h3 id="okna">Okna</h3>
 <p>Sąsiednie przedziały tego samego poziomu łączą się w okna. <code>next_boost_start</code>, <code>next_cheap_start</code>

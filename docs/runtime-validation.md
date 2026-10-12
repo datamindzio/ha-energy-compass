@@ -62,4 +62,59 @@ docker run --rm -v "$PWD":/workspace:ro ha-energy-compass-test:2026.9.1 -m bench
 
 Both commands exited successfully in the matched ARM64 container on the Mac development host. These timings are not physical Raspberry Pi 5 measurements. The nondefault run probes all 36 reference hours even though it displays only 12 hours. Actual Pi 5 timing remains to be measured before any control use.
 
-Known limit: `python -m benchmarks.optimizer --strategy self_sufficiency --slots 192 --probes 96` (and `backup_ready`) does not complete its probes at the default 2 s probe limit. Measured on the Mac development host: base plan optimal in 2.3-3.3 s, then 0/96 known costs after 56.7 s with `minimum_mode_minutes` 60 and 1/96 after 57.7 s with 0, `classification_mode=absolute_fallback`, `coverage_reason=reference_probe_failed`. Each probe is the strict full solve and needs 5-10 s under the SELF_CONSUME load-following rule; see `docs/model.md` § Incremental consumption for the cheaper probes that were measured and rejected. `tests/test_consumption_load_following_limit.py` asserts this fallback.
+## Consumption probe limits
+
+A consumption probe is the strict full-horizon solve and is known only when it proves its optimum within `probe_time_limit_s` (default 2 s); the probes run one after another inside `total_time_limit_s` (default 60 s) minus the base solve and a one-second reserve. `benchmarks.probes` runs every probe to its proof with a long limit, reports the CPU seconds, and replays the serial loop at the shipped limits:
+
+```sh
+python -m benchmarks.probes --strategy self_sufficiency --slots 96
+python -m benchmarks.probes --strategy cost_min --slots 192 --display-interval 15
+```
+
+Measured at `main` b015ee7 (with the SELF_CONSUME and CHARGE_PV load-following rules), `minimum_mode_minutes` 60, Python 3.14 venv with SciPy 1.18.1 on the Mac development host (Apple M4 Max), four runs side by side on a host that was also running other work; treat the seconds as ±30 %. `--slots 96` is the default planning horizon of 24 h with quarter-hour prices; the probes cover the first 24 h (12 h at 48 slots).
+
+| Slots | Probes | Strategy | Base plan CPU | Probe CPU min / median / max | All probes | Known at 2 s / 60 s |
+| ---: | --- | --- | ---: | ---: | ---: | ---: |
+| 48 | 12 hourly | `cost_min`, `pv_swap`, `max_export`, `grid_friendly` | 0.2-1.0 s | 0.2 / 0.4-0.5 / 0.9 s | 5-7 s | 12 of 12 |
+| 48 | 12 hourly | `self_sufficiency` | 0.4 s | 0.4 / 1.0 / 1.5 s | 12 s | 12 of 12 |
+| 48 | 12 hourly | `backup_ready` | 0.2 s | 0.1 / 0.2 / 0.2 s | 2 s | 12 of 12 |
+| 96 | 24 hourly | `cost_min` | 0.1 s | 0.1 / 0.1 / 0.3 s | 3 s | 24 of 24 |
+| 96 | 24 hourly | `pv_swap` | 0.4 s | 0.2 / 0.3 / 0.5 s | 8 s | 24 of 24 |
+| 96 | 24 hourly | `max_export` | 0.1 s | 0.1 / 0.1 / 0.3 s | 4 s | 24 of 24 |
+| 96 | 24 hourly | `grid_friendly` | 0.3 s | 0.2 / 0.3 / 0.6 s | 6 s | 24 of 24 |
+| 96 | 24 hourly | `self_sufficiency` | 6.6 s | 4.4 / 7.5 / 19.0 s | 195 s | 0 of 24 |
+| 96 | 24 hourly | `backup_ready` | 2.3 s | 1.9 / 2.8 / 3.5 s | 65 s | 2 of 24 |
+| 192 | 24 hourly | `cost_min` | 2.1 s | 1.0 / 2.5 / 3.8 s | 56 s | 7 of 24 |
+| 192 | 24 hourly | `pv_swap` | 0.4 s | 0.3 / 0.4 / 3.2 s | 19 s | 23 of 24 |
+| 192 | 24 hourly | `max_export` | 1.1 s | 0.7 / 2.4 / 3.5 s | 53 s | 9 of 24 |
+| 192 | 24 hourly | `grid_friendly` | 2.3 s | 0.7 / 2.3 / 4.3 s | 49 s | 12 of 24 |
+| 192 | 24 hourly | `self_sufficiency` | 19 s | 9 / 24 / 35 s (every 2nd probe, busier host) | — | none of the 12 measured |
+| 192 | 24 hourly | `backup_ready` | 23 s | 11 / 28 / 50 s (every 2nd probe, busier host) | — | none of the 12 measured |
+| 192 | 96 quarter-hour | `cost_min` | 1.7 s | 0.5 / 1.8 / 4.3 s | 167 s | 18 of 96 |
+| 192 | 96 quarter-hour | `pv_swap` | 0.3 s | 0.3 / 0.7 / 5.2 s | 79 s | 67 of 96 |
+| 192 | 96 quarter-hour | `max_export` | 0.9 s | 0.5 / 1.5 / 4.7 s | 158 s | 28 of 96 |
+| 192 | 96 quarter-hour | `grid_friendly` | 1.8 s | 0.6 / 1.5 / 4.3 s | 152 s | 38 of 96 |
+
+One unknown full reference probe is enough for the `short_coverage` policy (`coverage_reason=reference_probe_failed`), and an interval whose own probe is unknown has no level. So on this host:
+
+- 12 h horizon: every strategy keeps percentile levels. `self_sufficiency` uses up to 1.5 s of the 2 s probe limit, so a slower host will not fit.
+- 24 h horizon (the default): the four fast strategies keep percentile levels with a wide margin. `self_sufficiency` has no known probe and `backup_ready` two of 24, so their consumption levels are unknown for nearly every interval.
+- 48 h horizon: no strategy completes its probes, with hourly or quarter-hour display intervals. The base plan of `self_sufficiency` and `backup_ready` takes 17 s and 23 s wall-clock when run alone, above the 10 s `solve_time_limit_s`, so it is published as `time_limited`. The base-plan table above predates the CHARGE_PV load-following rule and still shows 5.28 s and 7.30 s for them and 0.42 s for `cost_min` (now about 1.4 s).
+- `minimum_mode_minutes` 0 at 96 slots: `self_sufficiency` 13 of 24 known (probes 1.2-25 s), `backup_ready` 20 of 24 (0.2-10 s) — still the `short_coverage` policy.
+
+Raised limits, wall-clock runs of `analyze_consumption` at 96 slots on the same host:
+
+| Strategy | `probe_time_limit_s` / `total_time_limit_s` | Probes | Result |
+| --- | --- | ---: | --- |
+| `backup_ready` | 5 s / 120 s | 74 s | 23 of 24 known, `absolute_fallback` |
+| `backup_ready` | 10 s / 120 s | 47 s | 24 of 24 known, percentile mode, complete |
+| `self_sufficiency` | 30 s / 300 s (both maxima) | 199 s | 24 of 24 known, percentile mode, complete |
+
+Flexible energy depth (`analyze_flexible_loads`, five solves of 3-20 kWh, each bounded by
+`probe_time_limit_s` inside what the probes left of the total limit), wall-clock at 96 slots on the same
+host: at the default 2 s all five solves of `self_sufficiency` and of `backup_ready` time out and the depth
+is unknown, also with the whole 50 s to themselves; `cost_min` finishes all five in 1.2 s, and
+`self_sufficiency` at 48 slots in 2.3 s. With `probe_time_limit_s` 10 `backup_ready` finishes all five in
+21 s, with 30 `self_sufficiency` in 48 s.
+
+These are fast-desktop numbers, not Raspberry Pi 5 measurements; a slower host reaches each limit at a shorter horizon. The probes stay exact by decision (`docs/adr/0006-consumption-probes-stay-exact.md`); `tests/test_consumption_load_following_limit.py` asserts the 96-slot and 192-slot fallback for the two slow strategies.
