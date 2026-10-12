@@ -868,6 +868,55 @@ Percentiles come from successful probe costs across the reference horizon (defau
 linear interpolation. If a full reference probe fails, `short_coverage` decides: `absolute_fallback`
 (default: keep BOOST/LIMIT absolute rules and the minimum-tariff CHEAP rule) or `unavailable`.
 
+**Limit: probes that do not finish in time.** Every probe is a full, exact solve of the whole
+planning horizon and is known only when it finishes within `probe_time_limit_s` (default 2 s); the
+probes run one after another inside `total_time_limit_s` (default 60 s). A probe that does not finish
+stays unknown — it is never replaced by an approximate cost. One unknown full reference probe is
+enough for `short_coverage` (`reason` is `reference_probe_failed`), and an interval whose own probe is
+unknown has no level.
+
+How long a probe takes depends on the strategy and on the number of intervals in the planning
+horizon. `self_sufficiency` and `backup_ready` keep `SELF_CONSUME` on through the night, and the
+load-following rule makes their probes many times slower. Probes with a known cost at the default
+limits, quarter-hour prices and hourly display intervals, measured on a fast desktop CPU (Apple M4
+Max):
+
+| Planning horizon | `cost_min`, `pv_swap`, `max_export`, `grid_friendly` | `self_sufficiency` | `backup_ready` |
+| --- | --- | --- | --- |
+| 12 h (48 intervals), 12 probes | 12 of 12 | 12 of 12 | 12 of 12 |
+| 24 h (96 intervals, the default), 24 probes | 24 of 24 | 0 of 24 | 2 of 24 |
+| 48 h (192 intervals), 24 probes | 7–23 of 24 | none | none |
+
+So with `self_sufficiency` or `backup_ready` the consumption levels are unknown for nearly every
+interval already on the default 24 h horizon, and on a 48 h horizon no strategy completes its probes
+(with a 15-minute display interval 18–67 of 96 are known). At 48 h the base plan of these two
+strategies also runs into `solve_time_limit_s` and is published as `time_limited`.
+`minimum_mode_minutes = 0` does not lift the limit: at 24 h 13 of 24 (`self_sufficiency`) and 20 of 24
+(`backup_ready`) probes are known, which is still `short_coverage`. A slower host, such as a
+Raspberry Pi, reaches each limit at a shorter horizon.
+
+The [flexible energy depth](#flexible-energy-depth) is bound by the same two settings: each of its
+five solves gets `probe_time_limit_s`, inside what the probes left of `total_time_limit_s`. With
+`self_sufficiency` or `backup_ready` at 24 h none of the five finished within the default 2 s, so the
+depth is unknown (profiles `UNKNOWN`, reason `timeout`); `cost_min` at 24 h and `self_sufficiency` at
+12 h got all five.
+
+What was measured to help on the same host, at the default 24 h horizon:
+
+- `backup_ready`: `probe_time_limit_s` 10 and `total_time_limit_s` 120 gave all 24 probes (47 s of
+  probing per recalculation) and, with the same probe limit, all five flexible-depth solves (21 s
+  more). With `probe_time_limit_s` 5 one probe was still late and the levels
+  stayed on `short_coverage`.
+- `self_sufficiency`: only the maximum of both settings, `probe_time_limit_s` 30 and
+  `total_time_limit_s` 300, gave all 24 probes, after 199 s of probing per recalculation, and the
+  five flexible-depth solves took 48 s more. That leaves no headroom for a slower host or a harder
+  day.
+- A 12 h planning horizon gave all 12 probes for both strategies at the default limits, with the
+  slowest `self_sufficiency` probe at 1.5 s of the 2 s limit; the plan then looks 12 h ahead only.
+
+The table, the per-probe times and the command that reproduces them are in
+[`docs/runtime-validation.md`](runtime-validation.md#consumption-probe-limits).
+
 ## Windows and flexible energy depth
 
 ### Windows
