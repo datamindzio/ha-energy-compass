@@ -406,7 +406,18 @@ DECISION = r"""
 {% endif %}
 {% if state in ['CHARGE_GRID','DISCHARGE_GRID'] and rt.get('reached_key') == reached_key and not balance %}{% set charge=charge_cap if state == 'CHARGE_GRID' else 0 %}{% set grid=0 %}{% set discharge=reached_discharge if state == 'DISCHARGE_GRID' else 0 %}{% set direction='Disabled' %}{% set ns.reached=true %}{% endif %}
 {# Przy 100 % ladowanie 0 A, poza oknem balansowania: tam BMS musi dostac prad absorpcji. #}
-{% if state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+{# Tryb Voltage: falownik sam konczy ladowanie na napieciu pakietu, a SOC 100 %
+   z estymatora potrafi byc zawyzony (licznik dryfuje miedzy pelnymi
+   kotwicami). HOLD, CHARGE_PV i SELF_CONSUME zostawiaja wiec pelny cap ladowania
+   z samego PV: siec 0 A, kierunek Disabled, bez celu SOC i bez zatrzasku;
+   rozladowanie wg wiersza (HOLD 0 A). Cap to charge_cap z histereza sufitu
+   pradu, wiec zapis nie spada do 0 A wokol granicy. CHARGE_GRID, CURTAIL,
+   balansowanie i tryb Capacity bez zmian. #}
+{% set full_pv = states(operation_entity)=='Voltage' and soc >= 100 and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+{% if full_pv %}
+  {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
+  {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
+{% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
 {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
   {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
   {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}

@@ -1225,6 +1225,7 @@ parametrów baterii (pojemność, sprawność) w planie`.
 | Stan planu | Prąd ładowania / rozładowania | Prąd ładowania z sieci | Kierunek TOU, cel |
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | limit / limit | 0 A | wszystkie Disabled, SOC 10 % |
+| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` przy SOC ≥ 100 % w trybie Voltage | limit / 0 A w `HOLD`, limit w pozostałych | 0 A | wszystkie Disabled, SOC 10 % |
 | `CHARGE_GRID` | limit / 0 A | planowana część sieciowa, ≤ `max_grid_current` | Grid w aktywnym programie, cel SOC z planu; w trybie Voltage napięcie TOU `voltage_grid_charge_ceiling` |
 | `DISCHARGE_GRID` | 0 A / z planu, ≤ limit; po osiągnięciu celu `reached_discharge_current`, ≤ limit | 0 A | Sell w aktywnym programie, cel SOC z planu, moc z planu, ≤ `max_power_w`; po osiągnięciu celu Disabled |
 | `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, cel SOC = końcowy SOC planu zaokrąglony w dół |
@@ -1234,7 +1235,7 @@ Limit to `min(max_current, max_power_w / V)` przy ładowaniu i `min(max_current,
 przy rozładowaniu. Limit ma histerezę: prąd już ustawiony w falowniku zostaje, dopóki mieści się
 w limicie mocy, a wyższy krok o 1 A wchodzi dopiero z 2 % zapasem napięcia (ok. 10 V przy 530 V), więc
 napięcie pakietu przechodzące przez granicę kroku nie przepisuje limitu przy każdym spadku i odbiciu.
-Limit mocy nigdy nie jest przekroczony. Przy SOC 100 % prąd ładowania spada do 0 A. Prądy z planu przeliczają kWh
+Limit mocy nigdy nie jest przekroczony. Przy SOC 100 % prąd ładowania spada do 0 A, z wyjątkiem trybu pracy baterii `Voltage` (następny akapit). Prądy z planu przeliczają kWh
 przedziału przez `eta_charge` (ładowanie) lub `eta_discharge` (rozładowanie) w pełnej długości przedziału. Cel SOC używa `capacity_kwh` zaakceptowanego planu; cel napięcia wynika
 ze stałej krzywej wysokonapięciowej baterii LFP (496–536 V dla 10–90 %, przy 100 % 584 V przy
 ładowaniu albo 544 V przy rozładowaniu). Osiągnięty cel w `CHARGE_GRID`/`DISCHARGE_GRID` jest
@@ -1244,7 +1245,13 @@ powyżej limitu), więc bateria pokrywa bazowe zużycie domu bez sprzedaży, a w
 sieci; 0 A oddałoby całe zużycie domu sieci przy pełnej baterii. Przedział z planowanym `discharge_kwh`
 poniżej tolerancji 0,05 kWh (eksport planowany z PV) jest osiągnięty od razu. W wierszu balansowania LFP (`balance_hold: true`) prąd
 ładowania zostaje przy 100 %, `CHARGE_GRID` celuje w 100 %, a prąd z sieci wynosi co najmniej
-`balance_grid_current`. `CURTAIL` wykonuje profil `HOLD` z ostrzeżeniem, bo sterownik nie ogranicza PV.
+`balance_grid_current`. W trybie `Voltage` falownik kończy ładowanie na napięciu pakietu, a źródło SOC oparte na
+liczniku może pokazać 100 % przed pełnym naładowaniem. Dlatego przy SOC ≥ 100 % w `HOLD`, `CHARGE_PV` i
+`SELF_CONSUME` sterownik zostawia zwykły limit prądu ładowania (z tą samą histerezą, więc bez zapisów 0 A
+wokół granicy) zamiast 0 A (lub `hold_grid_current` w `HOLD`). Prąd sieciowy wynosi 0 A, więc jedynym
+źródłem jest PV, rozładowanie wynika z wiersza planu (0 A w `HOLD`), nie jest zapisywany cel SOC ani
+zatrzaskiwany stan „osiągnięto”. `CHARGE_GRID` (zachowuje `voltage_grid_charge_ceiling`), `CURTAIL`,
+trzymanie balansu i tryb `Capacity` działają jak dotąd. `CURTAIL` wykonuje profil `HOLD` z ostrzeżeniem, bo sterownik nie ogranicza PV.
 
 Sterowane są tylko tryby baterii z listy `commissioned_battery_modes`; każdy inny tryb (np. Voltage
 przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Voltage cel poza zakresem
