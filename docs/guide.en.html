@@ -143,6 +143,7 @@
         <li><a href="#cost-card">Cost card</a></li>
         <li><a href="#deye-inverter-controller-solarman">Deye inverter controller (Solarman)</a></li>
         <li><a href="#energy-atlas-optional">Energy Atlas (optional)</a></li>
+        <li><a href="#offline-replay-tool">Offline replay tool</a></li>
         <li><a href="#reason-code-reference">Reason code reference</a></li>
       </ul>
     </nav>
@@ -174,6 +175,7 @@ inverters through Solarman: see <a href="#deye-inverter-controller-solarman">Dey
 <li><a href="#cost-card">Cost card</a></li>
 <li><a href="#deye-inverter-controller-solarman">Deye inverter controller (Solarman)</a></li>
 <li><a href="#energy-atlas-optional">Energy Atlas (optional)</a></li>
+<li><a href="#offline-replay-tool">Offline replay tool</a></li>
 <li><a href="#reason-code-reference">Reason code reference</a></li>
 </ol>
 <h2 id="how-it-works">How it works</h2>
@@ -2304,6 +2306,118 @@ sends past telemetry from Home Assistant's own recorder history for every entity
 5-minute statistics where the recorder still keeps them, hourly statistics for older history — to
 every entry that currently has sending enabled and a registered site, using the same value
 corrections as live delivery. It fails with an error if no entry currently qualifies.</p>
+<h2 id="offline-replay-tool">Offline replay tool</h2>
+<p><code>tools/replay.py</code> answers "what does this setting change do to the real cost?" without Home
+Assistant. It imports the optimizer from <code>custom_components/energy_compass/engine</code> and replays
+recorded days; it needs the same Python and SciPy as the integration (run it in the test image or
+any environment where <code>import scipy</code> works) and plots nothing. For every day and in total it prints,
+in the installation's currency:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Cost of</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>plan</code></td>
+<td>the Energy Compass plan <strong>as executed</strong>: re-solved every <code>refresh_minutes</code> on the forecast known at plan time, the planned mode and energies applied to the realized PV and load</td>
+</tr>
+<tr>
+<td><code>self_use</code></td>
+<td>plain self-consumption: the battery follows the load, no grid charging, no battery export</td>
+</tr>
+<tr>
+<td><code>hindsight</code></td>
+<td>one solve of the same objective on the <strong>realized</strong> PV and load — the best the same settings could have done</td>
+</tr>
+</tbody>
+</table></section>
+<pre><code>python tools/replay.py tools/replay_sample.json --currency PLN
+python tools/replay.py tools/replay_sample.json --set import_penalty_per_kwh=0.1 --set strategy=self_sufficiency
+</code></pre>
+<p><code>--set key=value</code> (repeatable) overrides any planner setting by its key (the keys of Options, as in
+<code>settings.py</code>; strategy-owned flags set this way are treated as explicit). Run twice and compare the
+<code>plan</code> column to measure a change. <code>--json</code> prints the numbers instead of the table; <code>--timezone</code> and
+<code>--initial-soc</code> apply to CSV input only.</p>
+<h3 id="input-format">Input format</h3>
+<p>One JSON file (or a CSV, below). <code>tools/replay_sample.json</code> is a complete two-day synthetic example.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>timezone</code></td>
+<td>IANA name, e.g. <code>Europe/Warsaw</code> (default <code>UTC</code>)</td>
+</tr>
+<tr>
+<td><code>interval_minutes</code></td>
+<td>interval length, default <code>15</code>; all days of a file share it</td>
+</tr>
+<tr>
+<td><code>settings</code></td>
+<td>optional planner settings (<code>capacity_kwh</code>, <code>charge_kw</code>, <code>grid_export_kw</code>, <code>strategy</code>, <code>refresh_minutes</code>, …); unset keys take the shipped defaults, so set at least the battery and site limits</td>
+</tr>
+<tr>
+<td><code>days[].start</code></td>
+<td>ISO timestamp of the first interval (with offset, or local to <code>timezone</code>)</td>
+</tr>
+<tr>
+<td><code>days[].date</code></td>
+<td>label for the table, default the local date of <code>start</code></td>
+</tr>
+<tr>
+<td><code>days[].initial_soc_percent</code></td>
+<td>battery SOC at <code>start</code> (default <code>initial_soc_percent</code> of the file, else 50)</td>
+</tr>
+<tr>
+<td><code>days[].intervals[]</code></td>
+<td>one object per interval, in order and without gaps (below)</td>
+</tr>
+</tbody>
+</table></section>
+<p>Each interval has six numbers: <code>buy</code> and <code>sell</code> (currency/kWh, the final tariff prices), <code>pv_forecast</code>
+and <code>load_forecast</code> (kWh in the interval, <strong>as known at plan time</strong>) and <code>pv</code> and <code>load</code> (kWh actually
+produced and consumed). Days are independent; each ends at its last interval.</p>
+<p>CSV has one row per interval with the columns <code>start</code>, <code>buy</code>, <code>sell</code>, <code>pv_forecast</code>, <code>load_forecast</code>,
+<code>pv</code>, <code>load</code> and optionally <code>initial_soc_percent</code> (read on the first row of a day). Rows are grouped
+into days by the local date of <code>start</code>; settings come only from <code>--set</code>.</p>
+<h3 id="reading-the-result">Reading the result</h3>
+<ul>
+<li><strong>Day-end energy is valued</strong>, because a day boundary is arbitrary for a battery: the difference
+  between the final and the initial SOC is priced at <code>terminal_value_per_kwh</code> when <code>terminal_mode</code> is
+  <code>value</code>, else at the day's mean buy price, and every solve of the replay uses the same value. This
+  also means the plan may end a day below its initial SOC.</li>
+<li><code>hindsight</code> is the optimum of the <strong>shaped objective</strong> (strategy weights and import penalty
+  included) priced in real currency. For <code>cost_min</code> with no import penalty it is a lower bound of
+  <code>plan</code>; for other strategies it is the best that strategy could do.</li>
+<li>The executed plan follows its mode against realized data: <code>CHARGE_GRID</code> charges the planned energy
+  from PV first, then the grid; <code>CHARGE_PV</code> charges from realized surplus up to the planned energy;
+  <code>DISCHARGE_GRID</code> discharges the planned energy; <code>HOLD</code> parks the battery; every other interval
+  follows the load. Grid export beyond <code>grid_export_kw</code> is curtailed, and stored energy is not exported
+  beyond the PV produced so far when <strong>Sell only PV</strong> (<code>limit_export_to_pv</code>) is on.</li>
+<li>Not replayed: LFP balance windows, the peak-period reserve, the autonomy tail beyond the data, and
+  carried export or grid-charge commitments. A warning names the enabled ones. A failed solve runs that
+  step as self-consumption and is reported under the table.</li>
+</ul>
+<h3 id="exporting-the-data-from-home-assistant">Exporting the data from Home Assistant</h3>
+<p><code>buy</code> and <code>sell</code> are the final prices the planner sees: from your tariff, or from the history of the
+price entities Energy Compass reads. The realized energy comes from long-term statistics: the
+<strong>Energy</strong> dashboard's menu offers <strong>Download data</strong> (CSV, hourly). The same hourly <code>change</code> values
+the replay needs are returned by the <code>recorder/statistics_during_period</code> WebSocket command with
+<code>"period": "hour"</code> and <code>"types": ["change"]</code>
+(<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/tools/export_value_backfill.py"><code>tools/export_value_backfill.py</code></a> shows the call). Take
+<code>pv</code> from the PV production statistic and <code>load</code> from the home consumption statistic
+(energy in = grid import + PV − grid export, when no consumption sensor exists).
+<code>pv_forecast</code> and <code>load_forecast</code> are what your forecast entities said <strong>before</strong> the interval — the
+Compass plan attribute <code>intervals</code> (or the Solcast/forecast history) recorded at plan time; using
+the realized value as the forecast gives an idealised plan with no forecast error.
+Use <code>interval_minutes: 60</code> for hourly statistics.</p>
 <h2 id="reason-code-reference">Reason code reference</h2>
 <h3 id="coverage--quality-reasons-reason-reasons-attributes">Coverage / quality reasons (<code>reason</code>, <code>reasons</code> attributes)</h3>
 <section class="table-scroll"><table>

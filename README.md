@@ -23,6 +23,8 @@ To try a source-independent synthetic setup, choose `Synthetic`, `EUR`, `UTC`, t
 
 For a diagram-based walkthrough of every state, the conditions that produce it, and each dispatch strategy, read the **states and strategies guide** ([English](docs/guide.en.md) · [Polski](docs/guide.pl.md)).
 
+To measure what a setting change does to real cost, replay recorded days offline with `tools/replay.py` (no Home Assistant needed): it prints the cost of the executed plan, of plain self-consumption and of the perfect-hindsight plan. See [Offline replay tool](docs/guide.en.md#offline-replay-tool) for the input format and how to export the data.
+
 Read the [published entity and calculation guide](https://datamindzio.github.io/ha-energy-compass/) for every entity, state, formula, quality flag and worked example. You can also open [docs/index.html](docs/index.html) from a checkout for offline viewing. The guide includes English and Polish entity names and follows your system's light or dark theme. See [publishing setup](docs/publishing.md) for GitHub Pages maintenance.
 
 The integration creates current consumption level and extra-kWh cost sensors, a flexible-energy depth sensor, optimized machine state and cost sensors, next change and next `BOOST`/`CHEAP`/`LIMIT` window timestamps, a plan with a bounded outlook, optimizer status, a forecast-valid binary sensor, and a diagnostic **Alert** binary sensor. Native entity names, diagnostics, and reasons are translated into English and Polish. Automations should compare level and machine state values using their stable uppercase names.

@@ -27,7 +27,8 @@ Solarman: zob. [Sterownik falownika Deye](#sterownik-falownika-deye-solarman).
 11. [Karta kosztów](#karta-kosztów)
 12. [Sterownik falownika Deye (Solarman)](#sterownik-falownika-deye-solarman)
 13. [Energy Atlas (opcjonalnie)](#energy-atlas-opcjonalnie)
-14. [Słownik kodów powodów](#słownik-kodów-powodów)
+14. [Narzędzie replay (offline)](#narzędzie-replay-offline)
+15. [Słownik kodów powodów](#słownik-kodów-powodów)
 
 ## Jak to działa
 
@@ -1423,6 +1424,86 @@ historia) wysyła historyczną telemetrię z rejestratora Home Assistant dla ka�
 dla starszej historii — do każdego wpisu, który obecnie ma włączone wysyłanie i zarejestrowaną
 witrynę, stosując te same korekty wartości co wysyłka na żywo. Kończy się błędem, jeśli żaden wpis
 obecnie nie kwalifikuje się.
+
+## Narzędzie replay (offline)
+
+`tools/replay.py` odpowiada na pytanie „co ta zmiana ustawienia robi z rzeczywistym kosztem?” bez
+Home Assistanta. Importuje optymalizator z `custom_components/energy_compass/engine` i odtwarza
+zapisane dni; wymaga tego samego Pythona i SciPy co integracja (uruchom w obrazie testowym albo w
+środowisku, gdzie działa `import scipy`) i niczego nie rysuje. Dla każdego dnia i łącznie wypisuje, w
+walucie instalacji:
+
+| Kolumna | Koszt |
+| --- | --- |
+| `plan` | planu Energy Compass **tak, jak został wykonany**: przeliczanego co `refresh_minutes` na prognozie znanej w chwili planowania, z zaplanowanym trybem i energiami zastosowanymi do rzeczywistego PV i zużycia |
+| `self_use` | zwykłej autokonsumpcji: bateria podąża za obciążeniem, bez ładowania z sieci i bez eksportu z baterii |
+| `hindsight` | jednego rozwiązania tego samego celu na **rzeczywistym** PV i zużyciu — tyle, ile te same ustawienia mogły osiągnąć |
+
+```
+python tools/replay.py tools/replay_sample.json --currency PLN
+python tools/replay.py tools/replay_sample.json --set import_penalty_per_kwh=0.1 --set strategy=self_sufficiency
+```
+
+`--set klucz=wartość` (można powtarzać) nadpisuje dowolne ustawienie planera po jego kluczu (klucze
+opcji, jak w `settings.py`; flagi należące do strategii ustawione w ten sposób są traktowane jako
+jawne). Uruchom dwa razy i porównaj kolumnę `plan`, aby zmierzyć zmianę. `--json` wypisuje liczby
+zamiast tabeli; `--timezone` i `--initial-soc` dotyczą tylko wejścia CSV.
+
+### Format wejścia
+
+Jeden plik JSON (albo CSV, niżej). `tools/replay_sample.json` to kompletny, dwudniowy przykład
+syntetyczny.
+
+| Klucz | Znaczenie |
+| --- | --- |
+| `timezone` | nazwa IANA, np. `Europe/Warsaw` (domyślnie `UTC`) |
+| `interval_minutes` | długość interwału, domyślnie `15`; wszystkie dni pliku mają tę samą |
+| `settings` | opcjonalne ustawienia planera (`capacity_kwh`, `charge_kw`, `grid_export_kw`, `strategy`, `refresh_minutes`, …); brakujące klucze przyjmują wartości domyślne, więc ustaw co najmniej baterię i limity instalacji |
+| `days[].start` | znacznik czasu ISO pierwszego interwału (z przesunięciem albo lokalny w `timezone`) |
+| `days[].date` | etykieta w tabeli, domyślnie lokalna data `start` |
+| `days[].initial_soc_percent` | SOC baterii w `start` (domyślnie `initial_soc_percent` pliku, w ostateczności 50) |
+| `days[].intervals[]` | po jednym obiekcie na interwał, po kolei i bez przerw (niżej) |
+
+Każdy interwał ma sześć liczb: `buy` i `sell` (waluta/kWh, końcowe ceny taryfy), `pv_forecast` i
+`load_forecast` (kWh w interwale, **jak znane w chwili planowania**) oraz `pv` i `load` (kWh faktycznie
+wyprodukowane i zużyte). Dni są niezależne; każdy kończy się na ostatnim interwale.
+
+CSV ma jeden wiersz na interwał z kolumnami `start`, `buy`, `sell`, `pv_forecast`, `load_forecast`,
+`pv`, `load` i opcjonalnie `initial_soc_percent` (czytaną z pierwszego wiersza dnia). Wiersze są
+grupowane w dni według lokalnej daty `start`; ustawienia podaje się tylko przez `--set`.
+
+### Jak czytać wynik
+
+- **Energia na koniec dnia jest wyceniana**, bo granica doby jest dla baterii dowolna: różnica
+  końcowego i początkowego SOC jest liczona po `terminal_value_per_kwh`, gdy `terminal_mode` to
+  `value`, a w przeciwnym razie po średniej cenie zakupu danego dnia; każde rozwiązanie w replayu
+  używa tej samej wartości. Plan może więc zakończyć dzień poniżej początkowego SOC.
+- `hindsight` to optimum **ukształtowanego celu** (wraz z wagami strategii i karą za import)
+  wycenione w rzeczywistej walucie. Dla `cost_min` bez kary za import jest dolnym ograniczeniem
+  `plan`; dla innych strategii to najlepszy wynik tej strategii.
+- Wykonany plan podąża za swoim trybem względem rzeczywistych danych: `CHARGE_GRID` ładuje
+  zaplanowaną energię najpierw z PV, potem z sieci; `CHARGE_PV` ładuje z rzeczywistej nadwyżki do
+  zaplanowanej energii; `DISCHARGE_GRID` rozładowuje zaplanowaną energię; `HOLD` zatrzymuje baterię;
+  każdy inny interwał podąża za obciążeniem. Eksport ponad `grid_export_kw` jest ucinany (curtailment),
+  a zmagazynowana energia nie jest eksportowana ponad dotychczasową produkcję PV, gdy włączone jest
+  **Sell only PV** (`limit_export_to_pv`) jest włączone.
+- Nie są odtwarzane: okna balansowania LFP, rezerwa na okres drogi, ogon autonomii poza danymi oraz
+  przenoszone zobowiązania eksportu i ładowania z sieci. Ostrzeżenie wymienia włączone z nich.
+  Nieudane rozwiązanie wykonuje dany krok jako autokonsumpcję i jest zgłaszane pod tabelą.
+
+### Eksport danych z Home Assistanta
+
+Ceny `buy` i `sell` to końcowe ceny, które widzi planer: z Twojej taryfy albo z historii encji cen
+czytanych przez Energy Compass. Rzeczywista energia pochodzi ze statystyk długoterminowych: menu
+panelu **Energia** oferuje **Pobierz dane** (CSV, godzinowe). Te same godzinowe wartości `change`,
+których potrzebuje replay, zwraca polecenie WebSocket `recorder/statistics_during_period` z
+`"period": "hour"` i `"types": ["change"]`
+(wywołanie pokazuje [`tools/export_value_backfill.py`](../tools/export_value_backfill.py)). `pv`
+weź ze statystyki produkcji PV, a `load` ze statystyki zużycia domu (gdy nie ma czujnika zużycia:
+pobór z sieci + PV − eksport do sieci). `pv_forecast` i `load_forecast` to to, co mówiły Twoje
+encje prognoz **przed** interwałem — atrybut planu Compass `intervals` (albo historia Solcast/prognozy)
+zapisany w chwili planowania; użycie wartości rzeczywistej jako prognozy daje wyidealizowany plan
+bez błędu prognozy. Dla statystyk godzinowych ustaw `interval_minutes: 60`.
 
 ## Słownik kodów powodów
 
