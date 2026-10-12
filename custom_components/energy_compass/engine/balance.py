@@ -66,7 +66,7 @@ def candidate_windows(
         if all(slots[i].pv_kwh >= slots[i].load_kwh for i in members) and (
             not pessimistic
             or (
-                reach[first] >= threshold_kwh - 1e-9
+                reach[first] >= threshold_kwh - 1e-6
                 and all(pessimistic_pv_kwh[i] >= slots[i].load_kwh for i in members)
             )
         ):
@@ -89,7 +89,11 @@ def candidate_windows(
 
 
 def fallback_costs(
-    windows: tuple[BalanceWindow, ...], miss_cost: float
+    windows: tuple[BalanceWindow, ...],
+    miss_cost: float,
+    *,
+    initial_kwh: float | None = None,
+    threshold_kwh: float = 0.0,
 ) -> tuple[float, ...]:
     """Solver cost of choosing each window, relative to the cheapest one.
 
@@ -99,15 +103,29 @@ def fallback_costs(
     is cheapest if the pessimistic series comes true. The weight shrinks so the
     dearest window never costs more than a share of the miss cost. Zero for a
     single window (a pinned probe) and when no window carries a shortfall.
+
+    A start-0 window the solver cannot pick (the pack starts below the
+    threshold) is left out of the floor and the spread, so it cannot shift the
+    pickable windows towards a miss; it carries no ranking itself.
     """
-    if not windows:
-        return ()
-    floor = min(window.fallback_cost for window in windows)
-    spread = max(window.fallback_cost for window in windows) - floor
+    pickable = [
+        initial_kwh is None
+        or window.slots[0] > 0
+        or initial_kwh >= threshold_kwh - 1e-6
+        for window in windows
+    ]
+    costs = [w.fallback_cost for w, ok in zip(windows, pickable, strict=True) if ok]
+    if not costs:
+        return (0.0,) * len(windows)
+    floor = min(costs)
+    spread = max(costs) - floor
     if spread <= 0:
         return (0.0,) * len(windows)
     weight = min(FALLBACK_WEIGHT, FALLBACK_MISS_SHARE * max(0.0, miss_cost) / spread)
-    return tuple(weight * (window.fallback_cost - floor) for window in windows)
+    return tuple(
+        weight * (w.fallback_cost - floor) if ok else 0.0
+        for w, ok in zip(windows, pickable, strict=True)
+    )
 
 
 def _best_case_energy(

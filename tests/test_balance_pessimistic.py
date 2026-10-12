@@ -294,6 +294,28 @@ def test_ranking_does_not_make_the_solver_skip_the_balance():
     assert plan.balance_start in (1, 2, 3)
 
 
+def test_unpickable_start_window_does_not_shift_the_ranking_towards_a_miss():
+    # Start 0 is the cheap slot but cannot be picked at 24.0 of 25 kWh. Taken as
+    # the floor it gave every pickable window a ranking of half the miss cost,
+    # and the solver skipped the balance at a miss cost of 0.12.
+    rows = [(20.0, 3.0, 1.0)] + [(90.0, 3.0, 1.0)] * 3
+    windows = _windows(_slots(rows), (0.2,) * 4, initial=24.0)
+    threshold = 0.99 * CAP
+    ranking = fallback_costs(windows, 0.12, initial_kwh=24.0, threshold_kwh=threshold)
+    assert ranking[0] == 0.0
+    assert ranking[1:] == (0.0,) * 3
+    assert max(fallback_costs(windows, 0.12)) > 0
+    plan = solve(_balance_problem(rows, windows, miss=0.12))
+    assert plan.balance_start in (1, 2, 3)
+
+
+def test_start_zero_window_stays_in_the_floor_when_the_pack_is_at_the_threshold():
+    windows = _windows(_slots(VETOED_REVERSED), (0.2,) * 4, initial=24.9)
+    ranking = fallback_costs(windows, 100.0, initial_kwh=24.9, threshold_kwh=24.75)
+    assert ranking[0] == 0.0
+    assert min(ranking[1:]) > 0
+
+
 def test_solver_takes_grid_windows_from_the_median_series_when_pv_is_short():
     # Median PV 0.5 < load 1.0: CHARGE_GRID without any pessimistic series.
     rows = [(0.9, 0.5, 1.0), (0.2, 0.5, 1.0), (0.2, 0.5, 1.0), (0.9, 0.5, 1.0)]
