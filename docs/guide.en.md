@@ -1140,7 +1140,7 @@ takes effect at the next periodic recalculation (`refresh_minutes`) or source ch
 | `autonomy_shortfall_kwh` | Total shortfall below the autonomy floor; `0` = floor met. |
 | `peak_reserve_shortfall_kwh` | Total shortfall below the [peak-period reserve](#peak-period-reserve); `0` = met or off. |
 | `time_limited` | `true` when the base solve hit `solve_time_limit_s` and the best validated solution found so far was published instead of a proven optimum. |
-| `mip_gap` | Relative MIP gap the solver reported for the published plan: `0` = proven optimal (a proven plan reads `0`, or at most `0.0001` when no episode hurdle is active); for a time-limited plan, the bound on how far its objective may be from the optimum (e.g. `0.017` = 1.7 %). |
+| `mip_gap` | Relative MIP gap the solver reported for the published plan: `0` = proven optimal (a proven plan normally reads `0`, or at most `0.0001` when no episode hurdle is active; not a hard bound: HiGHS also stops on its absolute gap of `1e-6`, which cannot be switched off, so when the plan's objective is within about ±0.01 of zero the relative gap can be larger, up to roughly `1e-6 / |objective|`; `time_limited`, not `mip_gap == 0`, tells a proven plan from an unproven one); for a time-limited plan, the bound on how far its objective may be from the optimum (e.g. `0.017` = 1.7 %). |
 | `cap_violation_kwh` | Total energy above `grid_friendly` soft caps; `0` = caps met. |
 
 ### Strategy-switch release

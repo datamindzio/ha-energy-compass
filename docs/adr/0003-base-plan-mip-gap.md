@@ -123,6 +123,14 @@ ending with no incumbent.
 - `tests/test_export_benefit.py` and `tests/test_charge_benefit.py` keep pinning the zero gap for an active
   hurdle. Goldens do not change.
 - `mip_gap` may read up to 0.0001 for a proven plan when no hurdle is active (decision 3).
+- That is not a hard bound, with or without a hurdle. HiGHS also stops on its absolute gap (`mip_abs_gap`, default
+  1e-6), which `scipy.optimize.milp` (1.18.1) does not expose, so `mip_rel_gap = 0` does not switch it off. When the
+  plan's objective is within about ±0.01 of zero (import cost offset by export revenue or terminal value) the
+  reported relative gap can reach roughly 1e-6 / |objective|. Re-measured in T-036 on 60 random 24/48-slot problems
+  per cell (`solve(..., accept_incumbent=True)`, every plan proven): prices of normal size, hurdle on worst 5.5e-16,
+  hurdle off worst 9.97e-5; prices x 0.01 (objective 1e-3 to 0.14) hurdle on worst 2.4e-6, off 9.9e-5; prices
+  x 0.0001 (objective 1e-5 to 1e-3) 14 of 60 above 1e-4 with the hurdle on (worst 2.6e-2) and 15 of 60 with it off
+  (worst 3.3e-3). `Plan.time_limited`, not `mip_gap == 0`, tells a proven plan from an unproven one.
 - The sentence T-022 adds to `docs/model.md` ("proves its optimum to HiGHS's default relative gap of 1e-4") is
   wrong for the default configuration and is corrected by the follow-up ticket.
 - Solve time for these strategies remains a formulation and horizon question (fewer binaries, coarser
