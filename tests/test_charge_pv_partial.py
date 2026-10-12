@@ -294,6 +294,39 @@ def test_released_hold_turns_to_curtail_inside_the_commitment():
     ]
 
 
+def test_curtail_under_way_goes_on_while_standby_loss_drains_the_pack():
+    # The pack drops below the full-pack ceiling in every CURTAIL interval (0.05 kW
+    # standby loss), so "the pack is full" no longer licenses the next CURTAIL: the
+    # CURTAIL already under way must.
+    problem = full_pack_problem(
+        (0.5, *(0.9,) * 7), initial=9.7, export_cap=2, lead=0, drain=0.05
+    )
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == [
+        "CHARGE_PV",
+        *("CURTAIL",) * 7,
+    ]
+    assert [flow.curtail_kwh for flow in plan.flows[1:]] == pytest.approx([0.3] * 7)
+    assert [flow.end_soc_kwh for flow in plan.flows[:4]] == pytest.approx(
+        [10.0, 9.9875, 9.975, 9.9625]
+    )
+
+
+def test_released_hold_turns_to_curtail_after_standby_loss_drained_the_pack():
+    # Slot 3 is the last committed interval; the pack (9.975 kWh) is below the
+    # 9.9875 kWh ceiling there, so only the released HOLD allows the CURTAIL.
+    problem = full_pack_problem(
+        (0.5, 0.0, 0.0, *(0.9,) * 5), initial=9.7, export_cap=2, lead=0, drain=0.05
+    )
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == [
+        "CHARGE_PV",
+        "HOLD",
+        "HOLD",
+        *("CURTAIL",) * 5,
+    ]
+
+
 def test_full_pack_curtails_inside_the_commitment_above_the_inverter_rating():
     # 2.2 kWh of PV against 2 kWh the 8 kW inverter passes per interval.
     problem = full_pack_problem((0.5, *(2.2,) * 7), initial=9.7, lead=0)
