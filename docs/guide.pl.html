@@ -1146,7 +1146,8 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   nigdy nie łączy małego rozładowania z importem z sieci: w przedziale <code>SELF_CONSUME</code> bateria
   pokrywa całe zapotrzebowanie, a import pojawia się dopiero, gdy rozładowanie sięga limitu mocy
   w przedziale albo bateria została opróżniona do rezerwy. W przeciwnym razie wiersz to <code>HOLD</code>
-  z pełnym importem. Obowiązuje, gdy <code>minimum_mode_minutes</code> jest większe od 0. Przeniesione
+  z pełnym importem. Reguła obowiązuje też przy <code>minimum_mode_minutes = 0</code>: nie ma wtedy trybów, a rozładowanie w
+  każdym przedziale, który przepływy oznaczają jako <code>SELF_CONSUME</code>, jest związane tak samo. Przeniesione
   zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> jest wykonywane tak samo. Jeśli bateria wyczerpie się
   przed jego końcem, reszta zobowiązania to <code>HOLD</code> z pełnym importem (startuje nowy zegar
   <code>HOLD</code>). Plan jest <code>infeasible</code> (niewykonalny) do końca zobowiązania tylko wtedy, gdy potem nie
@@ -1168,7 +1169,8 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <li><strong>Zmiana strategii (reset):</strong> zapis nowej strategii zrywa przeniesione zobowiązanie dla
   następnego planu, który startuje bez blokady (patrz <a href="#zwolnienie-przy-zmianie-strategii">zwolnienie przy zmianie
   strategii</a>).</li>
-<li><code>minimum_mode_minutes = 0</code> wyłącza reguły czasu i minimalnej mocy.</li>
+<li><code>minimum_mode_minutes = 0</code> wyłącza reguły czasu i minimalnej mocy; reguła podążania
+  <code>SELF_CONSUME</code> za obciążeniem pozostaje włączona.</li>
 </ul>
 <h3 id="polityki-ograniczające-tryby">Polityki ograniczające tryby</h3>
 <section class="table-scroll"><table>

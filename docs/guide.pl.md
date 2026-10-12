@@ -659,7 +659,8 @@ Zasady (domyślnie 60 min, 0,1 kW):
   nigdy nie łączy małego rozładowania z importem z sieci: w przedziale `SELF_CONSUME` bateria
   pokrywa całe zapotrzebowanie, a import pojawia się dopiero, gdy rozładowanie sięga limitu mocy
   w przedziale albo bateria została opróżniona do rezerwy. W przeciwnym razie wiersz to `HOLD`
-  z pełnym importem. Obowiązuje, gdy `minimum_mode_minutes` jest większe od 0. Przeniesione
+  z pełnym importem. Reguła obowiązuje też przy `minimum_mode_minutes = 0`: nie ma wtedy trybów, a rozładowanie w
+  każdym przedziale, który przepływy oznaczają jako `SELF_CONSUME`, jest związane tak samo. Przeniesione
   zobowiązanie `CHARGE_PV`/`SELF_CONSUME` jest wykonywane tak samo. Jeśli bateria wyczerpie się
   przed jego końcem, reszta zobowiązania to `HOLD` z pełnym importem (startuje nowy zegar
   `HOLD`). Plan jest `infeasible` (niewykonalny) do końca zobowiązania tylko wtedy, gdy potem nie
@@ -681,7 +682,8 @@ Zasady (domyślnie 60 min, 0,1 kW):
 - **Zmiana strategii (reset):** zapis nowej strategii zrywa przeniesione zobowiązanie dla
   następnego planu, który startuje bez blokady (patrz [zwolnienie przy zmianie
   strategii](#zwolnienie-przy-zmianie-strategii)).
-- `minimum_mode_minutes = 0` wyłącza reguły czasu i minimalnej mocy.
+- `minimum_mode_minutes = 0` wyłącza reguły czasu i minimalnej mocy; reguła podążania
+  `SELF_CONSUME` za obciążeniem pozostaje włączona.
 
 ### Polityki ograniczające tryby
 

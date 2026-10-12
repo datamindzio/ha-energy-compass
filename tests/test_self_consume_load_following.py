@@ -335,3 +335,100 @@ def test_standby_loss_owed_by_an_empty_reserve_keeps_the_lock_infeasible():
         initial_dispatch_mode_since=problem.slots[0].start - timedelta(hours=2),
     )
     assert solve(expired).flows
+
+
+def staggered_prices(**changes):
+    """1.2 kWh of battery, 0.5 kWh an hour of load, dearer power last."""
+    problem = dispatch(
+        ((1, 0, 0, 0.5), (1, 0, 0, 0.5), (2, 0, 0, 0.5)),
+        minutes=60,
+        minimum_mode_minutes=0,
+        terminal_mode="value",
+        terminal_value_per_kwh=0,
+        **changes,
+    )
+    return replace(problem, battery=replace(problem.battery, initial_kwh=1.2))
+
+
+def test_load_following_holds_without_a_minimum_mode_duration():
+    # Without the rule the cheap hour got 0.2 kWh of discharge and 0.3 kWh of import.
+    problem = staggered_prices()
+    plan = solve(problem)
+    assert_load_following(problem, plan)
+    assert plan.flows[2].discharge_kwh == pytest.approx(0.5)
+    assert sum(f.discharge_kwh for f in plan.flows) == pytest.approx(1.0)
+    for slot, flow in zip(problem.slots, plan.flows, strict=True):
+        if 0 < flow.discharge_kwh < slot.load_kwh - 1e-6:
+            assert flow.grid_import_kwh == pytest.approx(0)
+
+
+def test_load_following_without_a_duration_allows_import_at_the_power_limit():
+    problem = dispatch(((3, 0, 0, 2),) * 4, minimum_mode_minutes=0)
+    problem = replace(
+        problem,
+        battery=replace(problem.battery, initial_kwh=8, discharge_kw=4),
+        slots=tuple(
+            replace(slot, end=slot.start + timedelta(minutes=15))
+            for slot in problem.slots
+        ),
+    )
+    plan = solve(problem)
+    assert_load_following(problem, plan)
+    assert plan.flows[0].discharge_kwh == pytest.approx(1)
+    assert plan.flows[0].grid_import_kwh == pytest.approx(1)
+
+
+def test_load_following_without_a_duration_allows_import_once_emptied():
+    problem = staggered_prices()
+    problem = replace(
+        problem,
+        slots=tuple(replace(slot, load_kwh=2.0) for slot in problem.slots),
+        battery=replace(
+            problem.battery,
+            discharge_kw=8,
+            minimum_soc_fraction=0.1,
+            initial_kwh=2.5,
+            allow_grid_charge=False,
+        ),
+    )
+    plan = solve(problem)
+    assert_load_following(problem, plan)
+    last = plan.flows[-1]
+    assert last.end_soc_kwh == pytest.approx(1.0)
+    assert last.grid_import_kwh == pytest.approx(0.5)
+
+
+def test_flexible_load_probe_follows_the_load_without_a_duration():
+    problem = staggered_prices()
+    problem = replace(problem, battery=replace(problem.battery, initial_kwh=3.0))
+    plan = solve_flexible_load(problem, FlexibleLoadRequest(1.0, 2.0))
+    assert sum(plan.schedule_kwh) == pytest.approx(1.0)
+    slots = tuple(
+        replace(slot, load_kwh=slot.load_kwh + extra)
+        for slot, extra in zip(problem.slots, plan.schedule_kwh, strict=True)
+    )
+    assert_load_following(replace(problem, slots=slots), plan.plan)
+
+
+def test_validator_rejects_partial_discharge_with_import_without_a_duration():
+    problem = dispatch(((1, 0, 0, 5),) * 2, minutes=60, minimum_mode_minutes=0)
+    problem = replace(problem, battery=replace(problem.battery, initial_kwh=8))
+
+    def rows(import_kwh, discharge_kwh):
+        return tuple(
+            Flow(
+                import_kwh,
+                0,
+                0,
+                discharge_kwh,
+                0,
+                8 - discharge_kwh * (i + 1),
+                "discharge",
+                None,
+            )
+            for i in range(2)
+        )
+
+    with pytest.raises(SolveError, match="self-consume imports"):
+        validate_modes(problem, rows(4.5, 0.5))
+    validate_modes(problem, rows(1, 4))

@@ -1137,7 +1137,8 @@ directly by any other available mode.</p>
   plan never pairs a small discharge with grid import: in a <code>SELF_CONSUME</code> interval the battery
   covers the whole demand, and import appears only once the discharge is at its interval power
   limit or the battery has been emptied to its reserve. Otherwise the row is <code>HOLD</code> with full
-  import. Applies while <code>minimum_mode_minutes</code> is above 0. A carried <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>
+  import. The rule also holds with <code>minimum_mode_minutes = 0</code>: there are no modes then, and the
+  discharge in any interval the flows label <code>SELF_CONSUME</code> is bound the same way. A carried <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>
   commitment is executed the same way. If the battery runs out before it ends, the rest of the
   commitment is <code>HOLD</code> with full import (a new <code>HOLD</code> clock starts). The plan is <code>infeasible</code>
   until the commitment ends only when the terminal rule cannot be met afterwards
@@ -1157,7 +1158,8 @@ directly by any other available mode.</p>
   start before that deadline. Exposed in <code>dispatch_policy.safety_exception</code>.</li>
 <li><strong>Strategy change (reset):</strong> writing a new strategy drops the carried commitment for the next
   plan, which starts unlocked (see <a href="#strategy-switch-release">strategy-switch release</a>).</li>
-<li>Setting <code>minimum_mode_minutes = 0</code> disables duration and minimum-power rules.</li>
+<li>Setting <code>minimum_mode_minutes = 0</code> disables duration and minimum-power rules; the
+  <code>SELF_CONSUME</code> load-following rule stays on.</li>
 </ul>
 <h3 id="policies-that-gate-modes">Policies that gate modes</h3>
 <section class="table-scroll"><table>

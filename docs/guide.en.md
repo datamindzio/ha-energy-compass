@@ -650,7 +650,8 @@ Rules (defaults: 60 min, 0.1 kW):
   plan never pairs a small discharge with grid import: in a `SELF_CONSUME` interval the battery
   covers the whole demand, and import appears only once the discharge is at its interval power
   limit or the battery has been emptied to its reserve. Otherwise the row is `HOLD` with full
-  import. Applies while `minimum_mode_minutes` is above 0. A carried `CHARGE_PV`/`SELF_CONSUME`
+  import. The rule also holds with `minimum_mode_minutes = 0`: there are no modes then, and the
+  discharge in any interval the flows label `SELF_CONSUME` is bound the same way. A carried `CHARGE_PV`/`SELF_CONSUME`
   commitment is executed the same way. If the battery runs out before it ends, the rest of the
   commitment is `HOLD` with full import (a new `HOLD` clock starts). The plan is `infeasible`
   until the commitment ends only when the terminal rule cannot be met afterwards
@@ -670,7 +671,8 @@ Rules (defaults: 60 min, 0.1 kW):
   start before that deadline. Exposed in `dispatch_policy.safety_exception`.
 - **Strategy change (reset):** writing a new strategy drops the carried commitment for the next
   plan, which starts unlocked (see [strategy-switch release](#strategy-switch-release)).
-- Setting `minimum_mode_minutes = 0` disables duration and minimum-power rules.
+- Setting `minimum_mode_minutes = 0` disables duration and minimum-power rules; the
+  `SELF_CONSUME` load-following rule stays on.
 
 ### Policies that gate modes
 
