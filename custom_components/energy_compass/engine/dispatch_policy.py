@@ -17,6 +17,9 @@ MODES = (
     "CURTAIL",
 )
 ACTIVE = frozenset(MODES[:4])
+# Import this small is solver noise, not a plan.
+_IMPORT_TOLERANCE = 1e-5
+_EMPTY_TOLERANCE = 1e-4
 
 
 # CHARGE_PV and SELF_CONSUME both let the inverter follow PV: surplus charges
@@ -79,6 +82,51 @@ def _initial(problem):
     return (
         "HOLD" if exception else problem.initial_dispatch_mode
     ), problem.initial_dispatch_mode_since
+
+
+def _follow_load(model, problem, v, x, slot, hours, extra_load_max) -> None:
+    """Allow import in SELF_CONSUME only when the battery can give no more.
+
+    The inverter discharges whatever the house draws, so a partial discharge
+    next to grid import is not a state a controller can hold. Import needs the
+    discharge at its interval power limit or the battery emptied to its reserve.
+    """
+    battery = problem.battery
+    import_max = model.upper[v["gin"]]
+    power_limit = min(
+        model.upper[v["bd"]], problem.site.inverter_kw * hours - slot.pv_kwh
+    )
+    demand_max = slot.load_kwh + extra_load_max - slot.pv_kwh
+    reserve = battery.capacity_kwh * battery.minimum_soc_fraction
+    spare = model.upper[v["energy"]] - reserve
+    limits = []
+    # Below the demand the power limit binds; above it discharge covers the
+    # load before the limit is reached.
+    if power_limit <= demand_max + 1e-9:
+        power = v["self_consume_power"] = model.variable(binary=True)
+        model.constrain({v["bd"]: 1, power: -power_limit}, 0, np.inf)
+        limits.append(power)
+    # Any discharge ends at or above the reserve, so a battery that ends on it
+    # has just been emptied.
+    if spare > 0:
+        empty = v["self_consume_empty"] = model.variable(binary=True)
+        model.constrain(
+            {v["energy"]: 1, empty: spare}, -np.inf, model.upper[v["energy"]]
+        )
+        limits.append(empty)
+    model.constrain(
+        {
+            v["gin"]: 1,
+            x["SELF_CONSUME"]: import_max,
+            **{index: -import_max for index in limits},
+        },
+        -np.inf,
+        import_max,
+    )
+    if limits:
+        model.constrain(
+            {**{index: 1 for index in limits}, x["SELF_CONSUME"]: -1}, -np.inf, 0
+        )
 
 
 def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) -> None:
@@ -221,6 +269,8 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             -np.inf,
             model.upper[v["gout"]],
         )
+        if available["SELF_CONSUME"]:
+            _follow_load(model, problem, v, x, slot, hours, extra_load_max)
     if problem.initial_battery_mode is not None:
         held_until = problem.initial_battery_mode_since.astimezone(UTC) + dwell
         for start, v in zip(starts, vectors, strict=True):
@@ -298,6 +348,23 @@ def validate_modes(problem: Problem, flows) -> None:
             raise SolveError(
                 "solver_failure", "invalid solver result: physical dispatch mode"
             )
+        if mode == "SELF_CONSUME" and flow.grid_import_kwh > _IMPORT_TOLERANCE:
+            hours = (slot.end.astimezone(UTC) - start).total_seconds() / 3600
+            power_limit = min(
+                problem.battery.discharge_kw * hours,
+                problem.site.inverter_kw * hours - slot.pv_kwh,
+            )
+            reserve = (
+                problem.battery.capacity_kwh * problem.battery.minimum_soc_fraction
+            )
+            if (
+                discharge < power_limit - _IMPORT_TOLERANCE
+                and flow.end_soc_kwh > reserve + _EMPTY_TOLERANCE
+            ):
+                raise SolveError(
+                    "solver_failure",
+                    "invalid solver result: self-consume imports below its limit",
+                )
         if (
             problem.initial_battery_mode is not None
             and start < problem.initial_battery_mode_since.astimezone(UTC) + dwell
