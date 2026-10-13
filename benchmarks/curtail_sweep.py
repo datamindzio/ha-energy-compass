@@ -228,7 +228,9 @@ def commit(problem, plan):
         coordinator,
         {
             "generated_at": first,
-            "intervals": [{"dispatch_mode": plan.flows[0].dispatch_mode, "start": first}],
+            "intervals": [
+                {"dispatch_mode": plan.flows[0].dispatch_mode, "start": first}
+            ],
             "dispatch_policy": {
                 "enabled": True,
                 "minimum_mode_minutes": problem.minimum_mode_minutes,

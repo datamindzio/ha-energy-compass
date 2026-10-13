@@ -575,7 +575,13 @@ def test_probes_around_the_need_are_planned_in_a_hold_that_must_last(pv, sell, e
 @pytest.mark.parametrize(
     ("pv", "export_cap", "initial", "committed", "released"),
     [
-        ((0, 0.9, 0.9, 0.9, 0.9, 0.9), 2, 0.01, ("HOLD", "CHARGE_PV", "CHARGE_PV"), (0,)),
+        (
+            (0, 0.9, 0.9, 0.9, 0.9, 0.9),
+            2,
+            0.01,
+            ("HOLD", "CHARGE_PV", "CHARGE_PV"),
+            (0,),
+        ),
         (
             (0.05, 0.3, 0.5, 0.7, 0.9, 0.9),
             0,
@@ -801,7 +807,9 @@ def test_a_release_needs_a_pv_follow_commitment_to_come_from():
     for mode in ("HOLD", "CURTAIL"):
         with pytest.raises(InputError, match="released HOLD"):
             validate_problem(
-                replace(problem, initial_dispatch_mode=mode, initial_dispatch_released=True)
+                replace(
+                    problem, initial_dispatch_mode=mode, initial_dispatch_released=True
+                )
             )
     with pytest.raises(InputError, match="released HOLD"):
         validate_problem(
