@@ -1,7 +1,9 @@
-# ADR-0004: Net-metering — the planner stands down; plain self-consumption, hourly costs are an approximation
+# ADR-0008: Net-metering — the planner stands down; plain self-consumption, hourly costs are an approximation
 
 Status: accepted
 Date: 2026-10-12
+Number: drafted as ADR-0004 and renumbered to 0008 before the merge (0004 was already taken on `main`);
+queue entries of T-449, T-450 and T-455 dated before 2026-10-13 that say "ADR-0004" mean this document.
 
 ## Context
 

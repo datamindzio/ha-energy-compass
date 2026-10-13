@@ -407,6 +407,42 @@ def test_time_limited_incumbent_is_published_when_accepted(monkeypatch):
     assert plan.objective == pytest.approx(proven.objective)
 
 
+_MISSING = object()
+
+
+def _proven(monkeypatch, gap):
+    """Run the real solver, then report its answer as proven with a solver gap."""
+    from custom_components.energy_compass.engine import optimize
+
+    original = optimize.milp
+
+    def proven(**kwargs):
+        result = original(**kwargs)
+        values = {"status": 0, "x": result.x, "message": "Optimal."}
+        if gap is not _MISSING:
+            values["mip_gap"] = gap
+        return SimpleNamespace(**values)
+
+    monkeypatch.setattr(optimize, "milp", proven)
+
+
+def test_proven_plan_reports_the_solver_gap(monkeypatch):
+    source = problem(((0.5, 0, 1, 0), (0.1, 0, 1, 0)), battery=battery())
+    _proven(monkeypatch, 1e-4)
+    plan = solve(source, accept_incumbent=True)
+    assert plan.mip_gap == pytest.approx(1e-4)
+    assert plan.time_limited is False
+
+
+@pytest.mark.parametrize("gap", [float("nan"), float("inf"), None, _MISSING])
+def test_proven_plan_without_a_finite_gap_reads_zero(monkeypatch, gap):
+    source = problem(((0.5, 0, 1, 0), (0.1, 0, 1, 0)), battery=battery())
+    _proven(monkeypatch, gap)
+    plan = solve(source, accept_incumbent=True)
+    assert plan.mip_gap == 0.0
+    assert plan.time_limited is False
+
+
 def test_time_limit_without_incumbent_still_raises_timeout(monkeypatch):
     _time_limited(monkeypatch, feasible=False)
     with pytest.raises(SolveError) as caught:

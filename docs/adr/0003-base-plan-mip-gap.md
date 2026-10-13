@@ -123,6 +123,40 @@ ending with no incumbent.
 - `tests/test_export_benefit.py` and `tests/test_charge_benefit.py` keep pinning the zero gap for an active
   hurdle. Goldens do not change.
 - `mip_gap` may read up to 0.0001 for a proven plan when no hurdle is active (decision 3).
+- That is not a hard bound, with or without a hurdle. HiGHS also stops on its absolute gap (`mip_abs_gap`, default
+  1e-6), which `scipy.optimize.milp` (1.18.1) does not expose, so `mip_rel_gap = 0` does not switch it off. The
+  gap is relative to the objective HiGHS minimises, the weighted one above, and not to `Plan.objective`: the solver
+  objective is `Plan.objective` plus `Plan.export_episode_reserve` and `Plan.grid_charge_episode_reserve`, plus the
+  strategy terms (weights on import and export, battery-export penalty, shortfall slacks, peak import, soft caps),
+  the balance terms and, with the deposit model on, the planning-price difference. When that objective is within
+  about ±0.01 of zero (import cost offset by export revenue, terminal value or an episode reserve) the reported
+  relative gap can reach roughly 1e-6 / |objective|, which exceeds 1 once the objective is within 1e-6 of zero.
+  `Plan.time_limited`, not `mip_gap == 0`, tells a proven plan from an unproven one.
+- Re-measured in T-036 on `ha-energy-compass-test:2026.9.1` (scipy 1.18.1, HiGHS through `scipy.optimize.milp`).
+  The options the code passes are `time_limit` and, with an episode hurdle active, `mip_rel_gap = 0`; nothing
+  else. Corpus: the benchmark day in hourly slots (24 and 48 slots), PV scaled 0.3-2.0, load 0.6-2.0, per-slot
+  noise, buy and sell drawn per slot from 0.3-1.2, battery export allowed, initial SOC 1.35-12 kWh, `cost_min`,
+  60 problems per cell, every plan proven (status 0, not `time_limited`). Worst `mip_gap` per cell:
+
+  | prices | solver objective | hurdle on (default 1, `mip_rel_gap = 0` requested) | hurdle off (HiGHS default) |
+  | --- | --- | --- | --- |
+  | x 1 | 0.45 to 95 | 1.1e-8 | 9.95e-5 |
+  | x 0.01 | 8e-4 to 1.1 | 3.7e-6 | 5.3e-5 |
+  | x 0.0001 | 8e-6 to 0.011 | 3 of 60 above 1e-4, worst 7.6e-4 | 5 of 60 above 1e-4, worst 1.5e-2 |
+
+  Which objective. HiGHS reports its gap against the objective it minimises. milp's `fun` minus `Plan.objective`
+  equals the episode reserve to 2e-8 on all 8232 proven solves of the scan below (3088 with a reserve above 0), and
+  on the 96-slot benchmark problem `self_sufficiency` reads 84.0 and `backup_ready` 14.4 against `Plan.objective`
+  5.48 and 5.17. The scan drives the PV scale of 48 random 24-slot problems (hourly, buy and sell 0.3-1.2, default
+  hurdle) towards a zero of the solver objective and of `Plan.objective` by bisection: 4966 distinct problems, 2379
+  with a reserve above 0, every plan proven. 51 of them read above 1e-4, the largest 0.30, all with a solver
+  objective within 3e-11 of zero; 11 of those carry a reserve, with `Plan.objective` between -2 and -1. Of the 723
+  plans with a reserve above 0 and |`Plan.objective`| below 0.01, none read above 1e-4 (largest 5.7e-9); of the 697
+  with a reserve above 0 and |solver objective| below 0.01, 11 did (largest 0.125). The largest `mip_gap` x
+  |solver objective| is 7.1e-7, so the 1e-6 / |objective| bound held; `mip_gap` x |`Plan.objective`| reaches 0.125
+  (gap 0.125 at solver objective -2e-14, `Plan.objective` -1, reserve 1). A reading above 1 was not reproduced
+  here; the T-036 review reported 575.5 at a solver objective of -8.5e-11 on its own problems.
+  The harness (`t036_gap_zero.py`), the raw JSON lines and a results summary are task artifacts of T-036.
 - The sentence T-022 adds to `docs/model.md` ("proves its optimum to HiGHS's default relative gap of 1e-4") is
   wrong for the default configuration and is corrected by the follow-up ticket.
 - Solve time for these strategies remains a formulation and horizon question (fewer binaries, coarser
