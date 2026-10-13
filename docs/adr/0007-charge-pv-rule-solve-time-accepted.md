@@ -343,7 +343,7 @@ main too), the first form of the row 1 of 7584 (`191c3d4`, before that main was 
 rate of 2.8e-4 per matrix, 7584 clean matrices happen 12 % of the time, so it is not a clearance and the sentence
 above, "none where the default run was the worse one", holds for the T-041 corpus only. The alternative the review
 named, solving a forced-spill model with both switches and keeping the cheaper certified plan, doubles the solve
-inside the same time limit and is not shipped; T-085 decides it with the draws above.
+inside the same time limit and was not shipped there; T-085 shipped it (Amendment T-085 below).
 
 ## Amendment (T-074): the second attempt covers every model with mode rows
 
@@ -413,3 +413,43 @@ HOLD at nine intervals, at seven to nine, through `solve_released` with no rung 
 infeasible model with mode rows that is reported as infeasible after two runs. The first test accepts one or two
 runs, so it stays green on a HiGHS that is sound on this model; the SciPy upgrade that makes it so is a reason to
 re-measure this amendment, not to remove the second attempt.
+
+## Amendment (T-085): a forced-spill model is solved with both switches
+
+Decision: option (a) of the ticket. `_Model.solve` solves a model with forced-spill binaries (`compare_switches`,
+set where the gated spill row or a flexible load puts `spill_open` into the model) a second time without presolve
+when the default run is proven optimal (status 0), in what is left of the time limit, and takes that plan if it is
+cheaper by more than 1e-6 plus 1e-4 of the cost (the gap the default run stops at) and satisfies every bound, row
+(1e-6) and binary of the matrix (`_Model._satisfies`). A second run that times out, is infeasible, is fractional,
+breaks a row or is not cheaper changes nothing; models with mode rows only are not compared (the existing second
+attempt on an infeasible or fractional answer is unchanged). The certificate stays the gate for publishing.
+
+*Reproduced.* On `origin/main` dd40906 (before T-066) `benchmarks/switch_audit.py probe 5 300` and `probe 22 300`:
+draw 7 matrix 1 default −0.206387, `presolve=False` −0.263997, `mip_rel_gap=0` −0.206387 (the gap is not the cause);
+draw 294 matrix 1 default −1.174629, `presolve=False` −1.226629. Both matrices are stored as the solver saw them
+(`tests/fixtures/solver/highs_dearer_default_run.json.gz`, built by wrapping `_Model._run` on that tree) and pinned
+by `tests/test_solver_switches.py`: the default run returns the dearer cost, the run without presolve the cheaper
+one (red after a SciPy upgrade means HiGHS no longer does this: re-measure), `solve` returns the cheaper plan, a
+cheaper point that breaks a row is not taken, and a model without the flag is solved once.
+
+*Rate on this head.* `switch_audit.py probe` seeds 5, 11, 22, 33, 44, 91, 300 draws each (3500 matrices) on the
+head with T-066's split row: 0 matrices where the default run is dearer, the same count as T-066's audit. The two
+draws above are not reachable from the generator any more (the matrix changed), so the ticket's premise,
+"reproduce on main", holds for dd40906 only; the check ships because 0 of 3500 does not clear a rate near 2.8e-4
+per matrix (3500 clean matrices happen 37 % of the time), per LESSONS solver-defect-pinned-on-one-switch.
+
+*Cost against the time budget.* `_Model.solve` wall time over a sweep, the check off against on (same seed, one
+machine; 16 cores, Docker, runs one after the other):
+
+| Sweep | Solves | With the check | Total off | Total on | Longest off | Longest on |
+| --- | --- | --- | --- | --- | --- | --- |
+| `probe` 11 × 300 | 585 | 422 | 19.7 to 22.4 s | 33.6 to 33.8 s | 0.86 s | 1.43 s |
+| `bell` 5 × 300 | 296 | 274 | 24.6 s | 48.9 s | 1.88 s | 2.35 s |
+| `run` 5 × 300 | 291 | 196 | 3.2 s | 6.1 s | 0.28 s | 0.50 s |
+
+A model that takes the check costs up to twice its solve (the second run solves the same matrix again); a model without forced-spill binaries is unchanged. Neither run may exceed the limit: the second run gets
+what the first left (`solve_time_limit_s` 10 s per rung, `total_time_limit_s` over the probes), so a first run
+that used the whole limit gets 1 ms and the plan is the one it held. No solve of the sweeps got near 10 s; the
+full suite (4535 tests) is 502 s with the change. The longer solve is the price of not publishing, as
+optimal, a plan dearer than one the model has: nothing downstream can tell. If the owner finds the time too
+dear, the alternative is to pin the class as a limit, which T-066 already did for the draw it knew.
