@@ -443,7 +443,9 @@ it; `resrun`/`resroll` draw the pack exactly at the reserve with a `SELF_CONSUME
 minutes, the state the exception reads; `fullrun`/`fullroll` are T-057's full-pack release), seeds 11, 22, 33,
 44 × 300 = 1200 draws per kind. Head is this branch merged with main; main is origin/main `38d560f` (T-052,
 T-057 and T-065 merged; its engine is that of `991a587`), run with this branch's benchmark file and solved the
-old way (once, no rungs):
+old way (once, no rungs). The branch has since been merged with main `547bf7f`, which changes no file the sweep
+runs (`git diff 38d560f 547bf7f -- custom_components benchmarks` is empty: T-476, T-478 and T-480 are the replay
+tools' price input, a test fixture and CI), so the numbers are those of `547bf7f` as well:
 
 | Kind | Planned, main → head | Newly infeasible | Newly planned |
 | --- | --- | --- | --- |
