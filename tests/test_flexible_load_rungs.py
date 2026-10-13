@@ -142,3 +142,150 @@ def test_a_level_without_a_solution_on_any_rung_stays_infeasible(monkeypatch):
 
     assert result.profiles[0].price_status == "UNKNOWN"
     assert result.profiles[0].reason == "infeasible"
+
+
+SETTINGS = CompassSettings(flexible_load_max_power_kw=2)
+
+
+def fail_on(monkeypatch, name, reserve_hold=None, free=False, reason="timeout"):
+    """Make `consumption.<name>` raise `reason` on one rung, the real function elsewhere."""
+    real = getattr(consumption, name)
+
+    def solver(candidate, *args, **kwargs):
+        if (reserve_hold and candidate.initial_dispatch_reserve_hold) or (
+            free and candidate.initial_dispatch_mode is None
+        ):
+            raise SolveError(reason, "refused")
+        return real(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(consumption, name, solver)
+
+
+def test_a_rung_without_a_base_plan_is_skipped_and_the_next_one_prices_the_level(
+    monkeypatch,
+):
+    monkeypatch.setattr(consumption, "_FLEXIBLE_LOAD_TARGETS", (0.25,))
+    plan, problem = solve_released(edge_problem())
+    fail_on(monkeypatch, "solve", reserve_hold=True, reason="infeasible")
+
+    result = analyze_flexible_loads(problem, plan, settings=SETTINGS)
+
+    free = later_rungs(problem)[1]
+    expected = plan_monetary_cost(
+        solve_flexible_load(free, FlexibleLoadRequest(0.25, 2)).plan
+    ) - plan_monetary_cost(solve(free))
+    assert result.profiles[0].price_status == "ANCHOR"
+    assert result.profiles[0].incremental_cost == pytest.approx(expected, abs=1e-6)
+
+
+def test_a_level_whose_every_rung_is_without_a_base_plan_is_infeasible(monkeypatch):
+    monkeypatch.setattr(consumption, "_FLEXIBLE_LOAD_TARGETS", (0.25,))
+    plan, problem = solve_released(edge_problem())
+    fail_on(monkeypatch, "solve", reserve_hold=True, free=True, reason="infeasible")
+
+    result = analyze_flexible_loads(problem, plan, settings=SETTINGS)
+
+    assert result.profiles[0].price_status == "UNKNOWN"
+    assert result.profiles[0].reason == "infeasible"
+
+
+def test_a_timeout_on_a_later_rung_is_what_a_level_is_published_with(monkeypatch):
+    # Infeasible on the problem itself, then the second rung's probe times out: the
+    # ladder was not finished, so the level is a timeout, not "no solution", and the
+    # third rung is not tried.
+    monkeypatch.setattr(consumption, "_FLEXIBLE_LOAD_TARGETS", (0.25,))
+    plan, problem = solve_released(edge_problem())
+    fail_on(monkeypatch, "solve_flexible_load", reserve_hold=True)
+    tried = []
+    real = consumption.solve_flexible_load
+    monkeypatch.setattr(
+        consumption,
+        "solve_flexible_load",
+        lambda candidate, *args, **kwargs: (
+            tried.append(candidate) or real(candidate, *args, **kwargs)
+        ),
+    )
+
+    result = analyze_flexible_loads(problem, plan, settings=SETTINGS)
+
+    assert result.profiles[0].price_status == "UNKNOWN"
+    assert result.profiles[0].reason == "timeout"
+    assert all(candidate.initial_dispatch_mode for candidate in tried)
+
+
+def test_another_solver_error_on_a_later_rung_ends_the_level_with_its_reason(
+    monkeypatch,
+):
+    monkeypatch.setattr(consumption, "_FLEXIBLE_LOAD_TARGETS", (0.25,))
+    plan, problem = solve_released(edge_problem())
+    fail_on(
+        monkeypatch, "solve_flexible_load", reserve_hold=True, reason="solver_failure"
+    )
+
+    result = analyze_flexible_loads(problem, plan, settings=SETTINGS)
+
+    assert result.profiles[0].reason == "solver_failure"
+
+
+def test_a_base_plan_that_times_out_on_a_rung_ends_the_level_as_a_timeout(monkeypatch):
+    monkeypatch.setattr(consumption, "_FLEXIBLE_LOAD_TARGETS", (0.25,))
+    plan, problem = solve_released(edge_problem())
+    fail_on(monkeypatch, "solve", reserve_hold=True)
+
+    result = analyze_flexible_loads(problem, plan, settings=SETTINGS)
+
+    assert result.profiles[0].price_status == "UNKNOWN"
+    assert result.profiles[0].reason == "timeout"
+
+
+def test_a_base_plan_that_lands_past_the_deadline_leaves_no_probe_to_start(monkeypatch):
+    # The rung's base plan is solved on what is left of the budget and may return
+    # after it is gone: the level is a timeout, and the probe is never given a
+    # limit of zero (an InputError the coordinator would answer by dropping the plan).
+    monkeypatch.setattr(consumption, "_FLEXIBLE_LOAD_TARGETS", (0.25,))
+    plan, problem = solve_released(edge_problem())
+    clock = [0.0]
+    monkeypatch.setattr(consumption, "perf_counter", lambda: clock[0])
+    real_solve = consumption.solve
+    real_probe = consumption.solve_flexible_load
+    limits = []
+
+    def slow_solve(candidate, **kwargs):
+        result = real_solve(candidate, **kwargs)
+        clock[0] += 10
+        return result
+
+    def probe(candidate, request, **kwargs):
+        limits.append(kwargs["time_limit_s"])
+        return real_probe(candidate, request, **kwargs)
+
+    monkeypatch.setattr(consumption, "solve", slow_solve)
+    monkeypatch.setattr(consumption, "solve_flexible_load", probe)
+
+    result = analyze_flexible_loads(problem, plan, settings=SETTINGS, budget_s=5)
+
+    assert result.profiles[0].price_status == "UNKNOWN"
+    assert result.profiles[0].reason == "timeout"
+    assert len(limits) == 1
+    assert all(limit > 0 for limit in limits)
+
+
+def test_a_level_on_another_rung_than_the_anchor_is_not_judged_against_it(
+    monkeypatch,
+):
+    # The anchor (0.25 kWh) is priced on the second rung, the other two levels on the
+    # problem itself. The third has a block cost (against the second, same rung) and
+    # still no verdict: the allowed price it would be held to is of another problem.
+    monkeypatch.setattr(consumption, "_FLEXIBLE_LOAD_TARGETS", (0.25, 0.5, 0.75))
+    plan, problem = solve_released(edge_problem())
+
+    result = analyze_flexible_loads(problem, plan, settings=SETTINGS)
+
+    assert [profile.price_status for profile in result.profiles] == [
+        "ANCHOR",
+        "UNKNOWN",
+        "UNKNOWN",
+    ]
+    assert result.profiles[1].block_cost_per_kwh is None
+    assert result.profiles[2].block_cost_per_kwh is not None
+    assert result.depth_kwh == 0.25

@@ -1109,8 +1109,11 @@ Blok, który nie ma rozwiązania na problemie, dla którego policzono plan, jest
 szczeblach drabiny tego planu (`HOLD` zobowiązania, potem plan bez zobowiązania), każdy względem planu tego
 szczebla, więc poziom nigdy nie jest wyceniany względem planu innego problemu. Potrzebuje tego tylko
 przeniesione zobowiązanie `CHARGE_PV`/`SELF_CONSUME`, którego plan leży na granicy pełnego akumulatora.
-Dwa sąsiednie poziomy policzone na różnych szczeblach nie mają kosztu bloku między sobą: drugi ma status
-`UNKNOWN`.
+Dwa sąsiednie poziomy policzone na różnych szczeblach nie mają kosztu bloku między sobą, a poziom na innym
+szczeblu niż pierwszy (kotwica) nie jest oceniany względem dozwolonej ceny kotwicy: oba mają status
+`UNKNOWN`. Poziom jest publikowany z przyczyną, która go zakończyła: `infeasible` tylko wtedy, gdy żaden
+z odwiedzonych szczebli nie miał rozwiązania, a przekroczenie czasu lub inny błąd solvera kończy go od razu
+jako ten błąd.
 
 ## Strategie dyspozycji
 

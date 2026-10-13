@@ -163,21 +163,20 @@ def analyze_flexible_loads(
     # Rung 0 is the problem the plan was solved for. A level with no solution there is
     # tried on the later rungs of `solve_released`, against the plan of that rung (solved
     # once, only when a level needs it): a plan is only compared with a plan of its own problem.
+    # A level that does not finish the ladder is published with the reason that ended it
+    # (`timeout`, a solver error); `infeasible` only where every rung it reached had no solution.
     rungs = later_rungs(problem)
-    rung_plans: dict[int, Plan | None] = {0: plan}
+    rung_plans: dict[int, Plan] = {0: plan}
+    rung_failures: dict[int, str] = {}
+    anchor_rung: int | None = None
 
-    def rung_plan(rung: int) -> Plan | None:
-        if rung not in rung_plans:
+    def rung_plan(rung: int, time_limit_s: float) -> Plan | None:
+        if rung not in rung_plans and rung not in rung_failures:
             try:
-                rung_plans[rung] = solve(
-                    rungs[rung - 1],
-                    time_limit_s=min(
-                        max(deadline - perf_counter(), 0), settings.probe_time_limit_s
-                    ),
-                )
-            except SolveError, InputError:
-                rung_plans[rung] = None
-        return rung_plans[rung]
+                rung_plans[rung] = solve(rungs[rung - 1], time_limit_s=time_limit_s)
+            except SolveError as err:
+                rung_failures[rung] = err.reason
+        return rung_plans.get(rung)
 
     for energy_kwh in _FLEXIBLE_LOAD_TARGETS:
         reason = None
@@ -192,24 +191,32 @@ def analyze_flexible_loads(
             for rung in range(len(rungs) + 1):
                 remaining = deadline - perf_counter()
                 if remaining <= 0:
-                    reason = reason or "timeout"
+                    reason = "timeout"
                     break
-                if rung and rung_plan(rung) is None:
-                    continue
+                if rung:
+                    # The plan of a rung is solved on the budget that is left, and a solve
+                    # of it that lands past the deadline leaves nothing for the probe.
+                    base = rung_plan(rung, min(remaining, settings.probe_time_limit_s))
+                    if base is None:
+                        reason = rung_failures[rung]
+                        if reason != "infeasible":
+                            break
+                        continue
+                    remaining = deadline - perf_counter()
+                    if remaining <= 0:
+                        reason = "timeout"
+                        break
                 try:
                     candidate = solve_flexible_load(
                         rungs[rung - 1] if rung else problem,
                         request,
-                        time_limit_s=min(
-                            max(deadline - perf_counter(), 0),
-                            settings.probe_time_limit_s,
-                        ),
+                        time_limit_s=min(remaining, settings.probe_time_limit_s),
                     )
                     reason = None
                     break
                 except SolveError as err:
-                    reason = reason or err.reason
-                    if err.reason != "infeasible":
+                    reason = err.reason
+                    if reason != "infeasible":
                         break
         if candidate is None or perf_counter() > deadline:
             reason = reason or "timeout"
@@ -254,9 +261,12 @@ def analyze_flexible_loads(
             allowed_price = anchor_price + (
                 settings.flexible_price_degradation_percent / 100 * abs(anchor_price)
             )
+            anchor_rung = rung
             status = "ANCHOR"
             depth = energy_kwh
-        elif block_cost is None or allowed_price is None:
+        elif block_cost is None or allowed_price is None or rung != anchor_rung:
+            # The allowed price comes from the anchor: a level solved on another rung than
+            # the anchor's is not judged against it, however known its own block is.
             status = "UNKNOWN"
             chain_open = False
         elif block_cost <= allowed_price + _TOL:

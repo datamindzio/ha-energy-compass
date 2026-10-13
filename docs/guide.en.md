@@ -1083,7 +1083,10 @@ A block that has no solution on the problem the plan was solved for is tried aga
 the plan's own ladder (the commitment's `HOLD`, then the plan without the commitment), each against the plan
 of that rung, so a level is never priced against a plan of another problem. It is only a carried
 `CHARGE_PV`/`SELF_CONSUME` commitment whose plan sits on the edge of a full pack that needs this. Two
-neighbouring levels solved on different rungs have no block cost between them: the second is `UNKNOWN`.
+neighbouring levels solved on different rungs have no block cost between them, and a level on another
+rung than the first (anchor) level is not judged against the anchor's allowed price: both are `UNKNOWN`.
+A level is published with the reason that ended it: `infeasible` only if every rung it reached had no
+solution, while a timeout or another solver error ends it at once as that error.
 
 ## Dispatch strategies
 

@@ -286,9 +286,10 @@ def planned(problem, request=None):
 
     Returns the plan and the problem it was solved for. A tree without `solve_released`
     (a checkout of main to compare with) solves once and never falls back. A flexible-load
-    request is planned on the problem the base plan was solved for, like the runtime's probes,
-    and where that has no solution on the later rungs of the ladder (`later_rungs`, T-067)
-    as `consumption.analyze_flexible_loads` does; a tree without them solves it once.
+    request is planned on the problem the base plan was solved for, like the runtime's probes;
+    where that has no solution it goes to the later rungs of the ladder (`later_rungs`, T-067)
+    that have a base plan of their own, as `consumption.analyze_flexible_loads` does. A tree
+    without `later_rungs` (a checkout of main to compare with) solves it once.
     """
     released = getattr(optimize, "solve_released", None)
     if released:
@@ -301,6 +302,8 @@ def planned(problem, request=None):
     failure = None
     for candidate in (problem, *rungs):
         try:
+            if candidate is not problem:
+                solve(candidate)
             return solve_flexible_load(candidate, request).plan, candidate
         except SolveError as error:
             if error.reason != "infeasible":

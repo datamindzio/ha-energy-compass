@@ -449,8 +449,14 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
     then `uncommitted_fallback`; a problem that is already rung 2 has only the last), against the plan of that
     rung (solved once, only when a level needs it, with the probe time limit). A level is priced only against
     a plan of its own problem; the block between two levels on different rungs is `None` and the second is
-    `UNKNOWN`. Any other solver error ends a level as before. `benchmarks/curtail_sweep.py` plans a probe the
-    same way. Measured with `deprobe` seeds 11, 22, 33, 44 × 300 against `38d560f` (T-052, T-057 and T-065
+    `UNKNOWN`, and so is a level on another rung than the anchor (the first level), which is not judged against the
+    anchor's allowed price. A level is published with the reason that ended it: `infeasible` only where every rung it
+    reached had no solution (a rung whose own base plan is `infeasible` is skipped); a timeout or any other solver
+    error, on the probe or on the base plan of a rung, ends it at once as that error. The rung's base plan and the
+    probe each get what is left of the total limit, and a base plan that returns after it leaves no probe to start
+    (`timeout`; the first version passed the probe a limit of zero, an `InputError` that dropped the plan in the
+    coordinator, found in review). `benchmarks/curtail_sweep.py` plans a probe the same way, and a rung only when its
+    base plan has a solution. Measured with `deprobe` seeds 11, 22, 33, 44 × 300 against `38d560f` (T-052, T-057 and T-065
     merged, solved once, as for point 24's table), head `5baf226` plus this change: 0 newly infeasible
     (head without it: 1, seed 44 draw 10), 105, 100, 107 and 120 newly planned.
 
