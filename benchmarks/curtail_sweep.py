@@ -593,7 +593,14 @@ if __name__ == "__main__":
     else:
         out = draws(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
         Path(sys.argv[4]).write_text(json.dumps(out))
-        if sys.argv[1] in ("roll", "negroll", "deproll", "resroll", "fullroll", "aimroll"):
+        if sys.argv[1] in (
+            "roll",
+            "negroll",
+            "deproll",
+            "resroll",
+            "fullroll",
+            "aimroll",
+        ):
             print(
                 sum(row[0] == "ok" for row in out),
                 "followed to the end, of",
