@@ -27,7 +27,8 @@ the inverter).
    deadline stays the only one. It may turn to `CURTAIL` (a normal mode with its own clock) inside the
    commitment if the pack was at the ceiling in an earlier committed interval (cumulative, so not after an
    empty-battery release alone), and is free after the deadline. It does not go back to `CHARGE_PV`/`SELF_CONSUME` (an explicit
-   row; before, the `HOLD` clock forbade it). This applies to the empty-battery release as well.
+   row; before, the `HOLD` clock forbade it). This applies to the empty-battery release as well
+   (amended by T-050: not for a `HOLD` released from a depleted pack, point 13).
 3. `validate_modes` mirrors it: a released `HOLD` keeps the commitment's clock, `CURTAIL` is accepted from
    the commitment in an interval that starts at the ceiling, or from the released `HOLD` once the pack was
    seen at the ceiling, nothing else is.
@@ -237,7 +238,8 @@ Decision:
 Measured with `benchmarks/curtail_sweep.py` (the script is the same on both sides; it gained a generator for
 the sunrise on a depleted pack: `deprun`, `deproll`, `deprobe`, a carried `CHARGE_PV`/`SELF_CONSUME` with the
 pack at the reserve to 0.2 kWh above it, PV rising from nothing, export cap 0, 0.5 or 2 kW). Seeds 11, 22, 33,
-44 × 300 each, this branch against origin/main `98ddc16` (the branch's base):
+44 × 300 each, this branch (merged with origin/main `5c11c2e`) against that `main`; the same counts come out against
+`98ddc16`, the branch's first base:
 
 - Base draws (`run`, `negrun` with sell prices below zero, `probe` through `solve_flexible_load`): 0 newly
   infeasible, 0 newly planned, 0 changed objectives, 0 `NEW SOLVER FAILURE`. The rule changes nothing where
