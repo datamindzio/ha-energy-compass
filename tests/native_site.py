@@ -12,6 +12,7 @@ from controller_support import PREFIX, START, register_solarman
 from homeassistant.core import ServiceCall, SupportsResponse
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.energy_compass import controller_profile as profile
@@ -81,8 +82,9 @@ ENTITIES = profile.Entities(CHARGE, DISCHARGE, GRID, OPERATION, SOC, VOLTAGE, PR
 class Inverter:
     """Register bank and recording services."""
 
-    def __init__(self, hass):
+    def __init__(self, hass, select_handler=None):
         self.hass = hass
+        self._select_handler = select_handler
         self.registers = profile.register_map(ENTITIES)
         self.writes = []
         self.reads = 0
@@ -121,6 +123,9 @@ class Inverter:
         self._apply(call.data["entity_id"], call.data["value"])
 
     async def _select(self, call: ServiceCall):
+        if call.data["entity_id"] not in self.registers:
+            # Energy Compass's own select entities share the service name.
+            return await self._select_handler(call)
         if self.gate is not None:
             await self.gate.wait()
         self._apply(call.data["entity_id"], call.data["option"])
@@ -136,6 +141,20 @@ class Inverter:
     def release(self):
         self.gate.set()
         self.gate = None
+
+
+async def fake_inverter(hass):
+    """The register bank, with the real `select` component set up before its services.
+
+    The integration forwards its `select` platform while a run may already be writing.
+    That first load registers Home Assistant's own `select.select_option` over the
+    fake one, so a write landing after it is a no-op and never confirms. Loading the
+    component first makes the fake service the last registration, whatever the timing;
+    it hands the entities it does not own to the real handler.
+    """
+    assert await async_setup_component(hass, "select", {})
+    real = hass.services.async_services_internal()["select"]["select_option"]
+    return Inverter(hass, real.job.target)
 
 
 def register_inverter(hass, device_type=DEVICE_TYPE, protocol="1.4"):
@@ -181,7 +200,7 @@ async def native_site(
     freezer.move_to(START)
     await hass.config.async_set_time_zone("Europe/Warsaw")
     device = register_inverter(hass, **hardware)
-    inverter = Inverter(hass)
+    inverter = await fake_inverter(hass)
     entry = MockConfigEntry(
         domain="energy_compass",
         data=default_configuration("EUR", "UTC"),
