@@ -513,6 +513,7 @@ def test_runtime_summary_lists_the_recorded_attributes():
     summary = c.runtime_summary({"code": "ok", "reason": "r", "state": "HOLD"}, True)
     assert summary == {
         "reason": "r",
+        "reason_code": None,
         "state": "HOLD",
         "requested_mode": None,
         "confirmed_mode": None,

@@ -222,6 +222,7 @@ class NativeHost:
         self._logged: tuple[Any, Any] | None = None
         self._unsub_started: CALLBACK_TYPE | None = None
         self._failures = 0
+        self._seen: tuple[Any, ...] | None = None
 
     @property
     def _entry_id(self) -> str:
@@ -238,9 +239,15 @@ class NativeHost:
         """The last runs, oldest first."""
         return list(self.executor.history)
 
+    @property
+    def notable(self) -> list[dict[str, Any]]:
+        """The last runs that sent a command or ended with a code other than `ok`."""
+        return list(self.executor.notable)
+
     async def async_start(self) -> None:
         runtime = self.controller.state.runtime
         self._logged = (runtime.get("confirmed_mode"), runtime.get("code"))
+        self._seen = self._inputs()
         self._unsubscribe = [
             self.controller.async_add_listener(self._controller_changed),
             async_track_time_change(self.hass, self._minute, second=0),
@@ -425,7 +432,34 @@ class NativeHost:
 
     @callback
     def _controller_changed(self) -> None:
+        """Run when something the executor reads from the controller changed.
+
+        The controller notifies on every coordinator update, about every few seconds
+        on a busy site, whether or not its view moved; the sensor entities rely on
+        that, a run must not.
+        """
+        inputs = self._inputs()
+        if inputs == self._seen:
+            return
+        self._seen = inputs
         self.request("controller")
+
+    def _inputs(self) -> tuple[Any, ...]:
+        """The controller facts a run depends on.
+
+        The view is what the snapshot hands the profile; `advances` counts the
+        next-event timer, which moves `now` across a row or TOU boundary without
+        changing the view. Pause and the options (limits, entity overrides) are not
+        part of the view.
+        """
+        controller = self.controller
+        return (
+            controller.view()[1],
+            controller.advances,
+            controller.state.mode,
+            controller.state.paused,
+            controller.entry.options.get("controller"),
+        )
 
     def _sync_watch(self) -> None:
         setup = self.port.setup

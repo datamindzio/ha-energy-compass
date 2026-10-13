@@ -145,8 +145,12 @@ def sidecar_of(path: Path) -> Path:
     return path.with_name(f"{path.stem}.reported.json")
 
 
-def apply_reported(states: dict, reported: Mapping) -> None:
-    """Replace `last_reported` with the in-memory values from the sidecar."""
+def apply_reported(states: dict, reported: Mapping) -> datetime | None:
+    """Replace `last_reported` with the in-memory values from the sidecar.
+
+    Returns the latest report time applied.
+    """
+    latest = None
     for entity, value in reported.items():
         if entity not in states:
             continue
@@ -155,6 +159,10 @@ def apply_reported(states: dict, reported: Mapping) -> None:
         if not isinstance(value, str):
             value = datetime.fromtimestamp(value, UTC).isoformat()
         states[entity] = {**states[entity], "last_reported": value}
+        stamp = timestamp(value, 0.0)
+        if stamp and (latest is None or stamp > latest.timestamp()):
+            latest = datetime.fromtimestamp(stamp, UTC)
+    return latest
 
 
 def reference(states: Mapping, setup: Mapping) -> tuple[dict | None, str | None]:
@@ -343,7 +351,12 @@ def main(argv=None) -> int:
         states = states_of(json.loads(path.read_text()))
         sidecar = sidecar_of(path)
         if sidecar.is_file():
-            apply_reported(states, json.loads(sidecar.read_text()))
+            latest = apply_reported(states, json.loads(sidecar.read_text()))
+            # The sidecar is fetched after the dump's time is taken, so a report can
+            # be a fraction of a second newer than the file name; a negative
+            # telemetry age would make the decision invalid.
+            if latest is not None and latest > dump_time:
+                dump_time = latest.astimezone(zone)
         else:
             unreported += 1
         result, detail, age, written = compare(

@@ -2621,9 +2621,13 @@ z zapisywanych atrybutów, a inne zmiany najwyżej raz na minutę. Akceptacje, u
 sesji, zmiany trybu, importy i zmiany urządzenia trafiają do historii 50 wpisów w magazynie i w
 diagnostyce integracji (<code>deye_controller</code>); zdarzenia nie są wysyłane.</p>
 <p>Przy silniku natywnym sensor stanu pracy ma też <code>last_run</code> (nie jest zapisywany w historii): co uruchomiło ostatni
-przebieg, decyzję, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony lub zablokowany) i jak
-przebieg się zakończył. Ostatnie 50 przebiegów jest przechowywane w pamięci, nie w magazynie, i widnieje w diagnostyce
-jako <code>run_history</code>. Wpis w dzienniku zdarzeń podaje stary i nowy kod stanu pracy oraz potwierdzony tryb, gdy któryś się zmieni.</p>
+przebieg, decyzję, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony lub zablokowany), wynik
+próby układu rejestrów, gdy była wykonana (<code>probe</code>: <code>passed</code> lub <code>failed: &lt;encje&gt;</code>), i jak przebieg się zakończył.
+Ostatnie 50 przebiegów jest przechowywane w pamięci, nie w magazynie, i widnieje w diagnostyce jako <code>run_history</code>;
+ostatnie 20 przebiegów, które wysłały polecenie lub zakończyły się kodem stanu pracy innym niż <code>ok</code>, jest osobno jako
+<code>run_history_notable</code>, żeby zwykłe przebiegi ich nie wypychały. Silnik działa, gdy zmieni się coś, co czyta (plan,
+tryb, pauza, fakty TOU, najbliższa granica wiersza lub TOU), co pełną minutę i gdy zmieni się wartość falownika; nie
+działa przy każdym odświeżeniu Energy Compass. Wpis w dzienniku zdarzeń podaje stary i nowy kod stanu pracy oraz potwierdzony tryb, gdy któryś się zmieni.</p>
 <h3 id="usługi">Usługi</h3>
 <section class="table-scroll"><table>
 <thead>
@@ -2969,8 +2973,9 @@ Assistant (po polsku dla <code>pl</code>, w pozostałych przypadkach po angielsk
 <ul>
 <li><code>reason</code> i <code>reason_code</code> sensora stanu pracy oraz jego atrybut <code>last_run</code> (nie jest zapisywany w historii): wyzwalacz,
   decyzja, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony, zablokowany) i jak przebieg się zakończył;</li>
-<li>diagnostyka integracji (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code> i <code>run_history</code>, ostatnie 50 przebiegów
-  (w pamięci, więc restart je czyści);</li>
+<li>diagnostyka integracji (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code>, <code>run_history</code>, ostatnie 50 przebiegów, oraz
+  <code>run_history_notable</code>, ostatnie 20, które zapisały lub zakończyły się kodem innym niż <code>ok</code> (oba w pamięci, więc
+  restart je czyści);</li>
 <li>wpis w dzienniku zdarzeń sensora stanu pracy za każdym razem, gdy zmieni się kod stanu pracy lub potwierdzony tryb;</li>
 <li>kod <code>error</code> oraz problemy w Naprawach „Przebiegi sterownika Deye kończą się błędem” i „Automatyzacja blueprintu
   Deye nadal działa”, więc zatrzymany sterownik widać bez czytania logów.</li>

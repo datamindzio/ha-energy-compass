@@ -113,6 +113,7 @@ CONTROLLER_ATTRIBUTES = (
 )
 RUNTIME_SUMMARY_KEYS = (
     "reason",
+    "reason_code",
     "state",
     "requested_mode",
     "confirmed_mode",
