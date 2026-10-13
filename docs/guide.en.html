@@ -130,6 +130,7 @@
       · <a href="index.html">Entity and calculation guide</a></p>
     <nav aria-label="Contents">
       <ul>
+        <li><a href="#installation">Installation</a></li>
         <li><a href="#how-it-works">How it works</a></li>
         <li><a href="#entity-overview">Entity overview</a></li>
         <li><a href="#optimizer-status--calculation-lifecycle">Optimizer status — calculation lifecycle</a></li>
@@ -155,7 +156,8 @@
 <p>This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
 <strong>0.1.39</strong>. The mathematical contract behind each rule lives in <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md">model and limitations</a>;
-installation and dashboards are in the <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">installation guide</a>.</p>
+installation is described in the <a href="#installation">Installation</a> section, and dashboards in the
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">installation guide</a>.</p>
 <p>Energy Compass is <strong>advisory</strong>. It computes a plan and publishes it as Home Assistant entities. It
 sends no messages by itself, and it writes inverter settings only when you enable the optional Deye
 controller (off by default), which does so through the Solarman integration; notification blueprints
@@ -163,6 +165,7 @@ and other controllers decide for themselves whether to act on the plan. See
 <a href="#deye-inverter-controller-solarman">Deye inverter controller</a>.</p>
 <h2 id="contents">Contents</h2>
 <ol>
+<li><a href="#installation">Installation</a></li>
 <li><a href="#how-it-works">How it works</a></li>
 <li><a href="#entity-overview">Entity overview</a></li>
 <li><a href="#optimizer-status--calculation-lifecycle">Optimizer status — calculation lifecycle</a></li>
@@ -179,8 +182,96 @@ and other controllers decide for themselves whether to act on the plan. See
 <li><a href="#offline-replay-tool">Offline replay tool</a></li>
 <li><a href="#reason-code-reference">Reason code reference</a></li>
 </ol>
+<h2 id="installation">Installation</h2>
+<p>This section takes you from an empty Home Assistant to the first plan, step by step. You need a running
+Home Assistant and, for the full benefit, an inverter with a battery; you do not need to know Energy
+Compass first. Polish households are the main path (PLN, tariff G12, RCE sell price, net billing), and
+the same steps apply to any other currency and tariff.</p>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-d7bf30e4d838-dark.svg"><img src="assets/diagrams/diagram-d7bf30e4d838.svg" alt="Diagram 1" loading="lazy"></picture></figure>
+<h3 id="requirements">Requirements</h3>
+<ul>
+<li>Home Assistant <strong>2026.9.1 or later</strong>.</li>
+<li><code>scipy</code>, the numerical solver. The integration installs the exact pinned version from its manifest
+  (<code>scipy==1.18.1</code>); you install nothing yourself.</li>
+<li>Raspberry Pi and other ARM64 hosts work. The tested ARM64 Core/Python/solver combination and
+  representative benchmark results are in <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/runtime-validation.md">runtime validation</a>.</li>
+</ul>
+<h3 id="install-the-integration">Install the integration</h3>
+<ol>
+<li><strong>HACS (recommended).</strong> In HACS open <strong>Custom repositories</strong> and add
+   <code>https://github.com/datamindzio/ha-energy-compass</code> as an <strong>Integration</strong>. Download Energy Compass,
+   then restart Home Assistant.</li>
+<li><strong>Manual.</strong> Copy this repository's <code>custom_components/energy_compass</code> directory into the
+   <code>custom_components</code> folder of your Home Assistant configuration directory, then restart.</li>
+</ol>
+<h3 id="add-the-integration">Add the integration</h3>
+<p>Open <strong>Settings → Devices &amp; services → Add integration → Energy Compass</strong>. The setup is a short wizard;
+nothing is saved until its last step.</p>
+<ol>
+<li><strong>First form.</strong> Fill in <strong>Name</strong>, <strong>Currency</strong> (no automatic conversion) and <strong>Timezone</strong>, choose
+   the optional <strong>Preset</strong> (provider profile) and set <strong>Pv enabled</strong> and <strong>Battery enabled</strong>. The same form
+   offers three optional starting profiles: <strong>Prosumer settlement</strong>, <strong>Polish distribution tariff</strong> and
+   <strong>Inverter</strong>. They pre-fill editable tuning values once, for this new installation only, and never
+   set a price; Polish profiles require currency PLN. See
+   <a href="#setup-profiles-new-installations">Setup profiles</a> for what each profile fills in.</li>
+<li><strong>Detected sources.</strong> Energy Compass looks for Solcast, <code>rce_pse</code>, Solarman (Deye) and your Energy
+   dashboard sources by integration identity, not by entity name, and offers them as rows. Keep the ones
+   you want and continue: they are bound and <strong>Preview and save</strong> opens. Nothing found, or nothing
+   kept, opens the main menu instead. See
+   <a href="#detected-sources-new-installations">Detected sources</a>; PV can also use the
+   <a href="#energy-dashboard-solar-forecast">Energy dashboard solar forecast</a>.</li>
+<li><strong>Main menu.</strong> Work through the groups you need; each can be revisited later in <strong>Configure</strong>.
+   - <strong>Tariffs → Buy source</strong> for the buy price. For Polish G11/G12/G12w choose <strong>Polish tariff
+     schedule</strong>, which needs no YAML: pick the operator and group, then type the peak rate (<em>Buy rate</em>)
+     and, for G12/G12w, the <em>Off-peak buy rate</em> in <strong>Tariffs → Fixed rates and transformations</strong>. Zones,
+     clock and holidays are in <a href="#built-in-polish-tariffs">Built-in Polish tariffs</a>.
+   - <strong>Tariffs → Sell source</strong> for the sell price. For Poland choose <strong>RCE market price (PSE)</strong>, which
+     takes the sensor of the <code>rce_pse</code> integration.
+   - <strong>Load forecasting</strong> holds the numbers behind the household consumption forecast. A new
+     installation starts from the daily estimate you type there (<strong>Daily load kwh</strong>, 10 kWh/day by
+     default). Recorder history is used once a household load source is bound: keep the <strong>Household load
+     history</strong> row in <strong>Detected sources</strong>, or use <strong>Sources → Add source → Load</strong>. <strong>Load forecasting</strong>
+     then tunes the history window (<strong>Lookback days</strong>, <strong>Minimum samples</strong>) and the fallback.
+   - <strong>Sources</strong> reviews and edits every bound source, including PV; <strong>Battery</strong> and <strong>Hardware
+     capabilities</strong> hold the battery limits and the grid import limit. The planning, outlook,
+     performance and presentation groups appear after <strong>Show expert settings</strong> (see
+     <a href="#expert-settings">Expert settings</a>).</li>
+<li><strong>Preview and save.</strong> The preview normalizes the inputs, shows their coverage, units and ages, and
+   solves a bounded base plan before anything is saved. The base plan must be feasible to save. On first setup you also tick the confirmations for the displayed buy source and
+   household load source (a fixed buy rate of zero means free import; the default household estimate is
+   10 kWh/day), then confirm the save.</li>
+</ol>
+<p>To try Energy Compass without any provider entities, create a synthetic setup: name <code>Synthetic</code>,
+currency <code>EUR</code>, timezone <code>UTC</code>, preset <code>Generic</code>, PV and battery off; the README
+(<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/README.md#install">English</a>, <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/README.pl.md#instalacja">Polski</a>) lists the remaining values.</p>
+<h3 id="after-installation">After installation</h3>
+<p>The integration creates one device with the native sensors, binary sensors and the <strong>Strategy</strong> select
+described in <a href="#entity-overview">Entity overview</a>. Right after saving, the <strong>Optimizer status</strong> sensor
+reads <code>calculating</code> and turns <code>ready</code> when the first validated plan is published. If it reports <code>invalid_input</code>, <code>timeout</code> or <code>infeasible</code>, see
+<a href="#optimizer-status--calculation-lifecycle">Optimizer status</a> for the reason.</p>
+<p>After an update through HACS, restart Home Assistant and reload the browser page (on the mobile app,
+restart it). The frontend caches the integration's labels; without a reload, new options such as
+<strong>Energy Atlas</strong> can show as blank items.</p>
+<h3 id="optional-next-steps">Optional next steps</h3>
+<p>Each step is independent; the linked section has the details. <strong>Options</strong> and <strong>Configure</strong> are the same
+button on the integration's page in <strong>Settings → Devices &amp; services</strong>.</p>
+<ul>
+<li><strong>Deye inverter controller.</strong> To let Energy Compass write the plan to a Deye inverter through
+  Solarman, open <strong>Options → Deye controller</strong>. Off by default; see
+  <a href="#enabling-the-controller">Enabling the controller</a>.</li>
+<li><strong>Notifications.</strong> Turn on <strong>Notify enabled</strong> in <strong>Notification preferences</strong>, then copy the notification
+  blueprint, which lives outside the HACS-installed folder. See
+  <a href="#window-notifications">Window notifications</a> and
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">Opt-in notifications</a>.</li>
+<li><strong>Automatic strategy switching.</strong> The <code>strategy_switch</code> blueprint picks one dispatch strategy per day. See <a href="#automatic-strategy-switching">Automatic strategy switching</a> and
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#import-the-strategy-switch-blueprint">Import the strategy switch blueprint</a>.</li>
+<li><strong>Dashboards and cost card.</strong> Ready-made dashboard examples and the cost card are described in
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">Dashboard examples</a> and the <a href="#cost-card">Cost card</a>.</li>
+<li><strong>Energy Atlas.</strong> The optional telemetry service is under <strong>Configure → Energy Atlas</strong>; see
+  <a href="#energy-atlas-optional">Energy Atlas</a>.</li>
+</ul>
 <h2 id="how-it-works">How it works</h2>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-15f395d19772-dark.svg"><img src="assets/diagrams/diagram-15f395d19772.svg" alt="Diagram 1" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-15f395d19772-dark.svg"><img src="assets/diagrams/diagram-15f395d19772.svg" alt="Diagram 2" loading="lazy"></picture></figure>
 <p>Each calculation proceeds as follows:</p>
 <ol>
 <li><strong>Snapshot and validate inputs.</strong> Prices, PV forecast, load forecast (from recorder history),
@@ -200,7 +291,7 @@ and other controllers decide for themselves whether to act on the plan. See
 <li><strong>Publish.</strong> One coherent generation updates all entities; unchanged entities are not rewritten.</li>
 </ol>
 <h3 id="recalculation-cadence">Recalculation cadence</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-c88687f93698-dark.svg"><img src="assets/diagrams/diagram-c88687f93698.svg" alt="Diagram 2" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-c88687f93698-dark.svg"><img src="assets/diagrams/diagram-c88687f93698.svg" alt="Diagram 3" loading="lazy"></picture></figure>
 <ul>
 <li><strong>Periodic:</strong> <code>refresh_minutes</code> (default 15, max 60) aligned to the wall clock; the Deye hybrid
   setup profile pre-fills 60.</li>
@@ -877,9 +968,9 @@ Battery balance is disabled by default and enabled with the <strong>LFP balance<
 attributes carry <code>last_completed</code>, <code>next_due</code>, <code>days_overdue</code>, <code>planned_start</code>, <code>planned_end</code>,
 <code>planned_mode</code>, <code>pv_series</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code> and <code>threshold_percent</code>.</p>
 <h3 id="availability-rule">Availability rule</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8f0236fbff5e-dark.svg"><img src="assets/diagrams/diagram-8f0236fbff5e.svg" alt="Diagram 3" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8f0236fbff5e-dark.svg"><img src="assets/diagrams/diagram-8f0236fbff5e.svg" alt="Diagram 4" loading="lazy"></picture></figure>
 <h2 id="optimizer-status--calculation-lifecycle">Optimizer status — calculation lifecycle</h2>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-de6c78ba6f9d-dark.svg"><img src="assets/diagrams/diagram-de6c78ba6f9d.svg" alt="Diagram 4" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-de6c78ba6f9d-dark.svg"><img src="assets/diagrams/diagram-de6c78ba6f9d.svg" alt="Diagram 5" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -1061,7 +1152,7 @@ Configuration, registry and invalid-input changes discard in-flight results.</p>
 interval produced a known level. Other attributes: <code>coverage_end</code>, <code>requested_end</code>,
 <code>coverage_complete</code>, <code>input_ages</code>, <code>missing_sources</code>, <code>load_quality</code>.</p>
 <h3 id="alert-binary_sensor_alert">Alert (<code>binary_sensor.&lt;name&gt;_alert</code>)</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8d7b78fb8685-dark.svg"><img src="assets/diagrams/diagram-8d7b78fb8685.svg" alt="Diagram 5" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8d7b78fb8685-dark.svg"><img src="assets/diagrams/diagram-8d7b78fb8685.svg" alt="Diagram 6" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -1101,7 +1192,7 @@ interval produced a known level. Other attributes: <code>coverage_end</code>, <c
 <p>Attributes: <code>code</code>, <code>reason</code>, <code>since</code>, <code>plan_retained</code>, <code>last_successful_plan_at</code>. A retry does
 not clear the alert; only a successful new plan does.</p>
 <h3 id="plan-retention">Plan retention</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-230597e5df17-dark.svg"><img src="assets/diagrams/diagram-230597e5df17.svg" alt="Diagram 6" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-230597e5df17-dark.svg"><img src="assets/diagrams/diagram-230597e5df17.svg" alt="Diagram 7" loading="lazy"></picture></figure>
 <p>A retained plan is never extended beyond its original coverage and is not carried across an
 integration reload or Home Assistant restart. Saving Configure does not reload the integration, so it
 does not end the plan: see <a href="#saving-options">Saving options</a>. The <a href="#deye-inverter-controller-solarman">Deye controller</a>
@@ -1164,7 +1255,7 @@ by precedence: CURTAIL → CHARGE_GRID → CHARGE_PV → DISCHARGE_GRID → SELF
 <p>A planned <a href="#lfp-balance-charge">LFP balance hold</a> does not add a mode: its rows reuse <code>CHARGE_PV</code> or
 <code>CHARGE_GRID</code> and carry <code>balance_hold: true</code> in the plan's <code>intervals</code> attribute.</p>
 <h3 id="transitions-and-minimum-duration">Transitions and minimum duration</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-1eb21ee7ff64-dark.svg"><img src="assets/diagrams/diagram-1eb21ee7ff64.svg" alt="Diagram 7" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-1eb21ee7ff64-dark.svg"><img src="assets/diagrams/diagram-1eb21ee7ff64.svg" alt="Diagram 8" loading="lazy"></picture></figure>
 <p>The diagram is simplified with HOLD as a hub: after its minimum duration any mode may be followed
 directly by any other available mode.</p>
 <p>Rules (defaults: 60 min, 0.1 kW):</p>
@@ -1574,7 +1665,7 @@ each display interval (default 60 min over 24 h) the solver reruns with <code>pr
 1 kWh) of extra load. <strong>Consumption cost</strong> = (probe plan cost − base plan cost) ÷ added kWh. Because
 the battery and grid are re-optimized, this is the true marginal cost — it can differ from the
 tariff price (e.g. solar that would otherwise be exported costs its lost export value).</p>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-bd5562eb1535-dark.svg"><img src="assets/diagrams/diagram-bd5562eb1535.svg" alt="Diagram 8" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-bd5562eb1535-dark.svg"><img src="assets/diagrams/diagram-bd5562eb1535.svg" alt="Diagram 9" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -1721,7 +1812,7 @@ than guessing.</p>
 <h3 id="flexible-energy-depth">Flexible energy depth</h3>
 <p>Answers "how much deferrable energy can I use cheaply?". The solver independently places 3, 5, 10,
 15 and 20 kWh blocks at up to <code>flexible_load_max_power_kw</code> (default 3 kW).</p>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-d9dba1334286-dark.svg"><img src="assets/diagrams/diagram-d9dba1334286.svg" alt="Diagram 9" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-d9dba1334286-dark.svg"><img src="assets/diagrams/diagram-d9dba1334286.svg" alt="Diagram 10" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2122,7 +2213,7 @@ takes effect at the next periodic recalculation (<code>refresh_minutes</code>) o
 </tbody>
 </table></section>
 <h3 id="strategy-switch-release">Strategy-switch release</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8d0e0d00f6fc-dark.svg"><img src="assets/diagrams/diagram-8d0e0d00f6fc.svg" alt="Diagram 10" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8d0e0d00f6fc-dark.svg"><img src="assets/diagrams/diagram-8d0e0d00f6fc.svg" alt="Diagram 11" loading="lazy"></picture></figure>
 <p>A strategy change is a <strong>reset</strong>: the carried mode commitment is released so the new strategy is
 not trapped in the old mode's minimum duration. A current export episode is kept so its hurdle is
 not charged twice.</p>
@@ -2131,7 +2222,7 @@ not charged twice.</p>
 picks one strategy per day. It runs at <strong>14:05</strong> (after RCE next-day prices and Solcast), retries
 hourly until <strong>20:00</strong> if next-day prices are missing, and reconciles a half-applied write at Home
 Assistant start.</p>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8d8cab23fe75-dark.svg"><img src="assets/diagrams/diagram-8d8cab23fe75.svg" alt="Diagram 11" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-8d8cab23fe75-dark.svg"><img src="assets/diagrams/diagram-8d8cab23fe75.svg" alt="Diagram 12" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2178,7 +2269,7 @@ details: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/doc
 tells the household when extra use is cheap (favorable window) or when an expensive <code>LIMIT</code> window
 is starting. Energy Compass itself never sends anything; <strong>Notify enabled</strong> in the integration
 options is the master switch. Setup: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">installation guide</a>.</p>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-4bd0c2bb82d5-dark.svg"><img src="assets/diagrams/diagram-4bd0c2bb82d5.svg" alt="Diagram 12" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-4bd0c2bb82d5-dark.svg"><img src="assets/diagrams/diagram-4bd0c2bb82d5.svg" alt="Diagram 13" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2519,7 +2610,7 @@ logbook entry names the old and new runtime code and confirmed mode whenever eit
 </tbody>
 </table></section>
 <h3 id="modes">Modes</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-a6c9a3cacd04-dark.svg"><img src="assets/diagrams/diagram-a6c9a3cacd04.svg" alt="Diagram 13" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-a6c9a3cacd04-dark.svg"><img src="assets/diagrams/diagram-a6c9a3cacd04.svg" alt="Diagram 14" loading="lazy"></picture></figure>
 <p><strong>Auto</strong> writes; <strong>Simulation</strong> computes every target and records it in <code>runtime</code> without touching the
 inverter; <strong>Off</strong> releases control. Leaving Auto for Off restores the base profile once, confirms it,
 then leaves later manual settings alone. Disabling the <em>automation</em> skips that restore. A switch to
@@ -2592,8 +2683,14 @@ baterii (pojemność, sprawność) w planie</code>.</p>
 <td>all Disabled, SOC 10 %</td>
 </tr>
 <tr>
-<td><code>HOLD</code>, <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> at SOC ≥ 100 % in Voltage mode (<code>HOLD</code>: kept until SOC ≤ 99 %)</td>
-<td>cap / 0 A in <code>HOLD</code>, cap otherwise</td>
+<td><code>CURTAIL</code> with <code>charge_kwh</code> above 0.000001 kWh</td>
+<td>planned, from <code>hold_grid_current</code> to the cap / 0 A</td>
+<td>0 A</td>
+<td>all Disabled, SOC 10 %</td>
+</tr>
+<tr>
+<td><code>HOLD</code>, <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> and a charging <code>CURTAIL</code> at SOC ≥ 100 % in Voltage mode (<code>HOLD</code>: kept until SOC ≤ 99 %)</td>
+<td>cap / 0 A in <code>HOLD</code> and <code>CURTAIL</code>, cap otherwise</td>
 <td>0 A</td>
 <td>all Disabled, SOC 10 %</td>
 </tr>
@@ -2610,7 +2707,7 @@ baterii (pojemność, sprawność) w planie</code>.</p>
 <td>Sell on the active program, target SOC from the plan, power = planned, ≤ <code>max_power_w</code>; Disabled after the target is reached</td>
 </tr>
 <tr>
-<td><code>HOLD</code>, <code>CURTAIL</code></td>
+<td><code>HOLD</code>, <code>CURTAIL</code> with <code>charge_kwh</code> up to 0.000001 kWh</td>
 <td><code>hold_grid_current</code> / 0 A</td>
 <td><code>hold_grid_current</code></td>
 <td>Grid, target SOC = planned end SOC rounded down</td>
@@ -2648,11 +2745,20 @@ and 100 % does not rewrite the profile on every crossing. Each switch is one wri
 charge 0 A, and there is at most one per percentage point of SOC movement; without PV the pack drifts down on the
 inverter's own draw and <code>HOLD</code> tops it up from the grid, a cycle of hours. <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> need no
 hysteresis, because below 100 % they write the same values. <code>CHARGE_GRID</code> (it keeps <code>voltage_grid_charge_ceiling</code>
-and its 0 A charge current at 100 %), <code>CURTAIL</code>, the balance hold and <code>Capacity</code> mode behave as before. <code>CURTAIL</code> runs the <code>HOLD</code> profile with a warning, because the
-controller cannot limit PV. That profile writes <code>hold_grid_current</code> (1 A by default) as the charge current and as the grid
-current, so a <code>CURTAIL</code> interval in which the plan charges the pack (PV the site cannot pass, <code>charge_kwh</code> above 0) charges
-at about 50 W on the inverter, and the planned end state of charge of that interval is not reached; the next
-recalculation reads the real state of charge and plans from it (follow-up T-076).</p>
+and its 0 A charge current at 100 %), the balance hold and <code>Capacity</code> mode behave as before. A <code>CURTAIL</code> row that charges (<code>charge_kwh</code> above 0.000001 kWh: the PV
+above what the site passes is more than the pack takes at the charge power) runs like <code>CHARGE_PV</code> without discharge, at the
+planned current: the charge current is <code>charge_kwh × eta_charge / (h × V)</code> rounded up to the step of the charge entity, at
+least <code>hold_grid_current</code> and at most the cap, the grid current 0 A, the discharge current 0 A, all programs Disabled, so the
+pack takes PV at that current and the inverter curtails the rest by itself. A row that plans the charge power over its whole
+interval gets the whole cap. A row that plans less (the charge of such a row is free between zero and the PV left after the
+curtailment and the house, and the plan took less) charges less than the cap would, so the pack ends where the plan says and
+not above it. The controller never buys grid energy for such a row. At 100 % SOC it follows <code>CHARGE_PV</code> (0 A in <code>Capacity</code>
+mode, the cap in <code>Voltage</code> mode) and it raises no warning. The threshold is the 0.000001 kWh the plan's own classifier reads
+as zero: the plan publishes the solver's flows unrounded, and a <code>CURTAIL</code> row that does not charge can carry up to about
+5e-13 kWh there (about one such row in twelve in the sweep of ADR-0005), which must not charge. Any other <code>CURTAIL</code> row
+(<code>charge_kwh</code> up to 0.000001 kWh) runs the <code>HOLD</code> profile with the warning <code>CURTAIL is not supported: HOLD applied</code>, because
+the controller cannot limit PV: it writes <code>hold_grid_current</code> (1 A by default) as the charge current and the grid current
+and holds the planned end state of charge.</p>
 <p>Only battery modes listed in <code>commissioned_battery_modes</code> are controlled; any other mode (for example
 Voltage before its thresholds were proven) keeps the base profile. With Voltage allowed, a target
 outside 495–560 V is refused.</p>

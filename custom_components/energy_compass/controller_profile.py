@@ -46,6 +46,12 @@ PROGRAM_FIELDS = (
 )
 CURRENT_REGISTERS = (("charge", 108), ("discharge", 109), ("grid", 128))
 FORCING_STATES = ("CHARGE_PV", "SELF_CONSUME")
+# A CURTAIL row charges when its charge_kwh exceeds this. It is the 1e-6 kWh the plan's
+# display classifier calls zero (`engine.machine_state._TOL`): HiGHS leaves up to that
+# much (and `settle_mode_noise` up to `noise_bound`, zeroed) on a flow the mode does not
+# use, and the published rows carry it unrounded, so a plain CURTAIL row can read
+# 1e-34..5e-13 and must still hold. Equality with the engine is a test.
+CURTAIL_CHARGE_MIN_KWH = 1e-6
 
 
 def _is_number(value: Any) -> bool:
@@ -489,7 +495,33 @@ def decide(
                 direction = "Disabled"
                 reached = True
 
-    if state in ("HOLD", "CURTAIL") and row:
+    # A CURTAIL row that charges (the PV above what the site passes exceeds what the
+    # pack takes at charge_kw, T-064) charges from PV at the planned current, at least
+    # the HOLD current and at most the cap: grid 0 A, direction Disabled, discharge 0 A.
+    # The row's charge is free between 0 and the PV left after the curtailment and the
+    # load, so a row planning less than charge_kw x h charges less than the cap would
+    # (the SOC ends where the plan says, the rest stays curtailed). The planned current
+    # is rounded up to the charge step, so a row at charge_kw x h gets the whole cap.
+    # Every other HOLD/CURTAIL row holds the SOC.
+    curtail_charges = (
+        state == "CURTAIL"
+        and bool(row)
+        and _float(row.get("charge_kwh")) > CURTAIL_CHARGE_MIN_KWH
+    )
+    if curtail_charges:
+        # The current row starts at or before now and ends after it: h > 0.
+        h = (_timestamp(row.get("end")) - _timestamp(row.get("start"))) / 3600
+        step = charge_step if charge_step > 0 else 1
+        planned = _float(row.get("charge_kwh")) / h * 1000 * eta_charge / v
+        charge = min(
+            charge_cap,
+            max(
+                limits.hold_grid_current,
+                _round(_round(planned / step, 9), 0, "ceil") * step,
+            ),
+        )
+        discharge = 0
+    elif state in ("HOLD", "CURTAIL") and row:
         target_soc = _round(
             min(100, max(10, _float(row.get("end_soc_kwh")) / capacity_kwh * 100)),
             0,
@@ -524,7 +556,11 @@ def decide(
         operation == "Voltage"
         and (soc >= 100 or full_held)
         and not balance
-        and (state in FORCING_STATES or (state == "HOLD" and bool(row)))
+        and (
+            state in FORCING_STATES
+            or curtail_charges
+            or (state == "HOLD" and bool(row))
+        )
     )
     if full_pv:
         charge = charge_cap
@@ -534,7 +570,7 @@ def decide(
         target_voltage = BASE_VOLTAGE
         power = max_power_w
     elif (
-        state in ("CHARGE_PV", "SELF_CONSUME", "CHARGE_GRID")
+        (state in ("CHARGE_PV", "SELF_CONSUME", "CHARGE_GRID") or curtail_charges)
         and soc >= 100
         and not balance
     ):
@@ -650,7 +686,9 @@ def decide(
         slot_energy={"key": reached_key, "discharge": slot_start}
         if energy_mode
         else rt.get("slot_energy"),
-        warning_code="curtail_unsupported" if state == "CURTAIL" else "",
+        warning_code="curtail_unsupported"
+        if state == "CURTAIL" and not curtail_charges
+        else "",
     )
 
 

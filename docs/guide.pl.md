@@ -5,7 +5,7 @@
 Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
 **0.1.39**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
-instalację i dashboardy — [przewodnik instalacji](installation.md) (EN).
+instalację opisuje sekcja [Instalacja](#instalacja), a dashboardy — [przewodnik instalacji](installation.md) (EN).
 
 Energy Compass jest **doradczy**. Liczy plan i publikuje go jako encje Home Assistant. Sam nie wysyła
 powiadomień, a ustawienia falownika zapisuje tylko wtedy, gdy włączysz opcjonalny sterownik Deye
@@ -14,21 +14,133 @@ decydują, czy wykonać plan. Zob. [Sterownik falownika Deye](#sterownik-falowni
 
 ## Spis treści
 
-1. [Jak to działa](#jak-to-działa)
-2. [Przegląd encji](#przegląd-encji)
-3. [Stan optymalizatora — cykl obliczeń](#stan-optymalizatora--cykl-obliczeń)
-4. [Alert i poprawność prognozy](#alert-i-poprawność-prognozy)
-5. [Tryby pracy — planowany stan baterii](#tryby-pracy--planowany-stan-baterii)
-6. [Poziomy zużycia — BOOST, CHEAP, NORMAL, LIMIT](#poziomy-zużycia--boost-cheap-normal-limit)
-7. [Okna i głębokość elastycznego zużycia](#okna-i-głębokość-elastycznego-zużycia)
-8. [Strategie dyspozycji](#strategie-dyspozycji)
-9. [Automatyczne przełączanie strategii](#automatyczne-przełączanie-strategii)
-10. [Powiadomienia o oknach](#powiadomienia-o-oknach)
-11. [Karta kosztów](#karta-kosztów)
-12. [Sterownik falownika Deye (Solarman)](#sterownik-falownika-deye-solarman)
-13. [Energy Atlas (opcjonalnie)](#energy-atlas-opcjonalnie)
-14. [Narzędzie replay (offline)](#narzędzie-replay-offline)
-15. [Słownik kodów powodów](#słownik-kodów-powodów)
+1. [Instalacja](#instalacja)
+2. [Jak to działa](#jak-to-działa)
+3. [Przegląd encji](#przegląd-encji)
+4. [Stan optymalizatora — cykl obliczeń](#stan-optymalizatora--cykl-obliczeń)
+5. [Alert i poprawność prognozy](#alert-i-poprawność-prognozy)
+6. [Tryby pracy — planowany stan baterii](#tryby-pracy--planowany-stan-baterii)
+7. [Poziomy zużycia — BOOST, CHEAP, NORMAL, LIMIT](#poziomy-zużycia--boost-cheap-normal-limit)
+8. [Okna i głębokość elastycznego zużycia](#okna-i-głębokość-elastycznego-zużycia)
+9. [Strategie dyspozycji](#strategie-dyspozycji)
+10. [Automatyczne przełączanie strategii](#automatyczne-przełączanie-strategii)
+11. [Powiadomienia o oknach](#powiadomienia-o-oknach)
+12. [Karta kosztów](#karta-kosztów)
+13. [Sterownik falownika Deye (Solarman)](#sterownik-falownika-deye-solarman)
+14. [Energy Atlas (opcjonalnie)](#energy-atlas-opcjonalnie)
+15. [Narzędzie replay (offline)](#narzędzie-replay-offline)
+16. [Słownik kodów powodów](#słownik-kodów-powodów)
+
+## Instalacja
+
+Ta sekcja prowadzi krok po kroku od czystego Home Assistanta do pierwszego planu. Potrzebujesz
+działającego Home Assistanta i — by skorzystać w pełni — falownika z baterią; nie musisz znać wcześniej
+Energy Compass. Główną ścieżką jest polska instalacja (PLN, taryfa G12, cena sprzedaży RCE,
+net-billing); te same kroki dotyczą każdej innej waluty i taryfy.
+
+```mermaid
+flowchart LR
+    A[Wymagania] --> B[Instalacja<br/>HACS lub ręczna]
+    B --> C[Restart<br/>Home Assistanta]
+    C --> D[Dodanie integracji<br/>pierwszy formularz]
+    D --> E{Wykryte<br/>źródła?}
+    E -->|zostawione| G[Podgląd i zapis]
+    E -->|brak lub pominięte| F[Menu główne<br/>źródła, taryfy, prognoza]
+    F --> G
+    G --> H[Pierwszy plan<br/>stan optymalizatora: gotowy]
+    H --> I[Opcjonalnie: sterownik Deye,<br/>powiadomienia, przełączanie strategii,<br/>dashboardy, karta kosztów, Atlas]
+```
+
+### Wymagania
+
+- Home Assistant **2026.9.1 lub nowszy**.
+- `scipy`, solver numeryczny. Integracja instaluje dokładnie przypiętą wersję ze swojego manifestu
+  (`scipy==1.18.1`); sam niczego nie instalujesz.
+- Raspberry Pi i inne hosty ARM64 działają. Przetestowane połączenie ARM64 Core/Python/solver i
+  reprezentatywne wyniki benchmarków opisuje [walidacja środowiska](runtime-validation.md) (EN).
+
+### Instalacja integracji
+
+1. **HACS (zalecane).** W HACS otwórz **Custom repositories** i dodaj
+   `https://github.com/datamindzio/ha-energy-compass` jako **Integration**. Pobierz Energy Compass i
+   zrestartuj Home Assistanta.
+2. **Ręcznie.** Skopiuj katalog `custom_components/energy_compass` z tego repozytorium do katalogu
+   `custom_components` w konfiguracji Home Assistanta i zrestartuj.
+
+### Dodanie integracji
+
+Otwórz **Ustawienia → Urządzenia i usługi → Dodaj integrację → Energy Compass**. Konfiguracja to krótki
+kreator; nic nie jest zapisywane przed jego ostatnim krokiem.
+
+1. **Pierwszy formularz.** Wpisz **Nazwa**, **Waluta** (bez automatycznej konwersji) i **Strefa
+   czasowa**, wybierz **Opcjonalny profil dostawcy** (preset) oraz ustaw
+   **Włącz fotowoltaikę** i **Włącz baterię**. Ten sam formularz oferuje trzy opcjonalne profile startowe:
+   **Rozliczenie prosumenckie**, **Polska taryfa dystrybucyjna** i **Falownik**. Jednorazowo wypełniają
+   edytowalne wartości nowej instalacji i nigdy nie ustawiają ceny; profile polskie wymagają waluty
+   PLN. Co wypełnia każdy profil, opisują [Profile startowe](#profile-startowe-nowe-instalacje).
+2. **Wykryte źródła.** Energy Compass szuka Solcasta, `rce_pse`, Solarmana (Deye) i źródeł panelu Energia
+   po tożsamości integracji, nie po nazwie encji, i proponuje je jako wiersze. Zostaw te, które chcesz,
+   i przejdź dalej: zostaną powiązane i otworzy się **Podgląd i zapis**. Gdy nic nie znaleziono albo nic
+   nie zostawisz, otworzy się menu główne. Zob. [Wykryte źródła](#wykryte-źródła-nowe-instalacje);
+   PV może też korzystać z [prognozy PV z panelu Energia](#prognoza-pv-z-panelu-energia).
+3. **Menu główne.** Przejdź przez potrzebne grupy; każdą możesz później otworzyć ponownie w
+   **Konfiguruj**.
+   - **Taryfy → Źródło ceny zakupu** — cena zakupu. Dla polskich G11/G12/G12w wybierz **Taryfa OSD**,
+     która nie wymaga YAML: wskaż operatora i grupę, a następnie wpisz stawkę szczytową (*Cena zakupu*)
+     i, dla G12/G12w, *Cena zakupu poza szczytem* w **Taryfy → Stałe stawki i przeliczenia**. Strefy,
+     zegar i święta opisują [Wbudowane taryfy OSD](#wbudowane-taryfy-osd).
+   - **Taryfy → Źródło ceny sprzedaży** — cena sprzedaży. W Polsce wybierz **Cena rynkowa RCE (PSE)**,
+     która używa sensora integracji `rce_pse`.
+   - **Prognoza zużycia** — liczby stojące za prognozą zużycia domu. Nowa instalacja startuje od
+     dobowego szacunku, który tu wpisujesz (**Dobowe zużycie domu**, domyślnie 10 kWh/dobę). Historia
+     rekordera jest używana, gdy powiązane jest źródło zużycia domu: zostaw wiersz **Historia zużycia
+     domu** w **Wykrytych źródłach** albo użyj **Źródła danych → Dodaj źródło → Zużycie**. **Prognoza
+     zużycia** dostraja wtedy okno historii (**Długość historii**, **Minimalna liczba próbek**) i
+     rozwiązanie zapasowe.
+   - **Źródła danych** — przegląd i edycja wszystkich powiązanych źródeł, także PV; **Bateria** i
+     **Możliwości sprzętu** zawierają limity baterii i limit importu z sieci. Grupy planowania,
+     prognozy kosztu zużycia, wydajności i prezentacji pojawiają się po **Pokaż ustawienia eksperckie**
+     (zob. [Ustawienia eksperckie](#ustawienia-eksperckie)).
+4. **Podgląd i zapis.** Podgląd normalizuje dane wejściowe, pokazuje ich pokrycie, jednostki i wiek oraz
+   przed zapisem rozwiązuje ograniczony plan bazowy. Plan bazowy musi być wykonalny, by dało się
+   zapisać. Przy pierwszej konfiguracji zaznaczasz też potwierdzenia pokazanego źródła zakupu i źródła
+   zużycia domu (zerowa stała cena zakupu oznacza darmowy import; domyślny szacunek zużycia to
+   10 kWh/dobę), a potem potwierdzasz zapis.
+
+Aby wypróbować Energy Compass bez żadnych encji dostawców, utwórz konfigurację syntetyczną: nazwa
+`Synthetic`, waluta `EUR`, strefa `UTC`, preset `Generic`, PV i bateria wyłączone; pozostałe wartości
+podaje README ([English](../README.md#install), [Polski](../README.pl.md#instalacja)).
+
+### Po instalacji
+
+Integracja tworzy jedno urządzenie z natywnymi sensorami, sensorami binarnymi i selectem **Strategia**
+opisanymi w [Przeglądzie encji](#przegląd-encji). Zaraz po zapisie sensor **Stan optymalizatora**
+pokazuje `calculating` i przechodzi w `ready`, gdy opublikowany zostanie pierwszy zwalidowany plan. Jeśli
+zgłasza `invalid_input`, `timeout` lub `infeasible`, powód opisuje
+[Stan optymalizatora](#stan-optymalizatora--cykl-obliczeń).
+
+Po aktualizacji przez HACS zrestartuj Home Assistanta i odśwież stronę w przeglądarce (w aplikacji
+mobilnej uruchom ją ponownie). Interfejs przechowuje etykiety integracji w pamięci podręcznej, więc bez
+odświeżenia nowe ustawienia, np. **Energy Atlas**, mogą pojawić się jako puste pozycje.
+
+### Opcjonalne kolejne kroki
+
+Każdy krok jest niezależny; szczegóły są w podlinkowanej sekcji. **Opcje** i **Konfiguruj** to ten sam
+przycisk na stronie integracji w **Ustawienia → Urządzenia i usługi**.
+
+- **Sterownik Deye.** Aby Energy Compass zapisywał plan na falowniku Deye przez Solarman, otwórz
+  **Opcje → Sterownik Deye**. Domyślnie wyłączony; zob. [Włączenie sterownika](#włączenie-sterownika).
+- **Powiadomienia.** Włącz **Włącz powiadomienia** w **Ustawienia powiadomień**, a potem skopiuj
+  blueprint powiadomień, który leży poza folderem instalowanym przez HACS. Zob.
+  [Powiadomienia o oknach](#powiadomienia-o-oknach) i
+  [Opt-in notifications](installation.md#opt-in-notifications) (EN).
+- **Automatyczne przełączanie strategii.** Blueprint `strategy_switch` wybiera jedną strategię
+  dyspozycji na dobę. Zob. [Automatyczne przełączanie strategii](#automatyczne-przełączanie-strategii) i
+  [Import the strategy switch blueprint](installation.md#import-the-strategy-switch-blueprint) (EN).
+- **Dashboardy i karta kosztów.** Gotowe przykłady dashboardów i kartę kosztów opisują
+  [Dashboard examples](installation.md#dashboard-examples) (EN) i [Karta kosztów](#karta-kosztów).
+- **Energy Atlas.** Opcjonalna usługa telemetrii jest w **Konfiguruj → Energy Atlas**; zob.
+  [Energy Atlas](#energy-atlas-opcjonalnie).
 
 ## Jak to działa
 
@@ -1730,10 +1842,11 @@ parametrów baterii (pojemność, sprawność) w planie`.
 | Stan planu | Prąd ładowania / rozładowania | Prąd ładowania z sieci | Kierunek TOU, cel |
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | limit / limit | 0 A | wszystkie Disabled, SOC 10 % |
-| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` przy SOC ≥ 100 % w trybie Voltage (`HOLD`: utrzymany do SOC ≤ 99 %) | limit / 0 A w `HOLD`, limit w pozostałych | 0 A | wszystkie Disabled, SOC 10 % |
+| `CURTAIL` z `charge_kwh` powyżej 0,000001 kWh | z planu, od `hold_grid_current` do limitu / 0 A | 0 A | wszystkie Disabled, SOC 10 % |
+| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` i ładujący `CURTAIL` przy SOC ≥ 100 % w trybie Voltage (`HOLD`: utrzymany do SOC ≤ 99 %) | limit / 0 A w `HOLD` i `CURTAIL`, limit w pozostałych | 0 A | wszystkie Disabled, SOC 10 % |
 | `CHARGE_GRID` | limit / 0 A | planowana część sieciowa, ≤ `max_grid_current` | Grid w aktywnym programie, cel SOC z planu; w trybie Voltage napięcie TOU `voltage_grid_charge_ceiling` |
 | `DISCHARGE_GRID` | 0 A / z planu, ≤ limit; po osiągnięciu celu `reached_discharge_current`, ≤ limit | 0 A | Sell w aktywnym programie, cel SOC z planu, moc z planu, ≤ `max_power_w`; po osiągnięciu celu Disabled |
-| `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, cel SOC = końcowy SOC planu zaokrąglony w dół |
+| `HOLD`, `CURTAIL` z `charge_kwh` do 0,000001 kWh | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, cel SOC = końcowy SOC planu zaokrąglony w dół |
 | bazowy (zwolnienie, nieważny plan) | `relinquish_current` / `relinquish_current` | 0 A | wszystkie Disabled, SOC 10 %, 49,6 (496 V), moc `max_power_w` |
 
 Limit to `min(max_current, max_power_w / V)` przy ładowaniu i `min(max_current, max_power_w × eta_discharge / V)`
@@ -1761,12 +1874,20 @@ i zostaje w kolejnych przebiegach `HOLD`, dopóki SOC nie spadnie do 99 % lub ni
 zaczyna się od ładowania 0 A, i przypada najwyżej jedna na punkt procentowy zmiany SOC; bez PV pakiet opada na
 poborze własnym falownika, a `HOLD` doładowuje go z sieci, w cyklu liczonym w godzinach. `CHARGE_PV` i `SELF_CONSUME`
 nie potrzebują histerezy, bo poniżej 100 % zapisują te same wartości. `CHARGE_GRID` (zachowuje
-`voltage_grid_charge_ceiling` i prąd ładowania 0 A przy 100 %), `CURTAIL`,
-trzymanie balansu i tryb `Capacity` działają jak dotąd. `CURTAIL` wykonuje profil `HOLD` z ostrzeżeniem, bo sterownik nie ogranicza PV. Ten profil zapisuje `hold_grid_current`
-(domyślnie 1 A) jako prąd ładowania i prąd z sieci, więc przedział `CURTAIL`, w którym plan ładuje pakiet (PV, którego
-instalacja nie przepuści, `charge_kwh` powyżej 0), ładuje na falowniku mocą około 50 W, a planowany końcowy stan
-naładowania tego przedziału nie jest osiągany; następne przeliczenie odczytuje rzeczywisty stan naładowania i planuje od
-niego (zadanie następcze T-076).
+`voltage_grid_charge_ceiling` i prąd ładowania 0 A przy 100 %), trzymanie balansu i tryb `Capacity` działają jak dotąd. Wiersz `CURTAIL`, który ładuje (`charge_kwh` powyżej 0,000001 kWh: PV ponad to,
+co przepuszcza instalacja, jest większe niż pakiet przyjmuje przy mocy ładowania), działa jak `CHARGE_PV` bez
+rozładowania, z prądem z planu: prąd ładowania to `charge_kwh × eta_charge / (h × V)` zaokrąglone w górę do kroku encji
+ładowania, nie mniej niż `hold_grid_current` i nie więcej niż limit, prąd z sieci 0 A, prąd rozładowania 0 A, wszystkie
+programy Disabled, więc pakiet bierze PV tym prądem, a resztę falownik ogranicza sam. Wiersz, który planuje moc ładowania
+przez cały przedział, dostaje cały limit. Wiersz, który planuje mniej (ładowanie takiego wiersza jest dowolne między zerem
+a PV po ograniczeniu i po domu, a plan wziął mniej), ładuje mniej, niż pozwala limit, więc pakiet kończy tam, gdzie mówi plan,
+a nie powyżej. Sterownik nigdy nie kupuje w takim wierszu energii z sieci. Przy SOC 100 % idzie za `CHARGE_PV` (0 A w trybie
+`Capacity`, limit w trybie `Voltage`) i nie zgłasza ostrzeżenia. Próg to 0,000001 kWh, które własny klasyfikator planu czyta
+jako zero: plan publikuje przepływy solwera bez zaokrągleń, a wiersz `CURTAIL`, który nie ładuje, może tam nieść do około
+5e-13 kWh (około jeden taki wiersz na dwanaście w przeglądzie z ADR-0005), i nie wolno mu ładować. Każdy inny wiersz `CURTAIL`
+(`charge_kwh` do 0,000001 kWh) wykonuje profil `HOLD` z ostrzeżeniem `CURTAIL nieobsługiwany: zastosowano HOLD`,
+bo sterownik nie ogranicza PV: zapisuje `hold_grid_current` (domyślnie 1 A) jako prąd ładowania i prąd z sieci i trzyma
+planowany końcowy stan naładowania.
 
 Sterowane są tylko tryby baterii z listy `commissioned_battery_modes`; każdy inny tryb (np. Voltage
 przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Voltage cel poza zakresem
