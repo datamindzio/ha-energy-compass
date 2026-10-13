@@ -11,6 +11,8 @@ Energy Compass is an advisory Home Assistant integration. It estimates the incre
 
 ## Install
 
+A step-by-step walkthrough, from HACS to the first plan, is the [Installation](docs/guide.en.md#installation) section of the user guide.
+
 Requires Home Assistant **2026.9.1 or later**. The integration installs `scipy==1.18.1` through its manifest. Its tested ARM64 Core/Python/solver combination and representative benchmark results are recorded in [runtime validation](docs/runtime-validation.md).
 
 In HACS, open **Custom repositories**, add `https://github.com/datamindzio/ha-energy-compass` as an **Integration**, then download Energy Compass. Restart Home Assistant, and add **Energy Compass** under **Settings → Devices & services → Add integration**. For a manual installation, copy `custom_components/energy_compass` into the Home Assistant config directory's `custom_components` folder and restart. The optional notification blueprint lives outside the HACS-installed integration folder and must be [copied separately](docs/installation.md#opt-in-notifications). The same holds for the optional [Deye (Solarman) controller](docs/installation.md#deye-inverter-controller) — a blueprint plus Energy Compass's own controller entities (Options → Deye controller) that execute the plan on a Deye inverter — the [dashboard examples](docs/installation.md#dashboard-examples) and the [cost card](docs/cost-card.md) (purchase, export deposit and balance).

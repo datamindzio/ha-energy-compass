@@ -5,7 +5,8 @@
 This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
 **0.1.39**. The mathematical contract behind each rule lives in [model and limitations](model.md);
-installation and dashboards are in the [installation guide](installation.md).
+installation is described in the [Installation](#installation) section, and dashboards in the
+[installation guide](installation.md).
 
 Energy Compass is **advisory**. It computes a plan and publishes it as Home Assistant entities. It
 sends no messages by itself, and it writes inverter settings only when you enable the optional Deye
@@ -15,21 +16,126 @@ and other controllers decide for themselves whether to act on the plan. See
 
 ## Contents
 
-1. [How it works](#how-it-works)
-2. [Entity overview](#entity-overview)
-3. [Optimizer status — calculation lifecycle](#optimizer-status--calculation-lifecycle)
-4. [Alert and forecast validity](#alert-and-forecast-validity)
-5. [Operating modes — the planned battery state](#operating-modes--the-planned-battery-state)
-6. [Consumption levels — BOOST, CHEAP, NORMAL, LIMIT](#consumption-levels--boost-cheap-normal-limit)
-7. [Windows and flexible energy depth](#windows-and-flexible-energy-depth)
-8. [Dispatch strategies](#dispatch-strategies)
-9. [Automatic strategy switching](#automatic-strategy-switching)
-10. [Window notifications](#window-notifications)
-11. [Cost card](#cost-card)
-12. [Deye inverter controller (Solarman)](#deye-inverter-controller-solarman)
-13. [Energy Atlas (optional)](#energy-atlas-optional)
-14. [Offline replay tool](#offline-replay-tool)
-15. [Reason code reference](#reason-code-reference)
+1. [Installation](#installation)
+2. [How it works](#how-it-works)
+3. [Entity overview](#entity-overview)
+4. [Optimizer status — calculation lifecycle](#optimizer-status--calculation-lifecycle)
+5. [Alert and forecast validity](#alert-and-forecast-validity)
+6. [Operating modes — the planned battery state](#operating-modes--the-planned-battery-state)
+7. [Consumption levels — BOOST, CHEAP, NORMAL, LIMIT](#consumption-levels--boost-cheap-normal-limit)
+8. [Windows and flexible energy depth](#windows-and-flexible-energy-depth)
+9. [Dispatch strategies](#dispatch-strategies)
+10. [Automatic strategy switching](#automatic-strategy-switching)
+11. [Window notifications](#window-notifications)
+12. [Cost card](#cost-card)
+13. [Deye inverter controller (Solarman)](#deye-inverter-controller-solarman)
+14. [Energy Atlas (optional)](#energy-atlas-optional)
+15. [Offline replay tool](#offline-replay-tool)
+16. [Reason code reference](#reason-code-reference)
+
+## Installation
+
+This section takes you from an empty Home Assistant to the first plan, step by step. You need a running
+Home Assistant and, for the full benefit, an inverter with a battery; you do not need to know Energy
+Compass first. Polish households are the main path (PLN, tariff G12, RCE sell price, net billing), and
+the same steps apply to any other currency and tariff.
+
+```mermaid
+flowchart LR
+    A[Requirements] --> B[Install<br/>HACS or manual]
+    B --> C[Restart<br/>Home Assistant]
+    C --> D[Add integration<br/>first form]
+    D --> E{Detected<br/>sources?}
+    E -->|kept| G[Preview and save]
+    E -->|none or skipped| F[Main menu<br/>sources, tariffs, forecast]
+    F --> G
+    G --> H[First plan<br/>optimizer status ready]
+    H --> I[Optional: Deye controller,<br/>notifications, strategy switch,<br/>dashboards, cost card, Atlas]
+```
+
+### Requirements
+
+- Home Assistant **2026.9.1 or later**.
+- `scipy`, the numerical solver. The integration installs the exact pinned version from its manifest
+  (`scipy==1.18.1`); you install nothing yourself.
+- Raspberry Pi and other ARM64 hosts work. The tested ARM64 Core/Python/solver combination and
+  representative benchmark results are in [runtime validation](runtime-validation.md).
+
+### Install the integration
+
+1. **HACS (recommended).** In HACS open **Custom repositories** and add
+   `https://github.com/datamindzio/ha-energy-compass` as an **Integration**. Download Energy Compass,
+   then restart Home Assistant.
+2. **Manual.** Copy this repository's `custom_components/energy_compass` directory into the
+   `custom_components` folder of your Home Assistant configuration directory, then restart.
+
+### Add the integration
+
+Open **Settings → Devices & services → Add integration → Energy Compass**. The setup is a short wizard;
+nothing is saved until its last step.
+
+1. **First form.** Fill in **Name**, **Currency** (no automatic conversion) and **Timezone**, choose
+   the optional **Preset** (provider profile) and switch **PV** and **Battery** on or off. The same form
+   offers three optional starting profiles: **Prosumer settlement**, **Polish distribution tariff** and
+   **Inverter**. They pre-fill editable tuning values once, for this new installation only, and never
+   set a price; Polish profiles require currency PLN. See
+   [Setup profiles](#setup-profiles-new-installations) for what each profile fills in.
+2. **Detected sources.** Energy Compass looks for Solcast, `rce_pse`, Solarman (Deye) and your Energy
+   dashboard sources by integration identity, not by entity name, and offers them as rows. Keep the ones
+   you want and continue: they are bound and **Preview and save** opens. Nothing found, or nothing
+   kept, opens the main menu instead. See
+   [Detected sources](#detected-sources-new-installations); PV can also use the
+   [Energy dashboard solar forecast](#energy-dashboard-solar-forecast).
+3. **Main menu.** Work through the groups you need; each can be revisited later in **Configure**.
+   - **Tariffs → Buy source** for the buy price. For Polish G11/G12/G12w choose **Polish tariff
+     schedule**, which needs no YAML: pick the operator and group, then type the peak rate (*Buy rate*)
+     and, for G12/G12w, the *Off-peak buy rate* in **Tariffs → Fixed rates and transformations**. Zones,
+     clock and holidays are in [Built-in Polish tariffs](#built-in-polish-tariffs).
+   - **Tariffs → Sell source** for the sell price. For Poland choose **RCE market price (PSE)**, which
+     takes the sensor of the `rce_pse` integration.
+   - **Load forecasting** chooses how household consumption is predicted: from Home Assistant's
+     recorder history or from a daily estimate you type.
+   - **Sources** reviews and edits every bound source, including PV; **Battery** and **Hardware
+     capabilities** hold the battery limits and the grid import limit. The planning, outlook,
+     performance and presentation groups appear after **Show expert settings** (see
+     [Expert settings](#expert-settings)).
+4. **Preview and save.** The preview normalizes the inputs, shows their coverage, units and ages, and
+   solves a bounded base plan before anything is saved. The base plan must be feasible to save. On first setup you also tick the confirmations for the displayed buy source and
+   household load source (a fixed buy rate of zero means free import; the default household estimate is
+   10 kWh/day), then confirm the save.
+
+To try Energy Compass without any provider entities, create a synthetic setup: name `Synthetic`,
+currency `EUR`, timezone `UTC`, preset `Generic`, PV and battery off; the README
+([English](../README.md#install), [Polski](../README.pl.md#instalacja)) lists the remaining values.
+
+### After installation
+
+The integration creates one device with the native sensors, binary sensors and the **Strategy** select
+described in [Entity overview](#entity-overview). Right after saving, the **Optimizer status** sensor
+reads `calculating` and turns `ready` when the first validated plan is published. If it reports `invalid_input`, `timeout` or `infeasible`, see
+[Optimizer status](#optimizer-status--calculation-lifecycle) for the reason.
+
+After an update through HACS, restart Home Assistant and reload the browser page (on the mobile app,
+restart it). The frontend caches the integration's labels; without a reload, new options such as
+**Energy Atlas** can show as blank items.
+
+### Optional next steps
+
+Each step is independent; the linked section has the details.
+
+- **Deye inverter controller.** To let Energy Compass write the plan to a Deye inverter through
+  Solarman, open **Options → Deye controller**. Off by default; see
+  [Enabling the controller](#enabling-the-controller).
+- **Notifications.** Turn on **Notify enabled** in **Notifications**, then copy the notification
+  blueprint, which lives outside the HACS-installed folder. See
+  [Window notifications](#window-notifications) and
+  [Opt-in notifications](installation.md#opt-in-notifications).
+- **Automatic strategy switching.** The `strategy_switch` blueprint picks one dispatch strategy per day. See [Automatic strategy switching](#automatic-strategy-switching) and
+  [Import the strategy switch blueprint](installation.md#import-the-strategy-switch-blueprint).
+- **Dashboards and cost card.** Ready-made dashboard examples and the cost card are described in
+  [Dashboard examples](installation.md#dashboard-examples) and the [Cost card](#cost-card).
+- **Energy Atlas.** The optional telemetry service is under **Configure → Energy Atlas**; see
+  [Energy Atlas](#energy-atlas-optional).
 
 ## How it works
 
