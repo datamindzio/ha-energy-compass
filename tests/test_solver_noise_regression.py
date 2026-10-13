@@ -259,6 +259,59 @@ def test_noise_on_flows_a_mode_leaves_at_zero_is_settled(case):
     assert min(flow["gin"], flow["gout"]) == pytest.approx(0, abs=1e-5)
 
 
+# Zeros as real HiGHS returns them: a hair below zero on a few percent of the slots.
+DUST = {"bd": -6.161471333143709e-16, "gout": -4.6e-14, "bc": -7.7e-16, "curt": -2e-14}
+DUSTY = {
+    "HOLD curtail": ("HOLD", 2.0, 0.5, {"curt": 3e-6}, "grid"),
+    "HOLD discharge": ("HOLD", 0.5, 1.0, {"bd": 2.8e-6}, "grid"),
+    "CHARGE_PV curtail": ("CHARGE_PV", 3.0, 0.5, {"curt": 6e-6}, "bc"),
+    "CHARGE_PV discharge": ("CHARGE_PV", 3.0, 0.5, {"bc": 2.5, "bd": 2e-6}, "grid"),
+    "CHARGE_GRID curtail": ("CHARGE_GRID", 1.0, 1.5, {"bc": 2.0, "curt": 2e-6}, "grid"),
+    "CHARGE_GRID discharge": ("CHARGE_GRID", 1.0, 1.5, {"bc": 2.0, "bd": 3e-6}, "grid"),
+}
+
+
+@pytest.mark.parametrize("case", DUSTY)
+def test_noise_beside_zeros_the_solver_left_a_hair_negative_is_settled(case):
+    mode, pv, load, noise, derive = DUSTY[case]
+    problem = hourly_problem(pv, load)
+    vectors, values, upper = solver_rows(problem, [(mode, noise, derive)])
+    (v,) = vectors
+    dusted = [name for name in DUST if values[v[name]] == 0.0]
+    for name in dusted:
+        values[v[name]] = DUST[name]
+    assert set(dusted) & set(IDLE_FLOWS[mode])
+    with pytest.raises(SolveError, match="physical dispatch mode"):
+        validate_modes(problem, flows_of(vectors, values, [mode]))
+
+    (flow,) = settled = settle_mode_noise(problem, vectors, values, upper)
+
+    plan = settled_flows(settled, [mode])
+    validate_modes(problem, plan)
+    assert machine_state(problem.slots[0], plan[0]) == mode
+    for name in noise:
+        if name in IDLE_FLOWS[mode]:
+            assert flow[name] == 0.0
+    # The solver's own zeros are not noise to settle: they stay as it returned them.
+    for name in dusted:
+        if name in IDLE_FLOWS[mode]:
+            assert flow[name] == DUST[name]
+    slot = problem.slots[0]
+    assert slot.pv_kwh - flow["curt"] + flow["gin"] + flow["bd"] == pytest.approx(
+        slot.load_kwh + flow["gout"] + flow["bc"], abs=1e-12
+    )
+
+
+def test_self_consume_noise_the_discharge_cannot_absorb_is_left_as_solved():
+    problem = hourly_problem(1.0, 1.0)
+    noise = {"gout": -4.6e-14, "curt": 2e-6, "bd": 1e-6}
+    vectors, values, upper = solver_rows(problem, [("SELF_CONSUME", noise, "grid")])
+
+    (flow,) = settle_mode_noise(problem, vectors, values, upper)
+
+    assert (flow["curt"], flow["bd"]) == (2e-6, 1e-6)
+
+
 def test_noise_the_classifier_already_reads_as_zero_is_left_as_solved():
     problem = hourly_problem(1.0, 2.0)
     noise = {"gout": 0.9e-6, "curt": 0.9e-6, "bc": 0.9e-6}

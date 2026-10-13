@@ -26,19 +26,22 @@ def _settle(mode: str, flow: dict[str, float], upper: dict[str, float]):
     if left > 0:
         # Too much supply: import less, then export the rest. SELF_CONSUME may not
         # export, so there the battery delivers less.
-        imported = min(settled["gin"], left)
+        # A flow HiGHS returned a hair below zero has nothing to give.
+        imported = max(min(settled["gin"], left), 0.0)
         settled["gin"] -= imported
         left -= imported
         if "gout" in idle:
+            if left > settled["bd"]:
+                return None
             settled["bd"] -= left
         else:
             settled["gout"] += left
     elif left < 0:
         # Too little supply: export less, then import the rest.
-        exported = min(settled["gout"], -left)
+        exported = max(min(settled["gout"], -left), 0.0)
         settled["gout"] -= exported
         settled["gin"] += -left - exported
-    return None if settled["bd"] < 0 else settled
+    return settled
 
 
 def settle_mode_noise(
