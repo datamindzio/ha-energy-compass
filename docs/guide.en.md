@@ -1079,6 +1079,12 @@ flowchart LR
 
 Groups: `small` (3/5 kWh), `medium` (10/15 kWh), `large` (20 kWh).
 
+A block that has no solution on the problem the plan was solved for is tried again on the later rungs of
+the plan's own ladder (the commitment's `HOLD`, then the plan without the commitment), each against the plan
+of that rung, so a level is never priced against a plan of another problem. It is only a carried
+`CHARGE_PV`/`SELF_CONSUME` commitment whose plan sits on the edge of a full pack that needs this. Two
+neighbouring levels solved on different rungs have no block cost between them: the second is `UNKNOWN`.
+
 ## Dispatch strategies
 
 `select.<name>_strategy` chooses which objective bundle the solver uses. Every strategy keeps all

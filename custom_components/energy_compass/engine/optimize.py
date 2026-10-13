@@ -559,6 +559,22 @@ def solve_released(
     raise failure
 
 
+def later_rungs(problem: Problem) -> tuple[Problem, ...]:
+    """The problems of the rungs after the one `problem` was solved on, in the order of the ladder.
+
+    The ladder of `solve_released` for a flexible-load probe: a level that has no solution on
+    the problem the plan was solved for (the model bounds what a probe may take from a pack
+    that is just full by its largest draw, so a plan on that edge has no probe) is tried on
+    these. Each is a different problem, so a level solved on one is priced against a plan
+    solved on that same problem, never against the plan of another rung.
+    """
+    return tuple(
+        rung
+        for rung in (reserve_fallback(problem), uncommitted_fallback(problem))
+        if rung is not None
+    )
+
+
 def solve_flexible_load(
     problem: Problem,
     request: FlexibleLoadRequest,

@@ -1105,6 +1105,13 @@ flowchart LR
 
 Grupy: `small` (3/5 kWh), `medium` (10/15 kWh), `large` (20 kWh).
 
+Blok, który nie ma rozwiązania na problemie, dla którego policzono plan, jest liczony ponownie na kolejnych
+szczeblach drabiny tego planu (`HOLD` zobowiązania, potem plan bez zobowiązania), każdy względem planu tego
+szczebla, więc poziom nigdy nie jest wyceniany względem planu innego problemu. Potrzebuje tego tylko
+przeniesione zobowiązanie `CHARGE_PV`/`SELF_CONSUME`, którego plan leży na granicy pełnego akumulatora.
+Dwa sąsiednie poziomy policzone na różnych szczeblach nie mają kosztu bloku między sobą: drugi ma status
+`UNKNOWN`.
+
 ## Strategie dyspozycji
 
 `select.<name>_strategy` wybiera pakiet funkcji celu, którego używa solver. Każda strategia

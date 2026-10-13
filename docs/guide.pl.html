@@ -1734,6 +1734,12 @@ bloki 3, 5, 10, 15 i 20 kWh z mocą do <code>flexible_load_max_power_kw</code> (
 </tbody>
 </table></section>
 <p>Grupy: <code>small</code> (3/5 kWh), <code>medium</code> (10/15 kWh), <code>large</code> (20 kWh).</p>
+<p>Blok, który nie ma rozwiązania na problemie, dla którego policzono plan, jest liczony ponownie na kolejnych
+szczeblach drabiny tego planu (<code>HOLD</code> zobowiązania, potem plan bez zobowiązania), każdy względem planu tego
+szczebla, więc poziom nigdy nie jest wyceniany względem planu innego problemu. Potrzebuje tego tylko
+przeniesione zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>, którego plan leży na granicy pełnego akumulatora.
+Dwa sąsiednie poziomy policzone na różnych szczeblach nie mają kosztu bloku między sobą: drugi ma status
+<code>UNKNOWN</code>.</p>
 <h2 id="strategie-dyspozycji">Strategie dyspozycji</h2>
 <p><code>select.&lt;name&gt;_strategy</code> wybiera pakiet funkcji celu, którego używa solver. Każda strategia
 zachowuje wszystkie twarde ograniczenia fizyczne; strategie zmieniają wyłącznie <strong>wagi

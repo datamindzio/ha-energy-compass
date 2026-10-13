@@ -437,6 +437,22 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
     `_commit_battery_direction` with the commitment of the problem as built. With `allow_curtailment` false and no plan on any rung the problem stays infeasible, as
     before. Charging at the charge power and curtailing the rest in one interval is the proper plan for rung 2's
     class (T-064; forced spill with room: T-066; the unmoded CHARGE_PV rule: T-041).
+26. **A flexible-load level takes the ladder too (T-067).** The base plan of the draw above is `CHARGE_PV` five
+    times and then `CURTAIL`, the pack just full where the `CURTAIL` interval starts. `lock_full` (the pack at the next
+    interval's ceiling) is set in the probe's model with the largest draw the probe may make in that interval
+    (`extra`), which keeps the plan valid for any load up to it; the realised load the certificate reads is
+    smaller, so a probe of 0.25 kWh at 2 kW has no solution anywhere in the horizon, while 0.05 kWh at 0.5 kW, 0.5 kWh at 2 kW, a pack
+    of 4 or 6 kWh or a commitment of 75 minutes each have one. Making the ceiling follow the realised load needs a
+    disjunction per interval (the ceiling is concave in the load, so no single linear bound is both sound and as
+    loose as the constant), so the model is left as it is, and `consumption.analyze_flexible_loads` takes the ladder instead: a level that is `infeasible`
+    on the problem the plan was solved for is solved on `optimize.later_rungs(problem)` in order (`reserve_fallback`,
+    then `uncommitted_fallback`; a problem that is already rung 2 has only the last), against the plan of that
+    rung (solved once, only when a level needs it, with the probe time limit). A level is priced only against
+    a plan of its own problem; the block between two levels on different rungs is `None` and the second is
+    `UNKNOWN`. Any other solver error ends a level as before. `benchmarks/curtail_sweep.py` plans a probe the
+    same way. Measured with `deprobe` seeds 11, 22, 33, 44 × 300 against `38d560f` (T-052, T-057 and T-065
+    merged, solved once, as for point 24's table), head `5baf226` plus this change: 0 newly infeasible
+    (head without it: 1, seed 44 draw 10), 105, 100, 107 and 120 newly planned.
 
 Measured with `benchmarks/curtail_sweep.py` (its `run`/`roll` solve through `solve_released` where the tree has
 it; `resrun`/`resroll` draw the pack exactly at the reserve with a `SELF_CONSUME` commitment carried 0 to 45
@@ -470,7 +486,7 @@ main `0778580`, before T-065 landed). All 17 fail on a carried `CHARGE_PV` insid
 commitment and every one has a plan with the terminal value instead of the requirement: the part of rung 3's
 class T-065 left open (T-070). The one newly infeasible `deprobe` draw (seed 44, draw 10) is the base plan solving on
 rung 1 while the 0.25 kWh probe on that same problem has no solution (it has one on rungs 2 and 3): one consumption
-level reports `infeasible`, the plan is untouched; it is T-067. Every draw with no plan on any rung (79 of 1200
+level reports `infeasible`, the plan is untouched; closed by point 26 (T-067). Every draw with no plan on any rung (79 of 1200
 `deprun`, 55 `resrun`, 83 `run`) has `allow_curtailment` false: T-041, T-064 and T-066, which main has as well;
 the 575 `fullrun` draws without a plan have none on main either.
 
