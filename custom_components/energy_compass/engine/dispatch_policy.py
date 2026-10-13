@@ -318,14 +318,16 @@ def idle_slots(problem) -> frozenset[int]:
     )
 
 
-def _owed(problem, drains, held_until) -> tuple[float, ...]:
+def _owed(problem, drains, held_until, terminal=True) -> tuple[float, ...]:
     """Energy each slot must end with so the standby loss of later slots stays payable.
 
     Best case for the pack: every later slot charges all it may, from PV surplus
     and, outside the carried commitment, from the grid where grid charging is
     open. Ending a slot below this value cannot stay above the relaxed reserve
-    floor later whatever the plan does, so it is a bound the energy rows already
-    imply, not a new requirement.
+    floor later, or meet the `preserve_initial` terminal rule, whatever the plan
+    does, so it is a bound the energy rows already imply, not a new requirement.
+    `terminal` False leaves the terminal rule out: the bound of a pack that is
+    depleted in itself, which is all a HOLD released from a full pack may go back on.
     """
     battery = problem.battery
     reserve = min(
@@ -333,7 +335,11 @@ def _owed(problem, drains, held_until) -> tuple[float, ...]:
     )
     drained = cumulative(drains)
     owed = []
-    later = 0.0
+    later = (
+        battery.initial_kwh - sum(drains)
+        if terminal and problem.terminal_mode == "preserve_initial"
+        else 0.0
+    )
     for slot, drain, lost in zip(
         reversed(problem.slots), reversed(drains), reversed(drained), strict=True
     ):
@@ -670,7 +676,7 @@ def _released_start(problem: Problem) -> bool:
     )
 
 
-def _resume(model, v, members, released, depleted, emptied) -> None:
+def _resume(model, v, members, released, depleted, emptied, physical=None) -> None:
     """Let a HOLD released from a depleted pack go back to the commitment (`back`).
 
     A released HOLD does not go back to the commitment, except where the pack it
@@ -681,6 +687,12 @@ def _resume(model, v, members, released, depleted, emptied) -> None:
     (a HOLD released from a full pack does not: the coordinator carries it as a HOLD
     with a clock of its own). The return is the commitment going on, not a PV-follow
     run of its own: its deadline is the only one.
+
+    `depleted` counts a pack the terminal rule has spent (the lock floor above the
+    reserve's). Only a run the coordinator carries as released, one that began on a
+    depleted pack, goes back on that; any other run needs the pack depleted in itself.
+    `physical` is that bound, `(energy before, slack, run that began depleted)`, where
+    the two floors differ.
     """
     back = v["back"] = model.variable(binary=True)
     followed = {v[f"mode_{mode}"]: 1 for mode in members}
@@ -696,6 +708,17 @@ def _resume(model, v, members, released, depleted, emptied) -> None:
         -np.inf,
         0,
     )
+    if physical:
+        energy, slack, began = physical
+        model.constrain(
+            {
+                energy: 1,
+                back: slack,
+                **{key: -slack * value for key, value in began.items()},
+            },
+            -np.inf,
+            model.upper[energy],
+        )
 
 
 def _nonzero(terms) -> dict:
@@ -1031,6 +1054,20 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         follows_pv = "SELF_CONSUME" in members
         follows_hold = dwell_group(previous) == "HOLD"
         owed = _owed(problem, drains, held_until) if follows_pv else ()
+        # The same without the terminal rule: where the two floors differ, a pack above
+        # this one is spent only by the terminal rule, which a HOLD released from a
+        # full pack does not go back on (the coordinator does not carry it as released).
+        owed_physical = (
+            _owed(problem, drains, held_until, terminal=False)
+            if follows_pv and problem.terminal_mode == "preserve_initial"
+            else owed
+        )
+        raised = [
+            owed_physical is not owed
+            and _lock_floor(problem, drains, owed, j)
+            > _lock_floor(problem, drains, owed_physical, j) + 1e-9
+            for j in range(len(problem.slots))
+        ]
         # A battery too empty or too full to go on ends a carried PV-follow commitment
         # the way an observed SOC bound does: the inverter imports for the house or
         # exports what the pack cannot take, which is HOLD. A pack too empty is known
@@ -1093,7 +1130,17 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             # the site cannot pass the PV (`_resume`); the run before is carried over.
             resumable = emptied if unpassable[i] else {}
             held_before, emptied_before, emptied = held, emptied, {}
-            track = follows_pv and any(unpassable[i + 1 :])
+            track = follows_pv and (any(unpassable[i + 1 :]) or any(raised[i + 1 :]))
+            # The bound a HOLD run not carried as released goes back on, where the lock
+            # floor is above what the pack itself needs.
+            physical = None
+            if i and raised[i]:
+                energy = vectors[i - 1]["energy"]
+                slack = model.upper[energy] - _lock_floor(
+                    problem, drains, owed_physical, i
+                )
+                if slack > 0:
+                    physical = (energy, slack, emptied_before)
             # The pack is known to be spent: HOLD starts, with nothing to test.
             known = spent and not i
             # What starts a HOLD run from a depleted pack, and the releases of both kinds.
@@ -1173,7 +1220,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     # to the commitment (unless the pack is depleted) and starts no
                     # clock of its own.
                     if released:
-                        _resume(model, v, members, released, depleted, resumable)
+                        _resume(
+                            model, v, members, released, depleted, resumable, physical
+                        )
                     if track:
                         emptied = _emptied_hold(
                             model, v, real, origin, held_before, emptied_before
@@ -1246,7 +1295,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     # starts no clock of its own: the commitment's deadline is the only
                     # one, so it may end in CURTAIL at once.
                     if released:
-                        _resume(model, v, members, released, depleted, resumable)
+                        _resume(
+                            model, v, members, released, depleted, resumable, physical
+                        )
                     if track:
                         emptied = _emptied_hold(
                             model,
@@ -1556,6 +1607,12 @@ def _certify_modes(
     carried = dwell_group(previous) == "PV_FOLLOW"
     released = full_seen = False
     owed = _owed(problem, drains, since.astimezone(UTC) + dwell) if carried else ()
+    # Without the terminal rule: the floor a HOLD released from a full pack goes back on.
+    physical = (
+        _owed(problem, drains, since.astimezone(UTC) + dwell, terminal=False)
+        if carried
+        else ()
+    )
     idle = idle_slots(problem) if carried else frozenset()
     # The HOLD released from a depleted pack before the first interval goes on: it starts
     # no clock, and the commitment's deadline stays the only one.
@@ -1696,11 +1753,18 @@ def _certify_modes(
                     and dwell_group(mode) == "PV_FOLLOW"
                     and (
                         left
-                        <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
-                        # Or PV the site cannot pass, for the run released from a
-                        # depleted pack: the pack may have been charged since.
+                        <= _lock_floor(problem, drains, physical, index)
+                        + _EMPTY_TOLERANCE
+                        # Or, for the run released from a depleted pack (the coordinator
+                        # carries it): a pack the terminal rule has spent, or PV the site
+                        # cannot pass, the pack may have been charged since.
                         or emptied
-                        and curtail_need(problem, slot) > 0
+                        and (
+                            left
+                            <= _lock_floor(problem, drains, owed, index)
+                            + _EMPTY_TOLERANCE
+                            or curtail_need(problem, slot) > 0
+                        )
                         # The release the coordinator carried: its pack was depleted.
                         or resumed
                         and not index

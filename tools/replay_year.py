@@ -36,7 +36,8 @@ Input: one JSON object, or a CSV with one row per hour.
 
 `hours` are consecutive hours (one row per hour, no gaps, in order); a JSON row may carry its own
 `start`, which must then be the hour the position implies. `buy`/`sell` are currency/kWh, `buy_energy` the part of `buy` the deposit pays (the energy
-part, with excise and VAT as invoiced; missing = 0), the four energies are kWh per hour as in
+part, with excise and VAT as invoiced, signed: a draw at a negative energy price lowers the month; when
+negative at most `buy`; missing = 0; the planner sees max(`buy_energy`, 0)), the four energies are kWh per hour as in
 `tools/replay.py`; `pv_forecast`/`load_forecast` are what was known at plan time, `pv`/`load` what
 happened. `--rho`, `--fixed` and `--initial-soc` override the file.
 
@@ -49,9 +50,8 @@ naive JSON `start` in that hour is the first occurrence.
 
 Limits: the fixed part of the bill is one number given in the input (taken from the no-battery bill
 of the home); it does not follow the flow, so a charge band that depends on the annual import is
-not modelled. `buy_energy` is non-negative as in the engine (`normalize.py`), so a month with a
-negative energy part reaches `bill()` only as a signed `energy` list through the Python API, not
-through this input. The ledger bins hours by the local month, so a partial first and last month are one
+not modelled. The settlement period is the calendar month; a seller that bills a longer period
+nets across its months. The ledger bins hours by the local month, so a partial first and last month are one
 month of the cycle, and a stretch shorter than a year is read as a year with empty months. Energy
 is valued per hour: intervals other than one hour are rejected. No household data belongs in the
 repository; `tests/test_replay_year.py` uses a synthetic series.
@@ -273,7 +273,7 @@ def run_year(
                     rows[i].sell,
                     rows[i].pv_forecast,
                     rows[i].load_forecast,
-                    rows[i].buy_energy,
+                    R.planner_energy(rows[i]),
                 )
                 for i in range(index, index + window)
             )

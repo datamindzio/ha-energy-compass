@@ -62,7 +62,7 @@ The released rows are `HOLD` with full import, the mode the unlocked solver pick
   newly feasible, none newly infeasible, and no first-interval release where the commitment could be kept.
 - `owed` is a best case, so the release never ends a commitment the battery could keep. The price is a rare
   remaining `infeasible`: scattered PV surplus that the minimum mode durations do not let the plan bank.
-- Not changed: `preserve_initial` that cannot be met after the forced discharge stays `infeasible` (T-001).
+- Not changed here: `preserve_initial` that cannot be met after the forced discharge stayed `infeasible` (T-001); the T-065 follow-up below releases it.
 - Found here, fixed in T-025 (below): a committed interval in which neither `SELF_CONSUME` nor `CHARGE_PV`
   reaches the minimum activity (net load and surplus both below it) was `infeasible` unless the interval before
   left the pack empty; it predates T-001. Requiring `CHARGE_PV` instead of `HOLD` in a released interval with PV
@@ -197,3 +197,63 @@ cost; main picks between the two the same way, by the order of the rows, which t
 of round 3 (`t038_review4_tie.py`, seeds 12001 and 12002, 3000 probes) against the same main: no planned problem
 `infeasible`, no `solver_failure`. G1, #151, #581 and #604 are pinned in
 `tests/test_carried_commitment_guard_probes.py`.
+
+## Follow-up (T-065): the terminal rule is owed too
+
+A carried `CHARGE_PV` with the pack just above the reserve, PV below the load in the first interval and
+`preserve_initial` had no plan: the pack was not spent, so `HOLD` was not open, `SELF_CONSUME` draws the net load
+(0.105 kWh) and the PV surplus later (0.095 kWh) cannot put it back. At the boundary before, with a longer horizon, the
+same slot was planned `SELF_CONSUME`, so the plan disappeared at the next boundary (sweep `deproll` seed 11 draw 293
+on `main` b2d6ffb, found in T-058; the state is the first test of `tests/test_carried_terminal_release.py`; the
+generator and engine have moved since, and that draw is followed to the end on later `main`s, the pinned test is
+the repro).
+
+`_owed` now starts its backward recursion from the terminal requirement (`initial - total standby loss`, the bound
+`optimize.py` puts on the last energy variable) instead of 0 when `terminal_mode` is `preserve_initial`. The lock
+floor, the first-interval test, the `depleted` release and `validate_modes` read that value. A pack that cannot
+follow a committed interval and still reach the terminal even with the best-case recharge is released to `HOLD` with
+full import, the same row as for the standby loss, and ends where it began.
+
+### The return is not the release (review of T-065)
+
+The lock floor is the bound of two decisions. The release (HOLD may start, `lock_depleted`, `pack_spent`) takes the
+terminal-driven floor. The return of a released HOLD to the commitment (`back`, `validate_modes` `resumes`) does not,
+unless the HOLD run began on a depleted pack, which the coordinator carries as released (`released_holds`, T-050).
+After T-057 (a HOLD released from a *full* pack does not go back where the pack is not depleted: the coordinator
+carries it as a plain HOLD with a clock of its own) the terminal-driven floor sits above a nearly full pack
+(`fullroll` seed 33 draw 241: floor 9.987 kWh, the pack 9.9775 kWh after the HOLD, 0.02 kWh under its ceiling), so
+the first version of this follow-up counted that pack as depleted and planned the full-pack HOLD back to
+`CHARGE_PV`: a plan at one boundary, infeasible at the next. The model and the validator now take the floor without
+the terminal requirement (`_owed(..., terminal=False)`) for a run that did not begin on a depleted pack: a further row
+on `back` (`_resume`, `physical`), relaxed by `emptied_hold`, which is tracked wherever the two floors differ; and
+`resumes` reads `left <= floor(terminal=False)`, or the run began depleted and `left <= floor` or the PV is one the
+site cannot pass. Where the two floors are equal nothing is added. Pinned in `tests/test_carried_terminal_release.py`
+(draw 241 rolled; the validator refuses the return of the full-pack HOLD, a test that fails without the row).
+
+A problem that has a plan keeps its objective (the states that open the release already violate the terminal bound on
+every path that follows).
+
+### `TIE_761`: bridge or released HOLD run
+
+The last interval of `TIE_761` is a bridge or, since T-065, a HOLD run released from a pack that cannot refill for the
+terminal rule (`released_holds` (2,)): the same flows and cost, the solver's tie, which the test accepts either way.
+Both readings roll on. The coordinator stores the first interval of a plan only, and in both readings that is a bridge
+(the commitment unchanged), so the next boundary gets the same problem (`test_both_readings_of_a_bridge_or_released_hold_tie_roll_on_from_the_same_state`
+follows both to the end of the horizon). The last interval reaches the first place only in a one-interval problem,
+which reads its own tie.
+
+### Evidence
+
+Checked against `main` 0778580 (T-057, T-052, T-473 and T-474 included; the branch merges it) on
+`benchmarks/curtail_sweep.py` (the branch's copy run on both trees), seeds 11, 22 and 33, 300 problems each, for
+`run`, `negrun`, `deprun`, `fullrun`, `probe`, `deprobe`, `roll`, `negroll`, `deproll` and `fullroll`, read with
+`compare` and `rollcompare` (first-failure, changed-boundary and trace rows too, not only newly infeasible):
+
+- plans: 0 newly infeasible, 0 new solver failures, 0 worse, 2 better (`probe`, 11 and 22), 16 newly planned
+  (`run` 4, `negrun` 2, `deprun` 1, `fullrun` 0, `probe` 8, `deprobe` 1);
+- rolls followed one interval at a time: 0 newly infeasible, 9 fixed (`roll` 5, `negroll` 3, `deproll` 1, `fullroll` 0),
+  0 first failure earlier or later, 0 plans contradicted at the next boundary, 0 different traces. `fullroll` seed 33
+  draw 241 behaves as on `main` (no plan at the first boundary).
+
+Pinned problem #44 and the night with no refill (`test_carried_lock_without_a_way_to_refill_releases_to_hold`) are
+planned now; #917 stays `infeasible` without a probe.

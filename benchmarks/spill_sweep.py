@@ -105,12 +105,18 @@ def draws(kind, seed, count):
 def followed(problem, steps=None):
     """`curtail_sweep.roll`, with the reason of a stop and the minimum mode duration drawn.
 
+    The first five items are the row of `curtail_sweep.roll` (`roll_compare` reads them
+    by position: item 4 is the list of boundaries that contradict the plan before);
+    the reason and the minutes come after them.
+
     A day followed to its end runs into the end of its own forecast, where a carried
     commitment may have no plan on any site: a stop is `off only` when the problem it
     stops at is planned with curtailment on (the forced spill's own gap), `any site`
     when it is not, and `start` when the first plan is already missing.
     """
     trace = []
+    changed = []
+    promised = None
     for step in range(steps or len(problem.slots)):
         if len(problem.slots) < 2:
             break
@@ -126,14 +132,17 @@ def followed(problem, steps=None):
                 step,
                 str(error)[:40],
                 trace,
+                changed,
                 why,
                 problem.minimum_mode_minutes,
             ]
-        trace.append(
-            plan.flows[0].dispatch_mode + ("*" if 0 in plan.carried_bridges else "")
-        )
+        modes = [flow.dispatch_mode for flow in plan.flows]
+        if promised is not None and promised != modes[0]:
+            changed.append(step)
+        promised = modes[1]
+        trace.append(modes[0] + ("*" if 0 in plan.carried_bridges else ""))
         problem = sweep.follow(problem, plan)
-    return ["ok", len(trace), "", trace, "", problem.minimum_mode_minutes]
+    return ["ok", len(trace), "", trace, changed, "", problem.minimum_mode_minutes]
 
 
 def summary(path):
@@ -143,9 +152,9 @@ def summary(path):
     total = Counter(row[-1] for row in rows)
     for minutes in sorted(total):
         stops = Counter(
-            row[4]
+            row[5]
             for row in rows
-            if len(row) == 6 and row[0] == "err" and row[-1] == minutes
+            if len(row) == 7 and row[0] == "err" and row[-1] == minutes
         )
         detail = f" stops {dict(sorted(stops.items()))}" if stops else ""
         print(

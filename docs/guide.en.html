@@ -1192,12 +1192,11 @@ directly by any other available mode.</p>
   starts a real <code>HOLD</code> run there as in any other interval
   (<code>dispatch_policy.carried_idle_starts</code> lists the bridged intervals). With a full battery on a
   site that cannot pass the PV, such an interval may be <code>CURTAIL</code> as well, like any other
-  committed interval; it is then not bridged. The plan is
-  <code>infeasible</code> until the commitment ends when the
+  committed interval; it is then not bridged. When the
   terminal rule cannot be met afterwards (<code>preserve_initial</code> with no later PV or grid charge to
-  refill what the house drew; a flexible-load probe plans it only if its load leaves every
-  committed interval something to follow or takes a surplus below the minimum activity) or when the daily
-  throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
+  refill what the house drew) the interval is a <code>HOLD</code> with full import, as for a spent battery,
+  and the battery ends where it began. The plan is <code>infeasible</code> until the commitment ends when
+  the daily throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
   cases are listed in
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>. A direction the
   legacy direction guard blocks (<code>initial_battery_mode</code>) is not open: a pack that may not charge
@@ -1224,6 +1223,9 @@ directly by any other available mode.</p>
   legal flow: a plan followed one interval would otherwise reach the next boundary with a carried
   commitment and no plan. A <code>HOLD</code> released from a full pack does not go back there: it keeps its
   own clock across the boundary, and where the site cannot pass the PV it is <code>CURTAIL</code> (above).
+  Nor does it go back because the terminal rule has spent the pack: that counts for the release
+  and for the return of a <code>HOLD</code> that began on a depleted pack (the coordinator carries it as
+  released), not for this one, which returns only when the pack is depleted in itself.
   The return is the commitment going on, not a new
   run: the commitment's deadline stays the only clock. A pack that empties again inside the same
   commitment is released again and goes back again, as often as the commitment lasts. The release
@@ -3229,8 +3231,10 @@ produced and consumed). The six values must be finite and the four energies not 
 small negative values that rounding in statistics can leave, e.g. in <code>import + PV − export</code>); an error
 names the place, <code>days[n][i]</code> (day <code>n</code> from 1, interval <code>i</code> from 0) or <code>line n</code> of a CSV.</p>
 <p>An interval may also carry <code>buy_energy</code> (CSV column too): the energy part of <code>buy</code>, the part the
-deposit can pay (the rest of <code>buy</code> is distribution), in the same units, not above <code>buy</code> and empty or
-missing meaning 0. It matters only with the
+deposit can pay (the rest of <code>buy</code> is distribution), in the same units, as invoiced, so it may be
+negative (a draw at a negative energy price, dynamic offer without an index floor); it is not above
+<code>max(buy, 0)</code>, and when negative not above <code>buy</code>; empty or missing means 0. The planner uses
+<code>max(buy_energy, 0)</code> (capped at <code>max(buy, 0)</code>, as the engine does). It matters only with the
 <a href="#net-billing-deposit-value">deposit model</a>, which you switch on with <code>--set deposit_model=manual
 --set export_value_factor=0.3</code> (experimental). <code>buy</code> stays the invoice
 price, so <code>buy_distribution_mode</code>, <code>buy_distribution_rate</code> and <code>buy_distribution_off_peak_rate</code> are
@@ -3327,7 +3331,11 @@ the refund and the void of each bill. Compare two runs by the difference of <cod
 gives the no-planner reference. The input is one JSON object (<code>timezone</code>, <code>start</code>, <code>rho</code>, <code>fixed</code>,
 <code>initial_soc_percent</code>, <code>settings</code> and <code>hours[]</code>) or a CSV, one row per <strong>hour</strong> with <code>start</code>, <code>buy</code>,
 <code>sell</code>, <code>buy_energy</code>, <code>pv_forecast</code>, <code>load_forecast</code>, <code>pv</code>, <code>load</code> — the same values as above; the
-format is in the tool's docstring, <code>--rho</code>, <code>--fixed</code> and <code>--initial-soc</code> override the file. Hours
+format is in the tool's docstring, <code>--rho</code>, <code>--fixed</code> and <code>--initial-soc</code> override the file.
+<code>buy_energy</code> is the energy part as invoiced, with its sign: the bills sum it per month (a draw at a
+negative energy price lowers the month, and a month that ends below zero stays in the bill at full
+value and adds nothing to <code>E_owed</code>), while the planner sees <code>max(buy_energy, 0)</code>, so the plan does
+not depend on the negative values. Hours
 must be consecutive real hours, one row each; a JSON row may carry its own <code>start</code>, which must then
 match its position. <code>--refresh-hours</code> must not exceed <code>horizon_hours</code>. The number of failed plan
 solves is printed on stderr in both output formats.</p>
@@ -3340,9 +3348,9 @@ repeated autumn hour it is the first occurrence, unless the row before it is tha
 <p>Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
 charge band that depends on the annual import is not modelled (take <code>fixed</code> from the no-battery bill
 and expect a small constant error where the band differs); a stretch shorter than a year is read as
-a year with empty months; <code>buy_energy</code> stays non-negative as in the engine, so a month with a
-negative energy part reaches the bills only as a signed energy list through the Python API (<code>bill()</code>),
-not through the hourly input; the result is only as good as the forecast series you give it.</p>
+a year with empty months; the settlement period is the calendar month; a seller that bills a longer
+period nets across its months, which the tool does not model; energy is valued per hour; the result is only as good as the forecast
+series you give it.</p>
 <h2 id="reason-code-reference">Reason code reference</h2>
 <h3 id="coverage--quality-reasons-reason-reasons-attributes">Coverage / quality reasons (<code>reason</code>, <code>reasons</code> attributes)</h3>
 <section class="table-scroll"><table>

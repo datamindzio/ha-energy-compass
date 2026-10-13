@@ -12,7 +12,7 @@ from native_site import (
     CHARGE,
     DISCHARGE,
     GRID,
-    Inverter,
+    install_inverter,
     native_site,
     refresh_telemetry,
     register_inverter,
@@ -38,6 +38,35 @@ async def site(hass, freezer):
     yield entry, inverter
     if entry.state is ConfigEntryState.LOADED:
         await hass.config_entries.async_unload(entry.entry_id)
+
+
+def describe_runs(host):
+    """Every recorded run, short enough for an assertion message."""
+    runs = []
+    for run in host.history:
+        runs.append(
+            {
+                "trigger": run.get("trigger"),
+                "at": run.get("at"),
+                "outcome": run.get("outcome"),
+                "code": run.get("code"),
+                "decision": (run.get("decision") or {}).get("reason_code"),
+                "transactions": [
+                    (t["attempt"], t["cleanup"], len(t["commands"]))
+                    for t in run.get("transactions", [])
+                ],
+                "writes": [
+                    (
+                        w["entity"].rsplit(".", 1)[-1],
+                        w["value"],
+                        w.get("confirmed"),
+                        w.get("blocked"),
+                    )
+                    for w in run.get("writes", [])
+                ][:12],
+            }
+        )
+    return json.dumps(runs)
 
 
 async def run_once(entry, trigger="test"):
@@ -101,7 +130,7 @@ async def test_a_new_session_restores_the_base_before_anything_is_forced(
     # restore obligation in the store.
     hass.states.async_set(CHARGE, "5", hass.states.get(CHARGE).attributes)
     hass.states.async_set(PROGRAM_4, "Grid", hass.states.get(PROGRAM_4).attributes)
-    inverter = Inverter(hass)
+    inverter = await install_inverter(hass)
     entry = MockConfigEntry(
         domain="energy_compass",
         data=default_configuration("EUR", "UTC"),
@@ -129,10 +158,11 @@ async def test_a_new_session_restores_the_base_before_anything_is_forced(
     controller = controller_of(entry)
     await controller.host.async_wait_idle()
     # No plan was accepted in this session, so the only profile is the base.
-    assert controller.state.restore_pending is False
-    assert controller.state.runtime["code"] == "restored"
-    assert dict(inverter.writes)[PROGRAM_4] == "Disabled"
-    assert dict(inverter.writes)[CHARGE] > 5
+    last_run = describe_runs(controller.host)
+    assert controller.state.restore_pending is False, last_run
+    assert controller.state.runtime["code"] == "restored", last_run
+    assert dict(inverter.writes).get(PROGRAM_4) == "Disabled", last_run
+    assert dict(inverter.writes).get(CHARGE, 0) > 5, last_run
     base_writes = len(inverter.writes)
     freezer.move_to("2026-10-08T17:01:00+00:00")
     publish(entry, publication())

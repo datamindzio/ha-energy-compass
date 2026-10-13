@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("markdown")
-
 ROOT = Path(__file__).resolve().parents[1]
 _SPEC = importlib.util.spec_from_file_location(
     "build_guides", ROOT / "tools" / "build_guides.py"
@@ -71,3 +69,27 @@ def test_missing_html_is_stale(tree, capsys):
     (tree / "guide.en.html").unlink()
     assert guides.main(["--check"]) == 1
     assert "docs/guide.en.html" in capsys.readouterr().err
+
+
+def test_writing_run_rewrites_html_without_rendering_and_then_passes(
+    tree, monkeypatch, capsys
+):
+    """The normal run: markdown edited, HTML rebuilt, no Mermaid renderer started."""
+    started = []
+    monkeypatch.setattr(guides.shutil, "which", lambda name: f"/fake/{name}")
+    monkeypatch.setattr(guides.subprocess, "run", lambda *a, **k: started.append(a))
+    source = tree / "guide.en.md"
+    text = source.read_text(encoding="utf-8")
+    assert "Energy" in text.split("```mermaid", 1)[0]
+    source.write_text(text.replace("Energy", "Power", 1), encoding="utf-8")
+    page = tree / "guide.en.html"
+    polish = tree / "guide.pl.html"
+    before, before_pl = page.read_bytes(), polish.read_bytes()
+    assert guides.main(["--check"]) == 1
+    capsys.readouterr()
+    assert guides.main([]) == 0
+    assert page.read_bytes() != before
+    assert polish.read_bytes() == before_pl
+    assert guides.main(["--check"]) == 0
+    assert capsys.readouterr().err == ""
+    assert started == []
