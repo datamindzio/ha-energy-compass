@@ -135,10 +135,12 @@ flexible-load probe was held to the tightening without the bridge reading.
    probe that puts load into every committed interval, 0.3 kWh at 2 kW, or one that takes a chargeable surplus
    below the activity, #917, does give a plan, so the probe is not a constant of the problem), a
    daily throughput budget smaller than the minimum activity the commitment asks for, the standby loss case
-   above, and the terminal requirement of `preserve_initial` (T-065: `_owed` is a best case there too). Since T-058 the
-   fallback plan without the commitment covers nearly all of them: 1 of 1600 aimed first-boundary problems (seed 303,
-   draw 153; 126 before T-058, 213 before T-065) has no plan while dropping the commitment or the terminal rule gives
-   one. `docs/model.md` lists them and the T-070 measurement; the optimizer reports `infeasible` and the last plan is retained.
+   above, and the terminal requirement of `preserve_initial` (T-065: `_owed` is a best case there too; 213 aimed first-boundary
+   problems on `main` 0778580, 126 on the T-065 head, 123 on `main` 06f935e, all counted as: no plan with the commitment, a plan
+   without it and a plan with the terminal value instead). Since T-058 the fallback plan without the commitment (rung 3 of
+   `solve_released`) plans them, with a first interval that is HOLD or CURTAIL. `docs/model.md` lists them; the follow-up (T-070)
+   below has the three counts and the tightening that was not kept; where no rung has a plan the optimizer reports `infeasible`
+   and the last plan is retained.
 4. `validate_modes(problem, flows, bridges=None)` tries the readings above, and a test covers `_publish_current`
    deriving `carried_idle` and `mode_start` from `carried_idle_starts`.
 5. **An idle committed interval may be `CURTAIL`, on the terms of
@@ -261,3 +263,65 @@ Checked against `main` 0778580 (T-057, T-052, T-473 and T-474 included; the bran
 
 Pinned problem #44 and the night with no refill (`test_carried_lock_without_a_way_to_refill_releases_to_hold`) are
 planned now; #917 stays `infeasible` without a probe.
+
+## Follow-up (T-070): the best case of the terminal rule stays as it is
+
+T-065 left a class: a carried `CHARGE_PV` or `SELF_CONSUME` under `preserve_initial` where `_owed` counts as recharge a
+surplus the pack cannot bank (the surplus of an idle interval below the minimum activity, a charge in the last
+interval where a run of the minimum duration cannot start, a run an idle interval breaks). T-070 measured it with an
+aimed generator (`make_aimed` in `benchmarks/curtail_sweep.py`, kinds `aimrun` and `aimroll`: a carried PV-follow
+commitment, `preserve_initial` always, PV within 0.3 kWh of the load, any pack, standby loss 0 to 0.2 kW, export cap 0,
+0.5, 2 or 8 kW, minimum duration 60 or 120 minutes; seeds 101, 202, 303 and 404, 400 first-boundary problems and 150
+rolls each).
+
+### Three counts, by name
+
+They answer different questions and are not interchangeable (`benchmarks/aimed_breakdown.py 400 101 202 303 404`, on
+`main` 06f935e with this branch merged in; the engine files are the same as `main`'s):
+
+| count | what it is | `main` 0778580 | T-065 head | `main` 06f935e | with 678f38a |
+| --- | --- | --- | --- | --- | --- |
+| the class on rung 1 | the plain solve has no plan with the commitment, has one without it and one with the terminal value | 213 | 126 | 123 | 47 |
+| planned by rung 3 | `solve_released` drops the commitment (first interval HOLD or CURTAIL) | n/a | n/a | 222 (173 HOLD, 49 CURTAIL) | 138 (89 HOLD, 49 CURTAIL) |
+| no plan on any rung | `solve_released` raises `infeasible` | n/a | n/a | 62 | 60 |
+
+The first count is the one T-065 reported; it barely moved since (126 to 123 on a later `main`) because rung 3 does not
+touch the plain solve. Rung 3 turned it from "no plan" into a plan whose first interval leaves the commitment, so what is left to the rung
+is the whole class (123 of 1600) and 99 more draws that have no plan with the terminal value either.
+
+### The tightening that was not kept
+
+Commit 678f38a on `task/T-070` (149 lines in `dispatch_policy`, `tests/test_carried_recharge_bound.py`) made `_owed` count
+only what a PV-follow or grid-charge run can take: no surplus of an idle interval below the minimum activity, none in an
+interval where a run of the minimum duration cannot start before the end of the coverage, none after an idle interval has
+ended the run, and SELF_CONSUME only where the pack can give the minimum activity above the reserve. Measured on the same tree (the engine of `main` 06f935e with that diff applied, the same four seeds,
+`curtail_sweep.py compare` and `rollcompare` read per seed):
+
+- plans (4 x 400): 0 newly infeasible, 2 newly planned, 15 worse and 21 better objectives;
+- rolls (4 x 150): 0 newly infeasible while followed, 1 fixed, failed rolls 26 to 25 of 600, 14 plans newly contradicted at
+  the next boundary against 8 that no longer are, 90 different traces;
+- rung 3: 84 of the 222 draws move to rung 1 (the HOLD starts of rung 3 fall from 173 to 89); the class falls from 123 to 47.
+
+It was not kept: 84 fewer last-resort plans out of 1600 aimed draws (the generator is aimed at this class; the other kinds
+do not draw it) against 149 engine lines in the region T-066, T-074 and T-078 are changing, an objective that moves both
+ways and six more plans that change at the next boundary. Rung 3 stays the answer to a commitment the bound cannot keep
+(ADR-0005 point 24); its first interval leaving the commitment is what that rung is. Whether to restore 678f38a is
+T-081 (the architect); `git show 678f38a` is the measured code, and the diff applies to `main` 06f935e.
+
+### What is not this class
+
+The 62 draws with no plan on any rung have no plan without the commitment either (rung 3 would have planned them), and one
+(seed 303, draw 153) has a plan with the terminal value. All 62 have `allow_curtailment` false (430 of the 1600 draws),
+an export cap of 0 or 0.5 kW and an interval whose PV is above the load plus the cap, which only a charge or a curtailment
+can take (188 of the 1600 draws have that profile): the forced-spill class of ADR-0007 (T-041, T-064), whose open limits
+are T-066 and T-074. 53 plan with `minimum_mode_minutes` = 0 and 42 with `allow_curtailment` true; the pack at the start
+does not separate them (30 within 0.3 kWh of its ceiling, 21 within 0.3 kWh of the reserve, 11 elsewhere). They are not
+classified further here; the corpus is the `aimrun` draws of seeds 101, 202, 303 and 404, of which
+`benchmarks/aimed_breakdown.py` prints the first eight.
+
+### How to repeat it
+
+`python benchmarks/aimed_breakdown.py 400 101 202 303 404` prints the three counts, the first modes of rung 3 and the facts
+above on the checkout it runs in; `python benchmarks/curtail_sweep.py rungs aimrun 101 400` the rungs per seed;
+`curtail_sweep.py aimrun|aimroll <seed> <count> <out.json>` on two checkouts and `compare` / `rollcompare` the differences.
+`tests/test_aimed_sweep_tool.py` runs these command lines on a few draws.

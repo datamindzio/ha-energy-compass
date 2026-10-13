@@ -48,14 +48,16 @@ it in about one draw in ten), the generator aimed at the reserve rule. `planned`
 T-070 adds a carried PV-follow commitment under `preserve_initial` with PV near the load
 (`aimrun`, `aimroll`): the terminal rule asks the pack to bank surplus that an idle interval,
 the last minimum duration of the horizon or a full pack cannot take, which the other kinds
-(random terminal mode, PV well away from the load) do not draw. Before T-058's fallback 126 of 1600
-first-boundary problems (seeds 101, 202, 303, 404 x 400) were infeasible with a plan once the commitment or the
-terminal rule was dropped; on main da2c2e7 it is 1 of 63 infeasible (docs/model.md, ADR-0004).
+(random terminal mode, PV well away from the load) do not draw. `aimed_breakdown.py` counts them by
+name on the checkout it runs in: the class on rung 1 (no plan with the commitment, a plan without it
+and one with the terminal value; 213 on main 0778580, 126 on the T-065 head, 123 on main 06f935e),
+the draws planned by rung 3 (222) and the draws with no plan on any rung (62), 1600 first-boundary
+problems of seeds 101, 202, 303 and 404 x 400 (docs/model.md, ADR-0004 follow-up T-070).
 
 T-064 lets a CURTAIL interval charge: a pack whose charge power cannot take the PV above the export cap is
 planned in one interval. `rungs <kind> <seed> <count>` counts which rung of `solve_released` plans each draw
 (`first`, `reserve_hold`, `uncommitted`, or `none`); it is how the draws that moved from rung 2 or 3 to rung 1
-are counted (ADR-0005 amendment T-064).
+are counted (ADR-0005 amendment T-064; `aimrun` is a kind it takes).
 Invoked by path, like the other benchmarks: the repository root must be on PYTHONPATH.
 """
 
@@ -604,6 +606,26 @@ def draws(kind, seed, count):
     return [roll(makers[kind](rng)) for _ in range(count)]
 
 
+def rung_and_mode(problem):
+    """The rung of `solve_released` that plans `problem` (first, reserve_hold, uncommitted or none) and the
+    first mode of that plan (None where there is none)."""
+    try:
+        plan, solved = optimize.solve_released(problem)
+    except SolveError:
+        return "none", None
+    if solved.initial_dispatch_reserve_hold:
+        rung = "reserve_hold"
+    elif problem.initial_dispatch_mode and not solved.initial_dispatch_mode:
+        rung = "uncommitted"
+    else:
+        rung = "first"
+    return rung, plan.flows[0].dispatch_mode
+
+
+def rung_of(problem):
+    return rung_and_mode(problem)[0]
+
+
 def rungs(kind, seed, count):
     """Count the rung of `solve_released` that plans each draw of an ordinary kind."""
     makers = {
@@ -612,22 +634,12 @@ def rungs(kind, seed, count):
         "deprun": make_depleted,
         "resrun": make_reserve,
         "fullrun": make_full,
+        "aimrun": make_aimed,
     }
     rng = random.Random(seed)
     counts = {}
     for _ in range(count):
-        problem = makers[kind](rng)
-        try:
-            _, solved = optimize.solve_released(problem)
-        except SolveError:
-            rung = "none"
-        else:
-            if solved.initial_dispatch_reserve_hold:
-                rung = "reserve_hold"
-            elif problem.initial_dispatch_mode and not solved.initial_dispatch_mode:
-                rung = "uncommitted"
-            else:
-                rung = "first"
+        rung = rung_of(makers[kind](rng))
         counts[rung] = counts.get(rung, 0) + 1
     return counts
 
