@@ -2113,8 +2113,8 @@ are valued by two bills:
 
 | Bill | Rule |
 | --- | --- |
-| `annual` | the deposit D = 1.23 × V (V = value of the exported energy at `max(sell, 0)`) pays the energy part E of the imports; the refund is `min(D − min(D, E), ρ × V)` |
-| `ledger` | the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry `min(unused, ρ × V of the month)` comes back and the rest is void. It is the steady state of a repeated year: `D ≤ E` gives the annual result, `D > E` a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year |
+| `annual` | the deposit D = 1.23 × V (V = value of the exported energy at `max(sell, 0)`) pays the liability E⁺ = Σ max(E<sub>t</sub>, 0) of the monthly energy parts E<sub>t</sub> of the imports; the refund is `min(D − min(D, E⁺), ρ × V)`. A month with a negative energy part (dynamic price without an index floor, charging in negative-price hours) owes nothing and never feeds the deposit: it stays on the bill at full value, never refunded, capped or voided (ADR-0031 Amendment T-471). So bill = fixed + Σ E<sub>t</sub> − applied − refund, with Σ E<sub>t</sub> signed |
+| `ledger` | the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry `min(unused, ρ × V of the month)` comes back and the rest is void. It is the steady state of a repeated year: `D ≤ E⁺` gives the annual result, `D > E⁺` a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year |
 
 ```
 python tools/replay_year.py site.json --set deposit_model=manual --set export_value_factor=0.3
@@ -2122,7 +2122,7 @@ python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 
 ```
 
 It prints (or, with `--json`, returns) both bills, `wear`, the SOC drift (initial minus final SOC at
-the mean buy price), `K` = annual bill + wear + SOC drift (`KL` with the ledger), `D`, `V`, `E`, and
+the mean buy price), `K` = annual bill + wear + SOC drift (`KL` with the ledger), `D`, `V`, `E` (signed), `E_owed` (E⁺), and
 the refund and the void of each bill. Compare two runs by the difference of `K` (or `KL`); `--self-use`
 gives the no-planner reference. The input is one JSON object (`timezone`, `start`, `rho`, `fixed`,
 `initial_soc_percent`, `settings` and `hours[]`) or a CSV, one row per **hour** with `start`, `buy`,
