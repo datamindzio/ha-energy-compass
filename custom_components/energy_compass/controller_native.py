@@ -212,6 +212,7 @@ class NativeHost:
         )
         self.runs = 0
         self._task: asyncio.Task | None = None
+        self._running = False
         self._rerun = False
         self._stopped = False
         self._started_up = False
@@ -277,18 +278,25 @@ class NativeHost:
             task.cancel()
             await asyncio.wait([task])
         self._task = None
+        self._running = False
 
     @callback
     def request(self, trigger: str) -> None:
         """Ask for a run: at most one runs and one more waits."""
         if self._stopped or not self._started_up:
             return
-        if self._task is not None and not self._task.done():
+        if self._running:
             self._rerun = True
             return
+        # The flag, not the task, is the lock: Home Assistant starts tasks eagerly, so
+        # the run's first step executes before `_task` is assigned, and a request made
+        # from inside it (the controller listener fires on the run's own persists)
+        # would otherwise start a second, nested run.
+        self._running = True
         self._task = self.hass.async_create_background_task(
             self._loop(trigger),
             f"energy_compass_deye_run_{self.controller.entry.entry_id}",
+            eager_start=False,
         )
 
     async def async_wait_idle(self) -> None:
@@ -297,6 +305,12 @@ class NativeHost:
             await asyncio.wait([self._task])
 
     async def _loop(self, trigger: str) -> None:
+        try:
+            await self._runs(trigger)
+        finally:
+            self._running = False
+
+    async def _runs(self, trigger: str) -> None:
         while True:
             self._rerun = False
             self.executor.language = self.hass.config.language

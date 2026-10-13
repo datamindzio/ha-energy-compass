@@ -268,3 +268,34 @@ async def test_switching_the_engine_to_blueprint_clears_the_pause(hass, site):
     await hass.async_block_till_done()
     assert controller_of(entry).engine == "blueprint"
     assert controller_of(entry).state.paused is False
+
+
+async def test_a_request_from_inside_a_run_never_starts_a_nested_run(
+    hass, site, monkeypatch
+):
+    """Home Assistant starts tasks eagerly; the run's own persists fire the listener."""
+    entry, _ = site
+    host = controller_of(entry).host
+    await host.async_wait_idle()
+    active = 0
+    deepest = 0
+    calls = []
+
+    async def run(trigger=""):
+        nonlocal active, deepest
+        active += 1
+        deepest = max(deepest, active)
+        calls.append(trigger)
+        if len(calls) < 5:
+            # Before any suspension, as the controller listener does on a persist.
+            host.request("nested")
+        active -= 1
+        return "run_finished"
+
+    monkeypatch.setattr(host.executor, "run", run)
+    host.request("outer")
+    host.request("second")
+    await host.async_wait_idle()
+    assert deepest == 1
+    assert calls == ["outer", "queued", "queued", "queued", "queued"]
+    assert host._running is False
