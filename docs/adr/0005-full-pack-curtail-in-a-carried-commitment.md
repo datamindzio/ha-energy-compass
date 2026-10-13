@@ -438,6 +438,34 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
     before. Charging at the charge power and curtailing the rest in one interval is the proper plan for rung 2's
     class: planned since T-064 (amendment below), which makes rung 2 rarer, not the safety exception only (the
     T-069 amendment measures what is left); forced spill with room is T-066, the unmoded CHARGE_PV rule T-041.
+26. **A flexible-load level takes the ladder too (T-067).** The base plan of the draw above is `CHARGE_PV` five
+    times and then `CURTAIL`, the pack just full where the `CURTAIL` interval starts. `lock_full` (the pack at the next
+    interval's ceiling) is set in the probe's model with the largest draw the probe may make in that interval
+    (`extra`), which keeps the plan valid for any load up to it; the realised load the certificate reads is
+    smaller, so a probe of 0.25 kWh at 2 kW has no solution anywhere in the horizon, while 0.05 kWh at 0.5 kW, 0.5 kWh at 2 kW, a pack
+    of 4 or 6 kWh or a commitment of 75 minutes each have one. Making the ceiling follow the realised load needs a
+    disjunction per interval (the ceiling is concave in the load, so no single linear bound is both sound and as
+    loose as the constant), so the model is left as it is, and `consumption.analyze_flexible_loads` takes the ladder instead: a level that is `infeasible`
+    on the problem the plan was solved for is solved on `optimize.later_rungs(problem)` in order (`reserve_fallback`,
+    then `uncommitted_fallback`; a problem that is already rung 2 has only the last), against the plan of that
+    rung (solved once, only when a level needs it, with the probe time limit). A level is priced only against
+    a plan of its own problem; the block between two levels on different rungs is `None` and the second is
+    `UNKNOWN`, and so is a level on another rung than the anchor (the first level), which is not judged against the
+    anchor's allowed price. A level is published with the reason that ended it: `infeasible` only where every rung it
+    reached had no solution (a rung whose own base plan is `infeasible` is skipped); a timeout or any other solver
+    error, on the probe or on the base plan of a rung, ends it at once as that error. The rung's base plan and the
+    probe each get what is left of the total limit, and a base plan that returns after it leaves no probe to start
+    (`timeout`; the first version passed the probe a limit of zero, an `InputError` that dropped the plan in the
+    coordinator, found in review). `benchmarks/curtail_sweep.py` plans a probe the same way, and a rung only when its
+    base plan has a solution. Measured with `deprobe` seeds 11, 22, 33, 44 × 300, this branch's
+    `benchmarks/curtail_sweep.py` run on every tree so that the draws and the need of a base plan are the same. Head
+    is this branch merged with main `fde1cc5`. Against main `fde1cc5`: 0 newly infeasible, and 0, 0, 1 and 1 newly
+    planned (seed 33 draw 230 and seed 44 draw 10, both priced on rung 1). Against `38d560f` (T-052, T-057 and T-065
+    merged, solved once, as for point 24's table): 0 newly infeasible (main `fde1cc5` without this change: 1, seed
+    44 draw 10), 105, 101, 107 and 121 newly planned. The `curtail_sweep.py` of `38d560f` itself probes without
+    a base plan, so a comparison made with it counts 14 newly infeasible draws (5, 5, 4 and 0): every one has
+    `allow_curtailment` false and no base plan on `38d560f` or on head (T-041, T-064 and T-066 as below), and the
+    runtime never probes a problem without a plan.
 
 Measured with `benchmarks/curtail_sweep.py` (its `run`/`roll` solve through `solve_released` where the tree has
 it; `resrun`/`resroll` draw the pack exactly at the reserve with a `SELF_CONSUME` commitment carried 0 to 45
@@ -471,7 +499,7 @@ main `0778580`, before T-065 landed). All 17 fail on a carried `CHARGE_PV` insid
 commitment and every one has a plan with the terminal value instead of the requirement: the part of rung 3's
 class T-065 left open (T-070). The one newly infeasible `deprobe` draw (seed 44, draw 10) is the base plan solving on
 rung 1 while the 0.25 kWh probe on that same problem has no solution (it has one on rungs 2 and 3): one consumption
-level reports `infeasible`, the plan is untouched; it is T-067. Every draw with no plan on any rung (79 of 1200
+level reports `infeasible`, the plan is untouched; closed by point 26 (T-067). Every draw with no plan on any rung (79 of 1200
 `deprun`, 55 `resrun`, 83 `run`) has `allow_curtailment` false: T-041, T-064 and T-066, which main has as well;
 the 575 `fullrun` draws without a plan have none on main either.
 
@@ -653,7 +681,9 @@ Consequences:
 ## Amendment (T-064): a CURTAIL interval charges the pack and curtails the rest
 
 Status: implemented and swept on T-064. Measured against main `fde1cc5` (T-069 and T-063 merged on top of T-041), with
-this branch's engine at `3679099`; the commits after it change documents only. It closes the class that the T-037,
+this branch's engine at `3679099`; the commits after it change documents and tests only. Main `f7f9ae1` (T-067, T-072)
+was merged afterwards; the tables below were not re-swept, and `probe` and `deprobe` seed 11 × 300 were re-run on the
+merge against main `f7f9ae1` in review (0 newly infeasible, 0 new solver failure). It closes the class that the T-037,
 T-047 and T-058 amendments list as out of scope: a pack whose charge power cannot take the PV above what the site
 passes.
 
@@ -692,9 +722,16 @@ the case (T-058 planned the commitment's `HOLD` with `CURTAIL`, rung 2).
     released `HOLD` of the sunrise on a pack that cannot take the PV, and rung 3 stays for the commitments no plan
     can keep (T-070 class).
 
-`allow_curtailment = false` with PV above the cap and above what the pack takes still has no plan (point 24 end):
-nothing can take the surplus. What the house does then (report over-capacity, throttle in the plan) is an owner
-decision, tracked in T-066 with the forced-spill cases; this amendment changes nothing there.
+`allow_curtailment = false` with PV above the cap and above what the pack takes by its charge power is planned only
+as a forced spill (T-041), that is where the pack cannot take the need by its room and the gate is open. Point 29
+holds on any row where `CURTAIL` can be chosen, so that row now charges what the pack takes and spills the rest,
+where it spilled everything before: a site that cannot curtail is changed by this amendment as well. In a reviewer's
+draw (bell-shaped days rolled to the end, seed 81 × 150, 64 of them with `allow_curtailment` off, this branch merged
+with main `f7f9ae1` against main `f7f9ae1`) 22 of those plans have a charging `CURTAIL` row, none imports in it, 21
+are cheaper, 1 is newly planned and none is newly infeasible; `tests/test_forced_spill.py` pins the row. A pack with
+room for the need still has no plan there (point 24 end): no spill is forced and nothing else can take the surplus.
+What the house does then (report over-capacity, throttle in the plan) is an owner decision, tracked in T-066 with the
+forced-spill cases.
 
 The Deye controller is not changed here, and it does not carry out the charge of such a row: `CURTAIL` runs the `HOLD`
 profile, whose maximum charge current and grid current are both `hold_grid_current` (1 A by default, about 50 W;
@@ -750,5 +787,6 @@ rolled to the end): 135 plans contain a charging `CURTAIL` row, none imports in 
 PV is not beyond the pack; 0 newly infeasible, 0 solver failures, 150 of 150 followed to the end on both trees in
 both seeds.
 
-Still `infeasible`: `allow_curtailment = false` with PV above what the pack takes (T-066), `preserve_initial`
+Still `infeasible`: `allow_curtailment = false` with PV above what the pack takes by its charge power while the pack
+has room for it (no forced spill; T-066), `preserve_initial`
 whose terminal state of charge is out of reach (T-065, T-070), and a carried commitment no plan can keep (rung 3).

@@ -843,8 +843,10 @@ Zasady (domyślnie 60 min, 0,1 kW):
   słońca przy zerowym eksporcie, baterii 1 kW i 3,6 kW PV), to jest sam plan, a nie plan awaryjny.
   W przeniesionym zobowiązaniu `CURTAIL` jest oferowany w takim przedziale niezależnie od tego, co
   bateria miała wcześniej; przy próbce elastycznego zużycia tylko dla obciążeń próbki, przy których PV
-  zostaje poza baterią. Przy wyłączonym `allow_curtailment` nic nie przyjmie tego PV i planu dla
-  niego nie ma.
+  zostaje poza baterią. Przy wyłączonym `allow_curtailment` taki przedział jest planowany tylko jako
+  wymuszone przycięcie, czyli gdy bateria ma mniej miejsca niż PV, którego instalacja nie przepuści:
+  przedział `CURTAIL` ładuje wtedy tyle, ile bateria przyjmie, i przycina resztę. Bateria, która ma
+  miejsce na to PV, nadal nie ma tam planu.
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.
@@ -1138,6 +1140,16 @@ flowchart LR
 | `UNKNOWN` | Nie policzono: `insufficient_time` (blok nie zmieści się przy maks. mocy w horyzoncie), `timeout` lub powód solvera. Zatrzymuje głębokość. |
 
 Grupy: `small` (3/5 kWh), `medium` (10/15 kWh), `large` (20 kWh).
+
+Blok, który nie ma rozwiązania na problemie, dla którego policzono plan, jest liczony ponownie na kolejnych
+szczeblach drabiny tego planu (`HOLD` zobowiązania, potem plan bez zobowiązania), każdy względem planu tego
+szczebla, więc poziom nigdy nie jest wyceniany względem planu innego problemu. Potrzebuje tego tylko
+przeniesione zobowiązanie `CHARGE_PV`/`SELF_CONSUME`, którego plan leży na granicy pełnego akumulatora.
+Dwa sąsiednie poziomy policzone na różnych szczeblach nie mają kosztu bloku między sobą, a poziom na innym
+szczeblu niż pierwszy (kotwica) nie jest oceniany względem dozwolonej ceny kotwicy: oba mają status
+`UNKNOWN`. Poziom jest publikowany z przyczyną, która go zakończyła: `infeasible` tylko wtedy, gdy żaden
+z odwiedzonych szczebli nie miał rozwiązania, a przekroczenie czasu lub inny błąd solvera kończy go od razu
+jako ten błąd.
 
 ## Strategie dyspozycji
 

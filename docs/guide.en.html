@@ -1313,7 +1313,9 @@ directly by any other available mode.</p>
   on a zero-export site with a 1 kW pack and 3.6 kW of PV) this is the plan itself, not a fallback.
   In a carried commitment <code>CURTAIL</code> is offered in such an interval whatever the pack held before;
   with a flexible-load probe, only for the probe loads that leave PV beyond the pack. With
-  <code>allow_curtailment</code> off nothing can take that PV and there is no plan for it.</li>
+  <code>allow_curtailment</code> off such an interval is planned only as a forced spill, where the pack has
+  less room than the PV the site cannot pass: the <code>CURTAIL</code> interval then charges what the pack
+  takes and spills the rest. A pack with room for that PV still has no plan there.</li>
 <li><strong>PV-follow group:</strong> <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.</li>
@@ -1738,6 +1740,14 @@ than guessing.</p>
 </tbody>
 </table></section>
 <p>Groups: <code>small</code> (3/5 kWh), <code>medium</code> (10/15 kWh), <code>large</code> (20 kWh).</p>
+<p>A block that has no solution on the problem the plan was solved for is tried again on the later rungs of
+the plan's own ladder (the commitment's <code>HOLD</code>, then the plan without the commitment), each against the plan
+of that rung, so a level is never priced against a plan of another problem. It is only a carried
+<code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment whose plan sits on the edge of a full pack that needs this. Two
+neighbouring levels solved on different rungs have no block cost between them, and a level on another
+rung than the first (anchor) level is not judged against the anchor's allowed price: both are <code>UNKNOWN</code>.
+A level is published with the reason that ended it: <code>infeasible</code> only if every rung it reached had no
+solution, while a timeout or another solver error ends it at once as that error.</p>
 <h2 id="dispatch-strategies">Dispatch strategies</h2>
 <p><code>select.&lt;name&gt;_strategy</code> chooses which objective bundle the solver uses. Every strategy keeps all
 hard physical constraints; strategies change only <strong>planning weights</strong> and a small set of

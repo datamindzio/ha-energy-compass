@@ -822,7 +822,9 @@ Rules (defaults: 60 min, 0.1 kW):
   on a zero-export site with a 1 kW pack and 3.6 kW of PV) this is the plan itself, not a fallback.
   In a carried commitment `CURTAIL` is offered in such an interval whatever the pack held before;
   with a flexible-load probe, only for the probe loads that leave PV beyond the pack. With
-  `allow_curtailment` off nothing can take that PV and there is no plan for it.
+  `allow_curtailment` off such an interval is planned only as a forced spill, where the pack has
+  less room than the PV the site cannot pass: the `CURTAIL` interval then charges what the pack
+  takes and spills the rest. A pack with room for that PV still has no plan there.
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
@@ -1108,6 +1110,15 @@ flowchart LR
 | `UNKNOWN` | Not solved: `insufficient_time` (block cannot fit at max power within the horizon), `timeout`, or a solver reason. Stops the depth. |
 
 Groups: `small` (3/5 kWh), `medium` (10/15 kWh), `large` (20 kWh).
+
+A block that has no solution on the problem the plan was solved for is tried again on the later rungs of
+the plan's own ladder (the commitment's `HOLD`, then the plan without the commitment), each against the plan
+of that rung, so a level is never priced against a plan of another problem. It is only a carried
+`CHARGE_PV`/`SELF_CONSUME` commitment whose plan sits on the edge of a full pack that needs this. Two
+neighbouring levels solved on different rungs have no block cost between them, and a level on another
+rung than the first (anchor) level is not judged against the anchor's allowed price: both are `UNKNOWN`.
+A level is published with the reason that ended it: `infeasible` only if every rung it reached had no
+solution, while a timeout or another solver error ends it at once as that error.
 
 ## Dispatch strategies
 
