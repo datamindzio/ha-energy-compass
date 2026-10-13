@@ -341,8 +341,6 @@
           "buy_addition": "Dodatek do ceny zakupu",
           "sell_addition": "Dodatek do ceny sprzedaży",
           "monthly_charge": "Stała opłata miesięczna",
-          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
-          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
           "terminal_value_per_kwh": "Wartość energii na końcu planu",
           "boost_ceiling": "Próg zwiększania zużycia",
           "limit_floor": "Próg ograniczenia",
@@ -452,11 +450,9 @@
           "sell_addition": "Dodatek do ceny sprzedaży",
           "vat_percent": "Stawka VAT",
           "monthly_charge": "Stała opłata miesięczna",
-          "deposit_model": "Model depozytu prosumenckiego",
+          "deposit_model": "Model depozytu prosumenckiego (off; manual jest eksperymentalny)",
           "deposit_refund_percent": "Limit zwrotu z depozytu (% wartości eksportu z miesiąca)",
-          "export_value_factor": "Współczynnik wartości eksportu (model ręczny depozytu)",
-          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
-          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
+          "export_value_factor": "Współczynnik wartości eksportu (model ręczny, eksperymentalny)",
           "buy_apply_vat": "Dolicz VAT przy zakupie",
           "sell_apply_vat": "Dolicz VAT przy sprzedaży",
           "calibration": "Kalibracja taryfy"
@@ -466,11 +462,9 @@
           "buy_distribution_mode": "Domyślnie included. included: cena ze źródła zakupu już zawiera dystrybucję (cena all-in). added: stawki dystrybucji są doliczane do ceny ze źródła zakupu - dla ceny dynamicznej energii albo cennika wpisanego jak na fakturze. Zmienia cenę zakupu dla planera i dla raportowanych kosztów.",
           "buy_distribution_rate": "Domyślnie 0; zakres 0-1000 za kWh. Wszystko, co operator rozlicza za kWh (stawka sieciowa, opłata jakościowa, OZE, kogeneracyjna), wpisane jak cena zakupu; VAT dolicza się, gdy włączone jest naliczanie VAT od zakupu, mnożnik i dopłata nie dotyczą. Opłata miesięczna należy do opłaty miesięcznej.",
           "buy_distribution_off_peak_rate": "Domyślnie 0; zakres 0-1000 za kWh. To samo dla strefy poza szczytem dwustrefowej taryfy (źródło albo taryfa dystrybucyjna). Przy dwóch strefach ustaw obie stawki albo żadnej; przy jednej strefie jest pomijana.",
-          "deposit_model": "Domyślnie off. manual: sam podajesz współczynnik wartości eksportu. auto: planer wylicza go z oczekiwanego rocznego depozytu i opłat, raz dziennie. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
-          "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada.",
-          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu całkowicie deprecjonuje część energetyczną importu).",
-          "deposit_yearly_value": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wartość eksportu zaksięgowana na depozycie w 12 miesięcy, razem ze współczynnikiem 1,23.",
-          "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: to, co depozyt może zapłacić w roku - opłata za energię czynną (za kWh) z 12 miesięcy poboru, brutto. Bez opłaty handlowej, innych opłat stałych i dystrybucji."
+          "deposit_model": "Domyślnie off, i off jest ustawieniem dla każdej instalacji, także gdy depozyt przepada. manual (eksperymentalny): sam podajesz współczynnik wartości eksportu; w rocznym odtworzeniu nie obniżył rachunku, zwykle go podnosił. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
+          "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada. Na cenie sprzedaży z współczynnikiem 1,23 podłogą współczynnika wartości eksportu jest ten udział podzielony przez 1,23 (0,244 dla 30 %, 0,163 dla 20 %).",
+          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu, czyli udziału zwrotu podzielonego przez 1,23, całkowicie deprecjonuje część energetyczną importu)."
         }
       },
       "pv_solar_forecast": {
@@ -854,8 +848,6 @@
           "buy_addition": "Dodatek do ceny zakupu",
           "sell_addition": "Dodatek do ceny sprzedaży",
           "monthly_charge": "Stała opłata miesięczna",
-          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
-          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
           "terminal_value_per_kwh": "Wartość energii na końcu planu",
           "boost_ceiling": "Próg zwiększania zużycia",
           "limit_floor": "Próg ograniczenia",
@@ -965,11 +957,9 @@
           "sell_addition": "Dodatek do ceny sprzedaży",
           "vat_percent": "Stawka VAT",
           "monthly_charge": "Stała opłata miesięczna",
-          "deposit_model": "Model depozytu prosumenckiego",
+          "deposit_model": "Model depozytu prosumenckiego (off; manual jest eksperymentalny)",
           "deposit_refund_percent": "Limit zwrotu z depozytu (% wartości eksportu z miesiąca)",
-          "export_value_factor": "Współczynnik wartości eksportu (model ręczny depozytu)",
-          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
-          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
+          "export_value_factor": "Współczynnik wartości eksportu (model ręczny, eksperymentalny)",
           "buy_apply_vat": "Dolicz VAT przy zakupie",
           "sell_apply_vat": "Dolicz VAT przy sprzedaży",
           "calibration": "Kalibracja taryfy"
@@ -979,11 +969,9 @@
           "buy_distribution_mode": "Domyślnie included. included: cena ze źródła zakupu już zawiera dystrybucję (cena all-in). added: stawki dystrybucji są doliczane do ceny ze źródła zakupu - dla ceny dynamicznej energii albo cennika wpisanego jak na fakturze. Zmienia cenę zakupu dla planera i dla raportowanych kosztów.",
           "buy_distribution_rate": "Domyślnie 0; zakres 0-1000 za kWh. Wszystko, co operator rozlicza za kWh (stawka sieciowa, opłata jakościowa, OZE, kogeneracyjna), wpisane jak cena zakupu; VAT dolicza się, gdy włączone jest naliczanie VAT od zakupu, mnożnik i dopłata nie dotyczą. Opłata miesięczna należy do opłaty miesięcznej.",
           "buy_distribution_off_peak_rate": "Domyślnie 0; zakres 0-1000 za kWh. To samo dla strefy poza szczytem dwustrefowej taryfy (źródło albo taryfa dystrybucyjna). Przy dwóch strefach ustaw obie stawki albo żadnej; przy jednej strefie jest pomijana.",
-          "deposit_model": "Domyślnie off. manual: sam podajesz współczynnik wartości eksportu. auto: planer wylicza go z oczekiwanego rocznego depozytu i opłat, raz dziennie. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
-          "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada.",
-          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu całkowicie deprecjonuje część energetyczną importu).",
-          "deposit_yearly_value": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wartość eksportu zaksięgowana na depozycie w 12 miesięcy, razem ze współczynnikiem 1,23.",
-          "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: to, co depozyt może zapłacić w roku - opłata za energię czynną (za kWh) z 12 miesięcy poboru, brutto. Bez opłaty handlowej, innych opłat stałych i dystrybucji."
+          "deposit_model": "Domyślnie off, i off jest ustawieniem dla każdej instalacji, także gdy depozyt przepada. manual (eksperymentalny): sam podajesz współczynnik wartości eksportu; w rocznym odtworzeniu nie obniżył rachunku, zwykle go podnosił. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
+          "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada. Na cenie sprzedaży z współczynnikiem 1,23 podłogą współczynnika wartości eksportu jest ten udział podzielony przez 1,23 (0,244 dla 30 %, 0,163 dla 20 %).",
+          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu, czyli udziału zwrotu podzielonego przez 1,23, całkowicie deprecjonuje część energetyczną importu)."
         }
       },
       "energy_atlas": {

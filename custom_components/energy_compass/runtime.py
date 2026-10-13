@@ -468,7 +468,6 @@ def build_problem(
     grid_charge_commitment=None,
     balance_state=None,
     solar_forecasts=None,
-    settlement_state=None,
 ):
     """Preserve native boundaries and stop at actual contiguous source coverage."""
     values = effective_settings(config, states, now)
@@ -627,9 +626,7 @@ def build_problem(
         )
         for index, (start, finish) in enumerate(intervals)
     )
-    settlement, settlement_next = resolve_settlement(
-        values, settlement_state, now, config["timezone"], split_known=split_known
-    )
+    settlement = resolve_settlement(values, split_known=split_known)
     battery = None
     soc_observation = None
     budgets = ()
@@ -927,7 +924,6 @@ def build_problem(
         "balance_pv_series": balance_series,
         # Consumed by `compute`; never published.
         "settlement": settlement,
-        "settlement_state": settlement_next,
         "warnings": ["unvalidated_tariff"]
         if values["calibration"] != "verified"
         else [],
@@ -1159,8 +1155,6 @@ def compute(
     started = perf_counter()
     problem, values, quality = build_problem(config, states, now, **history)
     settlement = quality.pop("settlement")
-    settlement_state = quality.pop("settlement_state")
-    settlement_held = history.get("settlement_state")
     plan = solve(
         problem,
         time_limit_s=min(values["solve_time_limit_s"], values["total_time_limit_s"]),
@@ -1354,9 +1348,6 @@ def compute(
                 "export_value_factor": round(settlement["export_value_factor"], 4),
                 "import_energy_factor": round(settlement["import_energy_factor"], 4),
                 "cap_pressure": round(settlement["cap_pressure"], 4),
-                "unused_share": None
-                if settlement["unused_share"] is None
-                else round(settlement["unused_share"], 4),
             },
         },
         "measurements": measurement_diagnostics(config, states, now),
@@ -1393,9 +1384,6 @@ def compute(
             "actions_configured": bool(values["notify_actions"]),
         },
     }
-    if settlement_state is not None or settlement_held is not None:
-        # Popped by the coordinator; never a published attribute.
-        result["settlement_state"] = settlement_state
     if atlas_solve_builder is not None:
         result["atlas_solve_payload"] = atlas_payload
     return result

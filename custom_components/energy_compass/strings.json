@@ -341,8 +341,6 @@
           "buy_addition": "Buy addition",
           "sell_addition": "Sell addition",
           "monthly_charge": "Monthly charge",
-          "deposit_yearly_value": "Expected deposit booked over 12 months (auto deposit model)",
-          "deposit_yearly_energy_cost": "Charges the deposit can pay over 12 months (auto deposit model)",
           "terminal_value_per_kwh": "Terminal value per kwh",
           "boost_ceiling": "Boost ceiling",
           "limit_floor": "Limit floor",
@@ -452,11 +450,9 @@
           "sell_addition": "Sell addition",
           "vat_percent": "Vat percent",
           "monthly_charge": "Monthly charge",
-          "deposit_model": "Prosumer deposit model",
+          "deposit_model": "Prosumer deposit model (off; manual is experimental)",
           "deposit_refund_percent": "Deposit refund cap (% of the month's export value)",
-          "export_value_factor": "Export value factor (manual deposit model)",
-          "deposit_yearly_value": "Expected deposit booked over 12 months (auto deposit model)",
-          "deposit_yearly_energy_cost": "Charges the deposit can pay over 12 months (auto deposit model)",
+          "export_value_factor": "Export value factor (manual, experimental deposit model)",
           "buy_apply_vat": "Buy apply vat",
           "sell_apply_vat": "Sell apply vat",
           "calibration": "Calibration"
@@ -466,11 +462,9 @@
           "buy_distribution_mode": "Default included. included: the buy source price already contains distribution (an all-in price). added: the distribution rates are added on top of the buy source price - use it for a dynamic energy price or a price list typed as on the invoice. Changes the buy price for the planner and for reported costs.",
           "buy_distribution_rate": "Default 0; range 0-1000 per kWh. Everything the distributor bills per kWh (network rate, quality fee, RES fee, cogeneration fee), typed like the buy rate; VAT applies when buy apply VAT is on, the multiplier and addition do not. The monthly fee belongs in Monthly charge.",
           "buy_distribution_off_peak_rate": "Default 0; range 0-1000 per kWh. The same for the off-peak zone of a two-zone tariff schedule or distribution tariff. With two zones set both rates or neither; a single zone ignores it.",
-          "deposit_model": "Default off. manual: you state the export value factor. auto: the planner derives it from the expected yearly deposit and charges, re-evaluated once a day. Planning only; reported costs stay at invoice prices.",
-          "deposit_refund_percent": "Default 30 (hourly RCE settlement; 20 for monthly RCEm); range 0-100 %. After 12 months an unused deposit is refunded up to this share of the month's exported energy value; the rest is void.",
-          "export_value_factor": "Default 1 (invoice price); range 0-1. Manual model only: what one more unit of export is worth in planning, used as typed. The import-energy factor is derived from it and the refund cap (a value below the cap percentage devalues the energy part of imports fully).",
-          "deposit_yearly_value": "Default 0 (unknown); range 0-1,000,000. Auto model: the export value booked on the deposit over 12 months, including the 1.23 coefficient.",
-          "deposit_yearly_energy_cost": "Default 0 (unknown); range 0-1,000,000. Auto model: what the deposit can pay in a year - the per-kWh energy charge of 12 months of import, gross. Leave out the trade fee, other fixed fees and distribution."
+          "deposit_model": "Default off, and off is the setting for every site, also when the deposit is forfeited. manual (experimental): you state the export value factor; measured on a one-year replay it did not lower the yearly bill and usually raised it. Planning only; reported costs stay at invoice prices.",
+          "deposit_refund_percent": "Default 30 (hourly RCE settlement; 20 for monthly RCEm); range 0-100 %. After 12 months an unused deposit is refunded up to this share of the month's exported energy value; the rest is void. On a sell price that contains the 1.23 coefficient the floor of the export value factor is that share divided by 1.23 (0.244 for 30 %, 0.163 for 20 %); with 100 % it is 1/1.23, not 1 - the setting that never cancels anything is deposit model off.",
+          "export_value_factor": "Default 1 (invoice price); range 0-1. Manual model only: what one more unit of export is worth in planning, used as typed. The import-energy factor is derived from it and the refund cap (a value below the cap share divided by 1.23 devalues the energy part of imports fully)."
         }
       },
       "pv_solar_forecast": {
@@ -854,8 +848,6 @@
           "buy_addition": "Buy addition",
           "sell_addition": "Sell addition",
           "monthly_charge": "Monthly charge",
-          "deposit_yearly_value": "Expected deposit booked over 12 months (auto deposit model)",
-          "deposit_yearly_energy_cost": "Charges the deposit can pay over 12 months (auto deposit model)",
           "terminal_value_per_kwh": "Terminal value per kwh",
           "boost_ceiling": "Boost ceiling",
           "limit_floor": "Limit floor",
@@ -965,11 +957,9 @@
           "sell_addition": "Sell addition",
           "vat_percent": "Vat percent",
           "monthly_charge": "Monthly charge",
-          "deposit_model": "Prosumer deposit model",
+          "deposit_model": "Prosumer deposit model (off; manual is experimental)",
           "deposit_refund_percent": "Deposit refund cap (% of the month's export value)",
-          "export_value_factor": "Export value factor (manual deposit model)",
-          "deposit_yearly_value": "Expected deposit booked over 12 months (auto deposit model)",
-          "deposit_yearly_energy_cost": "Charges the deposit can pay over 12 months (auto deposit model)",
+          "export_value_factor": "Export value factor (manual, experimental deposit model)",
           "buy_apply_vat": "Buy apply vat",
           "sell_apply_vat": "Sell apply vat",
           "calibration": "Calibration"
@@ -979,11 +969,9 @@
           "buy_distribution_mode": "Default included. included: the buy source price already contains distribution (an all-in price). added: the distribution rates are added on top of the buy source price - use it for a dynamic energy price or a price list typed as on the invoice. Changes the buy price for the planner and for reported costs.",
           "buy_distribution_rate": "Default 0; range 0-1000 per kWh. Everything the distributor bills per kWh (network rate, quality fee, RES fee, cogeneration fee), typed like the buy rate; VAT applies when buy apply VAT is on, the multiplier and addition do not. The monthly fee belongs in Monthly charge.",
           "buy_distribution_off_peak_rate": "Default 0; range 0-1000 per kWh. The same for the off-peak zone of a two-zone tariff schedule or distribution tariff. With two zones set both rates or neither; a single zone ignores it.",
-          "deposit_model": "Default off. manual: you state the export value factor. auto: the planner derives it from the expected yearly deposit and charges, re-evaluated once a day. Planning only; reported costs stay at invoice prices.",
-          "deposit_refund_percent": "Default 30 (hourly RCE settlement; 20 for monthly RCEm); range 0-100 %. After 12 months an unused deposit is refunded up to this share of the month's exported energy value; the rest is void.",
-          "export_value_factor": "Default 1 (invoice price); range 0-1. Manual model only: what one more unit of export is worth in planning, used as typed. The import-energy factor is derived from it and the refund cap (a value below the cap percentage devalues the energy part of imports fully).",
-          "deposit_yearly_value": "Default 0 (unknown); range 0-1,000,000. Auto model: the export value booked on the deposit over 12 months, including the 1.23 coefficient.",
-          "deposit_yearly_energy_cost": "Default 0 (unknown); range 0-1,000,000. Auto model: what the deposit can pay in a year - the per-kWh energy charge of 12 months of import, gross. Leave out the trade fee, other fixed fees and distribution."
+          "deposit_model": "Default off, and off is the setting for every site, also when the deposit is forfeited. manual (experimental): you state the export value factor; measured on a one-year replay it did not lower the yearly bill and usually raised it. Planning only; reported costs stay at invoice prices.",
+          "deposit_refund_percent": "Default 30 (hourly RCE settlement; 20 for monthly RCEm); range 0-100 %. After 12 months an unused deposit is refunded up to this share of the month's exported energy value; the rest is void. On a sell price that contains the 1.23 coefficient the floor of the export value factor is that share divided by 1.23 (0.244 for 30 %, 0.163 for 20 %); with 100 % it is 1/1.23, not 1 - the setting that never cancels anything is deposit model off.",
+          "export_value_factor": "Default 1 (invoice price); range 0-1. Manual model only: what one more unit of export is worth in planning, used as typed. The import-energy factor is derived from it and the refund cap (a value below the cap share divided by 1.23 devalues the energy part of imports fully)."
         }
       },
       "energy_atlas": {

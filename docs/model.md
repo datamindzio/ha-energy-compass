@@ -116,7 +116,7 @@ A separate HA Store, `energy_compass.<entry_id>.grid_charge`, persists only `{ge
 
 ## Net-billing deposit value
 
-Under net billing the export value is booked on the prosumer deposit, the deposit pays only the energy part of what is owed to the seller, and after 12 months a month's refund is capped at `ρ × export value of that month` (ρ = 30 % with hourly RCE, 20 % with RCEm). For one monthly vintage with exported value `G` and unused amount `U`, `refund = min(U, ρ × G)` and the rest is void. At the margin one more currency unit of export, and one more unit of energy-part import, is worth 1 while the deposit is short or `U ≤ ρ × G`; once `U > ρ × G` export is worth ρ and the energy part of import costs 0 in cash. The planner's full-price valuation is exact until the cap binds and wrong on both sides after it. The decision record is [ADR-0001](adr/0001-net-billing-settlement-model.md).
+Under net billing the export value is booked on the prosumer deposit, the deposit pays only the energy part of what is owed to the seller, and after 12 months a month's refund is capped at `ρ × export value of that month` (ρ = 30 % with hourly RCE, 20 % with RCEm; the export value is the one without the 1.23 coefficient). For one monthly vintage with exported value `G` and unused amount `U`, `refund = min(U, ρ × G)` and the rest is void. At the margin one more currency unit of export, and one more unit of energy-part import, is worth 1 while the deposit is short or `U ≤ ρ × G`; once `U > ρ × G` export is worth ρ of the value without 1.23, that is `ρ / 1.23` of a sell price that contains it, and the energy part of import costs 0 in cash. The planner's full-price valuation is exact until the cap binds and wrong on both sides after it. Valued on the yearly bill (ADR-0001 revision 3) the correction does not pay: on a one-year replay of 40 hourly-RCE homes at 10 kWh no factor lowered the bill by more than 44 PLN, the factor at the cap raised it in all 40 (68–431 PLN with the annual formula, 21–306 PLN with the monthly ledger), and with RCEm it moves the bill by less than 10 PLN. `deposit_model: off` is the setting for every site, also one whose deposit is forfeited (switching battery export off for that reason cost 154–662 PLN a year in all 16 homes measured); `manual` is experimental; `auto` is withdrawn and a stored `auto` is read as `off`. The decision record is [ADR-0001](adr/0001-net-billing-settlement-model.md).
 
 `Slot.buy_energy_per_kwh` is the part of `buy_per_kwh` the deposit can pay. The buy price of a slot has two parts, the buy source price and the distribution `dist` (`buy_distribution_rate`, `buy_distribution_off_peak_rate`; VAT applies when `buy_apply_vat` is on, the multiplier, the addition and a forecast floor do not):
 
@@ -136,21 +136,21 @@ sell_plan = φx × max(sell, 0) + min(sell, 0)
 With both factors 1.0 the expressions are short-circuited to `buy` and `sell`, so the model is byte-identical. A negative sell price is a real charge and is never scaled. The factors derive from one cap pressure `π ∈ [0, 1]`:
 
 ```text
-φx = 1 - π × (1 - ρ)          φe = 1 - π
-auto:    s = clamp(1 - E / D, 0, 1)     π = clamp((s - ρ/2) / (ρ/2), 0, 1)
-manual:  φx = export_value_factor (as typed, for ρ < 1)
-         π  = clamp((1 - φx) / (1 - ρ), 0, 1), used for φe
+ρp = deposit_refund_percent / 100 / 1.23      (DEPOSIT_COEFFICIENT, engine/settlement.py)
+φx = 1 - π × (1 - ρp)          φe = 1 - π
+manual:  φx = export_value_factor (as typed)
+         π  = clamp((1 - φx) / (1 - ρp), 0, 1), used for φe
 ```
 
-`D` is `deposit_yearly_value`, `E` is `deposit_yearly_energy_cost`. The ramp starts at ρ/2 because expiry is not spread over the year: the unused amount lands on the high-export months, which hold about half of the yearly deposit (an assumption, not measured), so their cap binds at about half the yearly share. `auto` evaluates π once per local day, keeps it in a Store, and replaces the held value only when the new one differs by at least 0.10 or is exactly 0 or 1; a change of any of the five deposit settings re-evaluates at once. `D` or `E` equal to 0 gives π = 0 with `reason: inputs_missing`. When π > 0 and no slot has a distribution part (`dist` is 0 everywhere), the whole buy price would be energy and an import would look free: φe is forced to 1 and `reason` is `split_missing`, φx unchanged. The deposit balance is not an input: oldest-first use makes the 12-month sums decide the long-run state.
+At the cap `φx` is 0.244 for ρ = 30 % and 0.163 for 20 %; with `deposit_refund_percent` 100 the floor is 1/1.23, not 1 (the "nothing is ever cancelled" case is `deposit_model: off`). A seller that refunds a share of the deposit is 36.9 / 24.6. The model is stateless: there is no settlement Store and no daily evaluation. When π > 0 and no slot has a distribution part (`dist` is 0 everywhere), the whole buy price would be energy and an import would look free: φe is forced to 1 and `reason` is `split_missing`, φx unchanged. The deposit balance is not an input.
 
 Stays at invoice prices: `Plan.grid_cost`, `Plan.objective`, `plan_monetary_cost()` and the net cost in the plan attributes, the consumption probes' reported cost, the `maximum_grid_charge_price` comparison, the autonomy and peak-reserve rankings (`buy_plan ≤ buy`, so their dominance holds), the Atlas solve payload, the Deye controller, the cost card and the export value counter. The strategy weights, `import_penalty_per_kwh` and the episode hurdles act on top of the planning prices, unscaled.
 
-Worked example (PGE G12 2026 gross: day 0.7018 energy + 0.540 distribution, night 0.4635 + 0.143 PLN/kWh; round trip 0.89, wear 0.05 per kWh, ρ = 30 %): selling from the battery and buying the energy back at night needs a sell price of `1.1236 × 0.6065 + 0.0531 = 0.73` with the cap not binding and `(1.1236 × 0.143 + 0.0531) / 0.30 = 0.71` when it binds. At ρ = 20 % the same sale pays above about 1.07. Surplus PV at a sell price of 0.40 is worth 0.12 instead of 0.40 when it binds.
+Worked example (PGE G12 2026 gross: day 0.7018 energy + 0.540 distribution, night 0.4635 + 0.143 PLN/kWh; round trip 0.89, wear 0.05 per kWh, the cap not binding): selling from the battery and buying the energy back at night needs a sell price of `1.1236 × 0.6065 + 0.0531 = 0.73`. When the cap binds the threshold is `(1.1236 × 0.143 + 0.0531) / ρp`: about 0.88 at ρ = 30 % and 1.31 at 20 % (0.71 and 1.07 for a seller refunding 36.9 % / 24.6 % of the deposit). Surplus PV at a sell price of 0.40 is worth `0.40 × ρp` = 0.10 instead of 0.40 at ρ = 30 % when it binds.
 
 A dynamic energy price with a G12 distribution tariff (`added`; energy 0.25 midday, 0.95 in the evening peak, 0.45 at night; distribution 0.540 peak, 0.143 off-peak) gives buy 0.79, 1.49 and 0.593. At π = 1 the planning buy prices are the distribution parts alone: 0.540, 0.540 and 0.143.
 
-Diagnostics are published as `dispatch_policy.settlement` (`model`, `export_value_factor`, `import_energy_factor`, `cap_pressure`, `unused_share`, `refund_percent`, `yearly_deposit`, `yearly_energy_cost`, `distribution_mode`, `evaluated_on`, `reason`).
+Diagnostics are published as `dispatch_policy.settlement` (`model`, `export_value_factor`, `import_energy_factor`, `cap_pressure`, `refund_percent`, `distribution_mode`, `reason`; `reason` is `ok`, `off` or `split_missing`).
 
 ## Inverter standby loss
 
