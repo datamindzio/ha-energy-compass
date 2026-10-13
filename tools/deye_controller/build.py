@@ -395,13 +395,22 @@ DECISION = r"""
    1 A, 21.09); przy progu <= SOC dryf w dol ograniczony do jednego kroku.
    Krzywa rozladowania (544 V przy 100%) trzyma cel w zatwierdzonym 495-560 V.
    Bez zatrzasku reached_key: cel sledzi plan w kazdym przebiegu. #}
-{# CURTAIL z ladowaniem (charge_kwh > 0: PV ponad to, co przepusci instalacja,
-   przekracza ladowanie z charge_kw, T-064) laduje z samego PV pelnym capem jak
-   CHARGE_PV: siec 0 A, kierunek Disabled, rozladowanie 0 A. Pozostale HOLD/CURTAIL
-   trzymaja SOC. #}
-{% set curtail_charges = state == 'CURTAIL' and ns.row and ns.row.charge_kwh|float(0) > 0 %}
+{# CURTAIL z ladowaniem (charge_kwh > 0,000001 kWh, czyli ponad szum solwera, ktory plan
+   publikuje bez zaokraglen: PV ponad to, co przepusci instalacja, przekracza
+   ladowanie z charge_kw, T-064) laduje z samego PV pradem z planu, nie mniejszym niz
+   hold_grid_current i nie wiekszym niz cap: siec 0 A, kierunek Disabled,
+   rozladowanie 0 A. Ladowanie takiego wiersza jest dowolne miedzy 0 a PV po
+   obcieciu i obciazeniu, wiec wiersz planujacy mniej niz charge_kw x h laduje mniej
+   niz cap (SOC konczy tam, gdzie plan, reszta zostaje obcieta). Prad z planu zaokraglony
+   w gore do kroku, wiec wiersz na charge_kw x h dostaje caly cap. Pozostale
+   HOLD/CURTAIL trzymaja SOC. #}
+{% set curtail_charges = state == 'CURTAIL' and ns.row and ns.row.charge_kwh|float(0) > 0.000001 %}
 {% if curtail_charges %}
-  {% set charge = charge_cap %}{% set discharge = 0 %}
+  {% set curtail_h = (as_timestamp(ns.row.end) - as_timestamp(ns.row.start)) / 3600 %}
+  {% set step = charge_step if charge_step > 0 else 1 %}
+  {% set planned = ns.row.charge_kwh|float / curtail_h * 1000 * eta_charge / v %}
+  {% set charge = [charge_cap, [hold_grid_current, ((planned / step)|round(9)|round(0,'ceil')) * step]|max]|min %}
+  {% set discharge = 0 %}
 {% elif state in ['HOLD','CURTAIL'] and ns.row %}
   {% set target_soc = [100, [10, ns.row.end_soc_kwh|float / capacity_kwh * 100]|max]|min|round(0,'floor') %}
   {% set knots = [496,512,515,520,522,523,528,531,536,544] %}
