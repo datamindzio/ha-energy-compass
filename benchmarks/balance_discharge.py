@@ -5,19 +5,33 @@ accepts a binary within 1e-6 of 1, so a chosen window could in theory carry
 `1e-6 * cap` of `bd` while `_validate_balance` requires `bd <= 1e-6`. This sweep solves
 random problems on real HiGHS (hold and fixed windows, hourly and 15-minute slots,
 battery discharge limit 8-60 kW, up to 60 kWh per hourly slot) and reports every solver
-failure by message plus the largest `bd` inside a chosen window.
+failure by message plus the largest `bd` inside a chosen window, per slot length.
 
-Result of the T-048 run (1600 seeds, 3 s limit, 4 sets of 400): 0 `balance discharge`
-failures in about 2 800 chosen windows; the largest `bd` in a chosen window was 7.4e-11
-kWh. The only failures were `timeout` on 15-minute problems. Not reproduced.
+Result of the T-048 run (seeds 0-1599: 795 problems with 15-minute slots, 805 hourly; 8
+chunks of 200 on 6 parallel containers, so wall-clock limits bind harder than on an idle
+host and the counts below move from run to run):
 
-    python -m benchmarks.balance_discharge --seeds 400 --start 0
+- exact solves (`--time-limit 3`): 1 924 chosen windows validated (816 15-minute, 1 108
+  hourly), 0 `balance discharge` failures, largest `bd` in a chosen window 1.27e-11 kWh.
+  Solves that never reached the validator: 82 of 795 free 15-minute solves and 2 of 805
+  hourly ones timed out, plus 2 pinned 15-minute solves.
+- time-limited incumbents, the way `runtime.py` solves the base plan
+  (`--time-limit 0.4 --accept-incumbent`): 639 incumbents (361 free + 64 pinned 15-minute,
+  166 free + 48 pinned hourly) went through the same validator among 1 894 chosen
+  windows; 0 failures, largest `bd` 1.13e-11 kWh; 2 free 15-minute solves found no
+  incumbent and timed out.
+
+Not reproduced.
+
+    python -m benchmarks.balance_discharge --seeds 200 --start 0
+    python -m benchmarks.balance_discharge --seeds 200 --start 0 --time-limit 0.4 --accept-incumbent
 """
 
 import argparse
 import random
 from collections import Counter
-from dataclasses import replace
+from collections.abc import Iterable
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
 from custom_components.energy_compass.engine import optimize
@@ -97,51 +111,95 @@ def make_problem(seed: int) -> Problem:
     )
 
 
-def sweep(seeds: range, time_limit_s: float = 3.0) -> tuple[Counter, float, int]:
-    """Solve each seed free and pinned; return failure counts, max bd, windows seen."""
-    outcomes: Counter = Counter()
-    seen = {"max_bd": 0.0, "windows": 0}
+@dataclass
+class Sweep:
+    """What a sweep saw; every count is keyed by the slot length in minutes."""
+
+    outcomes: Counter = field(default_factory=Counter)  # (minutes, label) -> solves
+    windows: Counter = field(default_factory=Counter)  # chosen windows validated
+    max_bd: float = 0.0  # largest bd inside a chosen window, kWh
+
+    def balance_failures(self) -> dict:
+        return {k: n for k, n in self.outcomes.items() if "balance" in k[1]}
+
+
+def sweep(
+    seeds: Iterable[int],
+    time_limit_s: float = 3.0,
+    accept_incumbent: bool = False,
+) -> Sweep:
+    """Solve each seed free and pinned on real HiGHS and validate every chosen window.
+
+    `time-limited` outcomes count the solves that returned an incumbent, a subset of `ok`.
+
+    `accept_incumbent` solves the way the base plan does (`runtime.py`): a time-limited
+    incumbent goes through the same `_validate_balance` instead of raising `timeout`.
+    A `timeout` outcome never reaches the validator, so it is counted, not hidden.
+    """
+    result = Sweep()
     original = optimize._validate_balance
 
     def spy(problem, vectors, values, choices, miss):
+        minutes = _minutes(problem)
         for position, index in enumerate(choices):
             if values[index] > 0.5:
-                seen["windows"] += 1
+                result.windows[minutes] += 1
                 for t in problem.balance_windows[position].slots:
-                    seen["max_bd"] = max(
-                        seen["max_bd"], float(values[vectors[t]["bd"]])
-                    )
+                    result.max_bd = max(result.max_bd, float(values[vectors[t]["bd"]]))
         return original(problem, vectors, values, choices, miss)
 
     optimize._validate_balance = spy
     try:
         for seed in seeds:
             problem = make_problem(seed)
+            minutes = _minutes(problem)
+            stage = ""
             try:
-                plan = optimize.solve(problem, time_limit_s=time_limit_s)
-                outcomes["ok"] += 1
+                plan = optimize.solve(
+                    problem,
+                    time_limit_s=time_limit_s,
+                    accept_incumbent=accept_incumbent,
+                )
+                result.outcomes[minutes, "ok"] += 1
+                result.outcomes[minutes, "time-limited"] += plan.time_limited
                 if plan.balance_start is not None:
-                    optimize.solve(
-                        pin_balance(problem, plan), time_limit_s=time_limit_s
+                    stage = "pinned "
+                    plan = optimize.solve(
+                        pin_balance(problem, plan),
+                        time_limit_s=time_limit_s,
+                        accept_incumbent=accept_incumbent,
                     )
-                    outcomes["pinned ok"] += 1
+                    result.outcomes[minutes, "pinned ok"] += 1
+                    result.outcomes[minutes, "pinned time-limited"] += plan.time_limited
             except SolveError as err:
-                outcomes[str(err).split(" (")[0]] += 1
+                label = str(err) if err.reason == "solver_failure" else err.reason
+                result.outcomes[minutes, stage + label] += 1
     finally:
         optimize._validate_balance = original
-    return outcomes, seen["max_bd"], seen["windows"]
+    return result
+
+
+def _minutes(problem: Problem) -> int:
+    first = problem.slots[0]
+    return int((first.end - first.start).total_seconds() // 60)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=int, default=400)
     parser.add_argument("--start", type=int, default=0)
+    parser.add_argument("--time-limit", type=float, default=3.0)
+    parser.add_argument("--accept-incumbent", action="store_true")
     args = parser.parse_args()
-    outcomes, max_bd, windows = sweep(range(args.start, args.start + args.seeds))
-    print(dict(outcomes))
-    print(
-        f"chosen windows validated: {windows}; max bd in a chosen window: {max_bd:.3g}"
+    result = sweep(
+        range(args.start, args.start + args.seeds),
+        args.time_limit,
+        args.accept_incumbent,
     )
+    for minutes in (15, 60):
+        row = {k[1]: n for k, n in result.outcomes.items() if k[0] == minutes}
+        print(f"{minutes} min: {row}; chosen windows: {result.windows[minutes]}")
+    print(f"max bd in a chosen window: {result.max_bd:.3g}")
 
 
 if __name__ == "__main__":
