@@ -199,7 +199,9 @@ profile) instead of ending `infeasible`.
   solver result: fractional mode_CURTAIL") and reported a problem with a plan as infeasible.
   `optimize._Model.solve` solves a problem that has forced-spill binaries again without presolve when it comes
   back infeasible or with a fractional binary, within the remaining time budget. A site that can pass its PV
-  has no such binary and is solved once.
+  has no such binary and is solved once. T-074 widened the trigger to every problem with mode rows
+  (a minimum duration above zero): presolve also called a model infeasible that has the plan of all HOLD
+  with no forced spill in it (`docs/model.md` § forced spill; `tests/test_mode_presolve.py`).
 - Measured with `benchmarks/spill_sweep.py` (seeds 11 and 12 on main 5baf226 and here with that main merged in, 300 per seed and draw,
   the export-episode hurdle at zero so that a "worse" plan is not a hurdle artefact; every plan through
   `optimize.solve_released` as the runtime makes it, T-058): of 2400 problems drawn

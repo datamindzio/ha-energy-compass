@@ -1107,6 +1107,11 @@ def _solve(
         constrain_modes(
             model, problem, vectors, flexible_load=flexible_load is not None
         )
+        if problem.minimum_mode_minutes:
+            # The mode rows too: HiGHS's presolve called a model infeasible that a
+            # plan of all HOLD satisfies (T-074, negroll seed 12, problem 205), with no
+            # forced spill in it. Where it says so the model is solved once more without.
+            model.presolve_unsound = True
         _relay_forced_spill(model, vectors, spills)
         if problem.terminal_mode == "preserve_initial":
             model.constrain(
