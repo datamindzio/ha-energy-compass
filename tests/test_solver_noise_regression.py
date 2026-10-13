@@ -751,6 +751,155 @@ def test_unmoded_export_noise_on_the_other_side_of_the_indicator_is_settled(
     assert plan.new_export_episodes == 0
 
 
+HOLD_PASS_THROUGH = {
+    # (battery_mode, export_side, extra kWh on gout beyond the 1e-5 that bd passes through)
+    "gout equal to bd": (9e-7, 1 - 9e-7, 0.0),
+    "gout 1e-9 above bd": (9e-7, 1 - 9e-7, 1e-9),
+    "gout 1e-9 below bd": (9e-7, 1 - 9e-7, -1e-9),
+    "export side 0 control": (9e-7, 9e-7, 0.0),
+    "export side 0 control, gout 1e-9 above bd": (9e-7, 9e-7, 1e-9),
+    "export side 0 control, gout 1e-9 below bd": (9e-7, 9e-7, -1e-9),
+}
+
+
+@pytest.mark.parametrize("case", HOLD_PASS_THROUGH)
+def test_unmoded_hold_with_battery_to_grid_pass_through_is_published_as_hold(
+    monkeypatch, case
+):
+    # PV 2, load 2: the solver holds. Battery direction (discharge), export indicator at
+    # 9e-7 and 1e-5 kWh of `bd` passing through to `gout` (free `bd`; `gout` gated by the
+    # export side). A residual of 1e-9 inside the balance tolerance used to decide whether
+    # the slot published (`physical export indicator`) with `export_side` at 1.
+    battery_mode, side, extra = HOLD_PASS_THROUGH[case]
+    problem = unmoded_problem(
+        1.0, 0.1, 2.0, 2.0, BIG_BATTERY_20, hurdle=True, terminal=0.5
+    )
+    clean = solve(problem).flows[0]
+    assert machine_state(problem.slots[0], clean) == "HOLD"
+
+    def noise(v, values):
+        values[v["battery_mode"]] = battery_mode
+        values[v["export_active"]] = 9e-7
+        values[v["export_side"]] = side
+        move(values, v, 1e-5, ("bd", "battery_grid", "gout"), ())
+        values[v["energy"]] -= 1e-5
+        values[v["gout"]] += extra
+
+    plan = solve_with_noise(monkeypatch, problem, noise)
+
+    (flow,) = plan.flows
+    assert machine_state(problem.slots[0], flow) == "HOLD"
+    assert flow.discharge_kwh <= 1e-8
+    assert flow.grid_export_kwh <= 1e-8
+    assert flow.charge_kwh == 0.0
+    assert flow.grid_import_kwh == pytest.approx(clean.grid_import_kwh, abs=1e-8)
+    assert flow.end_soc_kwh == pytest.approx(clean.end_soc_kwh, abs=1e-8)
+    assert plan.new_export_episodes == 0
+
+
+CYCLING_GAP = {
+    "bc equal to bd": 0.0,
+    "bc 1e-9 above bd": 1e-9,
+    "bc 1e-9 below bd": -1e-9,
+    "bc 5e-7 above bd": 5e-7,
+}
+
+
+@pytest.mark.parametrize("hurdle", (False, True), ids=("no hurdle", "hurdle, z=1"))
+@pytest.mark.parametrize("case", CYCLING_GAP)
+def test_unmoded_hold_with_battery_cycling_noise_is_published_as_hold(
+    monkeypatch, case, hurdle
+):
+    # PV 2, load 2: the solver holds. Discharge direction (`battery_mode` at 9e-7): the
+    # PV charges the battery 5e-6 kWh (plus the gap on `bc`, the idle flow) while the
+    # battery feeds the load 5e-6. The zeroed `bc` exceeds the working `bd` by the gap
+    # and `gout` is not idle (hurdle off, or the export indicator active). The gap's
+    # sign used to decide whether the slot publishes (`simultaneous battery directions`).
+    gap = CYCLING_GAP[case]
+    problem = unmoded_problem(
+        1.0, 0.1, 2.0, 2.0, BIG_BATTERY_20, hurdle=hurdle, terminal=0.5
+    )
+    clean = solve(problem).flows[0]
+    assert machine_state(problem.slots[0], clean) == "HOLD"
+
+    def noise(v, values):
+        values[v["battery_mode"]] = 9e-7
+        if hurdle:
+            values[v["export_active"]] = 9e-7
+            values[v["export_side"]] = 1 - 9e-7
+        move(values, v, 5e-6, ("bc", "bd", "pv_battery", "battery_load"), ("pv_load",))
+        move(values, v, gap, ("bc", "pv_battery"), ())
+        values[v["energy"]] += gap
+
+    plan = solve_with_noise(monkeypatch, problem, noise)
+
+    (flow,) = plan.flows
+    assert machine_state(problem.slots[0], flow) == "HOLD"
+    assert flow.charge_kwh == 0.0
+    assert flow.discharge_kwh <= 1e-8
+    assert flow.grid_export_kwh <= 1e-6
+    assert flow.grid_import_kwh == pytest.approx(clean.grid_import_kwh, abs=1e-8)
+    assert flow.end_soc_kwh == pytest.approx(clean.end_soc_kwh, abs=1e-8)
+    assert plan.new_export_episodes == 0
+
+
+def test_unmoded_settle_leaves_the_balance_residual_the_discharge_cannot_cover_on_gout():
+    # `gout` idle, `bd` 1e-9 short of what is taken off `gout`: `bd` to 0, the residual on
+    # `gout`.
+    flow = unmoded_slot_flow(gout=1e-5 + 1e-9, bd=1e-5)
+
+    settled = _settle(("bc", "gout"), flow, {"bc": 20.0, "gout": 60.0}, moded=False)
+
+    assert settled["bd"] == 0.0
+    assert settled["gout"] == pytest.approx(1e-9, abs=1e-15)
+
+
+BC_ABOVE_WORKING_BD = {
+    "1e-9 above": 1e-9,
+    "5e-7 above": 5e-7,
+    "9e-7 above": 9e-7,
+    "1e-6 above": 1e-6,
+}
+
+
+@pytest.mark.parametrize("case", BC_ABOVE_WORKING_BD)
+def test_unmoded_settle_leaves_the_balance_residual_a_zeroed_bc_leaves_on_gout(case):
+    # `gout` is not idle: the zeroed `bc` (battery cycling noise) exceeds the working `bd`
+    # by the balance tolerance. `bd` to 0, the residual on `gout`.
+    gap = BC_ABOVE_WORKING_BD[case]
+    flow = unmoded_slot_flow(bc=5e-6 + gap, bd=5e-6)
+
+    settled = _settle(("bc",), flow, {"bc": 20.0}, moded=False)
+
+    assert settled["bc"] == 0.0
+    assert settled["bd"] == 0.0
+    assert settled["gout"] == pytest.approx(gap, abs=1e-15)
+    assert settled["gin"] == 0.0
+
+
+def test_unmoded_settle_adds_the_residual_to_the_gout_already_present():
+    flow = unmoded_slot_flow(bc=3e-6, gout=9e-7, bd=2.5e-6)
+
+    settled = _settle(("bc", "gout"), flow, {"bc": 20.0, "gout": 60.0}, moded=False)
+
+    assert settled["bd"] == 0.0
+    assert settled["gout"] == pytest.approx(1.4e-6, abs=1e-15)
+
+
+def test_unmoded_settle_refuses_a_shortfall_beyond_the_balance_tolerance():
+    flow = unmoded_slot_flow(gout=1e-5 + 1e-5, bd=1e-5)
+
+    assert (
+        _settle(("bc", "gout"), flow, {"bc": 20.0, "gout": 60.0}, moded=False) is None
+    )
+
+
+def test_moded_settle_still_refuses_what_the_discharge_cannot_absorb():
+    flow = unmoded_slot_flow(gout=1e-5 + 1e-9, bd=1e-5)
+
+    assert _settle(("gout",), flow, {"gout": 60.0}, moded=True) is None
+
+
 def test_unmoded_export_pair_the_settle_cannot_clear_is_refused(monkeypatch):
     # The discharge noise passes the validator ahead of the settle (it is within the
     # bound of `bd`), but z at 1 says `gout` is the gated flow, and a real 4 kWh export

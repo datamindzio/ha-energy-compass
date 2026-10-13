@@ -66,8 +66,18 @@ def _settle(
         left -= imported
         if "gout" in idle or (not moded and settled["bd"] > _TOL):
             if left > settled["bd"]:
-                return None
-            settled["bd"] -= left
+                # Without mode variables the zeroed flow (`gout`, from a pass-through
+                # `bd -> gout`, or `bc`, from battery cycling noise) may exceed the
+                # working `bd` by the balance tolerance: `bd` goes to 0, which satisfies
+                # the export pair and the battery direction, and at most 1e-6 kWh is
+                # added to `gout`.
+                residual = left - settled["bd"]
+                if moded or residual > _TOL:
+                    return None
+                settled["gout"] += residual
+                settled["bd"] = 0.0
+            else:
+                settled["bd"] -= left
         else:
             settled["gout"] += left
     elif left < 0:
