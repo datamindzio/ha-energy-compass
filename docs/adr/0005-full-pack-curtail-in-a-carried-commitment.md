@@ -425,8 +425,9 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
        (a tail the previous plan allowed and the next boundary does not: closed by T-057; a carried `CHARGE_PV`
        inside its duration with the pack just above the reserve under the `preserve_initial` terminal rule:
        T-065 released the part where the terminal rule cannot be met at all, and what is left, a requirement
-       the pack could meet but the commitment cannot bank, is T-070). It is the last resort: T-057 and T-065
-       made the rung rarer (below), T-070 is to close the rest of its cause.
+       the pack could meet but the commitment cannot bank, left to this rung: T-070 measured it at 1 of 1600 aimed
+       problems on main da2c2e7 and did not tighten the bound, ADR-0004). It is the last resort: T-057 and T-065
+       made the rung rarer (below).
 25. **One function solves it.** `optimize.solve_released(problem, time_limit_s=, budget_s=, accept_incumbent=,
     solver=)` returns `(plan, problem)`, the problem being the rung that was solved (a flexible-load probe runs on
     it). `runtime.compute`, `tools/replay.py`,
@@ -468,7 +469,7 @@ failing boundary moves earlier (`fullroll`: one moves later). Without rung 3 (th
 main `0778580`, before T-065 landed). All 17 fail on a carried `CHARGE_PV` inside its minimum duration, 0.07 to
 2.4 kWh above the reserve, under the `preserve_initial` terminal rule; every one has a plan without the
 commitment and every one has a plan with the terminal value instead of the requirement: the part of rung 3's
-class T-065 left open (T-070). The one newly infeasible `deprobe` draw (seed 44, draw 10) is the base plan solving on
+class T-065 left open (rung 3 is its answer; T-070 measured what is left, ADR-0004). The one newly infeasible `deprobe` draw (seed 44, draw 10) is the base plan solving on
 rung 1 while the 0.25 kWh probe on that same problem has no solution (it has one on rungs 2 and 3): one consumption
 level reports `infeasible`, the plan is untouched; it is T-067. Every draw with no plan on any rung (79 of 1200
 `deprun`, 55 `resrun`, 83 `run`) has `allow_curtailment` false: T-041, T-064 and T-066, which main has as well;

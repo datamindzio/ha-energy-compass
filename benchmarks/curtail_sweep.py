@@ -48,9 +48,9 @@ it in about one draw in ten), the generator aimed at the reserve rule. `planned`
 T-070 adds a carried PV-follow commitment under `preserve_initial` with PV near the load
 (`aimrun`, `aimroll`): the terminal rule asks the pack to bank surplus that an idle interval,
 the last minimum duration of the horizon or a full pack cannot take, which the other kinds
-(random terminal mode, PV well away from the load) do not draw. After T-065, 126 of 1600
-first-boundary problems (seeds 101, 202, 303, 404 x 400) were infeasible with a plan once the
-commitment or the terminal rule was dropped; T-070 brings that to 51 (docs/model.md, ADR-0004).
+(random terminal mode, PV well away from the load) do not draw. Before T-058's fallback 126 of 1600
+first-boundary problems (seeds 101, 202, 303, 404 x 400) were infeasible with a plan once the commitment or the
+terminal rule was dropped; on main da2c2e7 it is 1 of 63 infeasible (docs/model.md, ADR-0004).
 Invoked by path, like the other benchmarks: the repository root must be on PYTHONPATH.
 """
 
