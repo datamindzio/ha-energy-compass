@@ -12,7 +12,7 @@ from native_site import (
     CHARGE,
     DISCHARGE,
     GRID,
-    Inverter,
+    install_inverter,
     native_site,
     refresh_telemetry,
     register_inverter,
@@ -101,7 +101,7 @@ async def test_a_new_session_restores_the_base_before_anything_is_forced(
     # restore obligation in the store.
     hass.states.async_set(CHARGE, "5", hass.states.get(CHARGE).attributes)
     hass.states.async_set(PROGRAM_4, "Grid", hass.states.get(PROGRAM_4).attributes)
-    inverter = Inverter(hass)
+    inverter = await install_inverter(hass)
     entry = MockConfigEntry(
         domain="energy_compass",
         data=default_configuration("EUR", "UTC"),
