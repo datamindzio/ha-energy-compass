@@ -1,7 +1,7 @@
 """Bounded advisory dispatch for grid, solar, and optional battery energy."""
 
 from dataclasses import dataclass, replace
-from datetime import UTC
+from datetime import UTC, timedelta
 from math import isfinite
 from time import perf_counter
 from zoneinfo import ZoneInfo
@@ -17,6 +17,7 @@ from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fract
 from .dispatch_policy import (
     MODES,
     carried_curtail,
+    carried_curtail_until,
     carried_hold,
     constrain_modes,
     curtail_limit,
@@ -24,6 +25,7 @@ from .dispatch_policy import (
     forced_spill_limit,
     reserve_fallback,
     spill_gate,
+    takes_over_hold,
     uncommitted_fallback,
     validate_modes,
 )
@@ -303,6 +305,12 @@ def _validate_solution(
     lifted = frozenset(problem.balance_lift_slots)
     relayed = carried_curtail(problem)
     holding = carried_hold(problem)
+    # The CURTAIL run under way (a bridge is it going on as a HOLD) and when its minimum
+    # duration is up: the carried run's, or that of the run the plan began (T-082).
+    carried_until = carried_curtail_until(problem)
+    from_carried = carried_until is not None
+    run_start = None
+    dwell = timedelta(minutes=problem.minimum_mode_minutes or 0)
     spent = {day: 0.0 for day in budgets}
     floor_slacks = [
         (
@@ -380,7 +388,7 @@ def _validate_solution(
             # (T-082).
             takes_over = (
                 holding
-                and carried_hold(problem, slot)
+                and takes_over_hold(problem, slot)
                 and "mode_CURTAIL" in variables
                 and value("mode_CURTAIL") > 0.5
                 and curtail_need(problem, slot, extra_load) > 0
@@ -396,16 +404,32 @@ def _validate_solution(
                 curt <= forced + _TOL or open_gate,
                 "forced spill with room in the pack",
             )
+            curtailing = "mode_CURTAIL" in variables and value("mode_CURTAIL") > 0.5
+            bridging = "curtail_bridge" in variables and value("curtail_bridge") > 0.5
+            # The run the plan began stands where its first interval does, kept through
+            # the intervals that go on (a CURTAIL or a bridge) and ended by another mode;
+            # the carried run's end is its own, and its intervals begin no run.
+            if not (curtailing or bridging):
+                run_start, from_carried = None, False
+            elif run_start is None and not from_carried:
+                run_start = slot.start.astimezone(_UTC)
+            end = slot.start.astimezone(_UTC)
+            if carried_until is not None:
+                end = max(end, carried_until)
+            if run_start is not None:
+                end = max(end, run_start + dwell)
             relayed = (
                 (open_gate or curt > _TOL)
-                and "mode_CURTAIL" in variables
-                and value("mode_CURTAIL") > 0.5
+                and curtailing
                 and curtail_limit(problem, slot) > 0
             ) or (
-                # The run going on as a HOLD where there is nothing to spill (a bridge).
+                # The run going on as a HOLD where there is nothing to spill (a bridge):
+                # it keeps the next interval's spill open while that one is inside the
+                # run's minimum duration, and no longer (T-082).
                 relayed
-                and "curtail_bridge" in variables
-                and value("curtail_bridge") > 0.5
+                and bridging
+                and index + 1 < len(problem.slots)
+                and problem.slots[index + 1].start.astimezone(_UTC) < end
             )
         holding = "mode_HOLD" in variables and value("mode_HOLD") > 0.5
         _check(
@@ -728,17 +752,19 @@ def _gate_forced_spill(
     forced = min(forced_spill_limit(problem, slot, flex_upper), upper)
     # A CURTAIL run carried into the plan keeps its first interval open, as a run inside
     # the plan keeps the next one (`_relay_forced_spill`), and a HOLD run carried into it
-    # may be taken over by the spill (`takeover`, T-082).
+    # may be taken over by the spill (`takeover`, T-082) where nothing is forced: a slot
+    # with a forced part spills that and charges the rest, as it did before.
+    held = takes_over_hold(problem, slot)
     if (
         previous_energy_index is None
         and battery.initial_kwh < gate - 1e-6
         and not carried_curtail(problem)
-        and not carried_hold(problem)
+        and not held
     ):
         model.upper[v["curt"]] = forced
         # A forced CURTAIL here still relays the gate to the next slot.
         return _Spill(gate, forced=forced) if forced > 0 else None
-    spill = _Spill(gate, forced=forced, held=carried_hold(problem, slot))
+    spill = _Spill(gate, forced=forced, held=held)
     # Nothing to gate where even the emptiest pack cannot take the need.
     gated = (
         previous_energy_index is not None and gate > model.lower[previous_energy_index]
@@ -802,10 +828,11 @@ def _relay_forced_spill(model, vectors, spills) -> None:
     for index, spill in enumerate(spills):
         following = spills[index + 1] if index + 1 < len(spills) else None
         # An interval with nothing to spill is the run going on as a HOLD (a bridge,
-        # `curtail_bridge`): the run's spill stays open through it (T-082).
-        bridge = vectors[index].get("curtail_bridge")
-        if bridge is not None and following is not None and following.row is not None:
-            following.row[bridge] = following.gate
+        # `curtail_bridge`): the run's spill stays open through it into the next interval
+        # while that one is inside the run's minimum duration (`curtail_relay`, T-082).
+        relay = vectors[index].get("curtail_relay")
+        if relay is not None and following is not None and following.row is not None:
+            following.row[relay] = following.gate
         if spill is None or "mode_CURTAIL" not in vectors[index]:
             continue
         # A CURTAIL that takes the carried HOLD run over spills with room in the pack
