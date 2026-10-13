@@ -717,7 +717,7 @@ Zasady (domyślnie 60 min, 0,1 kW):
   dom), przedział to `HOLD` z pełnym importem, jak przy wyczerpanej baterii, a bateria kończy tam,
   gdzie zaczęła. Plan jest `infeasible` (niewykonalny) do końca zobowiązania, gdy dzienny budżet
   przepustowości nie
-  pokryje minimalnej aktywności, której wymaga zobowiązanie; rzadkie pozostałe przypadki opisuje
+  pokryje minimalnej aktywności, której wymaga zobowiązanie; rzadkie pozostałe przypadki (straty postojowe lub wymóg końcowy `preserve_initial`, które pokryłaby tylko nadwyżka PV, której plan nie może zgromadzić) opisuje
   [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget) (EN). Kierunek
   zablokowany przez dawną blokadę kierunku (`initial_battery_mode`) nie jest otwarty: bateria,
   która nie może się ładować, nie ma `CHARGE_PV` do naśladowania, a ta, która nie może się
@@ -746,8 +746,8 @@ Zasady (domyślnie 60 min, 0,1 kW):
   instalacja nie przepuści, bo `HOLD` nie ma tam legalnego przepływu: plan wykonany przez jeden
   przedział dotarłby inaczej do następnej granicy z przeniesionym zobowiązaniem i bez planu. `HOLD`
   zwolniony przy pełnej baterii tam nie wraca: przez granicę zachowuje własny zegar, a tam, gdzie
-  instalacja nie przepuści PV, jest `CURTAIL` (wyżej). Nie wraca też dlatego, że regułę końcową
-  wyczerpała bateria: to liczy się przy zwolnieniu i przy powrocie `HOLD`, który zaczął się na
+  instalacja nie przepuści PV, jest `CURTAIL` (wyżej). Nie wraca też dlatego, że reguła końcowa
+  wyczerpała baterię: to liczy się przy zwolnieniu i przy powrocie `HOLD`, który zaczął się na
   rozładowanej baterii (koordynator przenosi go jako zwolniony), a nie przy tym, który wraca tylko
   wtedy, gdy bateria jest rozładowana sama w sobie. Powrót to dalszy ciąg zobowiązania, a nie nowy
   przebieg: jedynym zegarem pozostaje termin zobowiązania. Bateria, która opróżni się ponownie w

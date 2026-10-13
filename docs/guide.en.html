@@ -1197,7 +1197,7 @@ directly by any other available mode.</p>
   refill what the house drew) the interval is a <code>HOLD</code> with full import, as for a spent battery,
   and the battery ends where it began. The plan is <code>infeasible</code> until the commitment ends when
   the daily throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
-  cases are listed in
+  cases (a standby loss or the <code>preserve_initial</code> terminal requirement that only PV surplus the plan cannot bank could cover) are listed in
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>. A direction the
   legacy direction guard blocks (<code>initial_battery_mode</code>) is not open: a pack that may not charge
   has no <code>CHARGE_PV</code> to follow and one that may not discharge has no <code>SELF_CONSUME</code>, so an interval
