@@ -517,6 +517,26 @@ def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
         )
 
 
+def _resume(model, v, members, released, depleted) -> None:
+    """Let a HOLD released from a depleted pack go back to the commitment (`back`).
+
+    A released HOLD does not go back to the commitment, except where the pack it
+    was released for is still depleted: the surplus is then what the pack takes, and
+    a HOLD cannot pass the PV above the export cap. The return is the commitment
+    going on, not a PV-follow run of its own: its deadline is the only one.
+    """
+    back = v["back"] = model.variable(binary=True)
+    followed = {v[f"mode_{mode}"]: 1 for mode in members}
+    model.constrain({**followed, **released, back: -1}, -np.inf, 1)
+    model.constrain(
+        {back: 1, **{key: -value for key, value in followed.items()}}, -np.inf, 0
+    )
+    model.constrain(
+        {back: 1, **{key: -value for key, value in released.items()}}, -np.inf, 0
+    )
+    model.constrain({back: 1, **depleted}, -np.inf, 0)
+
+
 def _offer_curtail(model, v, seen_full, full, curtailing, released) -> None:
     """Let a committed interval curtail: the pack has been full, and is full now or was let go.
 
@@ -926,13 +946,10 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 held = {real: -1}
                 if follows_pv:
                     # As in any committed interval: a released HOLD does not go back
-                    # to the commitment and starts no clock of its own.
+                    # to the commitment (unless the pack is depleted) and starts no
+                    # clock of its own.
                     if released:
-                        model.constrain(
-                            {**{v[f"mode_{mode}"]: 1 for mode in members}, **released},
-                            -np.inf,
-                            1,
-                        )
+                        _resume(model, v, members, released, depleted)
                     free_hold.add(i)
                     released = {real: 1}
                 curtailing = {v["mode_CURTAIL"]: -1} if curtails else {}
@@ -991,15 +1008,13 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 model.constrain(kept, 1, 1)
                 if follows_pv:
                     # A released HOLD does not go back to the commitment (a released
-                    # CURTAIL is held by its own minimum duration), and it starts no
-                    # clock of its own: the commitment's deadline is the only one, so it
-                    # may end in CURTAIL at once.
+                    # CURTAIL is held by its own minimum duration), except while the
+                    # pack is depleted: the surplus it takes is what the inverter does
+                    # there, and a HOLD cannot pass the PV above the export cap. It
+                    # starts no clock of its own: the commitment's deadline is the only
+                    # one, so it may end in CURTAIL at once.
                     if released:
-                        model.constrain(
-                            {**{v[f"mode_{mode}"]: 1 for mode in members}, **released},
-                            -np.inf,
-                            1,
-                        )
+                        _resume(model, v, members, released, depleted)
                     free_hold.add(i)
                     released = {v["mode_HOLD"]: 1}
             depleted = {}
@@ -1102,6 +1117,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             }
             rise = {key: value for key, value in rise.items() if value}
             bound = prior_const - current_const
+            # A return to the commitment (`back`) is that commitment going on, not a run.
+            if group == "PV_FOLLOW" and "back" in v:
+                rise = {**rise, v["back"]: -1}
             if (
                 rise
                 and ACTIVE.intersection(members)
@@ -1330,10 +1348,24 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
                     and mode == "CURTAIL"
                     and _curtail_need(problem, slot) > 0
                 )
-                if not (ends or curtails or takes_over):
+                # A HOLD released from a depleted pack goes back to the commitment: the
+                # HOLD has no legal flow for PV the site cannot pass, and the pack is
+                # what takes it. A HOLD released from a full pack does not.
+                resumes = (
+                    released
+                    and dwell_group(mode) == "PV_FOLLOW"
+                    and left
+                    <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
+                )
+                if not (ends or curtails or takes_over or resumes):
                     raise SolveError(
                         "solver_failure", "invalid solver result: minimum mode duration"
                     )
+                if resumes:
+                    carried, released = True, False
+                    previous = mode
+                    left = flow.end_soc_kwh
+                    continue
             if mode in ACTIVE and coverage_end < start + dwell:
                 raise SolveError(
                     "solver_failure",

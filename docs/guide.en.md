@@ -689,8 +689,12 @@ Rules (defaults: 60 min, 0.1 kW):
   rest of the commitment is `HOLD` with the surplus exported, or `CURTAIL` where the site cannot
   pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
   pack. The released `HOLD` starts no clock of its own — the commitment's deadline stays the only
-  one — so it may turn to `CURTAIL` (which starts its own clock) before then; it does not go back
-  to `CHARGE_PV`/`SELF_CONSUME`. The first committed interval is judged the same way against the
+  one — so it may turn to `CURTAIL` (which starts its own clock) before then. A `HOLD` released
+  from a full pack does not go back to `CHARGE_PV`/`SELF_CONSUME`; one released from a depleted
+  pack does, in any later interval of the commitment while the pack is still depleted: the pack
+  takes the surplus, and a `HOLD` could not pass the PV above the export cap (on a site with
+  `grid_export_kw = 0` that is every sunrise). The return is the commitment going on, not a new
+  run: the commitment's deadline stays the only clock. The first committed interval is judged the same way against the
   observed state of charge: a pack already within the lowered ceiling of that interval (for
   example after the interval that filled it was carried out) may be `HOLD` or `CURTAIL` at once,
   in either member mode. An observed state of charge at the upper bound is the safety exception

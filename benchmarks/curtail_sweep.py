@@ -23,6 +23,10 @@ T-047 adds the same problems with a sell price that may fall below zero (`negrun
 `solve_flexible_load`: its plan is certified against the probe's load). The base seeds
 draw sell prices from 0 to 0.8 and never plan a probe, so they cannot show a rule that
 reads a slot's load.
+
+T-050 adds a sunrise on a depleted pack (`deprun`, `deproll`, `deprobe` through a flexible-load probe): a carried CHARGE_PV or
+SELF_CONSUME whose pack is at or just above the reserve, PV rising from nothing, and an
+export cap of 0, 0.5 or 2 kW. The base draws start from a full or nearly full pack.
 Invoked by path, like the other benchmarks: the repository root must be on PYTHONPATH.
 """
 
@@ -143,6 +147,45 @@ def make_probe(rng):
     return problem, FlexibleLoadRequest(energy, power)
 
 
+def make_depleted(rng):
+    """A sunrise on an empty pack with a carried PV-follow commitment (T-050)."""
+    problem = make(rng)
+    peak = rng.choice((0.3, 0.9, 1.5, 2.2))
+    first = rng.randrange(0, 3)
+    slots = tuple(
+        replace(
+            slot,
+            pv_kwh=0.0
+            if i < first
+            else round(peak * min(1, (i - first + 1) / rng.choice((1, 3, 5))), 2),
+        )
+        for i, slot in enumerate(problem.slots)
+    )
+    floor = problem.battery.capacity_kwh * problem.battery.minimum_soc_fraction
+    battery = replace(
+        problem.battery,
+        initial_kwh=floor + rng.choice((0, 0.01, 0.02, 0.05, 0.2)),
+    )
+    return replace(
+        problem,
+        slots=slots,
+        battery=battery,
+        site=replace(problem.site, grid_export_kw=rng.choice((0, 0.5, 2))),
+        initial_dispatch_mode=rng.choice(("CHARGE_PV", "SELF_CONSUME")),
+        initial_dispatch_mode_since=START
+        - timedelta(minutes=rng.choice((0, 1, 15, 29))),
+    )
+
+
+def make_depleted_probe(rng):
+    """The sunrise on an empty pack with a flexible load on top (`deprobe`)."""
+    problem = make_depleted(rng)
+    power = rng.choice((0.5, 1, 2, 4))
+    room = power * 0.25 * len(problem.slots)
+    energy = round(min(rng.choice((0.25, 0.5, 1, 2, 4)), 0.8 * room), 2)
+    return problem, FlexibleLoadRequest(energy, power)
+
+
 def run(problem, request=None):
     try:
         plan = (
@@ -254,10 +297,12 @@ def draws(kind, seed, count):
     rng = random.Random(seed)
     if kind == "probe":
         return [run(*make_probe(rng)) for _ in range(count)]
-    makers = {"run": make, "negrun": make_negative}
+    if kind == "deprobe":
+        return [run(*make_depleted_probe(rng)) for _ in range(count)]
+    makers = {"run": make, "negrun": make_negative, "deprun": make_depleted}
     if kind in makers:
         return [run(makers[kind](rng)) for _ in range(count)]
-    makers = {"roll": make, "negroll": make_negative}
+    makers = {"roll": make, "negroll": make_negative, "deproll": make_depleted}
     return [roll(makers[kind](rng)) for _ in range(count)]
 
 
@@ -269,7 +314,7 @@ if __name__ == "__main__":
     else:
         out = draws(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
         Path(sys.argv[4]).write_text(json.dumps(out))
-        if sys.argv[1] in ("roll", "negroll"):
+        if sys.argv[1] in ("roll", "negroll", "deproll"):
             print(
                 sum(row[0] == "ok" for row in out),
                 "followed to the end, of",

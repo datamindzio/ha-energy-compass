@@ -356,11 +356,12 @@ def test_full_pack_curtails_inside_the_commitment_above_the_inverter_rating():
     assert plan.flows[1].curtail_kwh == pytest.approx(0.2)
 
 
-def test_released_hold_does_not_go_back_to_the_commitment():
-    # An empty pack and no surplus in slot 0 end the commitment in HOLD. The
-    # surplus after it would pay to store (sells at 0.1, dear import after the
-    # commitment), but a member mode after the released HOLD is a second change
-    # inside the minimum duration: the plan holds until the commitment's deadline.
+def test_hold_released_from_a_depleted_pack_goes_back_to_the_commitment():
+    # An empty pack and no surplus in slot 0 end the commitment in HOLD. The pack is
+    # still empty when the surplus comes, and charging it is what the inverter does:
+    # the HOLD is released with no clock of its own, so the plan goes back to the
+    # commitment (T-050; before, it held until the commitment's deadline). The
+    # surplus pays to store (sells at 0.1, dear import after the commitment).
     rows = (
         (1.0, 0.1, 0.0, 0.1),
         *((1.0, 0.1, 0.9, 0.1),) * 3,
@@ -374,7 +375,10 @@ def test_released_hold_does_not_go_back_to_the_commitment():
         initial_dispatch_mode_since=problem.slots[0].start,
     )
     plan = solve(problem)
-    assert [flow.dispatch_mode for flow in plan.flows[:4]] == ["HOLD"] * 4
+    assert [flow.dispatch_mode for flow in plan.flows[:4]] == [
+        "HOLD",
+        *("CHARGE_PV",) * 3,
+    ]
 
 
 def test_a_pack_with_room_keeps_the_commitment_instead_of_curtailing():
