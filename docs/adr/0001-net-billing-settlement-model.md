@@ -544,8 +544,12 @@ Not measured, from the settlement rules:
   reports gross PV.
 - One year, one price history, a simple forecast, no standby loss, 10 kWh in the matrix (other
   capacities for π = 1 only), a 6 h cadence calibrated on six homes.
-- The measurement code is not in the repository: a harness around `engine/` and `tools/replay.py`,
-  stored with its results as artifacts of T-448. Committing it as a tool with a test is a ticket.
+- The measurement code of T-448 was a scratch harness around `engine/` and `tools/replay.py`, stored
+  with its results as artifacts of T-448. It is now the tool `tools/replay_year.py` (T-460, tested on
+  a synthetic series; see the guide, "Annual settlement oracle"). The tool books the ledger by the
+  exact two-year rule of the calculator's ADR-0031 (a warm-up year from a full account), not the
+  three passes from an empty account behind the `KL` numbers of T-448, and takes the fixed part of
+  the bill as an input, so a charge band that depends on the annual import is not modelled.
 
 ## Alternatives rejected
 

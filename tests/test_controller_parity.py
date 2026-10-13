@@ -25,6 +25,8 @@ from deye_oracle import (
     P,
     timestamp,
 )
+from deye_oracle_v0137 import GOLDEN as GOLDEN_V0137
+from deye_oracle_v0137 import GOLDEN_SHA256 as GOLDEN_V0137_SHA256
 
 from custom_components.energy_compass import controller as c
 
@@ -212,6 +214,10 @@ def compare(data, *, accepted_session, session, revoked):
 
 def test_golden_blueprint_is_byte_identical_to_v0_1_35():
     assert hashlib.sha256(GOLDEN.read_bytes()).hexdigest() == GOLDEN_SHA256
+
+
+def test_golden_blueprint_is_byte_identical_to_v0_1_37():
+    assert hashlib.sha256(GOLDEN_V0137.read_bytes()).hexdigest() == GOLDEN_V0137_SHA256
 
 
 STATUSES = ["ready", "calculating", "invalid_input", "error", "timeout"]

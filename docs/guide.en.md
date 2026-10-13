@@ -4,13 +4,14 @@
 
 This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
-**0.1.37**. The mathematical contract behind each rule lives in [model and limitations](model.md);
+**0.1.38**. The mathematical contract behind each rule lives in [model and limitations](model.md);
 installation and dashboards are in the [installation guide](installation.md).
 
 Energy Compass is **advisory**. It computes a plan and publishes it as Home Assistant entities. It
-never writes inverter registers and sends no messages by itself; controllers and notification
-blueprints decide whether to act on the plan. The repository ships one such controller, for Deye
-inverters through Solarman: see [Deye inverter controller](#deye-inverter-controller-solarman).
+sends no messages by itself, and it writes inverter settings only when you enable the optional Deye
+controller (off by default), which does so through the Solarman integration; notification blueprints
+and other controllers decide for themselves whether to act on the plan. See
+[Deye inverter controller](#deye-inverter-controller-solarman).
 
 ## Contents
 
@@ -183,12 +184,45 @@ Net-metering's `sell_multiplier` is a one-time copy of the ratio, not a link to 
 an approximation (the yearly kWh bank and G12 band mismatch are not modelled), and a later edit to
 the buy price does not update it.
 
+**A net-metering installation runs the battery in the inverter's own self-use mode.** Set the inverter
+to self-use (load first, no grid charging, no battery export), keep `allow_grid_charge` off and
+`allow_battery_export` off (both are off by default and stay off with these profiles), and do not enable the
+[Deye controller](#enabling-the-controller). Net-metering is not settled per hour: under the Renewable
+Energy Sources Act (consolidated text Dz.U. 2026 poz. 68, art. 4) fed-in energy is settled against energy
+drawn at the ratio 1 : 0.8 (1 : 0.7 above 10 kW) and the balance is carried forward for 12 months, so an
+exported kWh is worth `ratio` kWh of a later import — nothing once the year's credit covers the year's
+import — and the fixed part of the bill steps with the annual draw (capacity-fee bands at 500, 1 200 and
+2 800 kWh). None of that is a price per hour or lies inside a 24-48 h horizon, so the plan cannot lower the
+yearly bill. The planner stands down there: no engine, strategy or profile change, and the costs shown
+(`expected_net_cost`, `consumption_cost`, the cost card, `tools/replay.py`) stay hourly prices — the kWh are
+exact, the money is an approximation.
+
+Measured on 40 simulated homes (G11 and G12, ratio 0.8, 10 kWh battery, one year re-planned every hour
+against the same battery in plain self-consumption, valued with the annual bill, [ADR-0008](adr/0008-net-metering-plain-self-consumption.md)):
+the default plan (`cost_min`, as the profile ships) has a yearly gain against self-use, bill plus battery
+wear, of −93…+70 PLN (mean −1; + = cheaper, − = dearer), never lowers the bill by more than 10 PLN, and
+raises the annual import by +33…+704 kWh. Priced hour by hour, as Home Assistant reports it, the same G12
+plan shows a gain of +343 PLN per year that the settlement does not pay. With **Allow grid charge** on
+(13 homes) the yearly gain against self-use, bill plus battery wear, is −209…+139 PLN (same sign
+convention), and the import rises by +897 kWh (median). Limits: simulated homes, one battery size
+(10 kWh), one year of prices, hourly intervals, G12 zones netted as one mean rate.
+
 Preview shows setup-profile provenance for a profiled new entry: which keys each axis pre-filled, the
 buy source pre-selected by a `buy_tariff` profile, any value edited after pre-fill (including a
 helper-bound key, with the helper's effective value), and settlement notes — Sell only PV off, a sell
 source that already applies its own settlement multiplier, raw RCE prices not floored at 0 (with the
 RCE market price shortcut as the fix) or floored while the 1.23 multiplier is missing, or a
 net-metering sell that no longer tracks buy — shown only for installations that used a setup profile.
+For a net-metering profile Preview always adds one more note, and a second when Allow grid charge or
+Allow battery export is on (English only):
+
+- "Note: net-metering is settled on yearly kWh (an exported kWh takes back 0.8 kWh within 12 months),
+  not on hourly prices: price-driven dispatch does not lower the yearly bill and the costs shown are an
+  hourly approximation. Run the battery in the inverter's own self-use mode and do not let a controller
+  follow this plan." (0.7 on the 70 % profile.)
+- when **Allow grid charge** or **Allow battery export** is on, "Note: Allow grid charge is on: under
+  net-metering energy sent through the grid comes back at 0.8 and raises the yearly import; turn it
+  off." (naming the one that is on, or "Allow grid charge and Allow battery export are on").
 
 The selection, together with the setup-profiles revision that resolved it, is stored on the config
 entry (`setup_profiles`) and included in diagnostics.
@@ -413,6 +447,7 @@ reloads.
 | `sensor.<name>_deye_controller` | Deye controller | Sterownik Deye | timestamp of the next controller run; only with the [Deye controller](#deye-inverter-controller-solarman) enabled |
 | `select.<name>_deye_mode` | Deye mode | Tryb sterownika Deye | `Off` / `Simulation` / `Auto`; only with the controller enabled |
 | `sensor.<name>_deye_controller_runtime` | Deye controller runtime | Stan pracy sterownika Deye | runtime code; only with the controller enabled |
+| `switch.<name>_deye_pause` | Pause inverter writes | Wstrzymaj zapisy do falownika | `on` / `off`; only with the native engine |
 
 Cost sensors can be disabled with **Presentation → Expose costs**, window timestamps with
 **Expose windows**, and flexible depth with **Consumption outlook → Enable flexible energy depth**.
@@ -683,7 +718,8 @@ Rules (defaults: 60 min, 0.1 kW):
   use, so the plan never pairs a partial charge with grid export: in a `CHARGE_PV` interval the
   battery takes the whole PV surplus, and export appears only once the charge is at its interval
   power limit or the battery has been filled to its upper bound. Otherwise the row is not
-  `CHARGE_PV`. Applies while `minimum_mode_minutes` is above 0. A carried
+  `CHARGE_PV`. The rule also holds with `minimum_mode_minutes = 0`: there are no modes then, and the
+  charge in any interval the flows label `CHARGE_PV` is bound the same way. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is held to the same rule. If the battery is full before it
   ends (the next interval could not take even the minimum activity above the upper bound), the
   rest of the commitment is `HOLD` with the surplus exported, or `CURTAIL` where the site cannot
@@ -716,6 +752,12 @@ Rules (defaults: 60 min, 0.1 kW):
   curtail in the same interval, so the pack counts as full for the next interval, which may be
   `HOLD` or `CURTAIL`, once it is within that interval's curtail need of the ceiling (the PV that
   must go to the pack or be curtailed, at least the minimum activity).
+  With `minimum_mode_minutes = 0` the rule costs solve time (see the table in
+  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget)), and one more
+  case has no plan: with grid export capped (or the inverter rated below the PV) and curtailment
+  (`allow_curtailment`) off, a pack that fills before the last surplus leaves that surplus nowhere
+  to go. The mode model has the same limit; curtailment on, or a higher export cap or inverter
+  rating, gives a plan.
 - **`CURTAIL` goes on through a PV gap.** A `CURTAIL` run lasts the minimum duration, and PV can
   drop inside it. A `HOLD` in an interval with PV below the minimum activity (`minimum_mode_power_kw × h`)
   inside that duration is the run going on, not a new `HOLD`: the inverter has nothing to curtail
@@ -756,7 +798,7 @@ Rules (defaults: 60 min, 0.1 kW):
 - **Strategy change (reset):** writing a new strategy drops the carried commitment for the next
   plan, which starts unlocked (see [strategy-switch release](#strategy-switch-release)).
 - Setting `minimum_mode_minutes = 0` disables duration and minimum-power rules; the
-  `SELF_CONSUME` load-following rule stays on.
+  `SELF_CONSUME` and `CHARGE_PV` load-following rules stay on.
 
 ### Policies that gate modes
 
@@ -768,7 +810,7 @@ Rules (defaults: 60 min, 0.1 kW):
 | **Minimum export benefit** (`minimum_export_episode_benefit`) | 1 currency unit | Each additional battery-export period must improve full-horizon cost by at least this amount. `0` disables. |
 | **Minimum grid-charge episode benefit** (`minimum_grid_charge_episode_benefit`) | 0 (off) | Same hurdle for new grid-charge periods; consolidates charging into fewer episodes. |
 | **Import penalty** (`import_penalty_per_kwh`) | 0 | Planning-only shadow price per imported kWh, under every strategy. |
-| **Deposit model** (`deposit_model`) | `off` | Values exported energy and the deposit-payable part of imports by what the prosumer deposit will really pay back. Needs the distribution part of the buy price. See [Net-billing deposit value](#net-billing-deposit-value). |
+| **Deposit model** (`deposit_model`) | `off` | `off` is the setting for every site. `manual` (experimental) values exported energy and the deposit-payable part of imports by a factor you state; measured on a one-year replay it did not lower the bill. Needs the distribution part of the buy price. See [Net-billing deposit value](#net-billing-deposit-value). |
 | **Inverter standby loss** (`idle_drain_kw`) | 0 (off) | Constant battery drain modelled per interval. |
 | **Battery buffer for expensive periods** (`peak_reserve_margin_kwh`) | 0 (off) | Energy kept above the forecast need when an expensive period starts. See [Peak-period reserve](#peak-period-reserve). |
 | **Terminal rule** (`terminal_mode`) | `preserve_initial` | End SOC ≥ start SOC, or `value`: stored energy at the end is credited at `terminal_value_per_kwh`. |
@@ -782,12 +824,25 @@ Under Polish net billing the value of exported energy is booked on the **prosume
 deposit pays only what you owe the seller for **energy**; distribution charges are paid in cash.
 After 12 months the unused part is refunded, but a month's refund cannot exceed
 **ρ × the value exported in that month** (ρ = 30 % with hourly RCE settlement, 20 % with monthly
-RCEm); the rest is void. While the deposit is short, or its unused part still fits under the cap,
+RCEm), where the value is the export value without the 1.23 coefficient; the rest is void. While the deposit is short, or its unused part still fits under the cap,
 one currency unit of export or of energy-part import is worth exactly one unit of cash and the
-planner needs no correction. Once the cap binds, one more unit of export is worth only ρ and the
+planner needs no correction. Once the cap binds, one more unit of export is worth only ρ/1.23 of a sell price that contains the 1.23 coefficient
+(0.244 for ρ = 30 %, 0.163 for 20 %) and the
 energy part of an import costs nothing in cash (it is paid from money that would expire). The
-deposit model lets the planner see that. It is **off by default** and then the plan is
-byte-identical to a build without it.
+deposit model lets the planner see that, but **it does not pay off**: `off` is the setting for
+every site, also a site whose deposit is forfeited, and `manual` is **experimental**. The `auto`
+model was withdrawn; a stored `auto` is read as `off` without an error or an Alert. `off` is the
+default and then the plan is byte-identical to a build without the model.
+
+What was measured, on a one-year replay of 40 hourly-RCE homes with a 10 kWh battery, billed by
+the yearly formula and by the monthly ledger:
+
+- no factor lowered the yearly bill by more than 44 PLN, and the factor at the cap raised it in
+  all 40 homes, by 68–431 PLN (yearly formula) or 21–306 PLN (monthly ledger);
+- with monthly RCEm the factor changes the bill by less than 10 PLN;
+- a site whose deposit is forfeited sets nothing: `deposit_model` stays `off`. Switching battery
+  export off because of a forfeited deposit cost 154–662 PLN a year in all 16 homes measured (with
+  grid charging and battery export allowed).
 
 **Two parts of the buy price.** The model must know which part of a buy price is energy (payable by
 the deposit) and which is distribution (paid in cash). The buy price of an interval is the sum of the
@@ -808,11 +863,9 @@ negative energy price keeps its real price and has no energy part to waive.
 
 | Setting (Tariffs) | Default | Meaning |
 | --- | --- | --- |
-| `deposit_model` | `off` | `off`: full prices. `manual`: you state `export_value_factor`. `auto`: Energy Compass derives it from the two yearly sums below. |
-| `deposit_refund_percent` | 30 | ρ, the refund cap as a share of a month's export value. 20 for monthly RCEm settlement. |
+| `deposit_model` | `off` | `off`: full prices, the setting for every site. `manual` (experimental): you state `export_value_factor`. A stored `auto` (withdrawn) is read as `off`. |
+| `deposit_refund_percent` | 30 | ρ, the refund cap as a share of a month's export value. 20 for monthly RCEm settlement. A seller that refunds a share of the deposit (which contains the 1.23 coefficient) has 36.9 / 24.6 here. |
 | `export_value_factor` | 1.0 | `manual` only: what one more unit of export is worth (0–1). |
-| `deposit_yearly_value` | 0 | `auto`: deposit you expect to be booked over 12 months (export value at the settlement price, 1.23 included). 0 = unknown. |
-| `deposit_yearly_energy_cost` | 0 | `auto`: what the deposit can pay over 12 months: the per-kWh energy charge of the imports, gross. The trade fee, other fixed fees and distribution are not part of it. 0 = unknown. |
 | `buy_distribution_mode` | `included` | `included` or `added`, as above. |
 | `buy_distribution_rate`, `buy_distribution_off_peak_rate` | 0 | Everything the distributor bills per kWh (network rate, quality, RES and cogeneration fees), typed like the buy rate; the first is the peak or single zone, the second the off-peak zone. VAT applies when `buy_apply_vat` is on; `buy_multiplier`, `buy_addition` and a forecast floor apply to the buy source only. The zones come from the tariff schedule of the buy source or from a [distribution tariff](#built-in-polish-tariffs); with neither, or with G11, the first rate applies all day. With two zones set both rates or neither: exactly one zero rate fails the calculation closed. The monthly fee belongs in `monthly_charge`. |
 
@@ -820,55 +873,44 @@ The cap pressure π (0 = deposit short or within the cap, 1 = cap binding) gives
 exist only inside the optimizer:
 
 ```text
-export value factor  φx = 1 − π × (1 − ρ)     1 → ρ
+export value factor  φx = 1 − π × (1 − ρp)    1 → ρp,  ρp = ρ / 1.23
 import energy factor φe = 1 − π               1 → 0
 planning buy  = buy − (1 − φe) × energy part of buy
 planning sell = φx × max(sell, 0) + min(sell, 0)
 ```
 
-- **`auto`**: the unused share of the yearly deposit is `s = 1 − E / D` (`D` = `deposit_yearly_value`,
-  `E` = `deposit_yearly_energy_cost`), and π ramps from 0 at `s = ρ/2` to 1 at `s = ρ`. If `D` or `E`
-  is 0 the model has no input: π = 0 and `reason` is `inputs_missing`; the plan stays valid and no
-  Alert is raised. The balance of the deposit is deliberately not an input — one day's balance says
-  nothing without the booking dates behind it.
-- **`manual`**: `φx` is your `export_value_factor` as typed, even below ρ. Only π is derived from it,
-  `π = clamp((1 − φx) / (1 − ρ), 0, 1)`, so `φe = 1 − π` follows (a value at or below ρ devalues the
-  energy part of imports fully). With `deposit_refund_percent` 100 both factors are 1.
+- **`manual`** (experimental): `φx` is your `export_value_factor` as typed, even below ρp. Only π is
+  derived from it, `π = clamp((1 − φx) / (1 − ρp), 0, 1)`, so `φe = 1 − π` follows (a value at or
+  below ρp devalues the energy part of imports fully). At the cap (π = 1) `φx` is `ρp = ρ / 1.23`,
+  not ρ: 0.244 for 30 %, 0.163 for 20 %. With `deposit_refund_percent` 100 it is 1/1.23, not 1;
+  the setting that never cancels anything is `deposit_model: off`.
 - **No distribution part** (the distribution rates are 0): the whole buy
   price would count as deposit-payable and an import would look free. With π above 0 `φe` is
   therefore forced to 1 and `reason` is `split_missing`; `φx` still applies. Set the distribution
   rates to use the model.
-- **Hysteresis (`auto`)**: π is evaluated once per local day (the first calculation after local
-  midnight) and held for the day in the `settlement` Store, so restarts and reloads do not re-evaluate
-  it. A new value replaces the held one only if it differs by at least 0.10, or reaches exactly 0 or 1.
-  Changing any of the five deposit settings (`deposit_model`, `deposit_refund_percent`,
-  `export_value_factor`, `deposit_yearly_value`, `deposit_yearly_energy_cost`) re-evaluates at once.
 - **Negative sell prices** stay whole: the factor scales only the positive part, because a negative
   price is a real charge.
 - **Reported costs do not change.** Net cost, `Plan.grid_cost`, the cost sensors, consumption levels and
   the `maximum_grid_charge_price` ceiling all stay at invoice prices; only the planning objective uses
   the factors, under every strategy and before the strategy weights.
 - **Battery sale threshold**, worked example (PGE G12 2026 gross prices, round trip 0.89, wear
-  0.05 per kWh, ρ = 30 %): selling from the battery and buying the energy back at night pays above
-  about 0.73 currency/kWh while the cap is not binding and above about 0.71 when it binds (the cheaper
-  night re-buy offsets the lower export value); at ρ = 20 % the threshold rises to about 1.07. What changes with the cap binding is the use of
-  surplus PV (worth 0.12 instead of 0.40 at a sell price of 0.40, so it goes to the battery and
-  flexible load first) and night grid charging, which stays profitable.
+  0.05 per kWh): selling from the battery and buying the energy back at night pays above
+  about 0.73 currency/kWh while the cap is not binding. With the cap binding the threshold is about
+  0.88 at ρ = 30 % and about 1.31 at ρ = 20 % (a seller that refunds 36.9 % / 24.6 % of the
+  deposit: about 0.71 / 1.07). What changes with the cap binding is the use of
+  surplus PV (worth 0.40 × ρp = 0.10 instead of 0.40 at a sell price of 0.40 and ρ = 30 %, so it goes to the
+  battery and flexible load first) and night grid charging, which stays profitable.
 
 Diagnostics are in the plan attribute `dispatch_policy.settlement`:
 
 | Key | Meaning |
 | --- | --- |
-| `model` | `off`, `manual` or `auto` |
+| `model` | `off` or `manual` |
 | `export_value_factor`, `import_energy_factor` | φx and φe the optimizer used |
 | `cap_pressure` | π |
-| `unused_share` | `s` for `auto`, else `null` |
-| `refund_percent`, `yearly_deposit`, `yearly_energy_cost` | the inputs used |
+| `refund_percent` | the input used (ρ in percent) |
 | `distribution_mode` | `included` or `added` |
-| `evaluated_on` | local date π was last evaluated |
-| `reason` | `ok`, `off`, `inputs_missing`, `split_missing` (π above 0 but no distribution part, `φe` forced to 1) or `held` (today's π was already evaluated) |
-
-Reading `D` and `E` from long-term statistics instead of typing them is not part of this release.
+| `reason` | `ok`, `off` or `split_missing` (π above 0 but no distribution part, `φe` forced to 1) |
 
 ### Peak-period reserve
 
@@ -954,8 +996,8 @@ So with `self_sufficiency` or `backup_ready` the consumption levels are unknown 
 interval already on the default 24 h horizon, and on a 48 h horizon no strategy completes its probes
 (with a 15-minute display interval 18–67 of 96 are known). At 48 h the base plan of these two
 strategies also runs into `solve_time_limit_s` and is published as `time_limited`.
-`minimum_mode_minutes = 0` does not lift the limit: at 24 h 13 of 24 (`self_sufficiency`) and 20 of 24
-(`backup_ready`) probes are known, which is still `short_coverage`. A slower host, such as a
+`minimum_mode_minutes = 0` does not lift the limit: at 24 h 1 of 24 (`self_sufficiency`) and 8 to 17
+of 24 (`backup_ready`) probes are known, which is still `short_coverage`. A slower host, such as a
 Raspberry Pi, reaches each limit at a shorter horizon.
 
 The [flexible energy depth](#flexible-energy-depth) is bound by the same two settings: each of its
@@ -1394,20 +1436,25 @@ it adds every increase of the export meter (`export_energy`), valued at the pric
 
 ## Deye inverter controller (Solarman)
 
-Energy Compass itself never writes to an inverter. The optional blueprint
-[`deye_solarman_controller.yaml`](../blueprints/automation/energy_compass/deye_solarman_controller.yaml)
-does: it executes the plan on a Deye hybrid inverter through the
-[Solarman integration](https://github.com/davidrapan/ha-solarman), writing three battery currents and
-the six time-of-use (TOU) programs, and reads every write back from the holding registers.
-The integration keeps the controller's state. With **Options → Deye controller** enabled, Energy Compass
-owns the mode, the accepted plan, the session and the revocation, the timing of the next run and the
-stored runtime; the blueprint keeps the profile maths, the diff, the safety gates and the register
-writes. No package, helper or `configuration.yaml` edit is needed, and the accepted plan survives an
-entry reload. It needs Energy Compass 0.1.37 or newer. Setup steps are in the
-[installation guide](installation.md#deye-inverter-controller). The blueprint is generated by
-`tools/deye_controller/build.py`; edit the generator, not the YAML. The `deye_hybrid` setup profile
+Energy Compass is advisory by default and writes to an inverter only when you enable the optional Deye
+controller (**Options → Deye controller**, off by default). The controller executes the plan on a Deye
+hybrid inverter through the [Solarman integration](https://github.com/davidrapan/ha-solarman): it writes
+three battery currents and the six time-of-use (TOU) programs, and reads every write back from the
+holding registers. With the **native engine** it runs inside the integration: no blueprint, automation,
+package, helper or `configuration.yaml` edit is needed, the accepted plan survives an entry reload, and
+Energy Compass owns the mode, the accepted plan, the session and the revocation, the timing of the next
+run and the stored runtime. It needs Energy Compass 0.1.38 or newer. Setup steps are in the
+[installation guide](installation.md#deye-inverter-controller). The `deye_hybrid` setup profile
 pre-fills `idle_drain_kw` 0.13 and `refresh_minutes` 60 for a new installation; see
 [Setup profiles](#setup-profiles-new-installations).
+
+The earlier executor, the blueprint
+[`deye_solarman_controller.yaml`](../blueprints/automation/energy_compass/deye_solarman_controller.yaml),
+is **deprecated**. It still works in this release as the `blueprint` engine (the value of every entry
+created before 0.1.38) and is removed in the release after next, together with its generator
+`tools/deye_controller/build.py`, the `energy_compass.controller_runtime` and
+`energy_compass.controller_import_package` services and the sections below that describe it. Move to the
+native engine as described in [Migrating from the blueprint](#migrating-from-the-blueprint-to-the-native-engine).
 
 ### Enabling the controller
 
@@ -1419,24 +1466,73 @@ refuses the device when a program is missing or disabled, when the entity IDs do
 prefix, or when another Energy Compass entry already controls it. Enabling reloads the entry once;
 moving the controller to another device applies live. Both are refused while the mode is not `Off` or a restore is pending: select `Off` and wait until `restore_pending` is off first, otherwise nothing could restore the base profile. The step is visible without the expert toggle.
 
+**Engine.** The step has an **Engine** field. `native` (the default for a new enable) lets Energy Compass
+execute the plan itself and write the inverter through the Solarman entities and the
+`solarman.read_holding_registers` service; no blueprint or automation is needed. `blueprint` (deprecated;
+the value of every entry created before 0.1.38) keeps the Deye controller blueprint as the executor. Changing the
+engine reloads the entry and is refused while the mode is not `Off` or a restore is pending. The native engine finds
+the battery currents, operation mode, SOC, voltage and discharge counter on the same device by the Solarman keys
+`battery_max_charging_current`, `battery_max_discharging_current`, `battery_grid_charging_current`,
+`battery_operation_mode`, `battery`, `battery_voltage` and `total_battery_discharge`, and names what is missing.
+Only high-voltage packs (400–610 V) are supported: a pack measured below 400 V is refused.
+
+**Limits and takeover** (expert settings). The maximum battery power defaults to the smaller of the
+charge and discharge power in the Energy Compass settings; the currents default to the entity's own maximum, capped at
+that power divided by 400 V. Hold, reached-discharge and balance currents, the grid-charge voltage ceiling, the commissioned
+battery modes, the previous automations to wait for, the telemetry entities, the discharge counter and an override for
+each entity can be set; an empty field keeps its default. Limits apply on the next run without a reload. When one
+blueprint automation exists, its inputs are loaded into these fields for you to review before saving.
+
+Do not enable the controller on a net-metering installation: the right plan there is the inverter's own
+self-use mode (see [Setup profiles](#setup-profiles-new-installations)).
+
 An installation that ran the 0.1.36 package, has one Energy Compass entry and exactly one Solarman device
 with all six programs gets the controller enabled automatically at the first start of 0.1.37. The mode
 starts at `Off`, so nothing is written until you choose one; see
 [Migrating from the package](#migrating-from-the-package-0136-and-older).
 
+### Supported hardware
+
+| What | Verified |
+| --- | --- |
+| Inverter | Deye `SG0*HP3` three-phase high-voltage hybrid inverters; the Solarman `device` sensor reports the type "HV 3-Phase Hybrid Inverter" |
+| Protocol version | 1.4 (attribute `Protocol Version` of that sensor) |
+| Battery pack | high-voltage lithium (LFP) pack, 400–610 V |
+| Integration | [ha-solarman](https://github.com/davidrapan/ha-solarman) 25.08.16; the entities are found by their translation keys and the registers are read with `solarman.read_holding_registers` |
+| 48 V (low-voltage) Deye models | **not supported yet**: the options step refuses to enable the native engine below 400 V, and a run outside 400–610 V writes nothing |
+
+The tested unit is a `SG0*HP3` with control board firmware `3002-1095-11408`. Firmware versions are
+recorded in the `hardware` attribute but not compared: nothing is known about per-firmware differences.
+A device whose type and protocol are not on the list is not blocked. It raises the repair issue
+"Deye inverter not verified" (a dismissible warning) and sets `hardware.verified` to `false`; use
+Simulation first, as for every installation.
+
+**Layout probe.** Before the first write that forces a profile in a session, the native engine reads
+registers 108–177 and compares them with the states of the 27 entities it writes (the three currents and
+the 24 TOU values). Numbers and selects must agree; a select whose register holds a value outside the known
+map (`Disabled`, `Grid`, `Sell`) says nothing about the layout and is skipped, because the controller
+rewrites it anyway. Any other difference, a missing register or an unavailable entity stops the run with the
+runtime code `blocked` and the reason `layout_mismatch`, which lists the entities; nothing is written and the
+check repeats on the next run, because entities can lag one Solarman poll behind a manual change. The probe
+also runs in Simulation, so a wrong layout shows before Auto. A passed probe holds for the session, the
+device and the set of entities read: a changed device or an entity override probes again. Restoring the
+base profile does not wait for the probe, because it writes through Solarman's own entities and only the
+read-back depends on the layout; forcing a profile does.
+
 ### Controller entities
 
-Three entities exist only while the controller is enabled; they sit on the Energy Compass device.
-`<name>` is the entry title.
+Three entities exist only while the controller is enabled, a fourth with the native engine; they sit on
+the Energy Compass device. `<name>` is the entry title.
 
 | Key | Entity | Role |
 | --- | --- | --- |
-| `deye_controller` | `sensor.<name>_deye_controller` (timestamp) | the state is the next instant the blueprint must run (the earliest row end, `valid_until`, `coverage_end` or TOU program boundary); the attributes are the contract below |
+| `deye_controller` | `sensor.<name>_deye_controller` (timestamp) | the state is the next instant the executor must run (the earliest row end, `valid_until`, `coverage_end` or TOU program boundary); the attributes are the contract below |
 | `deye_mode` | `select.<name>_deye_mode` | **Off** / **Simulation** / **Auto**; the only switch you operate; the options are not translated |
 | `deye_runtime` | `sensor.<name>_deye_controller_runtime` | runtime code (below); attribute `runtime` holds state, reason, confirmed values and uncertain registers |
+| `deye_pause` | `switch.<name>_pause_inverter_writes` | **Pause inverter writes**; only with the native engine. While on, the controller computes and publishes the decision but sends no write; `restore_pending` and the uncertain registers stay as they are and the runtime code is `paused`. A run in flight stops before its next write; turning the switch off requests a run. Mode `Off` keeps its meaning: with nothing to restore the run reports released even when paused, and with a restore pending the pause wins and the restore waits. The flag is saved at once, survives a reload and is cleared when the engine is switched to `blueprint` |
 
 The IDs depend on the entry name and the language the entities were created in (a Polish instance gets
-names such as `…_sterownik_deye`); read them from the device page. The blueprint needs only the controller
+names such as `…_sterownik_deye`); read them from the device page. The blueprint engine needs only the controller
 sensor; it finds the mode entity and the TOU prefix through its attributes.
 
 | Controller attribute | Meaning |
@@ -1455,6 +1551,7 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.
 | `next_tou` | next local TOU program boundary |
 | `accepted` | the accepted plan snapshot (rows, dispatch policy, battery); not recorded |
 | `tou` | state of the 30 TOU entities; a change re-runs the blueprint; not recorded |
+| `hardware` | the inverter as the Solarman `device` sensor reports it: device type, protocol, control and communication board firmware, rated power, registry model and `verified` (the type and protocol pair is on the [tested list](#supported-hardware)); no serial number |
 
 The runtime sensor carries the recorded attributes `restore_pending`, `reason`, `state`, `requested_mode`,
 `confirmed_mode`, `since`, `warning`, `takeover_blocked` and `accepted_generation`, plus `runtime` and
@@ -1462,6 +1559,11 @@ The runtime sensor carries the recorded attributes `restore_pending`, `reason`, 
 changes and at most once a minute for other changes. Acceptances, revocations, session drops, mode
 changes, imports and device changes go to a history of 50 entries in the store and in the integration's
 diagnostics (`deye_controller`); no events are fired.
+
+With the native engine the runtime sensor also has `last_run` (not recorded): what triggered the last run, the
+decision, the planned commands, each write with its outcome (sent, failed, confirmed or blocked) and how the run
+ended. The last 50 runs are kept in memory, not in the store, and appear in the diagnostics as `run_history`. A
+logbook entry names the old and new runtime code and confirmed mode whenever either changes.
 
 ### Services
 
@@ -1600,26 +1702,96 @@ then sets thresholds, then enables the direction.
 | --- | --- |
 | `waiting` | the first run has not published a code yet |
 | `ok` | the planned profile is computed (Simulation) or written and confirmed (Auto) |
-| `blocked` | no valid plan or a gate failed; `runtime.reason` says which |
+| `blocked` | no valid plan or a gate failed; `reason` and `reason_code` say which |
 | `restored` | the base profile was written and confirmed (release in Off, or no valid plan in Auto) |
 | `verification_required` | writes finished but not every register confirmed |
 | `write_failed` | a register did not confirm after retries; restore stays pending |
 | `simulation_blocked` | Simulation was refused while a restore was pending |
+| `paused` | the pause switch is on (native engine): the decision is computed, nothing is written |
+| `error` | the run itself failed (native engine): an exception, or Energy Compass or the Solarman entities could not be read; `reason_code` is `run_failed` or `controller_unavailable`. After three failed runs in a row the repair issue "Deye controller runs are failing" appears; the next good run clears both |
 
-`runtime.reason` texts are in Polish in this release. Every runtime update goes through `energy_compass.controller_runtime`; when that call fails, the run stops before the next register is written.
+`runtime.reason_code` is a stable code and `runtime.reason` its text. The native engine writes the text in
+the Home Assistant language (Polish for `pl`, English otherwise); the blueprint engine's texts are Polish.
+
+| `reason_code` | Meaning |
+| --- | --- |
+| `ok` | nothing blocks the plan |
+| `telemetry_stale` | telemetry entities not numeric or older than 30 s, voltage outside 400–610 V or SOC outside 0–100 % |
+| `tou_times` | the six TOU start times are not different and rising |
+| `session_wait` | no plan accepted yet in this session |
+| `plan_revoked` | the accepted generation was revoked after an error |
+| `plan_sources` | an Alert is on or the publication is not ready |
+| `battery_params` | the accepted plan has no battery parameters |
+| `plan_expired` | the original validity ended or no interval covers now |
+| `plan_malformed` | an interval has missing or invalid values; a new plan is required |
+| `operation_mode` | the inverter battery mode is neither Capacity nor Voltage |
+| `mode_not_commissioned` | the battery mode is not in `commissioned_battery_modes` |
+| `voltage_range` | a Voltage-mode target outside 495–560 V |
+| `settings_range` | an entity range or step is missing, or a target is outside it |
+| `takeover_blocked` | an automation in `old_writers` is on or running |
+| `blueprint_active` | an automation using the Deye blueprint is on (see below); no write at all (not even the restore), and a repair issue names it |
+| `layout_mismatch` | the registers disagree with the entity states (see [Supported hardware](#supported-hardware)) |
+| `paused` | the pause switch is on |
+| `verification_required` | writes finished but not every register confirmed |
+| `write_failed` | a register did not confirm after retries |
+| `simulation_blocked` | Simulation refused while a restore was pending |
+| `run_failed` | the run raised an exception; details are in the Home Assistant log |
+| `controller_unavailable` | Energy Compass or the Solarman entities could not be read; nothing was written |
+
+Every runtime update of the blueprint engine goes through `energy_compass.controller_runtime`; when that call fails, the run stops before the next register is written. The native engine rejects that service, so a blueprint run that slips through stops before its first write.
+
+### Following a run (native engine)
+
+The blueprint left an automation trace per run; the native engine replaces it with:
+
+- the runtime sensor's `reason` and `reason_code`, and its attribute `last_run` (not recorded): trigger,
+  decision, planned commands, each write with its outcome (sent, failed, confirmed, blocked) and how the run ended;
+- the integration's diagnostics (`deye_controller`): `engine`, `hardware` and `run_history`, the last 50 runs
+  (kept in memory, so a restart empties it);
+- a logbook entry on the runtime sensor whenever the runtime code or the confirmed mode changes;
+- the runtime code `error` and the repair issues "Deye controller runs are failing" and "Deye blueprint
+  automation is still on", so a stopped controller is visible without reading logs.
 
 ### When Energy Compass is unavailable
 
 Without Energy Compass neither the mode nor the runtime can be read, so no write could be proven safe or
 recorded. The blueprint therefore stops at its first step, without any write or service call, when the
 controller sensor is missing or unavailable, reports another `controller_schema` or has no
-`mode_entity`: the trace says `Energy Compass niedostępny: sterowanie wstrzymane bez zapisów`. The
+`mode_entity`: the trace says `Energy Compass niedostępny: sterowanie wstrzymane bez zapisów`. The native
+engine does the same without a trace: the run ends without a write, the runtime code is `error` with the reason
+`controller_unavailable`, and a repair issue appears after three such runs. The
 inverter keeps its last profile; a forced TOU direction ends at the next TOU program boundary, while the
 battery currents stay as they are. If Energy Compass disappears in the middle of a run, the next runtime
 call fails and the run stops before another register is written. Home Assistant reports the failed
 entry; repair it or release the inverter by hand.
 
+### Limits and defaults (native engine)
+
+The expert group **Limits and takeover** of the options step sets these; an empty field keeps its default,
+and a change applies on the next run without a reload. No household value is built into the code.
+
+| Option | Default |
+| --- | --- |
+| `max_power_w` | the smaller of the charge and discharge power in the Energy Compass settings, in W |
+| `max_current`, `relinquish_current` | the `max` attribute of the charge-current entity, capped at `max_power_w` / 400 V |
+| `max_grid_current` | the `max` attribute of the grid-current entity, capped the same way |
+| `hold_grid_current`, `reached_discharge_current`, `balance_grid_current` | 1 A, 1 A, 2 A |
+| `voltage_grid_charge_ceiling` | 55.2 V |
+| `commissioned_battery_modes` | Capacity |
+| `old_writers` | none |
+| `telemetry_entities` | the SOC and voltage sensors of the device |
+| `discharge_energy_entity` | the device's total battery discharge sensor when there is exactly one |
+| entity overrides | none; the six entities are found on the device by Solarman translation keys |
+
+When the power or a current limit would come out as zero (for example a charge power of 0 in the battery
+settings), the options step does not store it: it shows the group and asks you to enter the limits.
+Enabling the native engine also needs a numeric battery voltage reading, because the pack is told from a
+48 V one by it.
+
 ### Inputs
+
+These are the inputs of the deprecated blueprint, with the blueprint's own defaults; the native engine
+takes the values above.
 
 | Input | Default | Meaning |
 | --- | --- | --- |
@@ -1677,6 +1849,38 @@ plan. Rollback before the package is removed: turn the new automation off, resto
 inputs and turn it on; the package helpers were never written by the import. A downgrade to 0.1.36 needs
 the old blueprint and the package back first.
 
+### Migrating from the blueprint to the native engine
+
+The two engines never write together. Selecting `native` in **Options → Deye controller → Engine** is
+refused until the mode is `Off` and the restore is done. While the engine is `native`:
+
+- the mode select refuses to leave `Off` (the error names the automation) while an automation that uses
+  the blueprint is on;
+- a run that would write (mode `Auto`, or `Off` with a restore pending) stops when such an automation is on:
+  nothing is written, the runtime reason is `blueprint_active` (naming the automation) and a repair issue stays
+  until the automation is switched off. Not even the restore to BASE is written meanwhile, so the inverter keeps
+  the last profile it was given; once the automation is off, the controller continues (or restores BASE) on its
+  next run. Mode `Off` with nothing to restore and `Simulation` run as usual and are not blocked. This also covers
+  a reload with mode `Auto` and a blueprint that was never updated;
+- `energy_compass.controller_runtime` rejects every call, so a blueprint run that slips through stops
+  before its first write.
+
+When exactly one automation uses the blueprint on the same Solarman device (its charge, discharge, grid and
+operation entities belong to that device), its limits and entity overrides are loaded into the expert
+group for you to review; nothing is applied until you save. An automation on another inverter prefills
+nothing.
+
+1. Select the mode `Off` and wait until `restore_pending` is off and the runtime code is `restored` (or the
+   run reports released).
+2. Turn the blueprint automation off. Do not stop its actions mid-run; wait for them to finish.
+3. **Options → Deye controller:** set the engine to `native`, review the prefilled limits and save. The entry reloads.
+4. Select `Simulation`, compare `runtime.desired` with what the blueprint wrote for a while, then select `Auto`
+   in a `CHARGE_PV` or `SELF_CONSUME` row.
+5. After a week delete the automation and the blueprint file.
+
+Rollback: select `Off`, wait for `restored`, set the engine to `blueprint`, turn the automation on, then
+choose the mode. A paused flag is cleared when the engine returns to `blueprint`.
+
 ### Dashboard examples
 
 Generated by `tools/dashboards/build.py` with placeholder entity IDs:
@@ -1684,16 +1888,18 @@ Generated by `tools/dashboards/build.py` with placeholder entity IDs:
 | Section | What it shows |
 | --- | --- |
 | `controller_panel.yaml` | the controller at a glance: a **Check control** warning (stale forecast, Alert, runtime not `ok`, no fresh confirmation, unconfirmed writes), battery now with the mode selector and confirmed settings, the Compass decision with the controller's SOC target, the next 24 h of plan states with end SOC, a SOC forecast chart, the household consumption hint and cost, and 24 h history of SOC, power and control |
-| `controller_diagnostics.yaml` | optimizer and controller state, reason, confirmed mode, last confirmation, plan and forecast validity, active TOU program, unconfirmed writes, session and restore flags, and the read-back of the three current limits |
+| `controller_diagnostics.yaml` | optimizer and controller state, reason and reason code, the inverter and whether it is verified, the last run, confirmed mode, last confirmation, plan and forecast validity, active TOU program, unconfirmed writes, session and restore flags, and the read-back of the three current limits |
 | `plan_chart.yaml` | 12 h of measured load, grid, PV and SoC with the next 24 h of the plan over plan-state bands; grid-charge and grid-sell bands show the energy-weighted mean price of the block |
 | `consumer_compass_chart.yaml` | Consumer Compass levels, 4 h history and 20 h forecast |
 
 The panel uses native cards plus ApexCharts Card for its SOC forecast; the two charts need ApexCharts Card. The [YAML builder](builder.html) fills any of them with your entity IDs, capacity and language.
 See the [installation guide](installation.md#dashboard-examples).
 
-The controller examples take three roles: `deye_controller`, `deye_mode` and `deye_runtime` (defaults
-`sensor.energy_compass_deye_controller`, `select.energy_compass_deye_mode` and
-`sensor.energy_compass_deye_controller_runtime`). Pass `--entity deye_mode=select.my_mode` to the generator or fill
+The controller examples take four roles: `deye_controller`, `deye_mode`, `deye_runtime` and `deye_pause` (defaults
+`sensor.energy_compass_deye_controller`, `select.energy_compass_deye_mode`,
+`sensor.energy_compass_deye_controller_runtime` and `switch.energy_compass_pause_inverter_writes`). The panel
+shows the pause switch only while the entity exists, that is with the native engine. Pass
+`--entity deye_mode=select.my_mode` to the generator or fill
 them in the YAML builder when your IDs differ; the session, the restore flag, the next TOU change and the TOU
 prefix are read from the controller's attributes.
 
@@ -1837,7 +2043,7 @@ An interval may also carry `buy_energy` (CSV column too): the energy part of `bu
 deposit can pay (the rest of `buy` is distribution), in the same units, not above `buy` and empty or
 missing meaning 0. It matters only with the
 [deposit model](#net-billing-deposit-value), which you switch on with `--set deposit_model=manual
---set export_value_factor=0.3` (or `auto` with the two yearly values). `buy` stays the invoice
+--set export_value_factor=0.3` (experimental). `buy` stays the invoice
 price, so `buy_distribution_mode`, `buy_distribution_rate` and `buy_distribution_off_peak_rate` are
 not read — prices come from the file — and a warning says so. Costs are reported at the file's prices
 whatever the factors are.
@@ -1877,6 +2083,9 @@ into days by the local date of `start`; settings come only from `--set`.
   discharges the planned energy, `HOLD` parks the battery. Grid export beyond `grid_export_kw` is
   curtailed, and stored energy is not exported beyond the PV produced so far when **Sell only PV**
   (`limit_export_to_pv`) is on.
+- **On a net-metering file the costs are hourly prices, not the settlement.** Net-metering is settled on
+  yearly kWh ([Setup profiles](#setup-profiles-new-installations)), so `plan − self_use` is not a saving
+  there; do not compare strategies by it.
 - The [peak-period reserve](#peak-period-reserve) (`peak_reserve_margin_kwh`) is replayed as in the integration: it needs
   `limit_grid_charge_price` (its ceiling is the cheap price), else a warning says it has no effect.
 - Not replayed: LFP balance windows, the autonomy tail beyond the data, and carried export or
@@ -1899,6 +2108,49 @@ Compass plan attribute `intervals` (or the Solcast/forecast history) recorded at
 the realized value as the forecast gives an idealised plan with no forecast error.
 Use `interval_minutes: 60` for hourly statistics.
 
+### Annual settlement oracle
+
+`tools/replay_year.py` is the yearly counterpart of the day replay, for the questions a day cannot
+answer: what a [deposit setting](#net-billing-deposit-value) does to the **bill of a year**. It
+replays consecutive hours as the integration runs them: a receding `horizon_hours` (24 h) window,
+re-planned every `--refresh-hours` hours (default 6) on the forecast, the state of charge carried
+over midnight, the daily PV-export counters reset at **local** midnight, every plan executed on the
+realized series, a failed solve run as self-consumption. The hourly import and export it produces
+are valued by two bills:
+
+| Bill | Rule |
+| --- | --- |
+| `annual` | the deposit D = 1.23 × V (V = value of the exported energy at `max(sell, 0)`) pays the energy part E of the imports; the refund is `min(D − min(D, E), ρ × V)` |
+| `ledger` | the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry `min(unused, ρ × V of the month)` comes back and the rest is void. It is the steady state of a repeated year: `D ≤ E` gives the annual result, `D > E` a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year |
+
+```
+python tools/replay_year.py site.json --set deposit_model=manual --set export_value_factor=0.3
+python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
+```
+
+It prints (or, with `--json`, returns) both bills, `wear`, the SOC drift (initial minus final SOC at
+the mean buy price), `K` = annual bill + wear + SOC drift (`KL` with the ledger), `D`, `V`, `E`, and
+the refund and the void of each bill. Compare two runs by the difference of `K` (or `KL`); `--self-use`
+gives the no-planner reference. The input is one JSON object (`timezone`, `start`, `rho`, `fixed`,
+`initial_soc_percent`, `settings` and `hours[]`) or a CSV, one row per **hour** with `start`, `buy`,
+`sell`, `buy_energy`, `pv_forecast`, `load_forecast`, `pv`, `load` — the same values as above; the
+format is in the tool's docstring, `--rho`, `--fixed` and `--initial-soc` override the file. Hours
+must be consecutive real hours, one row each; a JSON row may carry its own `start`, which must then
+match its position. `--refresh-hours` must not exceed `horizon_hours`. The number of failed plan
+solves is printed on stderr in both output formats.
+
+Timestamps are real instants, so a year across the two clock changes (a 25-hour and a 23-hour local
+day) is read correctly; the local date and month (counter reset, ledger month) come from `timezone`.
+A stamp with an offset (`+02:00`, `Z`) is exact. A naive stamp is local to `timezone`: in the
+repeated autumn hour it is the first occurrence, unless the row before it is that first occurrence
+(then it is the second), so a CSV of consecutive naive local stamps reads right — a naive JSON
+`start` in that hour is the first occurrence; give it an offset to mean the second.
+
+Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
+charge band that depends on the annual import is not modelled (take `fixed` from the no-battery bill
+and expect a small constant error where the band differs); a stretch shorter than a year is read as
+a year with empty months; the result is only as good as the forecast series you give it.
+
 ## Reason code reference
 
 ### Coverage / quality reasons (`reason`, `reasons` attributes)
@@ -1907,7 +2159,7 @@ Use `interval_minutes: 60` for hourly statistics.
 | --- | --- |
 | `complete` | Full reference coverage, all probes succeeded. |
 | `available_reference_horizon` | Source coverage shorter than the requested reference horizon; percentiles use what exists. |
-| `reference_horizon_uncovered` | Reserved in translations; not emitted by 0.1.37. |
+| `reference_horizon_uncovered` | Reserved in translations; not emitted by 0.1.38. |
 | `reference_probe_failed` | At least one reference probe failed or timed out. |
 | `short_source_coverage` | Price/forecast coverage ends before the requested planning horizon. |
 | `current_guidance_unavailable` | Current interval probe unknown; later windows may still be valid. |

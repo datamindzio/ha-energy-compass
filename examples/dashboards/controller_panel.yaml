@@ -141,6 +141,20 @@ cards:
     icon: mdi:compass
     features:
     - type: select-options
+  - type: conditional
+    conditions:
+    - condition: state
+      entity: switch.energy_compass_pause_inverter_writes
+      state:
+      - 'on'
+      - 'off'
+    card:
+      type: tile
+      entity: switch.energy_compass_pause_inverter_writes
+      name: Pause inverter writes
+      icon: mdi:pause-circle-outline
+      features:
+      - type: toggle
 - type: markdown
   title: Compass decision
   content: '{% set labels = {''CHARGE_PV'':''Charging from PV'',''CHARGE_GRID'':''Charging from grid'',''DISCHARGE_GRID'':''Selling

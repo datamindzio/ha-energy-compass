@@ -75,7 +75,7 @@ from custom_components.energy_compass.engine.models import (
     Slot,
     SolveError,
 )
-from custom_components.energy_compass.engine.optimize import solve
+from custom_components.energy_compass.engine.optimize import solve, solve_released
 from custom_components.energy_compass.engine.peak_reserve import (
     peak_reserve_targets,
     peak_reserve_weight,
@@ -419,11 +419,8 @@ def build_problem(
     )
     targets, windows, target_weight = _autonomy(values, slots, battery, zone_name)
     peak_kwh, peak_window, peak_weight = _peak_reserve(values, slots, battery)
-    settlement, _ = resolve_settlement(
+    settlement = resolve_settlement(
         values,
-        None,
-        slots[0].start,
-        zone_name,
         split_known=any(slot.buy_per_kwh > slot.buy_energy_per_kwh for slot in slots),
     )
     return Problem(
@@ -668,10 +665,11 @@ def run_plan(day: Day, values: dict, zone_name: str) -> Outcome:
             mode_since=mode_since if values["minimum_mode_minutes"] else None,
         )
         try:
-            plan = solve(
+            plan, problem = solve_released(
                 problem,
                 time_limit_s=values["solve_time_limit_s"],
                 accept_incumbent=True,
+                solver=solve,
             )
             planned = plan.flows
         except SolveError:

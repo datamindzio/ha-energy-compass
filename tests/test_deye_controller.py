@@ -1,15 +1,18 @@
-"""Behaviour of the generated Deye (Solarman) controller blueprint.
+"""Behaviour of the Deye (Solarman) controller, blueprint and native.
 
-The blueprint is loaded with the inputs below substituted, then its Jinja
-templates and action tree run against a sanitized state sample. The harness in
-`deye_harness.py` plays Energy Compass: it accepts the sample's plan through
-`controller.step` and serves the runtime service.
+Every scenario runs twice (see `deye_engines.py`). Against the generated blueprint
+its Jinja templates and action tree run over a sanitized state sample, with
+`deye_harness.py` playing Energy Compass: it accepts the sample's plan through
+`controller.step` and serves the runtime service. Against the native controller
+`deye_native_harness.py` offers the same API over `controller_run`. Tests that pin
+the shape of the blueprint are marked `blueprint_only`.
 """
 
 import datetime as dt
 from zoneinfo import ZoneInfo
 
 import pytest
+from deye_engines import ControllerGone, Harness, Runner, use
 from deye_harness import (
     BATTERY,
     BLUEPRINT,
@@ -19,16 +22,25 @@ from deye_harness import (
     PREFIX,
     RT,
     A,
-    ControllerGone,
     F,
-    Harness,
     O,
     P,
-    Runner,
     timestamp,
 )
 
 from custom_components.energy_compass import controller as core
+
+blueprint_only = pytest.mark.blueprint_only
+
+
+@pytest.fixture(autouse=True, params=["blueprint", "native"])
+def engine(request):
+    """Every scenario runs against the generated blueprint and the native controller."""
+    if request.param == "native" and request.node.get_closest_marker("blueprint_only"):
+        pytest.skip("pins the shape of the blueprint")
+    use(request.param)
+    yield request.param
+    use("blueprint")
 
 
 @pytest.fixture
@@ -603,6 +615,7 @@ def test_real_register_mismatch_blocks_new_direction(h):
     assert bad in h.data[RT]["attributes"]["runtime"]["uncertain"]
 
 
+@blueprint_only
 def test_all_templates_compile_and_one_automation(h):
     def walk(value):
         if isinstance(value, str) and ("{{" in value or "{%" in value):
@@ -617,6 +630,9 @@ def test_all_templates_compile_and_one_automation(h):
     walk(h.doc)
     assert h.doc["mode"] == "queued" and h.doc["max"] == 2
     assert not any(t.get("seconds") for t in h.doc["triggers"])
+
+
+def test_register_map_covers_the_27_entities(h):
     assert len(h.ctx["registers"]) == 27
 
 
@@ -704,7 +720,9 @@ def test_missing_battery_parameters_block(h, broken):
 @pytest.mark.parametrize(
     "missing", ["absent", "unavailable", "schema", "no_mode_entity"]
 )
-def test_missing_controller_holds_without_writes(h, missing):
+def test_missing_controller_holds_without_writes(h, missing, engine):
+    if engine == "native" and missing in ("schema", "no_mode_entity"):
+        pytest.skip("the native controller has no schema or mode entity to lose")
     row = h.data[P]["attributes"]["intervals"][0]
     row.update(state="CHARGE_GRID", charge_kwh=0.5, pv_kwh=0, end_soc_kwh=20)
     r = Runner(h)
@@ -1537,6 +1555,7 @@ def test_acceptance_during_transaction_rechecks_before_any_write(h):
     assert h.data[RT]["attributes"]["runtime"]["confirmed_mode"] == "DISCHARGE_GRID"
 
 
+@blueprint_only
 def test_blueprint_has_no_handoff_retry():
     text = BLUEPRINT.read_text()
     for word in ("handoff", "milliseconds", "candidate", "Publikacja planu"):
@@ -2004,6 +2023,7 @@ def test_plan_generated_before_revocation_is_never_accepted(h):
     assert h.accept()["generated_at"] == g
 
 
+@blueprint_only
 def test_blueprint_does_not_stamp_revocations():
     text = BLUEPRINT.read_text()
     assert "revoked_at" not in text and "revoked_generation=" not in text

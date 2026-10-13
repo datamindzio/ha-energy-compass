@@ -45,6 +45,7 @@ passes. State in the PR which docs changed, or why none needed to.
 | Notification blueprint: input, gate, message, helper format | `guide.*` § Window notifications (diagram, messages table, inputs table), `docs/installation.md` § Opt-in notifications, `README*.md` notification paragraph |
 | Deye controller: input, default, profile, plan acceptance, write/confirm rule, runtime code | `guide.*` § Deye inverter controller (inputs table, profiles table, runtime codes, diagram), `docs/installation.md` § Deye inverter controller |
 | Deye controller entities, options step, services, store, `plan_reason`, session or migration | `guide.*` § Deye inverter controller → Enabling, Controller entities, Services, Plan acceptance, Migrating from the package; `docs/installation.md` § Deye inverter controller step 1; `docs/index.html` entity index and articles; `translations/*.json` + `strings.json` |
+| Native Deye engine: decision, limits, defaults, reason code or text, runtime code, layout probe, supported hardware, two-writer guard, pause, engine option | `guide.*` § Deye inverter controller → Supported hardware, Limits and defaults, runtime codes and `reason_code` tables, Following a run, Migrating from the blueprint; `docs/installation.md` § Deye inverter controller; `docs/index.html` Deye articles; `translations/*.json` + `strings.json` (EN and PL, `en.json` equal to `strings.json`); the generated dashboards if a runtime attribute they show changes |
 | Plan attribute or state consumed by the controller (`intervals`, `dispatch_policy`, `balance_hold`, `generated_at`, `valid_until`, `refreshing`, `plan_retained`) | the controller generator and its tests first, then `guide.*` § Deye inverter controller |
 | Cost card (`cards/cost/`): config key, view, notice, string | `docs/cost-card.md` (configuration table), `guide.*` § Cost card (keys table); every user-visible string lives in the card's `TEXT.en` and `TEXT.pl` — change both; `node --test test-*.mjs` in `cards/cost/` |
 | Export value counter blueprint or `tools/export_value_backfill.py` | `docs/cost-card.md` § Export value, `guide.*` § Cost card |
@@ -75,6 +76,16 @@ The controller behaviour is covered by `tests/test_deye_controller.py` (template
 against a sanitized state sample, with `tests/deye_harness.py` playing Energy Compass),
 `tests/test_deye_controller_blueprint.py` (the blueprint loaded by Home Assistant), `tests/test_controller_*.py`
 (the integration-owned state) and `tests/test_controller_parity.py` (acceptance against the frozen v0.1.35
-blueprint in `tests/golden/`, which must never change). A controller change adds or updates a test there. Keep
+blueprint in `tests/golden/`, which must never change). The native engine (`controller_profile.py`,
+`controller_run.py`, `controller_native.py`, `controller_hardware.py`, `controller_setup.py`,
+`controller_texts.py`) is covered by `tests/test_controller_native_parity.py` (every scenario of the blueprint
+tests against the frozen 0.1.37 blueprint `tests/golden/deye_controller_v0137.yaml` and its harness
+`tests/deye_oracle_v0137.py`; both must never change), `tests/test_controller_run.py`,
+`tests/test_controller_hardware.py`, `tests/test_controller_texts.py`, `tests/test_controller_native.py`,
+`tests/test_controller_native_review.py`, `tests/test_controller_native_guards.py`,
+`tests/test_controller_native_options.py` (a fake inverter in `tests/native_site.py`; the executor harness is
+`tests/deye_native_harness.py`), `tests/test_dashboard_native_fields.py` and `tests/test_native_controller_docs.py`.
+`tools/shadow_compare.py` replays recorded Home Assistant state dumps through the native decision for the
+live-site shadow check (`tests/test_shadow_compare.py`). A controller change adds or updates a test there. Keep
 household-specific values (device IDs, entity names of one installation) out of the repository:
 they belong in blueprint inputs, not in the generator.

@@ -39,12 +39,7 @@ from .engine.consumption import (
     serialize_opportunity,
 )
 from .engine.daily_energy import daily_export_rows
-from .engine.dispatch_policy import (
-    MODES,
-    dwell_group,
-    reserve_fallback,
-    safety_exception,
-)
+from .engine.dispatch_policy import MODES, dwell_group, safety_exception
 from .engine.models import (
     Battery,
     CompassSettings,
@@ -56,7 +51,7 @@ from .engine.models import (
     SolveError,
 )
 from .engine.normalize import finite, validate_problem
-from .engine.optimize import solve
+from .engine.optimize import solve, solve_released
 from .engine.peak_reserve import peak_reserve_targets, peak_reserve_weight
 from .engine.strategy import resolve_flags, strategy_weights
 from .settings import validate_configuration
@@ -476,7 +471,6 @@ def build_problem(
     grid_charge_commitment=None,
     balance_state=None,
     solar_forecasts=None,
-    settlement_state=None,
 ):
     """Preserve native boundaries and stop at actual contiguous source coverage."""
     values = effective_settings(config, states, now)
@@ -635,9 +629,7 @@ def build_problem(
         )
         for index, (start, finish) in enumerate(intervals)
     )
-    settlement, settlement_next = resolve_settlement(
-        values, settlement_state, now, config["timezone"], split_known=split_known
-    )
+    settlement = resolve_settlement(values, split_known=split_known)
     battery = None
     soc_observation = None
     budgets = ()
@@ -936,7 +928,6 @@ def build_problem(
         "balance_pv_series": balance_series,
         # Consumed by `compute`; never published.
         "settlement": settlement,
-        "settlement_state": settlement_next,
         "warnings": ["unvalidated_tariff"]
         if values["calibration"] != "verified"
         else [],
@@ -1168,20 +1159,13 @@ def compute(
     started = perf_counter()
     problem, values, quality = build_problem(config, states, now, **history)
     settlement = quality.pop("settlement")
-    settlement_state = quality.pop("settlement_state")
-    settlement_held = history.get("settlement_state")
-    solve_limit = min(values["solve_time_limit_s"], values["total_time_limit_s"])
-    try:
-        plan = solve(problem, time_limit_s=solve_limit, accept_incumbent=True)
-    except SolveError as err:
-        # The house is never left without a plan: a PV-follow commitment with the pack at
-        # the reserve is released first (ADR-0005 point 13); where the released HOLD
-        # cannot take the PV above the export cap, the commitment's own HOLD is planned.
-        fallback = reserve_fallback(problem) if err.reason == "infeasible" else None
-        if fallback is None:
-            raise
-        problem = fallback
-        plan = solve(problem, time_limit_s=solve_limit, accept_incumbent=True)
+    plan, problem = solve_released(
+        problem,
+        time_limit_s=min(values["solve_time_limit_s"], values["total_time_limit_s"]),
+        budget_s=values["total_time_limit_s"] - (perf_counter() - started),
+        accept_incumbent=True,
+        solver=solve,
+    )
     remaining = values["total_time_limit_s"] - (perf_counter() - started)
     if remaining <= 0:
         raise SolveError("timeout")
@@ -1373,9 +1357,6 @@ def compute(
                 "export_value_factor": round(settlement["export_value_factor"], 4),
                 "import_energy_factor": round(settlement["import_energy_factor"], 4),
                 "cap_pressure": round(settlement["cap_pressure"], 4),
-                "unused_share": None
-                if settlement["unused_share"] is None
-                else round(settlement["unused_share"], 4),
             },
         },
         "measurements": measurement_diagnostics(config, states, now),
@@ -1412,9 +1393,6 @@ def compute(
             "actions_configured": bool(values["notify_actions"]),
         },
     }
-    if settlement_state is not None or settlement_held is not None:
-        # Popped by the coordinator; never a published attribute.
-        result["settlement_state"] = settlement_state
     if atlas_solve_builder is not None:
         result["atlas_solve_payload"] = atlas_payload
     return result

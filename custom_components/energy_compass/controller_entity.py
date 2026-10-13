@@ -12,7 +12,7 @@ from .entity import entry_device_info
 
 DETAIL_DELAY_SECONDS = 60
 CONTROLLER_UNRECORDED = frozenset({"accepted", "tou"})
-RUNTIME_UNRECORDED = frozenset({"runtime", "updated_at"})
+RUNTIME_UNRECORDED = frozenset({"runtime", "updated_at", "last_run"})
 
 
 class DeyeControllerEntity:

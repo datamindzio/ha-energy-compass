@@ -96,13 +96,26 @@ forecast.
    - A host several times slower than the development host meets the same states at shorter horizons
      (ADR-0003, decision 2). `solve_time_limit_s`, `probe_time_limit_s` and `total_time_limit_s` stay settings.
 4. Lazy rows are not adopted for the mode model. The loop was not measured with `minimum_mode_minutes = 0`
-   (T-034, T-041), which builds the same rows; T-042 stays the owner's decision for that case, and its option
-   "lazy constraints first" has no measured speed behind it. A lazy loop also cannot return a plan where the
+   (T-034, T-041), which builds the same rows; its option "lazy constraints first" in T-042 has no measured
+   speed behind it, and the owner did not take it (decision 6). A lazy loop also cannot return a plan where the
    full model has none: it stops only on a plan that obeys the rule in every interval, which is a plan of the
    full model.
 5. A change to the `_follow_surplus` rows is measured on all six strategies at 96 and 192 slots with
    `benchmarks/optimizer.py` and on a seeded corpus per strategy (LESSONS.md), before and after, and updates
    the tables in `docs/runtime-validation.md` in the same PR (ADR-0006, decision 4).
+6. The same cost is accepted with `minimum_mode_minutes = 0` (owner, T-042, answer A, 2026-10-13: "accept the
+   cost, close T-034"), against "no rule at duration 0" and "T-041 (lazy constraints) first". The owner was
+   shown the per-strategy table of `docs/model.md` § Operating-mode duration and PV export budget (CPU seconds
+   of one solve at 96 / 192 / 384 intervals, before → with the rule, `*` = 10 s limit: `cost_min` 0.04 → 0.46,
+   0.24 → 1.06, 0.86 → 7.80*; `self_sufficiency` 2.23 → 3.38, 3.68 → 5.37, 4.19* → 7.81*; `backup_ready`
+   1.67 → 1.41, 5.76 → 10.24*, 5.97 → 8.19*; `pv_swap` 0.05 → 0.12, 0.06 → 1.20, 1.01 → 3.99; `max_export`
+   0.03 → 0.09, 0.10 → 0.19, 0.71 → 0.76; `grid_friendly` 0.07 → 0.35, 0.49 → 0.73, 2.04 → 6.35), the reference
+   that the default duration of 60 takes 2.8 s (`cost_min`, 192 intervals) and reaches the limit at 384, and
+   that 1 problem in 300 of the seeded sweep loses its plan (export cap or inverter below the PV, curtailment
+   off, pack full before the last surplus; the mode model has no plan there either). Re-checked at `main`
+   5c11c2e with the rule merged: the same picture, objectives equal where both prove. Fewer consumption probes
+   finish at duration 0 as well (`docs/runtime-validation.md` § Consumption probe limits). T-041 keeps the
+   no-plan class.
 
 Revisit when the solver interface offers lazy constraints inside one solve or a warm start (the loop above
 then stops paying for cold solves), when a reformulation proves the 192-slot benchmark base plan of
@@ -139,7 +152,8 @@ corpus median for any strategy, or when the owner asks for consumption levels on
 ## Consequences
 
 - No engine change. ADR-0006 no longer leaves the regression open; its consequence line points here.
-- The reference point of T-042 (default-mode solve time) is an accepted state, not an open regression.
+- The reference point of T-042 (default-mode solve time) is an accepted state, not an open regression, and T-042
+  itself is decided (decision 6): the rule ships with `minimum_mode_minutes = 0` in T-034.
 - T-041 keeps its first problem (no plan on a capped site when the pack fills early); lazy rows are not a
   remedy for it (decision 4) and are not a measured remedy for its solve time.
 - Consumption levels on a 48 h horizon do not depend on this rule alone: on the irregular corpus the rule-free

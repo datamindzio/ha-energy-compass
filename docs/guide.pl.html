@@ -154,12 +154,12 @@
 <p><a href="guide.en.html">English</a> · <strong>Polski</strong></p>
 <p>Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
-<strong>0.1.37</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
+<strong>0.1.38</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
 instalację i dashboardy — <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">przewodnik instalacji</a> (EN).</p>
-<p>Energy Compass jest <strong>doradczy</strong>. Liczy plan i publikuje go jako encje Home Assistant. Nigdy nie
-zapisuje rejestrów falownika i sam nie wysyła powiadomień; o wykonaniu planu decydują sterowniki
-i blueprinty powiadomień. Repozytorium zawiera jeden taki sterownik, dla falowników Deye przez
-Solarman: zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika Deye</a>.</p>
+<p>Energy Compass jest <strong>doradczy</strong>. Liczy plan i publikuje go jako encje Home Assistant. Sam nie wysyła
+powiadomień, a ustawienia falownika zapisuje tylko wtedy, gdy włączysz opcjonalny sterownik Deye
+(domyślnie wyłączony), i robi to przez integrację Solarman; blueprinty powiadomień i inne sterowniki same
+decydują, czy wykonać plan. Zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika Deye</a>.</p>
 <h2 id="spis-treści">Spis treści</h2>
 <ol>
 <li><a href="#jak-to-działa">Jak to działa</a></li>
@@ -400,13 +400,48 @@ przez <a href="#wykryte-źródła-nowe-instalacje">Wykryte źródła</a> ustawia
 <p><code>sell_multiplier</code> w systemie opustów to jednorazowa kopia współczynnika, a nie odnośnik do ceny
 zakupu: to przybliżenie (roczny bilans kWh i niedopasowanie stref G12 nie są modelowane), a
 późniejsza zmiana ceny zakupu go nie aktualizuje.</p>
+<p><strong>Instalacja w systemie opustów pracuje z baterią we własnym trybie autokonsumpcji falownika.</strong> Ustaw
+falownik na autokonsumpcję (najpierw obciążenie, bez ładowania z sieci i bez eksportu z baterii), zostaw
+„Ładowanie z sieci” (<code>allow_grid_charge</code>) i „Eksport energii z baterii” (<code>allow_battery_export</code>)
+wyłączone (domyślnie są wyłączone i te profile tego nie zmieniają) i nie włączaj
+<a href="#włączenie-sterownika">sterownika Deye</a>. Opust nie jest rozliczany godzinowo: według ustawy o
+odnawialnych źródłach energii (tekst jednolity Dz.U. 2026 poz. 68, art. 4) energia oddana jest
+rozliczana z pobraną w stosunku 1 : 0,8 (1 : 0,7 powyżej 10 kW), a nadwyżka jest przenoszona przez 12
+miesięcy, więc oddana kWh jest warta <code>współczynnik</code> kWh późniejszego importu — nic, gdy roczny kredyt
+pokrywa roczny import — a część stała rachunku zmienia się skokowo z rocznym poborem (progi opłaty
+mocowej przy 500, 1 200 i 2 800 kWh). Nic z tego nie jest ceną godzinową ani nie mieści się w horyzoncie
+24-48 h, więc plan nie obniży rocznego rachunku. Planista się tu wycofuje: bez zmian silnika, strategii
+ani profilu, a pokazywane koszty (<code>expected_net_cost</code>, <code>consumption_cost</code>, karta kosztów,
+<code>tools/replay.py</code>) pozostają cenami godzinowymi — kWh są dokładne, kwoty są przybliżeniem.</p>
+<p>Pomiar na 40 symulowanych domach (G11 i G12, współczynnik 0,8, bateria 10 kWh, rok z przeliczaniem co
+godzinę, względem tej samej baterii w czystej autokonsumpcji, wycena rocznym rachunkiem,
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/adr/0008-net-metering-plain-self-consumption.md">ADR-0008</a>): plan domyślny (<code>cost_min</code>, jak w profilu)
+daje roczny zysk względem autokonsumpcji, rachunek plus zużycie baterii, −93…+70 PLN (średnio −1; + = taniej,
+− = drożej), nigdy nie obniża rachunku o więcej niż 10 PLN, a roczny import rośnie o +33…+704 kWh.
+Wyceniony godzinowo, tak jak raportuje go Home Assistant, ten sam plan na G12 pokazuje zysk +343 PLN
+rocznie, którego rozliczenie nie wypłaca. Z włączonym <strong>Ładowaniem z sieci</strong> (13 domów) roczny zysk
+względem autokonsumpcji, rachunek plus zużycie baterii, wynosi −209…+139 PLN (ta sama konwencja znaku),
+a import rośnie o +897 kWh (mediana). Ograniczenia: domy symulowane, jeden rozmiar baterii (10 kWh),
+jeden rok cen, interwały godzinowe, strefy G12 netowane jako jedna średnia stawka.</p>
 <p>Podgląd pokazuje pochodzenie profili startowych dla profilowanej nowej instalacji: które klucze
 wypełniła każda oś, źródło zakupu wstępnie wybrane przez profil <code>buy_tariff</code>, każdą wartość
 zmienioną po wypełnieniu (także klucz powiązany z pomocnikiem, wraz z jego efektywną wartością) oraz
 uwagi dotyczące rozliczenia — Sell only PV wyłączone, źródło sprzedaży stosujące już własny
 mnożnik rozliczeniowy, surowe ceny RCE bez progu 0 (z poprawką w postaci skrótu „Cena rynkowa RCE”)
 albo z progiem, ale bez mnożnika 1,23, lub sprzedaż w systemie opustów, która przestała śledzić
-zakup — widoczne tylko dla instalacji, które użyły profilu startowego.</p>
+zakup — widoczne tylko dla instalacji, które użyły profilu startowego.
+Dla profilu opustu Podgląd zawsze dodaje jeszcze jedną uwagę, a drugą, gdy włączone jest Ładowanie z sieci
+lub Eksport energii z baterii (tylko po angielsku):</p>
+<ul>
+<li>„Note: net-metering is settled on yearly kWh (an exported kWh takes back 0.8 kWh within 12 months),
+  not on hourly prices: price-driven dispatch does not lower the yearly bill and the costs shown are an
+  hourly approximation. Run the battery in the inverter's own self-use mode and do not let a controller
+  follow this plan.” (0.7 w profilu 70 %.)</li>
+<li>gdy włączone jest <strong>Ładowanie z sieci</strong> lub <strong>Eksport energii z baterii</strong>: „Note: Allow grid charge is
+  on: under net-metering energy sent through the grid comes back at 0.8 and raises the yearly import;
+  turn it off.” (z nazwą tego, co jest włączone, albo „Allow grid charge and Allow battery export are
+  on”).</li>
+</ul>
 <p>Wybór, razem z wersją profili startowych, która go wyliczyła, jest zapisywany we wpisie
 konfiguracji (<code>setup_profiles</code>) i trafia do diagnostyki.</p>
 <h3 id="wbudowane-taryfy-osd">Wbudowane taryfy OSD</h3>
@@ -834,6 +869,12 @@ witryny), bez restartu jego kolejki wysyłki. <strong>Rekonfiguracja</strong> za
 <td>Stan pracy sterownika Deye</td>
 <td>kod przebiegu; tylko przy włączonym sterowniku</td>
 </tr>
+<tr>
+<td><code>switch.&lt;name&gt;_deye_pause</code></td>
+<td>Pause inverter writes</td>
+<td>Wstrzymaj zapisy do falownika</td>
+<td><code>on</code> / <code>off</code>; tylko przy silniku natywnym</td>
+</tr>
 </tbody>
 </table></section>
 <p>Sensory kosztów można wyłączyć opcją <strong>Prezentacja → Włącz encje kosztów</strong>, znaczniki okien —
@@ -1181,10 +1222,12 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   nigdy nie łączy częściowego ładowania z eksportem do sieci: w przedziale <code>CHARGE_PV</code> bateria
   przejmuje całą nadwyżkę PV, a eksport pojawia się dopiero, gdy ładowanie jest na limicie mocy
   przedziału albo bateria została napełniona do górnej granicy. W innym wypadku wiersz nie jest
-  <code>CHARGE_PV</code>. Dotyczy przypadku, gdy <code>minimum_mode_minutes</code> jest większe od 0. Przeniesione
-  zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli bateria zapełni się przed
-  jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
-  granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki albo <code>CURTAIL</code> tam, gdzie
+  <code>CHARGE_PV</code>. Reguła obowiązuje też przy <code>minimum_mode_minutes = 0</code>: nie ma wtedy trybów, a
+  ładowanie w każdym przedziale, który przepływy oznaczają jako <code>CHARGE_PV</code>, jest związane tak
+  samo. Przeniesione zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli
+  bateria zapełni się przed jego końcem (następny przedział nie przyjąłby nawet minimalnej
+  aktywności powyżej górnej granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki albo
+  <code>CURTAIL</code> tam, gdzie
   instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
   falownik przy pełnej baterii. Zwolniony <code>HOLD</code> nie ma własnego zegara — jedynym zegarem jest
   termin zobowiązania — więc może przejść w <code>CURTAIL</code> (który startuje własny zegar) przed tym
@@ -1214,7 +1257,14 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   nie napełni baterii i nie przytnie nadwyżki w tym samym przedziale, więc bateria liczy się jako
   pełna dla następnego przedziału (może to być <code>HOLD</code> lub <code>CURTAIL</code>), gdy jest od górnej granicy
   nie dalej niż potrzeba przycięcia tego przedziału (PV, które musi trafić do baterii albo zostać
-  przycięte, co najmniej minimalna aktywność).</li>
+  przycięte, co najmniej minimalna aktywność).
+  Przy <code>minimum_mode_minutes = 0</code> reguła kosztuje czas obliczeń (tabela w
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN) i jeden
+  przypadek więcej nie ma planu: gdy eksport do sieci jest ograniczony (albo falownik ma moc
+  poniżej PV), a ograniczanie produkcji PV (<code>allow_curtailment</code>) jest wyłączone, bateria
+  zapełniona przed ostatnią nadwyżką zostawia tę nadwyżkę bez miejsca. Model z trybami ma to samo
+  ograniczenie; plan powstaje po włączeniu ograniczania produkcji PV albo przy wyższym limicie
+  eksportu lub mocy falownika.</li>
 <li><strong><code>CURTAIL</code> trwa mimo przerwy w PV.</strong> Przebieg <code>CURTAIL</code> trwa minimalny czas, a PV może w tym
   czasie spaść. <code>HOLD</code> w przedziale z PV poniżej minimalnej aktywności (<code>minimum_mode_power_kw × h</code>)
   w trakcie tego czasu to ten sam przebieg, a nie nowy <code>HOLD</code>: falownik nie ma czego przycinać,
@@ -1257,8 +1307,8 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <li><strong>Zmiana strategii (reset):</strong> zapis nowej strategii zrywa przeniesione zobowiązanie dla
   następnego planu, który startuje bez blokady (patrz <a href="#zwolnienie-przy-zmianie-strategii">zwolnienie przy zmianie
   strategii</a>).</li>
-<li><code>minimum_mode_minutes = 0</code> wyłącza reguły czasu i minimalnej mocy; reguła podążania
-  <code>SELF_CONSUME</code> za obciążeniem pozostaje włączona.</li>
+<li><code>minimum_mode_minutes = 0</code> wyłącza reguły czasu i minimalnej mocy; reguły podążania
+  <code>SELF_CONSUME</code> za obciążeniem i <code>CHARGE_PV</code> za nadwyżką pozostają włączone.</li>
 </ul>
 <h3 id="polityki-ograniczające-tryby">Polityki ograniczające tryby</h3>
 <section class="table-scroll"><table>
@@ -1303,7 +1353,7 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <tr>
 <td><strong>Model depozytu</strong> (<code>deposit_model</code>)</td>
 <td><code>off</code></td>
-<td>Wycenia eksport i część energetyczną importu tym, ile depozyt prosumencki naprawdę zwróci. Wymaga części dystrybucyjnej ceny zakupu. Zob. <a href="#wartość-depozytu-w-net-billingu">Wartość depozytu w net-billingu</a>.</td>
+<td><code>off</code> jest ustawieniem dla każdej instalacji. <code>manual</code> (eksperymentalny) wycenia eksport i część energetyczną importu podanym przez Ciebie współczynnikiem; w rocznym odtworzeniu nie obniżył rachunku. Wymaga części dystrybucyjnej ceny zakupu. Zob. <a href="#wartość-depozytu-w-net-billingu">Wartość depozytu w net-billingu</a>.</td>
 </tr>
 <tr>
 <td><strong>Pobór czuwania falownika</strong> (<code>idle_drain_kw</code>)</td>
@@ -1329,13 +1379,27 @@ instalacji; zob. <a href="#profile-startowe-nowe-instalacje">Profile startowe</a
 a depozyt pokrywa tylko to, co należy się sprzedawcy za <strong>energię</strong>; opłaty dystrybucyjne płaci się
 gotówką. Po 12 miesiącach niewykorzystana część jest zwracana, ale zwrot za miesiąc nie może
 przekroczyć <strong>ρ × wartość energii wyeksportowanej w tym miesiącu</strong> (ρ = 30 % przy rozliczeniu
-godzinowym RCE, 20 % przy miesięcznym RCEm); reszta przepada. Dopóki depozytu brakuje albo jego
+godzinowym RCE, 20 % przy miesięcznym RCEm), gdzie wartość to wartość eksportu bez współczynnika
+1,23; reszta przepada. Dopóki depozytu brakuje albo jego
 niewykorzystana część mieści się pod limitem, jedna jednostka waluty eksportu lub energetycznej
 części importu jest warta dokładnie jedną jednostkę gotówki i planer niczego nie musi poprawiać. Gdy
-limit zaczyna wiązać, kolejna jednostka eksportu jest warta tylko ρ, a część energetyczna importu nic
+limit zaczyna wiązać, kolejna jednostka eksportu jest warta tylko ρ/1,23 ceny sprzedaży zawierającej
+współczynnik 1,23 (0,244 dla ρ = 30 %, 0,163 dla 20 %), a część energetyczna importu nic
 nie kosztuje w gotówce (płaci się nią pieniędzmi, które i tak by przepadły). Model depozytu pozwala
-planerowi to zobaczyć. Jest <strong>domyślnie wyłączony</strong> i wtedy plan jest identyczny bajt w bajt z
-wersją bez niego.</p>
+planerowi to zobaczyć, ale <strong>się nie opłaca</strong>: <code>off</code> jest ustawieniem dla każdej instalacji, także
+gdy depozyt przepada, a <code>manual</code> jest <strong>eksperymentalny</strong>. Model <code>auto</code> został wycofany; zapisane
+<code>auto</code> jest czytane jako <code>off</code>, bez błędu i bez Alertu. <code>off</code> jest domyślne i wtedy plan jest
+identyczny bajt w bajt z wersją bez modelu.</p>
+<p>Co zmierzono, w rocznym odtworzeniu 40 domów z godzinowym RCE i baterią 10 kWh, rozliczonych wzorem
+rocznym i miesięcznym zapisem:</p>
+<ul>
+<li>żaden współczynnik nie obniżył rocznego rachunku o więcej niż 44 PLN, a współczynnik na limicie
+  podniósł go we wszystkich 40 domach, o 68–431 PLN (wzór roczny) albo 21–306 PLN (miesięczny zapis);</li>
+<li>przy miesięcznym RCEm współczynnik zmienia rachunek o mniej niż 10 PLN;</li>
+<li>instalacja, której depozyt przepada, niczego nie ustawia: <code>deposit_model</code> zostaje <code>off</code>. Wyłączenie
+  eksportu z baterii z powodu przepadającego depozytu kosztowało 154–662 PLN rocznie we wszystkich 16
+  zmierzonych domach (z ładowaniem z sieci i eksportem z baterii dozwolonymi).</li>
+</ul>
 <p><strong>Dwie części ceny zakupu.</strong> Model musi wiedzieć, która część ceny zakupu to energia (pokrywana z
 depozytu), a która dystrybucja (płacona gotówką). Cena zakupu interwału jest sumą obu, a podajesz
 stawki części dystrybucyjnej, nigdy energetycznej:</p>
@@ -1361,27 +1425,17 @@ Ujemna cena energii zostaje rzeczywistą ceną i nie ma części energetycznej d
 <tr>
 <td><code>deposit_model</code></td>
 <td><code>off</code></td>
-<td><code>off</code>: pełne ceny. <code>manual</code>: sam podajesz <code>export_value_factor</code>. <code>auto</code>: Energy Compass wylicza go z dwóch rocznych sum poniżej.</td>
+<td><code>off</code>: pełne ceny, ustawienie dla każdej instalacji. <code>manual</code> (eksperymentalny): sam podajesz <code>export_value_factor</code>. Zapisane <code>auto</code> (wycofane) jest czytane jako <code>off</code>.</td>
 </tr>
 <tr>
 <td><code>deposit_refund_percent</code></td>
 <td>30</td>
-<td>ρ, limit zwrotu jako udział wartości eksportu z miesiąca. 20 przy miesięcznym rozliczeniu RCEm.</td>
+<td>ρ, limit zwrotu jako udział wartości eksportu z miesiąca. 20 przy miesięcznym rozliczeniu RCEm. Sprzedawca zwracający udział depozytu (który zawiera współczynnik 1,23) ma tu 36,9 / 24,6.</td>
 </tr>
 <tr>
 <td><code>export_value_factor</code></td>
 <td>1,0</td>
 <td>Tylko <code>manual</code>: ile jest warta kolejna jednostka eksportu (0–1).</td>
-</tr>
-<tr>
-<td><code>deposit_yearly_value</code></td>
-<td>0</td>
-<td><code>auto</code>: depozyt, który spodziewasz się zaksięgować w 12 miesięcy (wartość eksportu w cenie rozliczeniowej, razem z 1,23). 0 = nieznane.</td>
-</tr>
-<tr>
-<td><code>deposit_yearly_energy_cost</code></td>
-<td>0</td>
-<td><code>auto</code>: to, co depozyt może pokryć w 12 miesięcy: opłata za energię czynną (za kWh) z poboru, brutto. Opłata handlowa, inne opłaty stałe i dystrybucja do niej nie wchodzą. 0 = nieznane.</td>
 </tr>
 <tr>
 <td><code>buy_distribution_mode</code></td>
@@ -1397,41 +1451,33 @@ Ujemna cena energii zostaje rzeczywistą ceną i nie ma części energetycznej d
 </table></section>
 <p>Presja limitu π (0 = depozytu brakuje albo mieści się pod limitem, 1 = limit wiąże) daje dwa
 współczynniki, które istnieją tylko wewnątrz optymalizatora:</p>
-<pre><code class="language-text">współczynnik wartości eksportu φx = 1 − π × (1 − ρ)     1 → ρ
+<pre><code class="language-text">współczynnik wartości eksportu φx = 1 − π × (1 − ρp)    1 → ρp,  ρp = ρ / 1,23
 współczynnik energii importu   φe = 1 − π               1 → 0
 cena zakupu w planie  = buy − (1 − φe) × część energetyczna buy
 cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 </code></pre>
 <ul>
-<li><strong><code>auto</code></strong>: niewykorzystany udział rocznego depozytu to <code>s = 1 − E / D</code> (<code>D</code> =
-  <code>deposit_yearly_value</code>, <code>E</code> = <code>deposit_yearly_energy_cost</code>), a π rośnie od 0 przy <code>s = ρ/2</code> do 1
-  przy <code>s = ρ</code>. Gdy <code>D</code> lub <code>E</code> wynosi 0, model nie ma danych: π = 0, a <code>reason</code> to <code>inputs_missing</code>;
-  plan pozostaje ważny i nie ma Alertu. Saldo depozytu celowo nie jest wejściem — saldo z jednego dnia
-  nic nie mówi bez dat księgowania.</li>
-<li><strong><code>manual</code></strong>: <code>φx</code> to Twój <code>export_value_factor</code> dokładnie tak, jak go wpisano, także poniżej ρ.
-  Z niego wynika tylko π, <code>π = clamp((1 − φx) / (1 − ρ), 0, 1)</code>, a <code>φe = 1 − π</code> idzie za nim (wartość
-  równa ρ lub niższa w pełni wyzerowuje część energetyczną importu). Przy <code>deposit_refund_percent</code> 100
-  oba współczynniki wynoszą 1.</li>
+<li><strong><code>manual</code></strong> (eksperymentalny): <code>φx</code> to Twój <code>export_value_factor</code> dokładnie tak, jak go wpisano,
+  także poniżej ρp. Z niego wynika tylko π, <code>π = clamp((1 − φx) / (1 − ρp), 0, 1)</code>, a <code>φe = 1 − π</code>
+  idzie za nim (wartość równa ρp lub niższa w pełni wyzerowuje część energetyczną importu). Przy
+  limicie (π = 1) <code>φx</code> to <code>ρp = ρ / 1,23</code>, a nie ρ: 0,244 dla 30 %, 0,163 dla 20 %. Przy
+  <code>deposit_refund_percent</code> 100 jest to 1/1,23, nie 1; ustawieniem, które niczego nie anuluje, jest
+  <code>deposit_model: off</code>.</li>
 <li><strong>Brak części dystrybucyjnej</strong> (stawki dystrybucji równe 0): cała cena zakupu byłaby liczona jako
   pokrywana z depozytu i import wyglądałby na darmowy. Przy π powyżej 0 <code>φe</code> jest więc wymuszone na 1,
   a <code>reason</code> to <code>split_missing</code>; <code>φx</code> nadal działa. Aby użyć modelu, ustaw stawki dystrybucji.</li>
-<li><strong>Histereza (<code>auto</code>)</strong>: π jest liczone raz na dobę lokalną (przy pierwszym przeliczeniu po lokalnej
-  północy) i utrzymywane przez dobę w magazynie <code>settlement</code>, więc restart i przeładowanie nie liczą
-  go od nowa. Nowa wartość zastępuje utrzymywaną tylko gdy różni się o co najmniej 0,10 albo wynosi
-  dokładnie 0 lub 1. Zmiana któregokolwiek z pięciu ustawień depozytu (<code>deposit_model</code>,
-  <code>deposit_refund_percent</code>, <code>export_value_factor</code>, <code>deposit_yearly_value</code>,
-  <code>deposit_yearly_energy_cost</code>) przelicza od razu.</li>
 <li><strong>Ujemne ceny sprzedaży</strong> zostają w całości: współczynnik skaluje tylko część dodatnią, bo ujemna
   cena jest realną opłatą.</li>
 <li><strong>Raportowane koszty się nie zmieniają.</strong> Koszt netto, <code>Plan.grid_cost</code>, czujniki kosztów, poziomy
   zużycia i próg <code>maximum_grid_charge_price</code> zostają w cenach z faktury; współczynników używa tylko cel
   planowania, przy każdej strategii i przed wagami strategii.</li>
 <li><strong>Próg sprzedaży z baterii</strong>, przykład (ceny brutto PGE G12 2026, sprawność cyklu 0,89, zużycie 0,05
-  za kWh, ρ = 30 %): sprzedaż z baterii i odkupienie energii w nocy opłaca się powyżej ok. 0,73
-  waluty/kWh, gdy limit nie wiąże, i powyżej ok. 0,71, gdy wiąże (tańszy nocny zakup równoważy niższą
-  wartość eksportu); przy ρ = 20 % próg rośnie do ok. 1,07. Zmienia się za to wykorzystanie nadwyżki PV (warta 0,12 zamiast 0,40 przy cenie
-  sprzedaży 0,40, więc trafia najpierw do baterii i elastycznego odbioru) oraz nocne ładowanie z
-  sieci, które pozostaje opłacalne.</li>
+  za kWh): sprzedaż z baterii i odkupienie energii w nocy opłaca się powyżej ok. 0,73
+  waluty/kWh, gdy limit nie wiąże. Gdy wiąże, próg wynosi ok. 0,88 przy ρ = 30 % i ok. 1,31 przy
+  ρ = 20 % (sprzedawca zwracający 36,9 % / 24,6 % depozytu: ok. 0,71 / 1,07). Zmienia się za to
+  wykorzystanie nadwyżki PV (warta 0,40 × ρp = 0,10 zamiast 0,40 przy cenie sprzedaży 0,40 i ρ = 30 %,
+  więc trafia najpierw do baterii i elastycznego odbioru) oraz nocne ładowanie z sieci, które
+  pozostaje opłacalne.</li>
 </ul>
 <p>Diagnostyka jest w atrybucie planu <code>dispatch_policy.settlement</code>:</p>
 <section class="table-scroll"><table>
@@ -1444,7 +1490,7 @@ cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 <tbody>
 <tr>
 <td><code>model</code></td>
-<td><code>off</code>, <code>manual</code> lub <code>auto</code></td>
+<td><code>off</code> lub <code>manual</code></td>
 </tr>
 <tr>
 <td><code>export_value_factor</code>, <code>import_energy_factor</code></td>
@@ -1455,29 +1501,19 @@ cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 <td>π</td>
 </tr>
 <tr>
-<td><code>unused_share</code></td>
-<td><code>s</code> dla <code>auto</code>, w innym przypadku <code>null</code></td>
-</tr>
-<tr>
-<td><code>refund_percent</code>, <code>yearly_deposit</code>, <code>yearly_energy_cost</code></td>
-<td>użyte wejścia</td>
+<td><code>refund_percent</code></td>
+<td>użyte wejście (ρ w procentach)</td>
 </tr>
 <tr>
 <td><code>distribution_mode</code></td>
 <td><code>included</code> albo <code>added</code></td>
 </tr>
 <tr>
-<td><code>evaluated_on</code></td>
-<td>lokalna data ostatniego liczenia π</td>
-</tr>
-<tr>
 <td><code>reason</code></td>
-<td><code>ok</code>, <code>off</code>, <code>inputs_missing</code>, <code>split_missing</code> (π powyżej 0, ale brak części dystrybucyjnej, <code>φe</code> wymuszone na 1) albo <code>held</code> (π z dzisiaj było już policzone)</td>
+<td><code>ok</code>, <code>off</code> albo <code>split_missing</code> (π powyżej 0, ale brak części dystrybucyjnej, <code>φe</code> wymuszone na 1)</td>
 </tr>
 </tbody>
 </table></section>
-<p>Odczyt <code>D</code> i <code>E</code> z długoterminowych statystyk zamiast wpisywania ich ręcznie nie wchodzi w skład tego
-wydania.</p>
 <h3 id="zapas-na-drogie-okresy">Zapas na drogie okresy</h3>
 <p>Prognoza zużycia jest średnią, więc plan, który rozładowuje baterię dokładnie do rezerwy na koniec
 drogiego okresu, mniej więcej co drugi dzień wypada za krótko. <code>peak_reserve_margin_kwh</code> każe
@@ -1600,8 +1636,8 @@ M4 Max):</p>
 przedziału już na domyślnym horyzoncie 24 h, a na horyzoncie 48 h żadna strategia nie kończy swoich
 prób (przy przedziale wyświetlania 15 minut znanych jest 18–67 z 96). Przy 48 h plan bazowy tych
 dwóch strategii dochodzi też do <code>solve_time_limit_s</code> i jest publikowany jako <code>time_limited</code>.
-<code>minimum_mode_minutes = 0</code> nie znosi ograniczenia: przy 24 h znanych jest 13 z 24 (<code>self_sufficiency</code>)
-i 20 z 24 (<code>backup_ready</code>) prób, czyli nadal <code>short_coverage</code>. Wolniejszy komputer, na przykład
+<code>minimum_mode_minutes = 0</code> nie znosi ograniczenia: przy 24 h znana jest 1 z 24 (<code>self_sufficiency</code>)
+i od 8 do 17 z 24 (<code>backup_ready</code>) prób, czyli nadal <code>short_coverage</code>. Wolniejszy komputer, na przykład
 Raspberry Pi, dochodzi do każdego z tych ograniczeń przy krótszym horyzoncie.</p>
 <p><a href="#głębokość-elastycznego-zużycia">Głębokość elastycznego zużycia</a> podlega tym samym dwóm ustawieniom:
 każde z jej pięciu obliczeń dostaje <code>probe_time_limit_s</code>, w ramach tego, co próby zostawiły z
@@ -2218,20 +2254,23 @@ i pełny opis: <a href="https://github.com/datamindzio/ha-energy-compass/blob/ma
 dodaje każdy przyrost licznika eksportu (<code>export_energy</code>), wyceniony według prognozy ceny
 (<code>export_prices</code>), do pomocnika liczbowego (<code>counter</code>); skoki powyżej <code>max_step_kwh</code> są pomijane.</p>
 <h2 id="sterownik-falownika-deye-solarman">Sterownik falownika Deye (Solarman)</h2>
-<p>Sam Energy Compass nigdy nie zapisuje do falownika. Robi to opcjonalny blueprint
-<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml"><code>deye_solarman_controller.yaml</code></a>:
-wykonuje plan na hybrydowym falowniku Deye przez
-<a href="https://github.com/davidrapan/ha-solarman">integrację Solarman</a>, zapisuje trzy prądy baterii i sześć
-programów czasowych (TOU), a każdy zapis sprawdza odczytem rejestrów.
-Stan sterownika przechowuje integracja. Przy włączonym <strong>Opcje → Sterownik Deye</strong> Energy Compass
-prowadzi tryb, zaakceptowany plan, sesję i unieważnienia, wyznacza czas kolejnego przebiegu i
-przechowuje stan pracy; blueprint zachowuje rachunek profilu, porównanie, bramki bezpieczeństwa i
-zapisy rejestrów. Nie trzeba pakietu, pomocników ani zmian w <code>configuration.yaml</code>, a zaakceptowany plan
-przeżywa przeładowanie wpisu. Wymaga Energy Compass 0.1.37 lub nowszego. Instalację opisuje
-<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">przewodnik instalacji</a> (EN). Blueprint generuje
-<code>tools/deye_controller/build.py</code>; zmienia się generator, nie YAML. Profil startowy
+<p>Energy Compass jest domyślnie doradczy i zapisuje do falownika tylko wtedy, gdy włączysz opcjonalny sterownik
+Deye (<strong>Opcje → Sterownik Deye</strong>, domyślnie wyłączony). Sterownik wykonuje plan na hybrydowym falowniku Deye przez
+<a href="https://github.com/davidrapan/ha-solarman">integrację Solarman</a>: zapisuje trzy prądy baterii i sześć programów
+czasowych (TOU), a każdy zapis sprawdza odczytem rejestrów. <strong>Silnik natywny</strong> działa wewnątrz integracji: nie
+trzeba blueprintu, automatyzacji, pakietu, pomocników ani zmian w <code>configuration.yaml</code>, zaakceptowany plan
+przeżywa przeładowanie wpisu, a Energy Compass prowadzi tryb, zaakceptowany plan, sesję i unieważnienia,
+wyznacza czas kolejnego przebiegu i przechowuje stan pracy. Wymaga Energy Compass 0.1.38 lub nowszego. Instalację opisuje
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">przewodnik instalacji</a> (EN). Profil startowy
 <code>deye_hybrid</code> wypełnia <code>idle_drain_kw</code> 0,13 i <code>refresh_minutes</code> 60 dla nowej instalacji; zob.
 <a href="#profile-startowe-nowe-instalacje">Profile startowe</a>.</p>
+<p>Dotychczasowy wykonawca, blueprint
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml"><code>deye_solarman_controller.yaml</code></a>, jest
+<strong>przestarzały</strong>. W tym wydaniu nadal działa jako silnik <code>blueprint</code> (wartość każdego wpisu utworzonego przed
+0.1.38), a zostanie usunięty w wydaniu po następnym, razem ze swoim generatorem <code>tools/deye_controller/build.py</code>,
+usługami <code>energy_compass.controller_runtime</code> i <code>energy_compass.controller_import_package</code> oraz opisującymi go
+sekcjami poniżej. Przejdź na silnik natywny według sekcji
+<a href="#migracja-z-blueprintu-na-silnik-natywny">Migracja z blueprintu na silnik natywny</a>.</p>
 <h3 id="włączenie-sterownika">Włączenie sterownika</h3>
 <p>Otwórz <strong>Opcje → Sterownik Deye</strong>, włącz <strong>Włącz sterownik Deye</strong> i wybierz urządzenie falownika
 Solarman (gdy jest tylko jedno, jest wstępnie wybrane). Energy Compass znajduje na tym urządzeniu
@@ -2241,13 +2280,75 @@ Odrzuca urządzenie, gdy brakuje programu lub jest wyłączony, gdy identyfikato
 wspólnego prefiksu albo gdy inny wpis Energy Compass już steruje tym urządzeniem. Włączenie przeładowuje
 wpis raz; przeniesienie sterownika na inne urządzenie działa na żywo. Oba są odrzucane, gdy tryb nie jest <code>Off</code> albo oczekuje przywrócenie: najpierw wybierz <code>Off</code> i poczekaj, aż <code>restore_pending</code> wygaśnie, bo inaczej nic nie przywróci profilu bazowego. Krok jest widoczny bez przełącznika
 ustawień eksperckich.</p>
+<p><strong>Silnik.</strong> Krok ma pole <strong>Silnik</strong>. <code>native</code> (domyślny przy nowym włączeniu) pozwala Energy Compass samemu
+wykonywać plan i zapisywać falownik przez encje Solarman oraz usługę <code>solarman.read_holding_registers</code>; blueprint ani
+automatyzacja nie są potrzebne. <code>blueprint</code> (przestarzały; wartość każdego wpisu utworzonego przed 0.1.38) zostawia
+wykonanie blueprintowi sterownika Deye. Zmiana silnika przeładowuje wpis i jest odrzucana, gdy tryb nie jest <code>Off</code> albo
+oczekuje przywrócenie. Silnik natywny znajduje prądy baterii, tryb pracy, SOC, napięcie i licznik rozładowania na tym samym
+urządzeniu po kluczach Solarman <code>battery_max_charging_current</code>, <code>battery_max_discharging_current</code>,
+<code>battery_grid_charging_current</code>, <code>battery_operation_mode</code>, <code>battery</code>, <code>battery_voltage</code> i <code>total_battery_discharge</code> oraz
+wskazuje, czego brakuje. Obsługiwane są tylko pakiety wysokonapięciowe (400–610 V): pakiet zmierzony poniżej 400 V jest odrzucany.</p>
+<p><strong>Limity i przejęcie</strong> (ustawienia eksperckie). Maksymalna moc baterii domyślnie to mniejsza z mocy ładowania
+i rozładowania z ustawień Energy Compass; prądy domyślnie wynoszą maksimum encji, ograniczone tą mocą podzieloną przez 400 V.
+Można ustawić prądy HOLD, po osiągnięciu celu rozładowania i balansowania, sufit napięcia ładowania z sieci, zatwierdzone tryby
+baterii, dawne automatyzacje, na które sterownik czeka, encje telemetrii, licznik rozładowania i nadpisanie każdej encji; puste
+pole zachowuje wartość domyślną. Limity działają od następnego przebiegu bez przeładowania. Gdy istnieje jedna automatyzacja
+blueprintu, jej wejścia są wczytywane do tych pól do sprawdzenia przed zapisem.</p>
+<p>Nie włączaj sterownika w instalacji z opustem: właściwym planem jest tam własny tryb autokonsumpcji
+falownika (zob. <a href="#profile-startowe-nowe-instalacje">Profile startowe</a>).</p>
 <p>Instalacja, która używała pakietu 0.1.36, ma jeden wpis Energy Compass i dokładnie jedno urządzenie Solarman
 ze wszystkimi sześcioma programami, dostaje sterownik włączony automatycznie przy pierwszym starcie
 0.1.37. Tryb zaczyna od <code>Off</code>, więc nic się nie zapisuje, dopóki go nie wybierzesz; zob.
 <a href="#migracja-z-pakietu-0136-i-starsze">Migracja z pakietu</a>.</p>
+<h3 id="obsługiwany-sprzęt">Obsługiwany sprzęt</h3>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Co</th>
+<th>Zweryfikowane</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Falownik</td>
+<td>trójfazowe hybrydowe falowniki wysokonapięciowe Deye <code>SG0*HP3</code>; sensor <code>device</code> Solarman podaje typ „HV 3-Phase Hybrid Inverter”</td>
+</tr>
+<tr>
+<td>Wersja protokołu</td>
+<td>1.4 (atrybut <code>Protocol Version</code> tego sensora)</td>
+</tr>
+<tr>
+<td>Pakiet baterii</td>
+<td>wysokonapięciowy pakiet litowy (LFP), 400–610 V</td>
+</tr>
+<tr>
+<td>Integracja</td>
+<td><a href="https://github.com/davidrapan/ha-solarman">ha-solarman</a> 25.08.16; encje są znajdowane po kluczach tłumaczeń, a rejestry czytane usługą <code>solarman.read_holding_registers</code></td>
+</tr>
+<tr>
+<td>Modele Deye 48 V (niskonapięciowe)</td>
+<td><strong>jeszcze nieobsługiwane</strong>: krok opcji odmawia włączenia silnika natywnego poniżej 400 V, a przebieg poza 400–610 V niczego nie zapisuje</td>
+</tr>
+</tbody>
+</table></section>
+<p>Przetestowany egzemplarz to <code>SG0*HP3</code> z oprogramowaniem płyty sterującej <code>3002-1095-11408</code>. Wersje oprogramowania
+są zapisywane w atrybucie <code>hardware</code>, ale nie są porównywane: o różnicach między wersjami nic nie wiadomo.
+Urządzenie, którego typ i protokół nie są na liście, nie jest blokowane. Zgłasza problem „Falownik Deye
+niezweryfikowany” (ostrzeżenie, które można zamknąć) i ustawia <code>hardware.verified</code> na <code>false</code>; użyj najpierw
+Simulation, jak przy każdej instalacji.</p>
+<p><strong>Kontrola układu rejestrów.</strong> Przed pierwszym zapisem wymuszającym profil w sesji silnik natywny czyta rejestry
+108–177 i porównuje je ze stanami 27 encji, które zapisuje (trzy prądy i 24 wartości TOU). Liczby i selecty muszą się
+zgadzać; select, którego rejestr ma wartość spoza znanej mapy (<code>Disabled</code>, <code>Grid</code>, <code>Sell</code>), nic nie mówi o układzie
+i jest pomijany, bo sterownik i tak go nadpisuje. Każda inna różnica, brakujący rejestr lub niedostępna encja
+zatrzymuje przebieg z kodem <code>blocked</code> i powodem <code>layout_mismatch</code>, który wymienia encje; nic nie jest zapisywane,
+a kontrola powtarza się w kolejnym przebiegu, bo encje mogą o jeden odczyt Solarman opóźniać się za ręczną zmianą.
+Kontrola działa też w Simulation, więc zły układ widać przed Auto. Zaliczona kontrola obowiązuje dla sesji,
+urządzenia i zestawu odczytywanych encji: zmiana urządzenia lub nadpisanie encji uruchamia ją od nowa. Przywrócenie
+profilu bazowego nie czeka na kontrolę, bo zapisuje przez własne encje Solarman, a od układu zależy tylko odczyt
+potwierdzający; wymuszenie profilu czeka.</p>
 <h3 id="encje-sterownika">Encje sterownika</h3>
-<p>Trzy encje istnieją tylko przy włączonym sterowniku; należą do urządzenia Energy Compass.
-<code>&lt;name&gt;</code> to tytuł wpisu.</p>
+<p>Trzy encje istnieją tylko przy włączonym sterowniku, czwarta przy silniku natywnym; należą do urządzenia
+Energy Compass. <code>&lt;name&gt;</code> to tytuł wpisu.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2260,7 +2361,7 @@ ze wszystkimi sześcioma programami, dostaje sterownik włączony automatycznie 
 <tr>
 <td><code>deye_controller</code></td>
 <td><code>sensor.&lt;name&gt;_deye_controller</code> (znacznik czasu)</td>
-<td>stan to najbliższa chwila, w której blueprint musi działać (najwcześniejszy koniec wiersza, <code>valid_until</code>, <code>coverage_end</code> albo granica programu TOU); atrybuty to poniższy kontrakt</td>
+<td>stan to najbliższa chwila, w której wykonawca musi działać (najwcześniejszy koniec wiersza, <code>valid_until</code>, <code>coverage_end</code> albo granica programu TOU); atrybuty to poniższy kontrakt</td>
 </tr>
 <tr>
 <td><code>deye_mode</code></td>
@@ -2272,10 +2373,15 @@ ze wszystkimi sześcioma programami, dostaje sterownik włączony automatycznie 
 <td><code>sensor.&lt;name&gt;_deye_controller_runtime</code></td>
 <td>kod przebiegu (niżej); atrybut <code>runtime</code> zawiera stan, powód, potwierdzone wartości i niepewne rejestry</td>
 </tr>
+<tr>
+<td><code>deye_pause</code></td>
+<td><code>switch.&lt;name&gt;_pause_inverter_writes</code></td>
+<td><strong>Wstrzymaj zapisy do falownika</strong>; tylko przy silniku natywnym. Gdy włączony, sterownik liczy i publikuje decyzję, ale nie wysyła żadnego zapisu; <code>restore_pending</code> i niepewne rejestry pozostają bez zmian, a kod stanu to <code>paused</code>. Przebieg w toku zatrzymuje się przed kolejnym zapisem; wyłączenie przełącznika zleca przebieg. Tryb <code>Off</code> zachowuje znaczenie: gdy nie ma czego przywracać, przebieg zgłasza zwolnienie także przy pauzie, a gdy przywrócenie oczekuje, pauza wygrywa i przywrócenie czeka. Flaga jest zapisywana od razu, przeżywa przeładowanie i jest zerowana po przełączeniu silnika na <code>blueprint</code></td>
+</tr>
 </tbody>
 </table></section>
 <p>Identyfikatory zależą od nazwy wpisu i języka, w którym encje utworzono (instalacja polska dostaje nazwy
-w rodzaju <code>…_sterownik_deye</code>); odczytaj je ze strony urządzenia. Blueprint potrzebuje tylko sensora
+w rodzaju <code>…_sterownik_deye</code>); odczytaj je ze strony urządzenia. Silnik blueprintowy potrzebuje tylko sensora
 sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.</p>
 <section class="table-scroll"><table>
 <thead>
@@ -2341,6 +2447,10 @@ sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.</p>
 <td><code>tou</code></td>
 <td>stany 30 encji TOU; zmiana uruchamia blueprint ponownie; nie jest zapisywany w historii</td>
 </tr>
+<tr>
+<td><code>hardware</code></td>
+<td>falownik według sensora <code>device</code> Solarman: typ urządzenia, protokół, oprogramowanie płyty sterującej i komunikacyjnej, moc znamionowa, model z rejestru urządzeń oraz <code>verified</code> (para typ i protokół jest na <a href="#obsługiwany-sprzęt">liście przetestowanych</a>); bez numeru seryjnego</td>
+</tr>
 </tbody>
 </table></section>
 <p>Sensor stanu pracy ma zapisywane atrybuty <code>restore_pending</code>, <code>reason</code>, <code>state</code>, <code>requested_mode</code>,
@@ -2349,6 +2459,10 @@ i <code>updated_at</code>, które nie trafiają do historii. Jest zapisywany od 
 z zapisywanych atrybutów, a inne zmiany najwyżej raz na minutę. Akceptacje, unieważnienia, porzucenia
 sesji, zmiany trybu, importy i zmiany urządzenia trafiają do historii 50 wpisów w magazynie i w
 diagnostyce integracji (<code>deye_controller</code>); zdarzenia nie są wysyłane.</p>
+<p>Przy silniku natywnym sensor stanu pracy ma też <code>last_run</code> (nie jest zapisywany w historii): co uruchomiło ostatni
+przebieg, decyzję, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony lub zablokowany) i jak
+przebieg się zakończył. Ostatnie 50 przebiegów jest przechowywane w pamięci, nie w magazynie, i widnieje w diagnostyce
+jako <code>run_history</code>. Wpis w dzienniku zdarzeń podaje stary i nowy kod stanu pracy oraz potwierdzony tryb, gdy któryś się zmieni.</p>
 <h3 id="usługi">Usługi</h3>
 <section class="table-scroll"><table>
 <thead>
@@ -2542,7 +2656,7 @@ ustawia progi, na końcu włącza kierunek.</p>
 </tr>
 <tr>
 <td><code>blocked</code></td>
-<td>brak ważnego planu albo niespełniony warunek; <code>runtime.reason</code> mówi który</td>
+<td>brak ważnego planu albo niespełniony warunek; <code>reason</code> i <code>reason_code</code> mówią który</td>
 </tr>
 <tr>
 <td><code>restored</code></td>
@@ -2560,19 +2674,198 @@ ustawia progi, na końcu włącza kierunek.</p>
 <td><code>simulation_blocked</code></td>
 <td>Simulation odrzucone przy wymaganym przywróceniu</td>
 </tr>
+<tr>
+<td><code>paused</code></td>
+<td>przełącznik wstrzymania jest włączony (silnik natywny): decyzja jest liczona, nic nie jest zapisywane</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>sam przebieg się nie powiódł (silnik natywny): wyjątek albo nie dało się odczytać Energy Compass lub encji Solarman; <code>reason_code</code> to <code>run_failed</code> albo <code>controller_unavailable</code>. Po trzech nieudanych przebiegach z rzędu pojawia się problem „Przebiegi sterownika Deye kończą się błędem”; następny udany przebieg usuwa oba</td>
+</tr>
 </tbody>
 </table></section>
-<p>Teksty <code>runtime.reason</code> są w tej wersji po polsku. Każda zmiana stanu pracy przechodzi przez <code>energy_compass.controller_runtime</code>; gdy to wywołanie się nie powiedzie, przebieg zatrzymuje się przed zapisem kolejnego rejestru.</p>
+<p><code>runtime.reason_code</code> to stały kod, a <code>runtime.reason</code> jego tekst. Silnik natywny zapisuje tekst w języku Home
+Assistant (po polsku dla <code>pl</code>, w pozostałych przypadkach po angielsku); teksty silnika blueprintowego są po polsku.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th><code>reason_code</code></th>
+<th>Znaczenie</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ok</code></td>
+<td>nic nie blokuje planu</td>
+</tr>
+<tr>
+<td><code>telemetry_stale</code></td>
+<td>encje telemetrii nie są liczbami lub są starsze niż 30 s, napięcie poza 400–610 V albo SOC poza 0–100 %</td>
+</tr>
+<tr>
+<td><code>tou_times</code></td>
+<td>sześć godzin startu TOU nie jest różnych i rosnących</td>
+</tr>
+<tr>
+<td><code>session_wait</code></td>
+<td>w tej sesji nie zaakceptowano jeszcze planu</td>
+</tr>
+<tr>
+<td><code>plan_revoked</code></td>
+<td>zaakceptowana generacja została unieważniona po błędzie</td>
+</tr>
+<tr>
+<td><code>plan_sources</code></td>
+<td>Alert jest włączony albo publikacja nie jest gotowa</td>
+</tr>
+<tr>
+<td><code>battery_params</code></td>
+<td>zaakceptowany plan nie ma parametrów baterii</td>
+</tr>
+<tr>
+<td><code>plan_expired</code></td>
+<td>pierwotny termin ważności minął albo żaden przedział nie obejmuje teraz</td>
+</tr>
+<tr>
+<td><code>plan_malformed</code></td>
+<td>przedział z brakującymi lub błędnymi wartościami; wymagany nowy plan</td>
+</tr>
+<tr>
+<td><code>operation_mode</code></td>
+<td>tryb baterii falownika to nie Capacity ani Voltage</td>
+</tr>
+<tr>
+<td><code>mode_not_commissioned</code></td>
+<td>tryb baterii nie jest w <code>commissioned_battery_modes</code></td>
+</tr>
+<tr>
+<td><code>voltage_range</code></td>
+<td>cel w trybie Voltage poza 495–560 V</td>
+</tr>
+<tr>
+<td><code>settings_range</code></td>
+<td>brak zakresu lub kroku encji albo cel poza zakresem</td>
+</tr>
+<tr>
+<td><code>takeover_blocked</code></td>
+<td>automatyzacja z <code>old_writers</code> jest włączona lub działa</td>
+</tr>
+<tr>
+<td><code>blueprint_active</code></td>
+<td>włączona jest automatyzacja używająca blueprintu Deye (niżej); bez żadnych zapisów (nawet przywrócenia), a problem w Naprawach ją wskazuje</td>
+</tr>
+<tr>
+<td><code>layout_mismatch</code></td>
+<td>rejestry nie zgadzają się ze stanami encji (zob. <a href="#obsługiwany-sprzęt">Obsługiwany sprzęt</a>)</td>
+</tr>
+<tr>
+<td><code>paused</code></td>
+<td>przełącznik wstrzymania jest włączony</td>
+</tr>
+<tr>
+<td><code>verification_required</code></td>
+<td>zapisy zakończone, ale nie każdy rejestr potwierdzony</td>
+</tr>
+<tr>
+<td><code>write_failed</code></td>
+<td>rejestr nie potwierdził się po ponowieniach</td>
+</tr>
+<tr>
+<td><code>simulation_blocked</code></td>
+<td>Simulation odrzucone przy wymaganym przywróceniu</td>
+</tr>
+<tr>
+<td><code>run_failed</code></td>
+<td>przebieg zgłosił wyjątek; szczegóły w dzienniku Home Assistant</td>
+</tr>
+<tr>
+<td><code>controller_unavailable</code></td>
+<td>nie dało się odczytać Energy Compass lub encji Solarman; nic nie zapisano</td>
+</tr>
+</tbody>
+</table></section>
+<p>Każda zmiana stanu pracy silnika blueprintowego przechodzi przez <code>energy_compass.controller_runtime</code>; gdy to wywołanie się nie powiedzie, przebieg zatrzymuje się przed zapisem kolejnego rejestru. Silnik natywny odrzuca tę usługę, więc przebieg blueprintu, który się prześlizgnie, zatrzyma się przed pierwszym zapisem.</p>
+<h3 id="śledzenie-przebiegu-silnik-natywny">Śledzenie przebiegu (silnik natywny)</h3>
+<p>Blueprint zostawiał ślad automatyzacji na każdy przebieg; silnik natywny zastępują:</p>
+<ul>
+<li><code>reason</code> i <code>reason_code</code> sensora stanu pracy oraz jego atrybut <code>last_run</code> (nie jest zapisywany w historii): wyzwalacz,
+  decyzja, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony, zablokowany) i jak przebieg się zakończył;</li>
+<li>diagnostyka integracji (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code> i <code>run_history</code>, ostatnie 50 przebiegów
+  (w pamięci, więc restart je czyści);</li>
+<li>wpis w dzienniku zdarzeń sensora stanu pracy za każdym razem, gdy zmieni się kod stanu pracy lub potwierdzony tryb;</li>
+<li>kod <code>error</code> oraz problemy w Naprawach „Przebiegi sterownika Deye kończą się błędem” i „Automatyzacja blueprintu
+  Deye nadal działa”, więc zatrzymany sterownik widać bez czytania logów.</li>
+</ul>
 <h3 id="gdy-energy-compass-jest-niedostępny">Gdy Energy Compass jest niedostępny</h3>
 <p>Bez Energy Compass nie da się odczytać ani trybu, ani stanu pracy, więc żadnego zapisu nie można uznać
 za bezpieczny ani zarejestrować. Blueprint zatrzymuje się więc na pierwszym kroku, bez żadnego zapisu
 i wywołania usługi, gdy sensor sterownika nie istnieje lub jest niedostępny, ma inny <code>controller_schema</code>
 albo nie ma <code>mode_entity</code>: ślad mówi <code>Energy Compass niedostępny: sterowanie wstrzymane bez zapisów</code>.
+Silnik natywny robi to samo bez śladu: przebieg kończy się bez zapisu, kod stanu pracy to <code>error</code> z powodem
+<code>controller_unavailable</code>, a po trzech takich przebiegach pojawia się problem w Naprawach.
 Falownik zachowuje ostatni profil; wymuszony kierunek TOU kończy się na najbliższej granicy programu TOU,
 a prądy baterii zostają. Jeśli Energy Compass zniknie w środku przebiegu, następne wywołanie stanu pracy
 się nie powiedzie i przebieg zatrzyma się przed kolejnym zapisem rejestru. Home Assistant zgłasza
 uszkodzony wpis; napraw go albo zwolnij falownik ręcznie.</p>
+<h3 id="limity-i-wartości-domyślne-silnik-natywny">Limity i wartości domyślne (silnik natywny)</h3>
+<p>Ustawia je grupa ekspercka <strong>Limity i przejęcie</strong> w kroku opcji; puste pole zachowuje wartość domyślną,
+a zmiana działa od następnego przebiegu bez przeładowania. W kodzie nie ma wpisanych wartości żadnego domu.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Opcja</th>
+<th>Domyślnie</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_power_w</code></td>
+<td>mniejsza z mocy ładowania i rozładowania w ustawieniach Energy Compass, w W</td>
+</tr>
+<tr>
+<td><code>max_current</code>, <code>relinquish_current</code></td>
+<td>atrybut <code>max</code> encji prądu ładowania, ograniczony do <code>max_power_w</code> / 400 V</td>
+</tr>
+<tr>
+<td><code>max_grid_current</code></td>
+<td>atrybut <code>max</code> encji prądu z sieci, ograniczony tak samo</td>
+</tr>
+<tr>
+<td><code>hold_grid_current</code>, <code>reached_discharge_current</code>, <code>balance_grid_current</code></td>
+<td>1 A, 1 A, 2 A</td>
+</tr>
+<tr>
+<td><code>voltage_grid_charge_ceiling</code></td>
+<td>55,2 V</td>
+</tr>
+<tr>
+<td><code>commissioned_battery_modes</code></td>
+<td>Capacity</td>
+</tr>
+<tr>
+<td><code>old_writers</code></td>
+<td>brak</td>
+</tr>
+<tr>
+<td><code>telemetry_entities</code></td>
+<td>sensory SOC i napięcia urządzenia</td>
+</tr>
+<tr>
+<td><code>discharge_energy_entity</code></td>
+<td>sensor łącznego rozładowania baterii urządzenia, gdy jest dokładnie jeden</td>
+</tr>
+<tr>
+<td>nadpisania encji</td>
+<td>brak; sześć encji jest znajdowanych na urządzeniu po kluczach tłumaczeń Solarman</td>
+</tr>
+</tbody>
+</table></section>
+<p>Gdy moc lub któryś limit prądu wyszedłby zerowy (na przykład moc ładowania 0 w ustawieniach baterii), krok opcji
+go nie zapisze: pokaże grupę i poprosi o wpisanie limitów. Włączenie silnika natywnego wymaga też liczbowego odczytu
+napięcia baterii, bo po nim odróżnia pakiet od 48 V.</p>
 <h3 id="wejścia">Wejścia</h3>
+<p>To wejścia przestarzałego blueprintu, z jego własnymi wartościami domyślnymi; silnik natywny bierze wartości z
+powyższej tabeli.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2697,6 +2990,36 @@ i magazyn sterownika, więc sterownik wymaga 0.1.37 razem z nowym blueprintem.</
 Wycofanie przed usunięciem pakietu: wyłącz nową automatyzację, przywróć stary blueprint i wejścia i
 włącz ją; import nigdy nie zapisał pomocników pakietu. Powrót do 0.1.36 wymaga wcześniejszego
 przywrócenia starego blueprintu i pakietu.</p>
+<h3 id="migracja-z-blueprintu-na-silnik-natywny">Migracja z blueprintu na silnik natywny</h3>
+<p>Oba silniki nigdy nie zapisują razem. Wybranie <code>native</code> w <strong>Opcje → Sterownik Deye → Silnik</strong> jest odrzucane,
+dopóki tryb nie jest <code>Off</code>, a przywrócenie nie zostanie wykonane. Gdy silnikiem jest <code>native</code>:</p>
+<ul>
+<li>select trybu odmawia wyjścia z <code>Off</code> (błąd wymienia automatyzację), dopóki włączona jest automatyzacja
+  używająca blueprintu;</li>
+<li>przebieg, który by zapisywał (tryb <code>Auto</code> albo <code>Off</code> z oczekującym przywróceniem), zatrzymuje się przy takiej włączonej
+  automatyzacji: nic nie jest zapisywane, powód stanu to <code>blueprint_active</code> (z nazwą automatyzacji), a problem w
+  Naprawach trwa do jej wyłączenia. Nawet przywrócenie BASE nie jest wtedy zapisywane, więc falownik zachowuje ostatni
+  nadany profil; po wyłączeniu automatyzacji sterownik kontynuuje (albo przywraca BASE) przy następnym przebiegu. Tryb
+  <code>Off</code> bez niczego do przywrócenia i <code>Simulation</code> działają jak zwykle i nie są blokowane. Dotyczy to też przeładowania
+  z trybem <code>Auto</code> i blueprintu, który nigdy nie został zaktualizowany;</li>
+<li><code>energy_compass.controller_runtime</code> odrzuca każde wywołanie, więc przebieg blueprintu, który się prześlizgnie,
+  zatrzyma się przed pierwszym zapisem.</li>
+</ul>
+<p>Gdy dokładnie jedna automatyzacja używa blueprintu na tym samym urządzeniu Solarman (jej encje ładowania,
+rozładowania, sieci i trybu należą do tego urządzenia), jej limity i nadpisania encji są wczytywane do grupy
+eksperckiej do sprawdzenia; nic nie jest stosowane przed zapisem. Automatyzacja na innym falowniku nie wczytuje niczego.
+Wczytanie działa, gdy silnikiem nadal jest <code>blueprint</code>.</p>
+<ol>
+<li>Wybierz tryb <code>Off</code> i poczekaj, aż <code>restore_pending</code> będzie wyłączone, a kod stanu to <code>restored</code> (albo przebieg
+   zgłosi zwolnienie).</li>
+<li>Wyłącz automatyzację blueprintu. Nie zatrzymuj jej wykonań w środku; poczekaj, aż się zakończą.</li>
+<li><strong>Opcje → Sterownik Deye:</strong> ustaw silnik na <code>native</code>, sprawdź wczytane limity i zapisz. Wpis się przeładuje.</li>
+<li>Wybierz <code>Simulation</code>, przez pewien czas porównuj <code>runtime.desired</code> z tym, co zapisywał blueprint, potem wybierz <code>Auto</code>
+   w wierszu <code>CHARGE_PV</code> lub <code>SELF_CONSUME</code>.</li>
+<li>Po tygodniu usuń automatyzację i plik blueprintu.</li>
+</ol>
+<p>Wycofanie: wybierz <code>Off</code>, poczekaj na <code>restored</code>, ustaw silnik na <code>blueprint</code>, włącz automatyzację, potem wybierz tryb.
+Flaga wstrzymania jest zerowana, gdy silnik wraca na <code>blueprint</code>.</p>
 <h3 id="przykładowe-dashboardy">Przykładowe dashboardy</h3>
 <p>Generuje je <code>tools/dashboards/build.py</code> z zastępczymi identyfikatorami encji:</p>
 <section class="table-scroll"><table>
@@ -2713,7 +3036,7 @@ przywrócenia starego blueprintu i pakietu.</p>
 </tr>
 <tr>
 <td><code>controller_diagnostics.yaml</code></td>
-<td>stan optymalizatora i sterownika, powód, potwierdzony tryb, ostatnie potwierdzenie, ważność planu i prognozy, aktywny program TOU, niepotwierdzone zapisy, flagi sesji i przywrócenia oraz odczyt trzech limitów prądu</td>
+<td>stan optymalizatora i sterownika, powód i kod powodu, falownik i czy jest zweryfikowany, ostatni przebieg, potwierdzony tryb, ostatnie potwierdzenie, ważność planu i prognozy, aktywny program TOU, niepotwierdzone zapisy, flagi sesji i przywrócenia oraz odczyt trzech limitów prądu</td>
 </tr>
 <tr>
 <td><code>plan_chart.yaml</code></td>
@@ -2727,11 +3050,12 @@ przywrócenia starego blueprintu i pakietu.</p>
 </table></section>
 <p>Panel używa kart natywnych oraz ApexCharts Card do prognozy SOC; oba wykresy wymagają ApexCharts Card. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/builder.html">Generator YAML</a> wypełnia każdą z nich Twoimi encjami, pojemnością
 i językiem. Opis: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">przewodnik instalacji</a> (EN).</p>
-<p>Przykłady sterownika używają trzech ról: <code>deye_controller</code>, <code>deye_mode</code> i <code>deye_runtime</code> (domyślnie
-<code>sensor.energy_compass_deye_controller</code>, <code>select.energy_compass_deye_mode</code> i
-<code>sensor.energy_compass_deye_controller_runtime</code>). Gdy Twoje identyfikatory są inne, przekaż generatorowi
-<code>--entity deye_mode=select.moj_tryb</code> albo wypełnij je w generatorze YAML; sesja, flaga przywrócenia, najbliższa
-zmiana TOU i prefiks TOU są czytane z atrybutów sterownika.</p>
+<p>Przykłady sterownika używają czterech ról: <code>deye_controller</code>, <code>deye_mode</code>, <code>deye_runtime</code> i <code>deye_pause</code> (domyślnie
+<code>sensor.energy_compass_deye_controller</code>, <code>select.energy_compass_deye_mode</code>,
+<code>sensor.energy_compass_deye_controller_runtime</code> i <code>switch.energy_compass_pause_inverter_writes</code>). Panel pokazuje
+przełącznik wstrzymania tylko wtedy, gdy encja istnieje, czyli przy silniku natywnym. Gdy Twoje identyfikatory są inne,
+przekaż generatorowi <code>--entity deye_mode=select.moj_tryb</code> albo wypełnij je w generatorze YAML; sesja, flaga przywrócenia,
+najbliższa zmiana TOU i prefiks TOU są czytane z atrybutów sterownika.</p>
 <h2 id="energy-atlas-opcjonalnie">Energy Atlas (opcjonalnie)</h2>
 <p>Energy Atlas to osobna usługa Datamindz, która agreguje zanonimizowaną telemetrię z wielu instalacji
 do celów badawczych i porównawczych. Wysyłanie danych jest <strong>opcjonalne i domyślnie wyłączone</strong>: przy
@@ -2921,7 +3245,7 @@ błąd wskazuje miejsce: <code>days[n][i]</code> (dzień <code>n</code> od 1, in
 pokryć depozyt (reszta <code>buy</code> to dystrybucja), w tych samych jednostkach, nie większa niż <code>buy</code>; puste
 lub brak oznacza 0. Ma znaczenie tylko z
 <a href="#wartość-depozytu-w-net-billingu">modelem depozytu</a>, który włączasz przez <code>--set
-deposit_model=manual --set export_value_factor=0.3</code> (albo <code>auto</code> z dwiema rocznymi wartościami).
+deposit_model=manual --set export_value_factor=0.3</code> (eksperymentalny).
 <code>buy</code> zostaje ceną z faktury, więc <code>buy_distribution_mode</code>, <code>buy_distribution_rate</code> i
 <code>buy_distribution_off_peak_rate</code> nie są czytane — ceny pochodzą z pliku — a ostrzeżenie o tym
 informuje. Koszty są raportowane w cenach z pliku niezależnie od współczynników.</p>
@@ -2958,6 +3282,9 @@ grupowane w dni według lokalnej daty <code>start</code>; ustawienia podaje się
   nie jest nadrabiany. <code>DISCHARGE_GRID</code> rozładowuje zaplanowaną energię, <code>HOLD</code> zatrzymuje baterię. Eksport ponad
   <code>grid_export_kw</code> jest ucinany (curtailment), a zmagazynowana energia nie jest eksportowana ponad
   dotychczasową produkcję PV, gdy włączone jest <strong>Sell only PV</strong> (<code>limit_export_to_pv</code>).</li>
+<li><strong>W pliku z opustem koszty to ceny godzinowe, a nie rozliczenie.</strong> Opust jest rozliczany w rocznych
+  kWh (<a href="#profile-startowe-nowe-instalacje">Profile startowe</a>), więc <code>plan − self_use</code> nie jest tam
+  oszczędnością; nie porównuj po nim strategii.</li>
 <li><a href="#zapas-na-drogie-okresy">Zapas na drogie okresy</a> (<code>peak_reserve_margin_kwh</code>) jest odtwarzany jak w integracji: wymaga
   <code>limit_grid_charge_price</code> (jego pułap to cena „tania”), w przeciwnym razie ostrzeżenie mówi, że nie
   ma efektu.</li>
@@ -2979,6 +3306,56 @@ pobór z sieci + PV − eksport do sieci). <code>pv_forecast</code> i <code>load
 encje prognoz <strong>przed</strong> interwałem — atrybut planu Compass <code>intervals</code> (albo historia Solcast/prognozy)
 zapisany w chwili planowania; użycie wartości rzeczywistej jako prognozy daje wyidealizowany plan
 bez błędu prognozy. Dla statystyk godzinowych ustaw <code>interval_minutes: 60</code>.</p>
+<h3 id="roczna-wyrocznia-rozliczenia">Roczna wyrocznia rozliczenia</h3>
+<p><code>tools/replay_year.py</code> to roczny odpowiednik replayu dni, do pytań, na które doba nie odpowie: co
+<a href="#wartość-depozytu-w-net-billingu">ustawienie depozytu</a> robi z <strong>rachunkiem za rok</strong>. Odtwarza kolejne
+godziny tak, jak pracuje integracja: kroczące okno <code>horizon_hours</code> (24 h), przeplanowywane co
+<code>--refresh-hours</code> godzin (domyślnie 6) na prognozie, stan naładowania przenoszony przez północ,
+dobowe liczniki eksportu PV zerowane o <strong>lokalnej</strong> północy, każdy plan wykonany na szeregu
+rzeczywistym, nieudane rozwiązanie wykonane jako autokonsumpcja. Godzinowy pobór i eksport, który z
+tego wychodzi, wyceniają dwa rachunki:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Rachunek</th>
+<th>Reguła</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>annual</code></td>
+<td>depozyt D = 1,23 × V (V = wartość oddanej energii po <code>max(sell, 0)</code>) płaci część energetyczną E poboru; zwrot to <code>min(D − min(D, E), ρ × V)</code></td>
+</tr>
+<tr>
+<td><code>ledger</code></td>
+<td>depozyt każdego miesiąca to rocznik księgowany w miesiącu następnym, wykorzystywany od najstarszego, ważny 12 miesięcy; po wygaśnięciu wraca <code>min(niewykorzystane, ρ × V miesiąca)</code>, reszta przepada. To stan okresowy powtarzanego roku: <code>D ≤ E</code> daje wynik roczny, <code>D &gt; E</code> rok rozbiegowy od pełnego konta (każdy żywy rocznik z całym depozytem), potem rok mierzony</td>
+</tr>
+</tbody>
+</table></section>
+<pre><code>python tools/replay_year.py site.json --set deposit_model=manual --set export_value_factor=0.3
+python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
+</code></pre>
+<p>Wypisuje (albo z <code>--json</code> zwraca) oba rachunki, <code>wear</code>, dryf SOC (początkowy minus końcowy SOC po
+średniej cenie zakupu), <code>K</code> = rachunek roczny + zużycie + dryf SOC (<code>KL</code> z księgą), <code>D</code>, <code>V</code>, <code>E</code> oraz
+zwrot i przepadek każdego rachunku. Dwa przebiegi porównuje różnica <code>K</code> (albo <code>KL</code>); <code>--self-use</code> daje
+punkt odniesienia bez planera. Wejście to jeden obiekt JSON (<code>timezone</code>, <code>start</code>, <code>rho</code>, <code>fixed</code>,
+<code>initial_soc_percent</code>, <code>settings</code> i <code>hours[]</code>) albo CSV, jeden wiersz na <strong>godzinę</strong> z <code>start</code>, <code>buy</code>,
+<code>sell</code>, <code>buy_energy</code>, <code>pv_forecast</code>, <code>load_forecast</code>, <code>pv</code>, <code>load</code> — te same wartości co wyżej; format
+opisuje docstring narzędzia, a <code>--rho</code>, <code>--fixed</code> i <code>--initial-soc</code> nadpisują plik. Godziny muszą
+następować kolejno, jedna rzeczywista godzina na wiersz; wiersz JSON może mieć własny <code>start</code>, który
+musi wtedy zgadzać się z jego pozycją. <code>--refresh-hours</code> nie może przekraczać <code>horizon_hours</code>. Liczba
+nieudanych rozwiązań planu trafia na stderr w obu formatach wyjścia.</p>
+<p>Znaczniki czasu to rzeczywiste chwile, więc rok z obiema zmianami czasu (doba 25-godzinna i
+23-godzinna) jest czytany poprawnie; lokalna data i miesiąc (zerowanie liczników, miesiąc księgi)
+pochodzą z <code>timezone</code>. Znacznik z przesunięciem (<code>+02:00</code>, <code>Z</code>) jest dokładny. Znacznik bez
+przesunięcia jest lokalny dla <code>timezone</code>: w powtórzonej jesiennej godzinie to pierwsze wystąpienie,
+chyba że poprzedni wiersz jest tym pierwszym wystąpieniem (wtedy to drugie), więc CSV kolejnych
+lokalnych znaczników bez przesunięcia czyta się poprawnie — <code>start</code> w JSON bez przesunięcia w tej
+godzinie to pierwsze wystąpienie; podaj przesunięcie, by oznaczyć drugie.</p>
+<p>Ograniczenia: część stała rachunku to jedna liczba z wejścia i nie podąża za przepływem, więc pasmo
+opłaty zależne od rocznego poboru nie jest modelowane (<code>fixed</code> weź z rachunku bez magazynu i licz się z
+niewielkim stałym błędem tam, gdzie pasmo jest inne); odcinek krótszy niż rok jest czytany jak rok z
+pustymi miesiącami; wynik jest tak dobry, jak podany szereg prognoz.</p>
 <h2 id="słownik-kodów-powodów">Słownik kodów powodów</h2>
 <h3 id="powody-pokrycia--jakości-atrybuty-reason-reasons">Powody pokrycia / jakości (atrybuty <code>reason</code>, <code>reasons</code>)</h3>
 <section class="table-scroll"><table>
@@ -2999,7 +3376,7 @@ bez błędu prognozy. Dla statystyk godzinowych ustaw <code>interval_minutes: 60
 </tr>
 <tr>
 <td><code>reference_horizon_uncovered</code></td>
-<td>Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.37.</td>
+<td>Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.38.</td>
 </tr>
 <tr>
 <td><code>reference_probe_failed</code></td>

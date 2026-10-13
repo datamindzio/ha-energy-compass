@@ -547,5 +547,27 @@ def settlement_notes(
                 "previewed interval; this is a copy, later buy edits do not "
                 "update sell."
             )
+        notes.append(
+            "Note: net-metering is settled on yearly kWh (an exported kWh "
+            f"takes back {ratio:g} kWh within 12 months), not on hourly "
+            "prices: price-driven dispatch does not lower the yearly bill and "
+            "the costs shown are an hourly approximation. Run the battery in "
+            "the inverter's own self-use mode and do not let a controller "
+            "follow this plan."
+        )
+        grid_charge = values.get("allow_grid_charge")
+        battery_export = values.get("allow_battery_export")
+        if grid_charge or battery_export:
+            if grid_charge and battery_export:
+                what = "Allow grid charge and Allow battery export are on"
+            elif grid_charge:
+                what = "Allow grid charge is on"
+            else:
+                what = "Allow battery export is on"
+            notes.append(
+                f"Note: {what}: under net-metering energy sent through the "
+                f"grid comes back at {ratio:g} and raises the yearly import; "
+                "turn it off."
+            )
 
     return notes

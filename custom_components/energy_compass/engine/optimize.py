@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import UTC
 from math import isfinite
+from time import perf_counter
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -13,7 +14,7 @@ from .balance import REACH_TOL, fallback_costs
 from .charge_benefit import constrain_charge_benefit, validate_charge_benefit
 from .charge_price import price_allows_grid_charge
 from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fractions
-from .dispatch_policy import MODES, constrain_modes, validate_modes
+from .dispatch_policy import MODES, constrain_modes, reserve_fallback, validate_modes
 from .export_benefit import constrain_export_benefit, validate_export_benefit
 from .idle_drain import cumulative, drain_schedule
 from .mode_noise import settle_mode_noise
@@ -226,6 +227,16 @@ def _validate_balance(
     return first
 
 
+def _validate_settled(problem: Problem, settled: list[dict[str, float]]) -> None:
+    """The published rows keep one direction per slot, whatever noise the solver left."""
+    for flow in settled:
+        _check(min(flow["gin"], flow["gout"]) <= _TOL, "simultaneous grid directions")
+        if problem.battery:
+            _check(
+                min(flow["bc"], flow["bd"]) <= _TOL, "simultaneous battery directions"
+            )
+
+
 def _validate_solution(
     problem: Problem,
     vectors: list[dict[str, int]],
@@ -319,7 +330,9 @@ def _validate_solution(
         _check(
             gout <= problem.site.grid_export_kw * duration + _TOL, "grid export limit"
         )
-        _check(min(gin, gout) <= _TOL, "simultaneous grid directions")
+        # One direction per slot is the pair of rows below with `grid_mode` checked to
+        # be within 1e-6 of 0 or 1, up to the noise that leaves on the other side
+        # (1e-6 * (M + 1)): `_validate_settled` holds the published rows to it.
         _check(
             gin <= problem.site.grid_import_kw * duration * value("grid_mode") + _TOL,
             "grid import direction",
@@ -382,7 +395,7 @@ def _validate_solution(
                 <= battery.discharge_kw * duration * (1 - value("battery_mode")) + _TOL,
                 "discharge direction",
             )
-            _check(min(charge, discharge) <= _TOL, "simultaneous battery directions")
+            # Likewise `battery_mode` for the battery: noise on the idle side is settled.
             if not battery.allow_grid_charge or not price_allows_grid_charge(
                 problem, slot
             ):
@@ -492,6 +505,49 @@ def solve(
         time_limit_s=time_limit_s,
         accept_incumbent=accept_incumbent,
     ).plan
+
+
+def solve_released(
+    problem: Problem,
+    *,
+    time_limit_s: float = 10.0,
+    budget_s: float | None = None,
+    accept_incumbent: bool = False,
+    solver=None,
+) -> tuple[Plan, Problem]:
+    """Solve a carried commitment's released plan; fall back to its HOLD, never to no plan.
+
+    A PV-follow commitment with the pack at the reserve is released first (ADR-0005
+    point 13); where that release has no plan (the PV above the export cap exceeds what
+    the pack can take by charge power) the house is not left without one: the problem is
+    solved again with the commitment's own HOLD kept (`reserve_fallback`). Returns the plan
+    and the problem it was solved for. Only `infeasible` takes the fallback; a timeout or
+    any other solver error propagates. `budget_s` bounds both solves together: the second
+    gets what is left of it, at most `time_limit_s`. `solver` is the single-solve function
+    (default `solve`), a seam for callers that count or replace the solve.
+    """
+    solver = solver or solve
+    started = perf_counter()
+    try:
+        return (
+            solver(
+                problem, time_limit_s=time_limit_s, accept_incumbent=accept_incumbent
+            ),
+            problem,
+        )
+    except SolveError as err:
+        fallback = reserve_fallback(problem) if err.reason == "infeasible" else None
+        if fallback is None:
+            raise
+        limit = time_limit_s
+        if budget_s is not None:
+            limit = min(limit, budget_s - (perf_counter() - started))
+            if limit <= 0:
+                raise SolveError("timeout") from err
+    return (
+        solver(fallback, time_limit_s=limit, accept_incumbent=accept_incumbent),
+        fallback,
+    )
 
 
 def solve_flexible_load(
@@ -899,6 +955,7 @@ def _solve(
         problem, vectors, values, balance_choices, balance_miss
     )
     settled = settle_mode_noise(problem, vectors, values, model.upper)
+    _validate_settled(problem, settled)
     flows = tuple(
         Flow(
             f["gin"],
@@ -1000,7 +1057,7 @@ def _solve(
     peak_import_kw = (
         float(values[vectors[0]["peak_import"]]) if "peak_import" in vectors[0] else 0.0
     )
-    episodes, reserve = validate_export_benefit(problem, vectors, values)
+    episodes, reserve = validate_export_benefit(problem, vectors, values, settled)
     charge_episodes, charge_reserve = validate_charge_benefit(problem, vectors, values)
     return FlexibleLoadPlan(
         Plan(
