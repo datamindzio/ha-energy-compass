@@ -456,9 +456,15 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
     probe each get what is left of the total limit, and a base plan that returns after it leaves no probe to start
     (`timeout`; the first version passed the probe a limit of zero, an `InputError` that dropped the plan in the
     coordinator, found in review). `benchmarks/curtail_sweep.py` plans a probe the same way, and a rung only when its
-    base plan has a solution. Measured with `deprobe` seeds 11, 22, 33, 44 × 300 against `38d560f` (T-052, T-057 and T-065
-    merged, solved once, as for point 24's table), head `5baf226` plus this change: 0 newly infeasible
-    (head without it: 1, seed 44 draw 10), 105, 100, 107 and 120 newly planned.
+    base plan has a solution. Measured with `deprobe` seeds 11, 22, 33, 44 × 300, this branch's
+    `benchmarks/curtail_sweep.py` run on every tree so that the draws and the need of a base plan are the same. Head
+    is this branch merged with main `fde1cc5`. Against main `fde1cc5`: 0 newly infeasible, and 0, 0, 1 and 1 newly
+    planned (seed 33 draw 230 and seed 44 draw 10, both priced on rung 1). Against `38d560f` (T-052, T-057 and T-065
+    merged, solved once, as for point 24's table): 0 newly infeasible (main `fde1cc5` without this change: 1, seed
+    44 draw 10), 105, 101, 107 and 121 newly planned. The `curtail_sweep.py` of `38d560f` itself probes without
+    a base plan, so a comparison made with it counts 14 newly infeasible draws (5, 5, 4 and 0): every one has
+    `allow_curtailment` false and no base plan on `38d560f` or on head (T-041, T-064 and T-066 as below), and the
+    runtime never probes a problem without a plan.
 
 Measured with `benchmarks/curtail_sweep.py` (its `run`/`roll` solve through `solve_released` where the tree has
 it; `resrun`/`resroll` draw the pack exactly at the reserve with a `SELF_CONSUME` commitment carried 0 to 45

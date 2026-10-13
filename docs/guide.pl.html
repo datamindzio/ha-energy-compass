@@ -1761,8 +1761,11 @@ bloki 3, 5, 10, 15 i 20 kWh z mocą do <code>flexible_load_max_power_kw</code> (
 szczeblach drabiny tego planu (<code>HOLD</code> zobowiązania, potem plan bez zobowiązania), każdy względem planu tego
 szczebla, więc poziom nigdy nie jest wyceniany względem planu innego problemu. Potrzebuje tego tylko
 przeniesione zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>, którego plan leży na granicy pełnego akumulatora.
-Dwa sąsiednie poziomy policzone na różnych szczeblach nie mają kosztu bloku między sobą: drugi ma status
-<code>UNKNOWN</code>.</p>
+Dwa sąsiednie poziomy policzone na różnych szczeblach nie mają kosztu bloku między sobą, a poziom na innym
+szczeblu niż pierwszy (kotwica) nie jest oceniany względem dozwolonej ceny kotwicy: oba mają status
+<code>UNKNOWN</code>. Poziom jest publikowany z przyczyną, która go zakończyła: <code>infeasible</code> tylko wtedy, gdy żaden
+z odwiedzonych szczebli nie miał rozwiązania, a przekroczenie czasu lub inny błąd solvera kończy go od razu
+jako ten błąd.</p>
 <h2 id="strategie-dyspozycji">Strategie dyspozycji</h2>
 <p><code>select.&lt;name&gt;_strategy</code> wybiera pakiet funkcji celu, którego używa solver. Każda strategia
 zachowuje wszystkie twarde ograniczenia fizyczne; strategie zmieniają wyłącznie <strong>wagi
