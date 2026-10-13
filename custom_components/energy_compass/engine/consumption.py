@@ -23,7 +23,7 @@ from .models import (
     plan_monetary_cost,
 )
 from .normalize import aware, validate_problem
-from .optimize import solve, solve_flexible_load
+from .optimize import later_rungs, solve, solve_flexible_load
 
 _UTC = UTC
 _TOL = 1e-6
@@ -155,37 +155,69 @@ def analyze_flexible_loads(
     profiles: list[FlexibleLoadProfile] = []
     previous_energy: float | None = None
     previous_cost: float | None = None
+    previous_rung: int | None = None
     anchor_price: float | None = None
     allowed_price: float | None = None
     depth: float | None = None
     chain_open = True
-    baseline_grid_import = sum(flow.grid_import_kwh for flow in plan.flows)
-    baseline_grid_export = sum(flow.grid_export_kwh for flow in plan.flows)
-    baseline_throughput = sum(
-        flow.charge_kwh + flow.discharge_kwh for flow in plan.flows
-    )
+    # Rung 0 is the problem the plan was solved for. A level with no solution there is
+    # tried on the later rungs of `solve_released`, against the plan of that rung (solved
+    # once, only when a level needs it): a plan is only compared with a plan of its own problem.
+    # A level that does not finish the ladder is published with the reason that ended it
+    # (`timeout`, a solver error); `infeasible` only where every rung it reached had no solution.
+    rungs = later_rungs(problem)
+    rung_plans: dict[int, Plan] = {0: plan}
+    rung_failures: dict[int, str] = {}
+    anchor_rung: int | None = None
+
+    def rung_plan(rung: int, time_limit_s: float) -> Plan | None:
+        if rung not in rung_plans and rung not in rung_failures:
+            try:
+                rung_plans[rung] = solve(rungs[rung - 1], time_limit_s=time_limit_s)
+            except SolveError as err:
+                rung_failures[rung] = err.reason
+        return rung_plans.get(rung)
 
     for energy_kwh in _FLEXIBLE_LOAD_TARGETS:
         reason = None
         candidate = None
+        rung = 0
         if energy_kwh > capacity_kwh + _TOL:
             reason = "insufficient_time"
         else:
-            remaining = deadline - perf_counter()
-            if remaining <= 0:
-                reason = "timeout"
-            else:
+            request = FlexibleLoadRequest(
+                energy_kwh, settings.flexible_load_max_power_kw
+            )
+            for rung in range(len(rungs) + 1):
+                remaining = deadline - perf_counter()
+                if remaining <= 0:
+                    reason = "timeout"
+                    break
+                if rung:
+                    # The plan of a rung is solved on the budget that is left, and a solve
+                    # of it that lands past the deadline leaves nothing for the probe.
+                    base = rung_plan(rung, min(remaining, settings.probe_time_limit_s))
+                    if base is None:
+                        reason = rung_failures[rung]
+                        if reason != "infeasible":
+                            break
+                        continue
+                    remaining = deadline - perf_counter()
+                    if remaining <= 0:
+                        reason = "timeout"
+                        break
                 try:
                     candidate = solve_flexible_load(
-                        problem,
-                        FlexibleLoadRequest(
-                            energy_kwh,
-                            settings.flexible_load_max_power_kw,
-                        ),
+                        rungs[rung - 1] if rung else problem,
+                        request,
                         time_limit_s=min(remaining, settings.probe_time_limit_s),
                     )
+                    reason = None
+                    break
                 except SolveError as err:
                     reason = err.reason
+                    if reason != "infeasible":
+                        break
         if candidate is None or perf_counter() > deadline:
             reason = reason or "timeout"
             profiles.append(
@@ -203,15 +235,25 @@ def analyze_flexible_loads(
                     (),
                 )
             )
-            previous_energy = previous_cost = None
+            previous_energy = previous_cost = previous_rung = None
             chain_open = False
             continue
 
-        incremental_cost = plan_monetary_cost(candidate.plan) - plan_monetary_cost(plan)
+        baseline = rung_plans[rung]
+        baseline_grid_import = sum(flow.grid_import_kwh for flow in baseline.flows)
+        baseline_grid_export = sum(flow.grid_export_kwh for flow in baseline.flows)
+        baseline_throughput = sum(
+            flow.charge_kwh + flow.discharge_kwh for flow in baseline.flows
+        )
+        incremental_cost = plan_monetary_cost(candidate.plan) - plan_monetary_cost(
+            baseline
+        )
         average_cost = incremental_cost / energy_kwh
+        # A block is the cost between two levels, which only means something where both
+        # are priced against plans of the same problem.
         block_cost = (
             None
-            if previous_energy is None or previous_cost is None
+            if previous_energy is None or previous_cost is None or previous_rung != rung
             else (incremental_cost - previous_cost) / (energy_kwh - previous_energy)
         )
         if energy_kwh == _FLEXIBLE_LOAD_TARGETS[0]:
@@ -219,9 +261,12 @@ def analyze_flexible_loads(
             allowed_price = anchor_price + (
                 settings.flexible_price_degradation_percent / 100 * abs(anchor_price)
             )
+            anchor_rung = rung
             status = "ANCHOR"
             depth = energy_kwh
-        elif block_cost is None or allowed_price is None:
+        elif block_cost is None or allowed_price is None or rung != anchor_rung:
+            # The allowed price comes from the anchor: a level solved on another rung than
+            # the anchor's is not judged against it, however known its own block is.
             status = "UNKNOWN"
             chain_open = False
         elif block_cost <= allowed_price + _TOL:
@@ -254,6 +299,7 @@ def analyze_flexible_loads(
         )
         previous_energy = energy_kwh
         previous_cost = incremental_cost
+        previous_rung = rung
 
     if not profiles or profiles[0].price_status != "ANCHOR":
         depth = anchor_price = allowed_price = None
