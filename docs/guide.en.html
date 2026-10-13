@@ -411,11 +411,12 @@ yearly bill. The planner stands down there: no engine, strategy or profile chang
 exact, the money is an approximation.</p>
 <p>Measured on 40 simulated homes (G11 and G12, ratio 0.8, 10 kWh battery, one year re-planned every hour
 against the same battery in plain self-consumption, valued with the annual bill, <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/adr/0008-net-metering-plain-self-consumption.md">ADR-0008</a>):
-the default plan (<code>cost_min</code>, as the profile ships) has a yearly gain against self-use of −93…+70 PLN
-(mean −1; + = cheaper, − = dearer), never lowers the bill by more than 10 PLN, and raises the annual import by +33…+704 kWh. Priced hour by
-hour, as Home Assistant reports it, the same G12 plan shows a gain of +343 PLN per year that the settlement
-does not pay. With <strong>Allow grid charge</strong> on (13 homes) the yearly gain against self-use is −209…+139 PLN
-(same sign), and the import rises by +897 kWh (median). Limits: simulated homes, one battery size
+the default plan (<code>cost_min</code>, as the profile ships) has a yearly gain against self-use, bill plus battery
+wear, of −93…+70 PLN (mean −1; + = cheaper, − = dearer), never lowers the bill by more than 10 PLN, and
+raises the annual import by +33…+704 kWh. Priced hour by hour, as Home Assistant reports it, the same G12
+plan shows a gain of +343 PLN per year that the settlement does not pay. With <strong>Allow grid charge</strong> on
+(13 homes) the yearly gain against self-use, bill plus battery wear, is −209…+139 PLN (same sign
+convention), and the import rises by +897 kWh (median). Limits: simulated homes, one battery size
 (10 kWh), one year of prices, hourly intervals, G12 zones netted as one mean rate.</p>
 <p>Preview shows setup-profile provenance for a profiled new entry: which keys each axis pre-filled, the
 buy source pre-selected by a <code>buy_tariff</code> profile, any value edited after pre-fill (including a
@@ -423,7 +424,8 @@ helper-bound key, with the helper's effective value), and settlement notes — S
 source that already applies its own settlement multiplier, raw RCE prices not floored at 0 (with the
 RCE market price shortcut as the fix) or floored while the 1.23 multiplier is missing, or a
 net-metering sell that no longer tracks buy — shown only for installations that used a setup profile.
-For a net-metering profile Preview always adds one more note, and a second when a flag is on (English only):</p>
+For a net-metering profile Preview always adds one more note, and a second when Allow grid charge or
+Allow battery export is on (English only):</p>
 <ul>
 <li>"Note: net-metering is settled on yearly kWh (an exported kWh takes back 0.8 kWh within 12 months),
   not on hourly prices: price-driven dispatch does not lower the yearly bill and the costs shown are an
@@ -1314,7 +1316,7 @@ directly by any other available mode.</p>
 <tr>
 <td><strong>Deposit model</strong> (<code>deposit_model</code>)</td>
 <td><code>off</code></td>
-<td>Values exported energy and the deposit-payable part of imports by what the prosumer deposit will really pay back. Needs the distribution part of the buy price. See <a href="#net-billing-deposit-value">Net-billing deposit value</a>.</td>
+<td><code>off</code> is the setting for every site. <code>manual</code> (experimental) values exported energy and the deposit-payable part of imports by a factor you state; measured on a one-year replay it did not lower the bill. Needs the distribution part of the buy price. See <a href="#net-billing-deposit-value">Net-billing deposit value</a>.</td>
 </tr>
 <tr>
 <td><strong>Inverter standby loss</strong> (<code>idle_drain_kw</code>)</td>
@@ -1340,12 +1342,25 @@ see <a href="#setup-profiles-new-installations">Setup profiles</a>.</p>
 deposit pays only what you owe the seller for <strong>energy</strong>; distribution charges are paid in cash.
 After 12 months the unused part is refunded, but a month's refund cannot exceed
 <strong>ρ × the value exported in that month</strong> (ρ = 30 % with hourly RCE settlement, 20 % with monthly
-RCEm); the rest is void. While the deposit is short, or its unused part still fits under the cap,
+RCEm), where the value is the export value without the 1.23 coefficient; the rest is void. While the deposit is short, or its unused part still fits under the cap,
 one currency unit of export or of energy-part import is worth exactly one unit of cash and the
-planner needs no correction. Once the cap binds, one more unit of export is worth only ρ and the
+planner needs no correction. Once the cap binds, one more unit of export is worth only ρ/1.23 of a sell price that contains the 1.23 coefficient
+(0.244 for ρ = 30 %, 0.163 for 20 %) and the
 energy part of an import costs nothing in cash (it is paid from money that would expire). The
-deposit model lets the planner see that. It is <strong>off by default</strong> and then the plan is
-byte-identical to a build without it.</p>
+deposit model lets the planner see that, but <strong>it does not pay off</strong>: <code>off</code> is the setting for
+every site, also a site whose deposit is forfeited, and <code>manual</code> is <strong>experimental</strong>. The <code>auto</code>
+model was withdrawn; a stored <code>auto</code> is read as <code>off</code> without an error or an Alert. <code>off</code> is the
+default and then the plan is byte-identical to a build without the model.</p>
+<p>What was measured, on a one-year replay of 40 hourly-RCE homes with a 10 kWh battery, billed by
+the yearly formula and by the monthly ledger:</p>
+<ul>
+<li>no factor lowered the yearly bill by more than 44 PLN, and the factor at the cap raised it in
+  all 40 homes, by 68–431 PLN (yearly formula) or 21–306 PLN (monthly ledger);</li>
+<li>with monthly RCEm the factor changes the bill by less than 10 PLN;</li>
+<li>a site whose deposit is forfeited sets nothing: <code>deposit_model</code> stays <code>off</code>. Switching battery
+  export off because of a forfeited deposit cost 154–662 PLN a year in all 16 homes measured (with
+  grid charging and battery export allowed).</li>
+</ul>
 <p><strong>Two parts of the buy price.</strong> The model must know which part of a buy price is energy (payable by
 the deposit) and which is distribution (paid in cash). The buy price of an interval is the sum of the
 two, and you give the distribution part as rates, never the energy part:</p>
@@ -1371,27 +1386,17 @@ negative energy price keeps its real price and has no energy part to waive.</p>
 <tr>
 <td><code>deposit_model</code></td>
 <td><code>off</code></td>
-<td><code>off</code>: full prices. <code>manual</code>: you state <code>export_value_factor</code>. <code>auto</code>: Energy Compass derives it from the two yearly sums below.</td>
+<td><code>off</code>: full prices, the setting for every site. <code>manual</code> (experimental): you state <code>export_value_factor</code>. A stored <code>auto</code> (withdrawn) is read as <code>off</code>.</td>
 </tr>
 <tr>
 <td><code>deposit_refund_percent</code></td>
 <td>30</td>
-<td>ρ, the refund cap as a share of a month's export value. 20 for monthly RCEm settlement.</td>
+<td>ρ, the refund cap as a share of a month's export value. 20 for monthly RCEm settlement. A seller that refunds a share of the deposit (which contains the 1.23 coefficient) has 36.9 / 24.6 here.</td>
 </tr>
 <tr>
 <td><code>export_value_factor</code></td>
 <td>1.0</td>
 <td><code>manual</code> only: what one more unit of export is worth (0–1).</td>
-</tr>
-<tr>
-<td><code>deposit_yearly_value</code></td>
-<td>0</td>
-<td><code>auto</code>: deposit you expect to be booked over 12 months (export value at the settlement price, 1.23 included). 0 = unknown.</td>
-</tr>
-<tr>
-<td><code>deposit_yearly_energy_cost</code></td>
-<td>0</td>
-<td><code>auto</code>: what the deposit can pay over 12 months: the per-kWh energy charge of the imports, gross. The trade fee, other fixed fees and distribution are not part of it. 0 = unknown.</td>
 </tr>
 <tr>
 <td><code>buy_distribution_mode</code></td>
@@ -1407,40 +1412,33 @@ negative energy price keeps its real price and has no energy part to waive.</p>
 </table></section>
 <p>The cap pressure π (0 = deposit short or within the cap, 1 = cap binding) gives two factors that
 exist only inside the optimizer:</p>
-<pre><code class="language-text">export value factor  φx = 1 − π × (1 − ρ)     1 → ρ
+<pre><code class="language-text">export value factor  φx = 1 − π × (1 − ρp)    1 → ρp,  ρp = ρ / 1.23
 import energy factor φe = 1 − π               1 → 0
 planning buy  = buy − (1 − φe) × energy part of buy
 planning sell = φx × max(sell, 0) + min(sell, 0)
 </code></pre>
 <ul>
-<li><strong><code>auto</code></strong>: the unused share of the yearly deposit is <code>s = 1 − E / D</code> (<code>D</code> = <code>deposit_yearly_value</code>,
-  <code>E</code> = <code>deposit_yearly_energy_cost</code>), and π ramps from 0 at <code>s = ρ/2</code> to 1 at <code>s = ρ</code>. If <code>D</code> or <code>E</code>
-  is 0 the model has no input: π = 0 and <code>reason</code> is <code>inputs_missing</code>; the plan stays valid and no
-  Alert is raised. The balance of the deposit is deliberately not an input — one day's balance says
-  nothing without the booking dates behind it.</li>
-<li><strong><code>manual</code></strong>: <code>φx</code> is your <code>export_value_factor</code> as typed, even below ρ. Only π is derived from it,
-  <code>π = clamp((1 − φx) / (1 − ρ), 0, 1)</code>, so <code>φe = 1 − π</code> follows (a value at or below ρ devalues the
-  energy part of imports fully). With <code>deposit_refund_percent</code> 100 both factors are 1.</li>
+<li><strong><code>manual</code></strong> (experimental): <code>φx</code> is your <code>export_value_factor</code> as typed, even below ρp. Only π is
+  derived from it, <code>π = clamp((1 − φx) / (1 − ρp), 0, 1)</code>, so <code>φe = 1 − π</code> follows (a value at or
+  below ρp devalues the energy part of imports fully). At the cap (π = 1) <code>φx</code> is <code>ρp = ρ / 1.23</code>,
+  not ρ: 0.244 for 30 %, 0.163 for 20 %. With <code>deposit_refund_percent</code> 100 it is 1/1.23, not 1;
+  the setting that never cancels anything is <code>deposit_model: off</code>.</li>
 <li><strong>No distribution part</strong> (the distribution rates are 0): the whole buy
   price would count as deposit-payable and an import would look free. With π above 0 <code>φe</code> is
   therefore forced to 1 and <code>reason</code> is <code>split_missing</code>; <code>φx</code> still applies. Set the distribution
   rates to use the model.</li>
-<li><strong>Hysteresis (<code>auto</code>)</strong>: π is evaluated once per local day (the first calculation after local
-  midnight) and held for the day in the <code>settlement</code> Store, so restarts and reloads do not re-evaluate
-  it. A new value replaces the held one only if it differs by at least 0.10, or reaches exactly 0 or 1.
-  Changing any of the five deposit settings (<code>deposit_model</code>, <code>deposit_refund_percent</code>,
-  <code>export_value_factor</code>, <code>deposit_yearly_value</code>, <code>deposit_yearly_energy_cost</code>) re-evaluates at once.</li>
 <li><strong>Negative sell prices</strong> stay whole: the factor scales only the positive part, because a negative
   price is a real charge.</li>
 <li><strong>Reported costs do not change.</strong> Net cost, <code>Plan.grid_cost</code>, the cost sensors, consumption levels and
   the <code>maximum_grid_charge_price</code> ceiling all stay at invoice prices; only the planning objective uses
   the factors, under every strategy and before the strategy weights.</li>
 <li><strong>Battery sale threshold</strong>, worked example (PGE G12 2026 gross prices, round trip 0.89, wear
-  0.05 per kWh, ρ = 30 %): selling from the battery and buying the energy back at night pays above
-  about 0.73 currency/kWh while the cap is not binding and above about 0.71 when it binds (the cheaper
-  night re-buy offsets the lower export value); at ρ = 20 % the threshold rises to about 1.07. What changes with the cap binding is the use of
-  surplus PV (worth 0.12 instead of 0.40 at a sell price of 0.40, so it goes to the battery and
-  flexible load first) and night grid charging, which stays profitable.</li>
+  0.05 per kWh): selling from the battery and buying the energy back at night pays above
+  about 0.73 currency/kWh while the cap is not binding. With the cap binding the threshold is about
+  0.88 at ρ = 30 % and about 1.31 at ρ = 20 % (a seller that refunds 36.9 % / 24.6 % of the
+  deposit: about 0.71 / 1.07). What changes with the cap binding is the use of
+  surplus PV (worth 0.40 × ρp = 0.10 instead of 0.40 at a sell price of 0.40 and ρ = 30 %, so it goes to the
+  battery and flexible load first) and night grid charging, which stays profitable.</li>
 </ul>
 <p>Diagnostics are in the plan attribute <code>dispatch_policy.settlement</code>:</p>
 <section class="table-scroll"><table>
@@ -1453,7 +1451,7 @@ planning sell = φx × max(sell, 0) + min(sell, 0)
 <tbody>
 <tr>
 <td><code>model</code></td>
-<td><code>off</code>, <code>manual</code> or <code>auto</code></td>
+<td><code>off</code> or <code>manual</code></td>
 </tr>
 <tr>
 <td><code>export_value_factor</code>, <code>import_energy_factor</code></td>
@@ -1464,28 +1462,19 @@ planning sell = φx × max(sell, 0) + min(sell, 0)
 <td>π</td>
 </tr>
 <tr>
-<td><code>unused_share</code></td>
-<td><code>s</code> for <code>auto</code>, else <code>null</code></td>
-</tr>
-<tr>
-<td><code>refund_percent</code>, <code>yearly_deposit</code>, <code>yearly_energy_cost</code></td>
-<td>the inputs used</td>
+<td><code>refund_percent</code></td>
+<td>the input used (ρ in percent)</td>
 </tr>
 <tr>
 <td><code>distribution_mode</code></td>
 <td><code>included</code> or <code>added</code></td>
 </tr>
 <tr>
-<td><code>evaluated_on</code></td>
-<td>local date π was last evaluated</td>
-</tr>
-<tr>
 <td><code>reason</code></td>
-<td><code>ok</code>, <code>off</code>, <code>inputs_missing</code>, <code>split_missing</code> (π above 0 but no distribution part, <code>φe</code> forced to 1) or <code>held</code> (today's π was already evaluated)</td>
+<td><code>ok</code>, <code>off</code> or <code>split_missing</code> (π above 0 but no distribution part, <code>φe</code> forced to 1)</td>
 </tr>
 </tbody>
 </table></section>
-<p>Reading <code>D</code> and <code>E</code> from long-term statistics instead of typing them is not part of this release.</p>
 <h3 id="peak-period-reserve">Peak-period reserve</h3>
 <p>The load forecast is a mean, so a plan that drains the battery exactly to the reserve by the end of an
 expensive period falls short on roughly every second day. <code>peak_reserve_margin_kwh</code> asks the solver to
@@ -3208,7 +3197,7 @@ names the place, <code>days[n][i]</code> (day <code>n</code> from 1, interval <c
 deposit can pay (the rest of <code>buy</code> is distribution), in the same units, not above <code>buy</code> and empty or
 missing meaning 0. It matters only with the
 <a href="#net-billing-deposit-value">deposit model</a>, which you switch on with <code>--set deposit_model=manual
---set export_value_factor=0.3</code> (or <code>auto</code> with the two yearly values). <code>buy</code> stays the invoice
+--set export_value_factor=0.3</code> (experimental). <code>buy</code> stays the invoice
 price, so <code>buy_distribution_mode</code>, <code>buy_distribution_rate</code> and <code>buy_distribution_off_peak_rate</code> are
 not read — prices come from the file — and a warning says so. Costs are reported at the file's prices
 whatever the factors are.</p>

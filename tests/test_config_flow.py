@@ -48,6 +48,24 @@ def test_settings_use_native_selectors(group):
     assert all(isinstance(value, selector.Selector) for value in schema.schema.values())
 
 
+def test_a_stored_choice_outside_the_options_falls_back_to_the_first_option():
+    # `auto` is withdrawn from deposit_model (ADR-0001 rev 3): the Tariffs form must
+    # still open on an entry that stored it, with `off` selected and `auto` not offered.
+    settings = default_configuration("EUR", "UTC")["settings"]
+    settings["deposit_model"] = "auto"
+    schema = settings_schema("tariffs", settings)
+    key = next(key for key in schema.schema if key == "deposit_model")
+    assert key.default() == "off"
+    assert schema.schema[key].config["options"] == ["off", "manual"]
+    settings["deposit_model"] = "manual"
+    key = next(
+        key
+        for key in settings_schema("tariffs", settings).schema
+        if key == "deposit_model"
+    )
+    assert key.default() == "manual"
+
+
 def test_defaults_are_generic():
     config = default_configuration("EUR", "UTC")
     assert config["settings"]["calibration"] == "unvalidated"

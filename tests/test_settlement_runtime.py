@@ -1,4 +1,4 @@
-"""Net-billing settlement inputs, factors and hysteresis at the runtime level."""
+"""Net-billing settlement inputs and factors at the runtime level."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -65,11 +65,9 @@ def fixed_config(**settings):
 
 def settings(**changes):
     base = {
-        "deposit_model": "auto",
+        "deposit_model": "manual",
         "deposit_refund_percent": 30,
-        "export_value_factor": 1.0,
-        "deposit_yearly_value": 2800,
-        "deposit_yearly_energy_cost": 2150,
+        "export_value_factor": 0.2,
     }
     return {**base, **changes}
 
@@ -217,7 +215,7 @@ def dynamic_config(**settings):
 def test_dynamic_price_with_a_g12_distribution_tariff_follows_the_adr_example():
     # UTC hours: 10 = 12:00 local midday, 17 = 19:00 evening peak, 23 = 01:00 night.
     states = _energy_prices({10: 0.25, 17: 0.95, 23: 0.45})
-    config = dynamic_config(deposit_model="manual", export_value_factor=0.3)
+    config = dynamic_config(deposit_model="manual", export_value_factor=0.2)
     problem, _, _ = build_problem(config, states, NOW)
     by_hour = {slot.start.hour: slot for slot in problem.slots}
     midday, evening, night = by_hour[10], by_hour[17], by_hour[23]
@@ -227,7 +225,8 @@ def test_dynamic_price_with_a_g12_distribution_tariff_follows_the_adr_example():
     assert [slot.buy_energy_per_kwh for slot in (midday, evening, night)] == (
         pytest.approx([0.25, 0.95, 0.45])
     )
-    # pi = 1 (factor 0.3 at rho 30 %): only the distribution part is left to pay.
+    # pi = 1 (factor 0.2 is below the 0.244 floor of rho 30 %): only the distribution
+    # part is left to pay.
     assert problem.import_energy_factor == 0
     assert [
         planning_buy(problem, slot) for slot in (midday, evening, night)
@@ -245,7 +244,7 @@ def test_distribution_band_edges_become_slot_boundaries():
 
 def test_a_negative_energy_price_keeps_its_real_price_when_the_cap_binds():
     states = _energy_prices({10: -0.10})
-    config = dynamic_config(deposit_model="manual", export_value_factor=0.3)
+    config = dynamic_config(deposit_model="manual", export_value_factor=0.2)
     problem, _, _ = build_problem(config, states, NOW)
     slot = {slot.start.hour: slot for slot in problem.slots}[10]
     assert slot.buy_per_kwh == pytest.approx(0.44)
@@ -275,14 +274,44 @@ def test_manual_model_sets_both_factors_from_the_stated_value():
     problem, _, _ = build_problem(
         fixed_config(deposit_model="manual", export_value_factor=0.65), {}, NOW
     )
+    share = 0.30 / 1.23
     assert problem.export_value_factor == pytest.approx(0.65)
-    assert problem.import_energy_factor == pytest.approx(0.5)
+    assert problem.import_energy_factor == pytest.approx(1 - 0.35 / (1 - share))
 
 
-def test_auto_model_derives_the_factors_from_the_yearly_inputs():
-    problem, _, _ = build_problem(fixed_config(**settings()), {}, NOW)
-    assert problem.export_value_factor == pytest.approx(0.62, abs=0.01)
-    assert problem.import_energy_factor == pytest.approx(0.45, abs=0.01)
+def test_the_manual_floor_is_the_refund_percent_over_1_23():
+    for percent, floor in ((30, 0.2439), (20, 0.1626)):
+        problem, _, _ = build_problem(
+            fixed_config(
+                deposit_model="manual",
+                deposit_refund_percent=percent,
+                export_value_factor=floor,
+            ),
+            {},
+            NOW,
+        )
+        assert problem.import_energy_factor == pytest.approx(0, abs=1e-3)
+    # With 100 % the floor is 1/1.23 = 0.813, not 1: 0.9 is above it, 0.8 is below it.
+    problem, _, _ = build_problem(
+        fixed_config(
+            deposit_model="manual",
+            deposit_refund_percent=100,
+            export_value_factor=0.9,
+        ),
+        {},
+        NOW,
+    )
+    assert problem.import_energy_factor == pytest.approx(1 - 0.1 / (1 - 1 / 1.23))
+    problem, _, _ = build_problem(
+        fixed_config(
+            deposit_model="manual",
+            deposit_refund_percent=100,
+            export_value_factor=0.8,
+        ),
+        {},
+        NOW,
+    )
+    assert problem.import_energy_factor == 0
 
 
 def values_for(**changes):
@@ -290,130 +319,64 @@ def values_for(**changes):
     return build_problem(config, {}, NOW)[1]
 
 
-def test_missing_inputs_leave_the_model_off_without_state():
-    for changes in ({"deposit_yearly_value": 0}, {"deposit_yearly_energy_cost": 0}):
-        result, state = resolve_settlement(values_for(**changes), None, NOW, ZONE)
-        assert result["reason"] == "inputs_missing"
-        assert result["cap_pressure"] == 0
-        assert result["export_value_factor"] == result["import_energy_factor"] == 1
-        assert state is None
-
-
-def test_off_model_reports_off_and_clears_the_state():
-    result, state = resolve_settlement(
-        values_for(deposit_model="off"), {"anything": 1}, NOW, ZONE
-    )
+def test_off_model_reports_off_and_is_the_default():
+    result = resolve_settlement(values_for(deposit_model="off"))
     assert result["reason"] == "off"
     assert result["model"] == "off"
-    assert state is None
+    assert result["cap_pressure"] == 0
+    assert result["export_value_factor"] == result["import_energy_factor"] == 1
 
 
-def test_pressure_is_evaluated_once_per_local_day_and_held():
-    values = values_for()
-    first, state = resolve_settlement(values, None, NOW, ZONE)
-    assert first["reason"] == "ok"
-    assert first["evaluated_on"] == "2026-07-01"
-    later = NOW + timedelta(hours=5)
-    held, held_state = resolve_settlement(values, state, later, ZONE)
-    assert held["reason"] == "held"
-    assert held["cap_pressure"] == first["cap_pressure"]
-    assert held_state == state
-
-
-def test_local_midnight_not_utc_midnight_starts_a_new_day():
-    values = values_for()
-    # 22:30 UTC is already 00:30 on 2 July in Warsaw (summer time, UTC+2).
-    evening = datetime(2026, 7, 1, 21, 30, tzinfo=UTC)
-    _, state = resolve_settlement(values, None, evening - timedelta(hours=2), ZONE)
-    result, _ = resolve_settlement(values, state, evening, ZONE)
-    assert result["reason"] == "held"
-    result, _ = resolve_settlement(values, state, evening + timedelta(hours=1), ZONE)
-    assert result["reason"] == "ok"
-    assert result["evaluated_on"] == "2026-07-02"
-
-
-def test_dead_band_keeps_a_small_daily_move_and_takes_a_large_one():
-    _, state = resolve_settlement(values_for(), None, NOW, ZONE)
-    held_pressure = state["cap_pressure"]
-    tomorrow = NOW + timedelta(days=1)
-    # A 3 % rise in D moves π by well under 0.10: held.
-    small = values_for(deposit_yearly_value=2800)
-    state["inputs"] = {**state["inputs"]}
-    result, new_state = resolve_settlement(small, state, tomorrow, ZONE)
-    assert result["cap_pressure"] == held_pressure
-    assert new_state["evaluated_on"] == "2026-07-02"
-    # π jumps to 1: replaces the held value.
-    big = values_for(deposit_yearly_value=3300)
-    result, new_state = resolve_settlement(big, state, tomorrow, ZONE)
-    assert result["cap_pressure"] == 1.0
-    assert new_state["cap_pressure"] == 1.0
-
-
-def test_an_inside_the_band_candidate_is_held_on_the_next_day():
-    values = values_for()
-    _, state = resolve_settlement(values, None, NOW, ZONE)
-    # Same inputs, yesterday's state with a slightly different held π.
-    state = {**state, "cap_pressure": state["cap_pressure"] + 0.04}
-    result, _ = resolve_settlement(values, state, NOW + timedelta(days=1), ZONE)
-    assert result["cap_pressure"] == pytest.approx(state["cap_pressure"])
-
-
-def test_changing_an_input_re_evaluates_at_once_without_the_dead_band():
-    _, state = resolve_settlement(values_for(), None, NOW, ZONE)
-    changed = values_for(deposit_yearly_value=2900)
-    result, new_state = resolve_settlement(
-        changed, state, NOW + timedelta(hours=1), ZONE
+def test_a_stored_auto_model_is_read_as_off():
+    values = values_for(deposit_model="auto")
+    assert values["deposit_model"] == "off"
+    problem, _, _ = build_problem(
+        fixed_config(deposit_model="auto", deposit_yearly_value=2800), {}, NOW
     )
-    assert result["reason"] == "ok"
-    assert result["cap_pressure"] != state["cap_pressure"]
-    assert new_state["inputs"]["yearly_deposit"] == 2900
+    assert problem.export_value_factor == problem.import_energy_factor == 1.0
+    result = compute(fixed_config(deposit_model="auto"), {}, NOW)
+    assert result["dispatch_policy"]["settlement"]["model"] == "off"
+    assert result["dispatch_policy"]["settlement"]["reason"] == "off"
+    assert result["status"] != "invalid_input"
 
 
-def test_a_malformed_held_state_is_ignored():
-    for held in ({}, {"inputs": {}}, {"cap_pressure": "x", "evaluated_on": "y"}):
-        result, _ = resolve_settlement(values_for(), held, NOW, ZONE)
-        assert result["reason"] == "ok"
+def test_an_unknown_deposit_model_is_still_rejected():
+    with pytest.raises(InputError, match="invalid deposit_model"):
+        build_problem(fixed_config(deposit_model="other"), {}, NOW)
 
 
-def test_a_held_state_without_its_day_is_ignored():
-    values = values_for(deposit_yearly_value=3300)
-    _, state = resolve_settlement(values, None, NOW, ZONE)
-    for evaluated_on in (None, 20261012):
-        held = {key: value for key, value in state.items() if key != "evaluated_on"}
-        if evaluated_on is not None:
-            held["evaluated_on"] = evaluated_on
-        held["cap_pressure"] = 0.4
+def test_the_withdrawn_settings_are_not_settings():
+    from custom_components.energy_compass.settings import NUMBERS
 
-        result, _ = resolve_settlement(values, held, NOW, ZONE)
-
-        assert result["reason"] == "ok"
-        assert result["cap_pressure"] == 1.0
+    for key in ("deposit_yearly_value", "deposit_yearly_energy_cost"):
+        assert key not in NUMBERS
 
 
-def test_compute_publishes_the_settlement_diagnostics_and_state():
-    config = fixed_config(**settings(deposit_yearly_value=3300))
-    result = compute(config, {}, NOW)
-    diagnostics = result["dispatch_policy"]["settlement"]
-    assert diagnostics["model"] == "auto"
-    assert diagnostics["cap_pressure"] == 1.0
-    assert diagnostics["export_value_factor"] == pytest.approx(0.3)
-    assert diagnostics["import_energy_factor"] == 0.0
+def test_diagnostics_keys_and_reasons_after_the_withdrawal():
+    diagnostics = compute(fixed_config(**settings()), {}, NOW)["dispatch_policy"][
+        "settlement"
+    ]
+    assert set(diagnostics) == {
+        "model",
+        "export_value_factor",
+        "import_energy_factor",
+        "cap_pressure",
+        "refund_percent",
+        "distribution_mode",
+        "reason",
+    }
+    assert diagnostics["model"] == "manual"
     assert diagnostics["reason"] == "ok"
-    assert result["settlement_state"]["cap_pressure"] == 1.0
-    # A second run with the persisted state holds it.
-    again = compute(
-        config,
-        {},
-        NOW + timedelta(hours=1),
-        settlement_state=result["settlement_state"],
-    )
-    assert again["dispatch_policy"]["settlement"]["reason"] == "held"
+    assert diagnostics["cap_pressure"] == 1.0
 
 
-def test_compute_with_the_model_off_adds_no_state():
-    result = compute(fixed_config(), {}, NOW)
-    assert "settlement_state" not in result
-    diagnostics = result["dispatch_policy"]["settlement"]
+def test_compute_publishes_no_settlement_state():
+    for config in (fixed_config(), fixed_config(**settings())):
+        assert "settlement_state" not in compute(config, {}, NOW)
+
+
+def test_compute_with_the_model_off_reports_invoice_factors():
+    diagnostics = compute(fixed_config(), {}, NOW)["dispatch_policy"]["settlement"]
     assert diagnostics["reason"] == "off"
     assert (
         diagnostics["export_value_factor"] == diagnostics["import_energy_factor"] == 1
@@ -421,9 +384,7 @@ def test_compute_with_the_model_off_adds_no_state():
 
 
 def test_reported_cost_stays_at_invoice_prices_when_the_cap_binds():
-    config = fixed_config(
-        buy_distribution_rate=0.4, **settings(deposit_yearly_value=3300)
-    )
+    config = fixed_config(buy_distribution_rate=0.4, **settings())
     result = compute(config, {}, NOW)
     off = compute(fixed_config(buy_distribution_rate=0.4), {}, NOW)
     assert result["intervals"][0]["buy_per_kwh"] == 1.0
@@ -433,23 +394,21 @@ def test_reported_cost_stays_at_invoice_prices_when_the_cap_binds():
 
 
 def test_a_binding_cap_without_a_distribution_part_is_reported_as_split_missing():
-    config = fixed_config(
-        buy_distribution_rate=0, **settings(deposit_yearly_value=3300)
-    )
+    config = fixed_config(buy_distribution_rate=0, **settings())
     problem, _, _ = build_problem(config, {}, NOW)
     assert problem.import_energy_factor == 1.0
-    assert problem.export_value_factor == pytest.approx(0.3)
+    assert problem.export_value_factor == pytest.approx(0.2)
     diagnostics = compute(config, {}, NOW)["dispatch_policy"]["settlement"]
     assert diagnostics["reason"] == "split_missing"
     assert diagnostics["import_energy_factor"] == 1.0
     assert diagnostics["cap_pressure"] == 1.0
-    # With the model short there is nothing to force, so the reason stays ok.
-    short = fixed_config(buy_distribution_rate=0, **settings(deposit_yearly_value=2000))
+    # With the factor at 1 there is nothing to force, so the reason stays ok.
+    short = fixed_config(buy_distribution_rate=0, **settings(export_value_factor=1.0))
     assert compute(short, {}, NOW)["dispatch_policy"]["settlement"]["reason"] == "ok"
 
 
-def test_manual_export_factor_is_not_clamped_by_the_refund_cap():
-    # Setting 0.2 is below the cap's floor of 0.3: pi clamps to 1, phi_x stays 0.2.
+def test_manual_export_factor_is_not_clamped_by_the_refund_floor():
+    # Setting 0.2 is below the floor 0.30 / 1.23 = 0.244: pi clamps to 1, phi_x stays 0.2.
     problem, _, _ = build_problem(
         fixed_config(deposit_model="manual", export_value_factor=0.2), {}, NOW
     )

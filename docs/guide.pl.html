@@ -416,12 +416,13 @@ ani profilu, a pokazywane koszty (<code>expected_net_cost</code>, <code>consumpt
 <p>Pomiar na 40 symulowanych domach (G11 i G12, współczynnik 0,8, bateria 10 kWh, rok z przeliczaniem co
 godzinę, względem tej samej baterii w czystej autokonsumpcji, wycena rocznym rachunkiem,
 <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/adr/0008-net-metering-plain-self-consumption.md">ADR-0008</a>): plan domyślny (<code>cost_min</code>, jak w profilu)
-daje roczny zysk względem autokonsumpcji −93…+70 PLN (średnio −1; + = taniej, − = drożej), nigdy nie obniża rachunku o więcej niż 10 PLN, a roczny
-import rośnie o +33…+704 kWh. Wyceniony godzinowo, tak jak raportuje go Home Assistant, ten sam plan na
-G12 pokazuje zysk +343 PLN rocznie, którego rozliczenie nie wypłaca. Z włączonym <strong>Ładowaniem z sieci</strong>
-(13 domów) roczny zysk względem autokonsumpcji wynosi −209…+139 PLN (ten sam znak), a import rośnie o +897 kWh
-(mediana). Ograniczenia: domy symulowane, jeden rozmiar baterii (10 kWh), jeden rok cen, interwały
-godzinowe, strefy G12 netowane jako jedna średnia stawka.</p>
+daje roczny zysk względem autokonsumpcji, rachunek plus zużycie baterii, −93…+70 PLN (średnio −1; + = taniej,
+− = drożej), nigdy nie obniża rachunku o więcej niż 10 PLN, a roczny import rośnie o +33…+704 kWh.
+Wyceniony godzinowo, tak jak raportuje go Home Assistant, ten sam plan na G12 pokazuje zysk +343 PLN
+rocznie, którego rozliczenie nie wypłaca. Z włączonym <strong>Ładowaniem z sieci</strong> (13 domów) roczny zysk
+względem autokonsumpcji, rachunek plus zużycie baterii, wynosi −209…+139 PLN (ta sama konwencja znaku),
+a import rośnie o +897 kWh (mediana). Ograniczenia: domy symulowane, jeden rozmiar baterii (10 kWh),
+jeden rok cen, interwały godzinowe, strefy G12 netowane jako jedna średnia stawka.</p>
 <p>Podgląd pokazuje pochodzenie profili startowych dla profilowanej nowej instalacji: które klucze
 wypełniła każda oś, źródło zakupu wstępnie wybrane przez profil <code>buy_tariff</code>, każdą wartość
 zmienioną po wypełnieniu (także klucz powiązany z pomocnikiem, wraz z jego efektywną wartością) oraz
@@ -429,7 +430,8 @@ uwagi dotyczące rozliczenia — Sell only PV wyłączone, źródło sprzedaży 
 mnożnik rozliczeniowy, surowe ceny RCE bez progu 0 (z poprawką w postaci skrótu „Cena rynkowa RCE”)
 albo z progiem, ale bez mnożnika 1,23, lub sprzedaż w systemie opustów, która przestała śledzić
 zakup — widoczne tylko dla instalacji, które użyły profilu startowego.
-Dla profilu opustu Podgląd zawsze dodaje jeszcze jedną uwagę, a drugą, gdy włączona jest flaga (tylko po angielsku):</p>
+Dla profilu opustu Podgląd zawsze dodaje jeszcze jedną uwagę, a drugą, gdy włączone jest Ładowanie z sieci
+lub Eksport energii z baterii (tylko po angielsku):</p>
 <ul>
 <li>„Note: net-metering is settled on yearly kWh (an exported kWh takes back 0.8 kWh within 12 months),
   not on hourly prices: price-driven dispatch does not lower the yearly bill and the costs shown are an
@@ -1333,7 +1335,7 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <tr>
 <td><strong>Model depozytu</strong> (<code>deposit_model</code>)</td>
 <td><code>off</code></td>
-<td>Wycenia eksport i część energetyczną importu tym, ile depozyt prosumencki naprawdę zwróci. Wymaga części dystrybucyjnej ceny zakupu. Zob. <a href="#wartość-depozytu-w-net-billingu">Wartość depozytu w net-billingu</a>.</td>
+<td><code>off</code> jest ustawieniem dla każdej instalacji. <code>manual</code> (eksperymentalny) wycenia eksport i część energetyczną importu podanym przez Ciebie współczynnikiem; w rocznym odtworzeniu nie obniżył rachunku. Wymaga części dystrybucyjnej ceny zakupu. Zob. <a href="#wartość-depozytu-w-net-billingu">Wartość depozytu w net-billingu</a>.</td>
 </tr>
 <tr>
 <td><strong>Pobór czuwania falownika</strong> (<code>idle_drain_kw</code>)</td>
@@ -1359,13 +1361,27 @@ instalacji; zob. <a href="#profile-startowe-nowe-instalacje">Profile startowe</a
 a depozyt pokrywa tylko to, co należy się sprzedawcy za <strong>energię</strong>; opłaty dystrybucyjne płaci się
 gotówką. Po 12 miesiącach niewykorzystana część jest zwracana, ale zwrot za miesiąc nie może
 przekroczyć <strong>ρ × wartość energii wyeksportowanej w tym miesiącu</strong> (ρ = 30 % przy rozliczeniu
-godzinowym RCE, 20 % przy miesięcznym RCEm); reszta przepada. Dopóki depozytu brakuje albo jego
+godzinowym RCE, 20 % przy miesięcznym RCEm), gdzie wartość to wartość eksportu bez współczynnika
+1,23; reszta przepada. Dopóki depozytu brakuje albo jego
 niewykorzystana część mieści się pod limitem, jedna jednostka waluty eksportu lub energetycznej
 części importu jest warta dokładnie jedną jednostkę gotówki i planer niczego nie musi poprawiać. Gdy
-limit zaczyna wiązać, kolejna jednostka eksportu jest warta tylko ρ, a część energetyczna importu nic
+limit zaczyna wiązać, kolejna jednostka eksportu jest warta tylko ρ/1,23 ceny sprzedaży zawierającej
+współczynnik 1,23 (0,244 dla ρ = 30 %, 0,163 dla 20 %), a część energetyczna importu nic
 nie kosztuje w gotówce (płaci się nią pieniędzmi, które i tak by przepadły). Model depozytu pozwala
-planerowi to zobaczyć. Jest <strong>domyślnie wyłączony</strong> i wtedy plan jest identyczny bajt w bajt z
-wersją bez niego.</p>
+planerowi to zobaczyć, ale <strong>się nie opłaca</strong>: <code>off</code> jest ustawieniem dla każdej instalacji, także
+gdy depozyt przepada, a <code>manual</code> jest <strong>eksperymentalny</strong>. Model <code>auto</code> został wycofany; zapisane
+<code>auto</code> jest czytane jako <code>off</code>, bez błędu i bez Alertu. <code>off</code> jest domyślne i wtedy plan jest
+identyczny bajt w bajt z wersją bez modelu.</p>
+<p>Co zmierzono, w rocznym odtworzeniu 40 domów z godzinowym RCE i baterią 10 kWh, rozliczonych wzorem
+rocznym i miesięcznym zapisem:</p>
+<ul>
+<li>żaden współczynnik nie obniżył rocznego rachunku o więcej niż 44 PLN, a współczynnik na limicie
+  podniósł go we wszystkich 40 domach, o 68–431 PLN (wzór roczny) albo 21–306 PLN (miesięczny zapis);</li>
+<li>przy miesięcznym RCEm współczynnik zmienia rachunek o mniej niż 10 PLN;</li>
+<li>instalacja, której depozyt przepada, niczego nie ustawia: <code>deposit_model</code> zostaje <code>off</code>. Wyłączenie
+  eksportu z baterii z powodu przepadającego depozytu kosztowało 154–662 PLN rocznie we wszystkich 16
+  zmierzonych domach (z ładowaniem z sieci i eksportem z baterii dozwolonymi).</li>
+</ul>
 <p><strong>Dwie części ceny zakupu.</strong> Model musi wiedzieć, która część ceny zakupu to energia (pokrywana z
 depozytu), a która dystrybucja (płacona gotówką). Cena zakupu interwału jest sumą obu, a podajesz
 stawki części dystrybucyjnej, nigdy energetycznej:</p>
@@ -1391,27 +1407,17 @@ Ujemna cena energii zostaje rzeczywistą ceną i nie ma części energetycznej d
 <tr>
 <td><code>deposit_model</code></td>
 <td><code>off</code></td>
-<td><code>off</code>: pełne ceny. <code>manual</code>: sam podajesz <code>export_value_factor</code>. <code>auto</code>: Energy Compass wylicza go z dwóch rocznych sum poniżej.</td>
+<td><code>off</code>: pełne ceny, ustawienie dla każdej instalacji. <code>manual</code> (eksperymentalny): sam podajesz <code>export_value_factor</code>. Zapisane <code>auto</code> (wycofane) jest czytane jako <code>off</code>.</td>
 </tr>
 <tr>
 <td><code>deposit_refund_percent</code></td>
 <td>30</td>
-<td>ρ, limit zwrotu jako udział wartości eksportu z miesiąca. 20 przy miesięcznym rozliczeniu RCEm.</td>
+<td>ρ, limit zwrotu jako udział wartości eksportu z miesiąca. 20 przy miesięcznym rozliczeniu RCEm. Sprzedawca zwracający udział depozytu (który zawiera współczynnik 1,23) ma tu 36,9 / 24,6.</td>
 </tr>
 <tr>
 <td><code>export_value_factor</code></td>
 <td>1,0</td>
 <td>Tylko <code>manual</code>: ile jest warta kolejna jednostka eksportu (0–1).</td>
-</tr>
-<tr>
-<td><code>deposit_yearly_value</code></td>
-<td>0</td>
-<td><code>auto</code>: depozyt, który spodziewasz się zaksięgować w 12 miesięcy (wartość eksportu w cenie rozliczeniowej, razem z 1,23). 0 = nieznane.</td>
-</tr>
-<tr>
-<td><code>deposit_yearly_energy_cost</code></td>
-<td>0</td>
-<td><code>auto</code>: to, co depozyt może pokryć w 12 miesięcy: opłata za energię czynną (za kWh) z poboru, brutto. Opłata handlowa, inne opłaty stałe i dystrybucja do niej nie wchodzą. 0 = nieznane.</td>
 </tr>
 <tr>
 <td><code>buy_distribution_mode</code></td>
@@ -1427,41 +1433,33 @@ Ujemna cena energii zostaje rzeczywistą ceną i nie ma części energetycznej d
 </table></section>
 <p>Presja limitu π (0 = depozytu brakuje albo mieści się pod limitem, 1 = limit wiąże) daje dwa
 współczynniki, które istnieją tylko wewnątrz optymalizatora:</p>
-<pre><code class="language-text">współczynnik wartości eksportu φx = 1 − π × (1 − ρ)     1 → ρ
+<pre><code class="language-text">współczynnik wartości eksportu φx = 1 − π × (1 − ρp)    1 → ρp,  ρp = ρ / 1,23
 współczynnik energii importu   φe = 1 − π               1 → 0
 cena zakupu w planie  = buy − (1 − φe) × część energetyczna buy
 cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 </code></pre>
 <ul>
-<li><strong><code>auto</code></strong>: niewykorzystany udział rocznego depozytu to <code>s = 1 − E / D</code> (<code>D</code> =
-  <code>deposit_yearly_value</code>, <code>E</code> = <code>deposit_yearly_energy_cost</code>), a π rośnie od 0 przy <code>s = ρ/2</code> do 1
-  przy <code>s = ρ</code>. Gdy <code>D</code> lub <code>E</code> wynosi 0, model nie ma danych: π = 0, a <code>reason</code> to <code>inputs_missing</code>;
-  plan pozostaje ważny i nie ma Alertu. Saldo depozytu celowo nie jest wejściem — saldo z jednego dnia
-  nic nie mówi bez dat księgowania.</li>
-<li><strong><code>manual</code></strong>: <code>φx</code> to Twój <code>export_value_factor</code> dokładnie tak, jak go wpisano, także poniżej ρ.
-  Z niego wynika tylko π, <code>π = clamp((1 − φx) / (1 − ρ), 0, 1)</code>, a <code>φe = 1 − π</code> idzie za nim (wartość
-  równa ρ lub niższa w pełni wyzerowuje część energetyczną importu). Przy <code>deposit_refund_percent</code> 100
-  oba współczynniki wynoszą 1.</li>
+<li><strong><code>manual</code></strong> (eksperymentalny): <code>φx</code> to Twój <code>export_value_factor</code> dokładnie tak, jak go wpisano,
+  także poniżej ρp. Z niego wynika tylko π, <code>π = clamp((1 − φx) / (1 − ρp), 0, 1)</code>, a <code>φe = 1 − π</code>
+  idzie za nim (wartość równa ρp lub niższa w pełni wyzerowuje część energetyczną importu). Przy
+  limicie (π = 1) <code>φx</code> to <code>ρp = ρ / 1,23</code>, a nie ρ: 0,244 dla 30 %, 0,163 dla 20 %. Przy
+  <code>deposit_refund_percent</code> 100 jest to 1/1,23, nie 1; ustawieniem, które niczego nie anuluje, jest
+  <code>deposit_model: off</code>.</li>
 <li><strong>Brak części dystrybucyjnej</strong> (stawki dystrybucji równe 0): cała cena zakupu byłaby liczona jako
   pokrywana z depozytu i import wyglądałby na darmowy. Przy π powyżej 0 <code>φe</code> jest więc wymuszone na 1,
   a <code>reason</code> to <code>split_missing</code>; <code>φx</code> nadal działa. Aby użyć modelu, ustaw stawki dystrybucji.</li>
-<li><strong>Histereza (<code>auto</code>)</strong>: π jest liczone raz na dobę lokalną (przy pierwszym przeliczeniu po lokalnej
-  północy) i utrzymywane przez dobę w magazynie <code>settlement</code>, więc restart i przeładowanie nie liczą
-  go od nowa. Nowa wartość zastępuje utrzymywaną tylko gdy różni się o co najmniej 0,10 albo wynosi
-  dokładnie 0 lub 1. Zmiana któregokolwiek z pięciu ustawień depozytu (<code>deposit_model</code>,
-  <code>deposit_refund_percent</code>, <code>export_value_factor</code>, <code>deposit_yearly_value</code>,
-  <code>deposit_yearly_energy_cost</code>) przelicza od razu.</li>
 <li><strong>Ujemne ceny sprzedaży</strong> zostają w całości: współczynnik skaluje tylko część dodatnią, bo ujemna
   cena jest realną opłatą.</li>
 <li><strong>Raportowane koszty się nie zmieniają.</strong> Koszt netto, <code>Plan.grid_cost</code>, czujniki kosztów, poziomy
   zużycia i próg <code>maximum_grid_charge_price</code> zostają w cenach z faktury; współczynników używa tylko cel
   planowania, przy każdej strategii i przed wagami strategii.</li>
 <li><strong>Próg sprzedaży z baterii</strong>, przykład (ceny brutto PGE G12 2026, sprawność cyklu 0,89, zużycie 0,05
-  za kWh, ρ = 30 %): sprzedaż z baterii i odkupienie energii w nocy opłaca się powyżej ok. 0,73
-  waluty/kWh, gdy limit nie wiąże, i powyżej ok. 0,71, gdy wiąże (tańszy nocny zakup równoważy niższą
-  wartość eksportu); przy ρ = 20 % próg rośnie do ok. 1,07. Zmienia się za to wykorzystanie nadwyżki PV (warta 0,12 zamiast 0,40 przy cenie
-  sprzedaży 0,40, więc trafia najpierw do baterii i elastycznego odbioru) oraz nocne ładowanie z
-  sieci, które pozostaje opłacalne.</li>
+  za kWh): sprzedaż z baterii i odkupienie energii w nocy opłaca się powyżej ok. 0,73
+  waluty/kWh, gdy limit nie wiąże. Gdy wiąże, próg wynosi ok. 0,88 przy ρ = 30 % i ok. 1,31 przy
+  ρ = 20 % (sprzedawca zwracający 36,9 % / 24,6 % depozytu: ok. 0,71 / 1,07). Zmienia się za to
+  wykorzystanie nadwyżki PV (warta 0,40 × ρp = 0,10 zamiast 0,40 przy cenie sprzedaży 0,40 i ρ = 30 %,
+  więc trafia najpierw do baterii i elastycznego odbioru) oraz nocne ładowanie z sieci, które
+  pozostaje opłacalne.</li>
 </ul>
 <p>Diagnostyka jest w atrybucie planu <code>dispatch_policy.settlement</code>:</p>
 <section class="table-scroll"><table>
@@ -1474,7 +1472,7 @@ cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 <tbody>
 <tr>
 <td><code>model</code></td>
-<td><code>off</code>, <code>manual</code> lub <code>auto</code></td>
+<td><code>off</code> lub <code>manual</code></td>
 </tr>
 <tr>
 <td><code>export_value_factor</code>, <code>import_energy_factor</code></td>
@@ -1485,29 +1483,19 @@ cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 <td>π</td>
 </tr>
 <tr>
-<td><code>unused_share</code></td>
-<td><code>s</code> dla <code>auto</code>, w innym przypadku <code>null</code></td>
-</tr>
-<tr>
-<td><code>refund_percent</code>, <code>yearly_deposit</code>, <code>yearly_energy_cost</code></td>
-<td>użyte wejścia</td>
+<td><code>refund_percent</code></td>
+<td>użyte wejście (ρ w procentach)</td>
 </tr>
 <tr>
 <td><code>distribution_mode</code></td>
 <td><code>included</code> albo <code>added</code></td>
 </tr>
 <tr>
-<td><code>evaluated_on</code></td>
-<td>lokalna data ostatniego liczenia π</td>
-</tr>
-<tr>
 <td><code>reason</code></td>
-<td><code>ok</code>, <code>off</code>, <code>inputs_missing</code>, <code>split_missing</code> (π powyżej 0, ale brak części dystrybucyjnej, <code>φe</code> wymuszone na 1) albo <code>held</code> (π z dzisiaj było już policzone)</td>
+<td><code>ok</code>, <code>off</code> albo <code>split_missing</code> (π powyżej 0, ale brak części dystrybucyjnej, <code>φe</code> wymuszone na 1)</td>
 </tr>
 </tbody>
 </table></section>
-<p>Odczyt <code>D</code> i <code>E</code> z długoterminowych statystyk zamiast wpisywania ich ręcznie nie wchodzi w skład tego
-wydania.</p>
 <h3 id="zapas-na-drogie-okresy">Zapas na drogie okresy</h3>
 <p>Prognoza zużycia jest średnią, więc plan, który rozładowuje baterię dokładnie do rezerwy na koniec
 drogiego okresu, mniej więcej co drugi dzień wypada za krótko. <code>peak_reserve_margin_kwh</code> każe
@@ -3239,7 +3227,7 @@ błąd wskazuje miejsce: <code>days[n][i]</code> (dzień <code>n</code> od 1, in
 pokryć depozyt (reszta <code>buy</code> to dystrybucja), w tych samych jednostkach, nie większa niż <code>buy</code>; puste
 lub brak oznacza 0. Ma znaczenie tylko z
 <a href="#wartość-depozytu-w-net-billingu">modelem depozytu</a>, który włączasz przez <code>--set
-deposit_model=manual --set export_value_factor=0.3</code> (albo <code>auto</code> z dwiema rocznymi wartościami).
+deposit_model=manual --set export_value_factor=0.3</code> (eksperymentalny).
 <code>buy</code> zostaje ceną z faktury, więc <code>buy_distribution_mode</code>, <code>buy_distribution_rate</code> i
 <code>buy_distribution_off_peak_rate</code> nie są czytane — ceny pochodzą z pliku — a ostrzeżenie o tym
 informuje. Koszty są raportowane w cenach z pliku niezależnie od współczynników.</p>
