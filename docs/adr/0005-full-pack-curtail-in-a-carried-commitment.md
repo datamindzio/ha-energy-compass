@@ -742,7 +742,7 @@ The Deye controller is not changed here. At this task it did not carry out the c
 the `HOLD` profile, whose maximum charge current and grid current are both `hold_grid_current` (1 A by default, about
 50 W; `controller_profile.py`), with the planned end state of charge rounded down as the target, so the pack took about
 50 W where the plan has it take up to the charge power. What the controller writes for a charging `CURTAIL` row is
-decided in T-076 (amendment at the end of this record).
+decided in the T-076 amendment ("the controller carries out a charging CURTAIL row").
 
 Measured with `benchmarks/curtail_sweep.py`, seeds 11, 22, 33 × 300 = 900 draws per kind, this branch (engine
 `3679099`, main `fde1cc5` merged in) against main `fde1cc5`, both solved through `solve_released`. Main's tree was
@@ -855,8 +855,9 @@ plan now may say so.
   it the second interval, whose need the pack could take, had no mode: `negroll` seed 22 draw 194 at its fourth boundary).
 - **The certificate** (`_validate_solution`): a spill above the forced part with room in the pack is still rejected,
   and a `CURTAIL` interval that spilled at most the forced part relays the gate like one that spilled at the gate.
-- **What is not changed:** the Deye controller (still the `HOLD` profile in a `CURTAIL` interval, see the T-064
-  amendment), the owner decision of T-062 B (a pack that can take the need never spills), a site that can curtail,
+- **What is not changed:** the Deye controller (not changed by T-066: a forced-spill row that charges is carried out as
+  point 31 of the T-076 amendment describes, the PV charge profile at the planned current; one that charges nothing
+  runs the `HOLD` profile), the owner decision of T-062 B (a pack that can take the need never spills), a site that can curtail,
   and every interval where nothing is beyond the pack (the model rows are those of before; `tests/test_strategy_golden.py`).
 - **Measured** (`benchmarks/spill_sweep.py` seeds 11 and 22 × 300 per draw, main `7c33fe8` against this branch with
   that main merged in, `8c72cfd`; the tables are in `docs/model.md`): problems solved once without a plan `run` 64 → 13,

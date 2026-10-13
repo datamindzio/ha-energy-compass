@@ -195,6 +195,8 @@ profile) instead of ending `infeasible`.
   pack full the run ends in a `HOLD` that starts its own clock (`dispatch_policy._fill_releases`, certified
   from a full pack only, offered within a minimum duration of an interval with a need or of a carried
   `CURTAIL`): the second version left a need that ended inside the PV-follow dwell without a legal mode.
+  A release at interval `j` ends only a run that began before `j` (T-083): a PV-follow run that begins after
+  it (a probe's load makes SELF_CONSUME of an idle interval) keeps its minimum duration, one row per start.
 - HiGHS is not sound on a model with the gate and relay rows: with presolve it returned a binary at 0.16 as
   optimal ("invalid solver result: fractional mode_CURTAIL") and reported a problem with a plan as infeasible.
   `optimize._Model.solve` gives a problem that has forced-spill binaries a second attempt without presolve when
