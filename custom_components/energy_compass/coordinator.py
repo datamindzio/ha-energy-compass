@@ -36,7 +36,7 @@ from .daily_export import (
     daily_export_active,
     daily_export_observations,
 )
-from .engine.dispatch_policy import dwell_group
+from .engine.dispatch_policy import dwell_group, mode_run_start
 from .engine.models import InputError, SolveError
 from .flow_schema import entity_ids, rebind_configuration, snapshot
 from .runtime import (
@@ -192,20 +192,13 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             environment = new_settings["environment"]
             if not is_registered(self.hass, self.entry.entry_id, environment):
                 return
-            from .atlas import AtlasBridge, build_attrs
-            from .atlas.location import home_h3_res6
+            from .atlas import AtlasBridge
 
             bridge = AtlasBridge(
                 self.hass, self.entry, self.configuration, new_settings
             )
             try:
-                await bridge.async_start(
-                    build_attrs(
-                        self.configuration,
-                        new_settings,
-                        home_h3_res6(self.hass),
-                    )
-                )
+                await bridge.async_start()
             except Exception:
                 _LOGGER.warning(
                     "Energy Atlas failed to start on %s after a settings change",
@@ -373,17 +366,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
     def _refresh_atlas(self):
         if self.atlas is None or self.atlas.sink is None:
             return
-        from .atlas import build_attrs
-        from .atlas.location import home_h3_res6
-
-        self.atlas.update(
-            self.configuration,
-            build_attrs(
-                self.configuration,
-                self.entry.options.get("atlas", {}),
-                home_h3_res6(self.hass),
-            ),
-        )
+        self.atlas.update(self.configuration)
 
     @callback
     def _registry_changed(self, event):
@@ -810,12 +793,13 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         if deadline <= now:
             self._invalidate("invalid_input", "expired_inputs")
             return
-        mode_start = current
-        while mode_start and rows[mode_start - 1].get("dispatch_mode") == rows[
-            current
-        ].get("dispatch_mode"):
-            mode_start -= 1
         policy = dict(result.get("dispatch_policy", {}))
+        # A HOLD row with nothing for the carried PV-follow commitment to follow, or
+        # with too little PV for a CURTAIL run to go on, is not a new mode: the
+        # commitment and its clock stay as they are, and a HOLD run that follows such a
+        # row starts its clock after it.
+        bridges = policy.get("carried_idle_starts", ())
+        mode_start = mode_run_start(rows, current, bridges)
         exception = policy.get("safety_exception")
         if exception and now >= parse_timestamp(exception["deadline"]):
             policy["safety_exception"] = None
@@ -825,7 +809,8 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                 "dispatch_policy": policy,
                 "intervals": rows[mode_start:],
                 "generated_at": rows[mode_start]["start"],
-            }
+            },
+            carried_idle=rows[current]["start"] in bridges,
         )
         export_start = current
         if min(rows[current]["discharge_kwh"], rows[current]["grid_export_kwh"]) > 1e-6:
@@ -1150,13 +1135,13 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             if not self._closed and not cancelled:
                 self._next_boundary(self.configuration["settings"])
 
-    def _commit_battery_direction(self, result):
+    def _commit_battery_direction(self, result, carried_idle=False):
         rows = result.get("intervals", [])
         policy = result.get("dispatch_policy", {})
         mode = rows[0].get("dispatch_mode") if rows else None
         if mode is None or not policy.get("enabled"):
             self._battery_commitment = None
-        elif policy.get("safety_exception"):
+        elif policy.get("safety_exception") or carried_idle:
             return
         elif self._battery_commitment and dwell_group(
             self._battery_commitment["mode"]

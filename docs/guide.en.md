@@ -605,7 +605,7 @@ hours: `activity = minimum_mode_power_kw × h` (default 0.1 kW) and
 | Mode | EN meaning | Occurs when (physical flows) | Allowed only if |
 | --- | --- | --- | --- |
 | `CHARGE_GRID` | Charge from grid | Battery charge ≥ surplus + activity — more is charged than PV surplus can supply, so the grid feeds the battery. No discharge, no curtailment. | `allow_grid_charge` on; price ≤ grid-charge ceiling when that limit is on. |
-| `CHARGE_PV` | Charge from PV | activity ≤ charge ≤ surplus — only solar surplus charges. No discharge, no curtailment. | PV surplus exists. |
+| `CHARGE_PV` | Charge from PV | activity ≤ charge ≤ surplus — only solar surplus charges. No discharge, no curtailment. Load-following: grid export only while the charge is at its power limit or the battery is full. | PV surplus exists. |
 | `DISCHARGE_GRID` | Discharge with export | Discharge ≥ activity **and** grid export ≥ activity — the battery sells energy. | `allow_battery_export` on; grid export capacity > 0; Sell only PV budget and export-benefit hurdle allow it. |
 | `SELF_CONSUME` | Self-consumption | Discharge ≥ activity, no charge, no export, no curtailment — the battery covers the house. Load-following: grid import only while the discharge is at its power limit or the battery is emptied to its reserve. | SOC above operating reserve. |
 | `HOLD` | Hold | No charge, no discharge, no curtailment — the battery idles; the grid/PV cover load. | Always available. |
@@ -653,22 +653,88 @@ Rules (defaults: 60 min, 0.1 kW):
   import. The rule also holds with `minimum_mode_minutes = 0`: there are no modes then, and the
   discharge in any interval the flows label `SELF_CONSUME` is bound the same way. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is executed the same way. If the battery runs out before
-  it ends, the rest of the commitment is `HOLD` with full import (a new `HOLD` clock starts). The
-  plan is `infeasible` until the commitment ends only when the terminal rule cannot be met
-  afterwards (`preserve_initial` with no later PV or grid charge to refill what the house drew),
-  or with a 0 % reserve and an inverter standby loss (`idle_drain_kw`).
+  it ends, the rest of the commitment is `HOLD` with full import (it starts no clock of its own: the
+  commitment's deadline stays the only one). The
+  same happens — from the first interval if need be — when the battery cannot cover the house
+  and still keep the inverter standby loss (`idle_drain_kw`) of the later intervals, with no PV
+  or grid charge to pay it in time. `HOLD` starts only in an interval without a PV surplus the
+  pack could take, in every committed interval: with one, the row stays `CHARGE_PV`. A committed
+  interval in which neither mode has anything to follow (net load and PV surplus both below
+  `minimum_mode_power_kw × h`, for example a night base load under 100 W) is `HOLD` by
+  classification and does not end the commitment: the plan bridges it (no `HOLD` clock starts,
+  and the persisted commitment keeps its mode and start) or, when the battery is spent or full,
+  starts a real `HOLD` run there as in any other interval
+  (`dispatch_policy.carried_idle_starts` lists the bridged intervals). With a full battery on a
+  site that cannot pass the PV, such an interval may be `CURTAIL` as well, like any other
+  committed interval; it is then not bridged. The plan is
+  `infeasible` until the commitment ends when the
+  terminal rule cannot be met afterwards (`preserve_initial` with no later PV or grid charge to
+  refill what the house drew; a flexible-load probe plans it only if its load leaves every
+  committed interval something to follow or takes a surplus below the minimum activity) or when the daily
+  throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
+  cases are listed in
+  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget). A direction the
+  legacy direction guard blocks (`initial_battery_mode`) is not open: a pack that may not charge
+  has no `CHARGE_PV` to follow and one that may not discharge has no `SELF_CONSUME`, so an interval
+  with only that direction to follow is bridged too. A flexible-load probe is bridged the same
+  way, as long as the probe it takes leaves the interval idle; a PV surplus it takes below the
+  minimum activity is not one the pack could take, so `HOLD` may start on it.
+- **`CHARGE_PV` follows the surplus.** The inverter charges with every watt the house does not
+  use, so the plan never pairs a partial charge with grid export: in a `CHARGE_PV` interval the
+  battery takes the whole PV surplus, and export appears only once the charge is at its interval
+  power limit or the battery has been filled to its upper bound. Otherwise the row is not
+  `CHARGE_PV`. Applies while `minimum_mode_minutes` is above 0. A carried
+  `CHARGE_PV`/`SELF_CONSUME` commitment is held to the same rule. If the battery is full before it
+  ends (the next interval could not take even the minimum activity above the upper bound), the
+  rest of the commitment is `HOLD` with the surplus exported, or `CURTAIL` where the site cannot
+  pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
+  pack. The released `HOLD` starts no clock of its own — the commitment's deadline stays the only
+  one — so it may turn to `CURTAIL` (which starts its own clock) before then; it does not go back
+  to `CHARGE_PV`/`SELF_CONSUME`. The first committed interval is judged the same way against the
+  observed state of charge: a pack already within the lowered ceiling of that interval (for
+  example after the interval that filled it was carried out) may be `HOLD` or `CURTAIL` at once,
+  in either member mode. An observed state of charge at the upper bound is the safety exception
+  below. A committed interval in which the pack fills while the rest of the surplus is still
+  above the export cap or the inverter rating is planned: `CHARGE_PV` cannot fill the pack and
+  curtail in the same interval, so the pack counts as full for the next interval, which may be
+  `HOLD` or `CURTAIL`, once it is within that interval's curtail need of the ceiling (the PV that
+  must go to the pack or be curtailed, at least the minimum activity).
+- **`CURTAIL` goes on through a PV gap.** A `CURTAIL` run lasts the minimum duration, and PV can
+  drop inside it. A `HOLD` in an interval with PV below the minimum activity (`minimum_mode_power_kw × h`)
+  inside that duration is the run going on, not a new `HOLD`: the inverter has nothing to curtail
+  and the pack and the grid do what `HOLD` does. It counts for the `CURTAIL` clock, starts no `HOLD`
+  clock, and ends with the run's duration; the `HOLD` after it starts its own clock. It applies to a
+  run begun by PV that the export cap or the inverter cannot pass, and to a `CURTAIL` carried in;
+  `dispatch_policy.carried_idle_starts` lists these rows too, and the persisted commitment keeps its
+  mode and start there. It holds inside a carried `CHARGE_PV`/`SELF_CONSUME` commitment as well (a
+  `CURTAIL` released from it goes on through a PV gap within the commitment's own duration), and for
+  an interval with a load below the minimum activity.
+- **`CURTAIL` takes over a `HOLD` that cannot pass the PV.** `HOLD` takes no curtailment, so a
+  `HOLD` that has to last (a carried `HOLD`, the `HOLD` that the safety exception below puts in
+  place of a `CHARGE_PV` at the maximum state of charge, or a `HOLD` that began earlier in the plan,
+  for example after a `CURTAIL` run that ended in a PV gap) has no legal mode in an interval whose
+  PV, after the house, is above the export cap (`grid_export_kw`) or above the inverter rating.
+  There the inverter curtails by itself and the interval is `CURTAIL`: it takes the `HOLD` over and
+  from then on is an ordinary `CURTAIL` run with its own minimum duration (which outlasts the
+  `HOLD`'s remainder; a PV gap inside it is bridged as above). Only where the site cannot pass the
+  PV: anywhere else `CURTAIL` inside a `HOLD`'s duration would be a label to leave it with, and is
+  not offered. The `HOLD` after the run starts its own clock. A `HOLD` released from a carried
+  `CHARGE_PV`/`SELF_CONSUME` commitment has no clock of its own and is not taken over. A
+  flexible-load probe counts: its load is part of what the site passes, so the takeover is offered
+  only for the probe loads that leave PV above the cap.
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
-- **Any other change** (source, destination, HOLD or CURTAIL) starts a new clock. Idle HOLD cannot
-  fund an active run.
+- **Any other change** (source, destination, HOLD or CURTAIL) starts a new clock, except the `HOLD`
+  released from a full pack or an empty battery above, which has none. Idle HOLD cannot fund an
+  active run.
 - **Coverage:** a new active mode needs a full duration of forecast coverage remaining.
 - **Safety exception (pause, not reset):** during an unexpired active commitment the current row
   shows HOLD when the observed SOC is already at the upper bound (charging modes —
   `observed_soc_maximum`) or at/below the reserve (discharge modes — `observed_soc_minimum`), or
   when a carried `CHARGE_GRID` meets a price above the ceiling before its deadline
   (`grid_charge_price_limit`). The interrupted mode and deadline stay stored; no other mode may
-  start before that deadline. Exposed in `dispatch_policy.safety_exception`.
+  start before that deadline, except the `CURTAIL` that takes the `HOLD` over where the site cannot pass the PV (above). Exposed in `dispatch_policy.safety_exception`.
 - **Strategy change (reset):** writing a new strategy drops the carried commitment for the next
   plan, which starts unlocked (see [strategy-switch release](#strategy-switch-release)).
 - Setting `minimum_mode_minutes = 0` disables duration and minimum-power rules; the
@@ -846,6 +912,55 @@ flowchart TD
 Percentiles come from successful probe costs across the reference horizon (default 24 h) using
 linear interpolation. If a full reference probe fails, `short_coverage` decides: `absolute_fallback`
 (default: keep BOOST/LIMIT absolute rules and the minimum-tariff CHEAP rule) or `unavailable`.
+
+**Limit: probes that do not finish in time.** Every probe is a full, exact solve of the whole
+planning horizon and is known only when it finishes within `probe_time_limit_s` (default 2 s); the
+probes run one after another inside `total_time_limit_s` (default 60 s). A probe that does not finish
+stays unknown — it is never replaced by an approximate cost. One unknown full reference probe is
+enough for `short_coverage` (`reason` is `reference_probe_failed`), and an interval whose own probe is
+unknown has no level.
+
+How long a probe takes depends on the strategy and on the number of intervals in the planning
+horizon. `self_sufficiency` and `backup_ready` keep `SELF_CONSUME` on through the night, and the
+load-following rule makes their probes many times slower. Probes with a known cost at the default
+limits, quarter-hour prices and hourly display intervals, measured on a fast desktop CPU (Apple M4
+Max):
+
+| Planning horizon | `cost_min`, `pv_swap`, `max_export`, `grid_friendly` | `self_sufficiency` | `backup_ready` |
+| --- | --- | --- | --- |
+| 12 h (48 intervals), 12 probes | 12 of 12 | 12 of 12 | 12 of 12 |
+| 24 h (96 intervals, the default), 24 probes | 24 of 24 | 0 of 24 | 2 of 24 |
+| 48 h (192 intervals), 24 probes | 7–23 of 24 | none | none |
+
+So with `self_sufficiency` or `backup_ready` the consumption levels are unknown for nearly every
+interval already on the default 24 h horizon, and on a 48 h horizon no strategy completes its probes
+(with a 15-minute display interval 18–67 of 96 are known). At 48 h the base plan of these two
+strategies also runs into `solve_time_limit_s` and is published as `time_limited`.
+`minimum_mode_minutes = 0` does not lift the limit: at 24 h 13 of 24 (`self_sufficiency`) and 20 of 24
+(`backup_ready`) probes are known, which is still `short_coverage`. A slower host, such as a
+Raspberry Pi, reaches each limit at a shorter horizon.
+
+The [flexible energy depth](#flexible-energy-depth) is bound by the same two settings: each of its
+five solves gets `probe_time_limit_s`, inside what the probes left of `total_time_limit_s`. With
+`self_sufficiency` or `backup_ready` at 24 h none of the five finished within the default 2 s, so the
+depth is unknown (profiles `UNKNOWN`, reason `timeout`); `cost_min` at 24 h and `self_sufficiency` at
+12 h got all five.
+
+What was measured to help on the same host, at the default 24 h horizon:
+
+- `backup_ready`: `probe_time_limit_s` 10 and `total_time_limit_s` 120 gave all 24 probes (47 s of
+  probing per recalculation) and, with the same probe limit, all five flexible-depth solves (21 s
+  more). With `probe_time_limit_s` 5 one probe was still late and the levels
+  stayed on `short_coverage`.
+- `self_sufficiency`: only the maximum of both settings, `probe_time_limit_s` 30 and
+  `total_time_limit_s` 300, gave all 24 probes, after 199 s of probing per recalculation, and the
+  five flexible-depth solves took 48 s more. That leaves no headroom for a slower host or a harder
+  day.
+- A 12 h planning horizon gave all 12 probes for both strategies at the default limits, with the
+  slowest `self_sufficiency` probe at 1.5 s of the 2 s limit; the plan then looks 12 h ahead only.
+
+The table, the per-probe times and the command that reproduces them are in
+[`docs/runtime-validation.md`](runtime-validation.md#consumption-probe-limits).
 
 ## Windows and flexible energy depth
 
@@ -1030,6 +1145,20 @@ Otherwise the start is offered only as **CHARGE_GRID**, subject to the usual gri
 rules, so the solver can pick a cheap grid window instead. The dispatch plan itself keeps using the median
 series. Without the source nothing changes.
 
+The solver prices every window on the median series, where PV surplus can pay for a vetoed
+**CHARGE_GRID** window, so several starts would cost the same. To avoid a tie-break landing on an
+expensive slot, every **CHARGE_GRID** window offered while the pessimistic series is present (also one
+that is **CHARGE_GRID** on the median series alone) carries a ranking cost: the energy the pessimistic series leaves to the
+grid, that is what the pack still lacks to reach the threshold at the window start plus the load PV does
+not cover inside the window, at the window's buy prices. The solver adds 5 % of each window's excess over
+the cheapest window the solver can pick to that window's cost, so a window the pessimistic series still supports
+(**CHARGE_PV**) beats a vetoed one and, among vetoed ones, the cheapest wins. The addition never exceeds
+half the cost of skipping the balance. A start-0 window the pack cannot reach (it starts below the
+threshold) is left out of that comparison, so it never shifts the other windows towards a skip; the
+ranking can still tip a close call against the balance. It is a preference, not a
+strict tie-break: a start that is cheaper on the median series by more than 5 % of the difference in
+ranking cost still wins. It is not part of the plan's cost.
+
 Trade-off: the pack test counts PV surplus only. A start the pack would reach only by charging from the
 grid before the window is offered as **CHARGE_GRID** alone, and is dropped when the grid-charge price
 ceiling blocks a slot of the window, so `balance_no_window_in_horizon` can appear where a window existed
@@ -1123,7 +1252,7 @@ takes effect at the next periodic recalculation (`refresh_minutes`) or source ch
 | `autonomy_shortfall_kwh` | Total shortfall below the autonomy floor; `0` = floor met. |
 | `peak_reserve_shortfall_kwh` | Total shortfall below the [peak-period reserve](#peak-period-reserve); `0` = met or off. |
 | `time_limited` | `true` when the base solve hit `solve_time_limit_s` and the best validated solution found so far was published instead of a proven optimum. |
-| `mip_gap` | Relative MIP gap the solver reported for the published plan: `0` = proven optimal; for a time-limited plan, the bound on how far its objective may be from the optimum (e.g. `0.017` = 1.7 %). |
+| `mip_gap` | Relative MIP gap the solver reported for the published plan: `0` = proven optimal (a proven plan normally reads `0`, or at most `0.0001` when no episode hurdle is active; not a hard bound: HiGHS also stops on its absolute gap of `1e-6`, which cannot be switched off, so when the [weighted objective the solver minimises](#what-each-strategy-changes) is within about ±0.01 of zero the relative gap can be larger, up to roughly `1e-6 / |objective|`, which exceeds 1 once the objective is within `1e-6` of zero; that objective is the plan's cost plus the episode reserves and the strategy's penalty terms, so it can be near zero while the plan's cost is not, and the reverse; `time_limited`, not `mip_gap == 0`, tells a proven plan from an unproven one); for a time-limited plan, the bound on how far the solver's weighted objective may be from the optimum (e.g. `0.017` = 1.7 %). It does not bound the plan's cost in currency, and the plan itself can differ from the proven one in many intervals (see [`docs/runtime-validation.md`](runtime-validation.md#how-far-the-time-limit-leaves-the-plan-from-the-proof)). |
 | `cap_violation_kwh` | Total energy above `grid_friendly` soft caps; `0` = caps met. |
 
 ### Strategy-switch release
@@ -1584,10 +1713,21 @@ import/export and battery power, household load power (recorder mode only), batt
 PV/import/export energy counters (only counters
 whose Home Assistant `state_class` is `total`/`total_increasing`); each Compass solve's plan and
 its price/PV/load inputs; a handful of installation attributes (PV kWp, grid connection power in kW
-if you entered it, battery capacity and usable capacity, SOC floor, the Compass version) and the coarse location of your Home Assistant home zone
-as an H3 resolution-6 cell (a hexagon of roughly 36 km², so Atlas can count your site in its
-voivodeship). The cell is computed once, when delivery starts, and your exact coordinates are never
-stored or sent. Nothing else — no tariff text or inverter model, and the enrollment credential
+if you entered it, battery capacity and usable capacity, SOC floor, the Compass version) and the municipality
+(gmina) your Home Assistant home zone lies in, as its 7-digit id. Atlas shows the municipality **by
+name** next to your home's values. Compass finds the municipality inside Home Assistant: it reads
+the public outline files that Atlas serves (the same files for every home, found through
+`GET /v1/public/geo`) and compares them with your home's position there, so your coordinates stay
+in Home Assistant and no request carries them. The only things derived from them that leave are the
+voivodeship id in the name of the municipalities file Compass fetches and the municipality id in
+the attributes. A home within about 50 m of a municipal border may be shown in the neighbouring
+municipality, because the outlines are simplified. A home outside every Polish municipality
+(abroad, at sea) or without coordinates sends no location and is counted in the fleet total only.
+The files are fetched again only when Atlas publishes a new version or your home moves (Atlas is
+asked for the version at start and at most once per 24 h); if Atlas cannot be reached, the last
+municipality found is kept — also across a Home Assistant restart, in the integration's storage
+next to the site key together with the coordinates and the geometry version it was found for, never
+sent — and the lookup is retried at most once per hour, without ever delaying telemetry. Nothing else is sent — no tariff text or inverter model, and the enrollment credential
 itself is **never stored**, only the site key issued in exchange for it.
 
 **How values are sent**: powers in W. Bind **Battery power** with + = discharge (as in the

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Energy Atlas Collector API
-  version: 1.3.0-hexmap2
+  version: 1.4.0-adminmap
   summary: Ingest and read API for Energy Atlas sites (E0) and the web app's public and signed-in reads (W1, hex map epic).
   description: |
     Single source of truth for the collector (Go) and the edge agent `atlas_sink` (Python).
@@ -68,6 +68,27 @@ info:
     - The W1 region operations (`/v1/public/regions/…`, `getPublicRegion`, `listPublicRegionAssets`),
       `PublicAsset.region_path` and the `/geo/…` TopoJSON files were removed with S-202: a request to
       `/v1/public/regions/…` or `/geo/…` answers 404 `not-found`.
+
+    Administrative map (docs/PRD-adminmap.md; ADR-0045) — decided 2026-10-12; the location part is in 1.4.0-adminmap, the zone reads follow
+    - The map's zones become administrative units of Poland: voivodeship, county, municipality (PRG
+      ids of 2, 4 and 7 digits; the parent is the id prefix) and the offshore unit "Bałtyk" (`00`,
+      `0000`, `0000000`). Owner decision D23: H3 is dropped entirely. A site names its municipality in
+      `location.municipality` (7 digits of the pinned PRG release, or `0000000`; anything else → 422
+      `invalid_municipality` / `unknown_municipality`) and belongs to it and to that municipality's
+      county and voivodeship; a parent's values are the exact sum of its children's; a site without
+      a municipality of the release is unzoned. `location.h3_res6` from a client that has not been
+      updated is tolerated and never read for units (ADR-0045 §2).
+    - The zone reads and the location schema below still describe the H3 contract 1.3.0-hexmap2.
+      Version 1.4.0-adminmap (dev tickets of S-219 and S-225) changes them: `AttrsLocation` carries
+      `municipality`; `PublicAsset` carries `municipality` and a `zone_path` of unit ids instead of the
+      H3 fields; new `getPublicGeo` `GET /v1/public/geo` → `{version, files}` names the geometry files
+      for clients that look a place up themselves (Energy Compass; no coordinate is ever sent); `listPublicZones` takes `level` = `voivodeship` | `county` |
+      `municipality` and `within` = a 2-digit voivodeship id (required at `municipality` level);
+      `getPublicZone` / `getWebZone` take `{unit}`; `Zone` carries `unit` and `level` instead of `h3`
+      and `res`. `ZoneAggregate`, the row schemas, caching and the rate limit do not change, and zone
+      reads stay values-only (no name, outline or anchor).
+    - Unit outlines, names and anchors are static files of the web app under `/geo/<version>/…`
+      (TopoJSON, `immutable`), not operations of this API; other paths under `/geo/` keep answering 404.
   contact:
     name: Datamindz
 servers:
@@ -915,6 +936,31 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
+  /v1/public/geo:
+    get:
+      tags: [public]
+      operationId: getPublicGeo
+      summary: Version and paths of the unit geometry files, for clients that look a place up themselves (S-225)
+      description: |
+        The geometry version (first 12 hex digits of the sha256 over the 33 files, ADR-0045 §4) and the
+        origin-relative paths of the TopoJSON files under `/geo/<version>/`: `pl.topo.json`, and the
+        counties and municipalities files with `{vv}` in place of the 2-digit voivodeship id. Each path
+        with a voivodeship id filled in answers 200 on the origin that served this read. The answer
+        carries no site data and no count; `Cache-Control: public, max-age=300`; rate limited like every
+        public read. Does not read the fleet snapshot, so it answers 200 without one.
+      security: []
+      responses:
+        '200':
+          description: Geometry version and file paths.
+          headers:
+            Cache-Control:
+              description: '`public, max-age=300`.'
+              schema: { type: string, examples: ['public, max-age=300'] }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicGeo' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   /v1/public/zones:
     get:
       tags: [public]
@@ -1427,8 +1473,9 @@ components:
           description: |
             Machine-readable code: required, wrong_type, unknown_field, out_of_range,
             not_aligned_5min, not_aligned_hour, not_utc, in_future, duplicate_key_in_batch,
-            too_many_items, not_multiple_of_300, invalid_h3, forbidden_identifying_data,
-            invalid_enum, from_not_before_to, range_too_large, unknown_metric, invalid_tz,
+            too_many_items, not_multiple_of_300, invalid_h3, invalid_municipality (`location.municipality`
+            is not a string of 7 digits), unknown_municipality (7 digits, no unit of the pinned release),
+            forbidden_identifying_data, invalid_enum, from_not_before_to, range_too_large, unknown_metric, invalid_tz,
             invalid_public_key, invalid_combination (W1 `bulk`),
             invalid_cursor (W1 paging), invalid_day (W1 `day`, not YYYY-MM-DD).
         detail: { type: string }
@@ -1876,7 +1923,8 @@ components:
         incl. `tariff.*`, `compass_version`, `inverter_model`) that look like coordinates, a street
         address or a serial number → 422 `forbidden_identifying_data`. Street-address rules
         (PL postal code + place, street keyword + name + house number) and must-pass/must-flag
-        examples: docs/adr/0012-street-address-detection-in-attrs.md. Location only as H3 res 6.
+        examples: docs/adr/0012-street-address-detection-in-attrs.md. Location only as H3 res 6
+        (1.4.0-adminmap: only as a municipality id, ADR-0045 §2).
       required: [pv_kwp, battery_kwh_nominal, battery_kwh_usable, compass_version]
       properties:
         pv_kwp: { type: number, exclusiveMinimum: 0, maximum: 1000 }
@@ -1926,12 +1974,22 @@ components:
     AttrsLocation:
       type: [object, 'null']
       additionalProperties: false
-      description: Site location, H3 res 6 only; shared by AttrsV1 and AttrsV2.
-      required: [h3_res6]
+      description: >-
+        Site location, shared by AttrsV1 and AttrsV2 (no new schema version). Since 1.4.0-adminmap (ADR-0045 §2,
+        owner decision D23) the location is the site's municipality: `municipality` (a string of exactly 7 digits;
+        not 7 digits → 422 `invalid_municipality`; 7 digits that are no unit of the release → 422
+        `unknown_municipality`). A location with neither key → 422 `required` naming `/attrs/location/municipality`;
+        any other key → 422 `unknown_field`. `h3_res6` is tolerated from a client older than S-226, alone or beside
+        `municipality`, checked for its shape (`invalid_h3`) and stored as sent, never read for units: a site whose
+        location has no `municipality` is unzoned. Versions stored before 1.4.0 are returned as stored.
       properties:
+        municipality:
+          type: string
+          pattern: '^[0-9]{7}$'
+          description: Id of a municipality of the pinned PRG release (2 479) or `0000000`, the offshore unit.
         h3_res6:
           type: string
-          description: H3 cell index at resolution 6 (hex, 15 chars, starts with 86). Resolution checked server-side.
+          description: Tolerated, no longer read. H3 cell index at resolution 6 (hex, 15 chars, starts with 86).
           pattern: '^86[0-9a-f]{13}$'
 
     AttributeSnapshot:
@@ -2036,7 +2094,7 @@ components:
         h3_res6: { type: string, pattern: '^86[0-9a-f]{13}$', description: 'The cell; its centre is computed by the client (`h3-js` `cellToLatLng`; `lat`/`lng` removed in 1.3.0-hexmap2, ADR-0039 §1).' }
         zone_path:
           type: array
-          description: The asset's zones from res 3 to res 6 by index bits (ADR-0039 §2); `[]` when its cell is not a valid res-6 cell.
+          description: The asset's zones from res 3 to res 6 by index bits (ADR-0039 §2); `[]` when its cell is not a valid res-6 cell. 1.4.0-adminmap (ADR-0045 §3) - the ids of its voivodeship, county and municipality, beside a new `municipality` field; `h3_res6` leaves.
           maxItems: 4
           items: { $ref: '#/components/schemas/ZoneH3' }
         current_output_kw: { type: [number, 'null'] }
@@ -2158,6 +2216,33 @@ components:
           properties:
             real: { type: integer, minimum: 0 }
             simulated: { type: integer, minimum: 0 }
+
+    PublicGeo:
+      type: object
+      additionalProperties: false
+      required: [version, files]
+      properties:
+        version:
+          type: string
+          pattern: '^[0-9a-f]{12}$'
+          description: Geometry version of the pinned PRG release; the files live under `/geo/<version>/`.
+        files:
+          type: object
+          additionalProperties: false
+          required: [voivodeships, counties, municipalities]
+          properties:
+            voivodeships:
+              type: string
+              description: Path of `pl.topo.json`.
+              examples: ['/geo/d053123129d9/pl.topo.json']
+            counties:
+              type: string
+              description: Path of the counties files, `{vv}` in place of the voivodeship id.
+              examples: ['/geo/d053123129d9/{vv}-counties.topo.json']
+            municipalities:
+              type: string
+              description: Path of the municipalities files, `{vv}` in place of the voivodeship id.
+              examples: ['/geo/d053123129d9/{vv}-municipalities.topo.json']
 
     PublicZoneList:
       type: object

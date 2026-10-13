@@ -1097,7 +1097,7 @@ przechowuje własną kopię zaakceptowanego planu przez przeładowanie wpisu, al
 <tr>
 <td><code>CHARGE_PV</code></td>
 <td>Ładowanie z PV</td>
-<td>activity ≤ ładowanie ≤ nadwyżka — ładuje tylko nadwyżka słoneczna. Bez rozładowania i ograniczania PV.</td>
+<td>activity ≤ ładowanie ≤ nadwyżka — ładuje tylko nadwyżka słoneczna. Bez rozładowania i ograniczania PV. Podąża za nadwyżką: eksport do sieci tylko przy ładowaniu na limicie mocy albo gdy bateria jest pełna.</td>
 <td>Jest nadwyżka PV.</td>
 </tr>
 <tr>
@@ -1150,14 +1150,83 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   a rozładowanie w każdym przedziale, który przepływy oznaczają jako <code>SELF_CONSUME</code>, jest związane
   tak samo. Przeniesione zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> jest wykonywane tak samo. Jeśli
   bateria wyczerpie się przed jego końcem, reszta zobowiązania to <code>HOLD</code> z pełnym importem
-  (startuje nowy zegar <code>HOLD</code>). Plan jest <code>infeasible</code> (niewykonalny) do końca zobowiązania tylko
-  wtedy, gdy potem nie da się spełnić reguły końcowej (<code>preserve_initial</code> bez późniejszego PV lub
-  ładowania z sieci, które uzupełniłyby to, co zużył dom), albo przy rezerwie 0 % i poborze
-  czuwania falownika (<code>idle_drain_kw</code>).</li>
+  (bez własnego zegara: jedynym zegarem jest termin zobowiązania). Tak samo — w razie potrzeby już od pierwszego przedziału — gdy
+  bateria nie może pokryć domu i zarazem zachować poboru czuwania falownika (<code>idle_drain_kw</code>)
+  z późniejszych przedziałów, a PV ani ładowanie z sieci nie uzupełnią go na czas. <code>HOLD</code> zaczyna
+  się tylko w przedziale bez nadwyżki PV, którą bateria mogłaby przyjąć, w każdym przedziale
+  zobowiązania: przy nadwyżce wiersz zostaje <code>CHARGE_PV</code>. Przedział zobowiązania, w którym żaden
+  z trybów nie ma za czym podążać (obciążenie netto i nadwyżka PV poniżej
+  <code>minimum_mode_power_kw × h</code>, np. nocny pobór bazowy poniżej 100 W), to z klasyfikacji <code>HOLD</code>
+  i nie kończy zobowiązania: plan go przemostkowuje (nie startuje zegar <code>HOLD</code>, a zapisane
+  zobowiązanie zachowuje tryb i start) albo, gdy bateria jest wyczerpana lub pełna, zaczyna tam
+  prawdziwy przebieg <code>HOLD</code>, tak jak w każdym innym przedziale
+  (<code>dispatch_policy.carried_idle_starts</code> wymienia przemostkowane przedziały). Przy pełnej baterii
+  w instalacji, która nie może oddać PV, taki przedział może być też <code>CURTAIL</code>, jak każdy inny
+  przedział zobowiązania; nie jest wtedy przemostkowany. Plan jest
+  <code>infeasible</code> (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
+  (<code>preserve_initial</code> bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
+  dom; sonda obciążenia elastycznego daje plan tylko wtedy, gdy jej obciążenie zostawia każdemu
+  przedziałowi zobowiązania coś do naśladowania albo sprowadza nadwyżkę poniżej minimalnej
+  aktywności) albo gdy dzienny budżet przepustowości nie
+  pokryje minimalnej aktywności, której wymaga zobowiązanie; rzadkie pozostałe przypadki opisuje
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a> (EN). Kierunek
+  zablokowany przez dawną blokadę kierunku (<code>initial_battery_mode</code>) nie jest otwarty: bateria,
+  która nie może się ładować, nie ma <code>CHARGE_PV</code> do naśladowania, a ta, która nie może się
+  rozładowywać, nie ma <code>SELF_CONSUME</code>, więc przedział z tylko takim kierunkiem też jest
+  przemostkowany. Sonda obciążenia elastycznego jest mostkowana tak samo, dopóki zabrane przez nią
+  obciążenie zostawia przedział bez aktywności; nadwyżka PV sprowadzona przez sondę poniżej
+  minimalnej aktywności nie jest nadwyżką, którą bateria mogłaby przyjąć, więc <code>HOLD</code> może się na
+  niej zacząć.</li>
+<li><strong><code>CHARGE_PV</code> podąża za nadwyżką.</strong> Falownik ładuje każdym watem, którego dom nie zużywa, więc plan
+  nigdy nie łączy częściowego ładowania z eksportem do sieci: w przedziale <code>CHARGE_PV</code> bateria
+  przejmuje całą nadwyżkę PV, a eksport pojawia się dopiero, gdy ładowanie jest na limicie mocy
+  przedziału albo bateria została napełniona do górnej granicy. W innym wypadku wiersz nie jest
+  <code>CHARGE_PV</code>. Dotyczy przypadku, gdy <code>minimum_mode_minutes</code> jest większe od 0. Przeniesione
+  zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli bateria zapełni się przed
+  jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
+  granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki albo <code>CURTAIL</code> tam, gdzie
+  instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
+  falownik przy pełnej baterii. Zwolniony <code>HOLD</code> nie ma własnego zegara — jedynym zegarem jest
+  termin zobowiązania — więc może przejść w <code>CURTAIL</code> (który startuje własny zegar) przed tym
+  terminem; nie wraca do <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>. Pierwszy przedział zobowiązania jest oceniany tak samo
+  względem zaobserwowanego stanu naładowania: bateria, która jest już w obrębie obniżonej górnej
+  granicy tego przedziału (na przykład po wykonaniu przedziału, który ją napełnił), może od razu
+  przejść w <code>HOLD</code> lub <code>CURTAIL</code>, w obu trybach grupy. Zaobserwowany stan naładowania na górnej
+  granicy to wyjątek bezpieczeństwa opisany niżej. Przedział zobowiązania, w którym bateria się napełnia,
+  a reszta nadwyżki nadal przekracza limit eksportu lub moc falownika, jest planowany: <code>CHARGE_PV</code>
+  nie napełni baterii i nie przytnie nadwyżki w tym samym przedziale, więc bateria liczy się jako
+  pełna dla następnego przedziału (może to być <code>HOLD</code> lub <code>CURTAIL</code>), gdy jest od górnej granicy
+  nie dalej niż potrzeba przycięcia tego przedziału (PV, które musi trafić do baterii albo zostać
+  przycięte, co najmniej minimalna aktywność).</li>
+<li><strong><code>CURTAIL</code> trwa mimo przerwy w PV.</strong> Przebieg <code>CURTAIL</code> trwa minimalny czas, a PV może w tym
+  czasie spaść. <code>HOLD</code> w przedziale z PV poniżej minimalnej aktywności (<code>minimum_mode_power_kw × h</code>)
+  w trakcie tego czasu to ten sam przebieg, a nie nowy <code>HOLD</code>: falownik nie ma czego przycinać,
+  a bateria i sieć robią to, co przy <code>HOLD</code>. Liczy się do zegara <code>CURTAIL</code>, nie uruchamia zegara
+  <code>HOLD</code> i kończy się z czasem przebiegu; <code>HOLD</code> po nim ma własny zegar. Dotyczy przebiegu
+  rozpoczętego przez PV, którego nie przepuści limit eksportu ani falownik, oraz przeniesionego
+  <code>CURTAIL</code>; <code>dispatch_policy.carried_idle_starts</code> wymienia także te wiersze, a zapisane zobowiązanie
+  zachowuje tam swój tryb i początek. Działa to także w przeniesionym zobowiązaniu
+  <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> (zwolniony z niego <code>CURTAIL</code> trwa mimo przerwy w PV w obrębie czasu
+  samego zobowiązania) oraz w przedziale z obciążeniem poniżej minimalnej aktywności.</li>
+<li><strong><code>CURTAIL</code> przejmuje <code>HOLD</code>, który nie przepuści PV.</strong> <code>HOLD</code> nie przycina produkcji, więc
+  <code>HOLD</code>, który musi trwać (przeniesiony <code>HOLD</code>, <code>HOLD</code>, który wyjątek bezpieczeństwa poniżej
+  stawia w miejsce <code>CHARGE_PV</code> przy maksymalnym stanie naładowania, albo <code>HOLD</code> rozpoczęty wcześniej
+  w planie, na przykład po przebiegu <code>CURTAIL</code>, który skończył się przerwą w PV), nie ma dozwolonego
+  trybu w przedziale, w którym PV po odjęciu zużycia domu przekracza limit eksportu
+  (<code>grid_export_kw</code>) albo moc falownika. Falownik przycina wtedy sam i przedział to <code>CURTAIL</code>:
+  przejmuje <code>HOLD</code> i od tej chwili jest zwykłym przebiegiem <code>CURTAIL</code> z własnym minimalnym czasem
+  (dłuższym niż reszta czasu <code>HOLD</code>; przerwa w PV w jego trakcie jest pokryta jak wyżej). Tylko tam,
+  gdzie instalacja nie przepuści PV: gdziekolwiek indziej <code>CURTAIL</code> w czasie <code>HOLD</code> byłby etykietą
+  do wyjścia z niego i nie jest oferowany. <code>HOLD</code> po przebiegu ma własny zegar. <code>HOLD</code> zwolniony z
+  przeniesionego zobowiązania <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> nie ma własnego zegara i nie jest
+  przejmowany. Próbka elastycznego zużycia się liczy: jej obciążenie jest częścią tego, co
+  instalacja przepuszcza, więc przejęcie jest oferowane tylko dla obciążeń próbki, przy których PV
+  nadal przekracza limit.</li>
 <li><strong>Grupa podążania za PV:</strong> <code>CHARGE_PV</code> i <code>SELF_CONSUME</code> dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.</li>
-<li><strong>Każda inna zmiana</strong> (źródło, cel, HOLD lub CURTAIL) uruchamia nowy zegar. Bezczynny HOLD nie
+<li><strong>Każda inna zmiana</strong> (źródło, cel, HOLD lub CURTAIL) uruchamia nowy zegar, poza <code>HOLD</code>
+  zwolnionym przy pełnej lub pustej baterii (wyżej), który go nie ma. Bezczynny HOLD nie
   „odlicza” czasu dla aktywnego przebiegu.</li>
 <li><strong>Pokrycie:</strong> nowy aktywny tryb wymaga pełnego minimalnego czasu pokrycia prognozą.</li>
 <li><strong>Wyjątek bezpieczeństwa (pauza, nie reset):</strong> w trakcie niewygasłego aktywnego zobowiązania
@@ -1165,7 +1234,8 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   <code>observed_soc_maximum</code>) lub na/poniżej rezerwy (tryby rozładowania — <code>observed_soc_minimum</code>),
   albo gdy przeniesione <code>CHARGE_GRID</code> trafia przed terminem na cenę powyżej sufitu
   (<code>grid_charge_price_limit</code>). Przerwany tryb i termin pozostają zapisane; przed tym terminem nie
-  może wystartować żaden inny tryb. Widoczne w <code>dispatch_policy.safety_exception</code>.</li>
+  może wystartować żaden inny tryb, poza <code>CURTAIL</code>, który przejmuje <code>HOLD</code> tam, gdzie instalacja
+  nie przepuści PV (wyżej). Widoczne w <code>dispatch_policy.safety_exception</code>.</li>
 <li><strong>Zmiana strategii (reset):</strong> zapis nowej strategii zrywa przeniesione zobowiązanie dla
   następnego planu, który startuje bez blokady (patrz <a href="#zwolnienie-przy-zmianie-strategii">zwolnienie przy zmianie
   strategii</a>).</li>
@@ -1467,6 +1537,75 @@ którą inaczej by sprzedano, kosztuje utraconą wartość eksportu).</p>
 liniową. Gdy nie powiedzie się pełna próba odniesienia, decyduje <code>short_coverage</code>:
 <code>absolute_fallback</code> (domyślnie: zostają bezwzględne reguły BOOST/LIMIT i reguła CHEAP wg minimalnej
 taryfy) albo <code>unavailable</code>.</p>
+<p><strong>Ograniczenie: próby, które nie kończą się na czas.</strong> Każda próba to pełne, dokładne obliczenie
+całego horyzontu planowania i jest znana tylko wtedy, gdy skończy się w <code>probe_time_limit_s</code>
+(domyślnie 2 s); próby liczone są jedna po drugiej w ramach <code>total_time_limit_s</code> (domyślnie 60 s).
+Próba, która nie zdąży, pozostaje nieznana — nigdy nie jest zastępowana kosztem przybliżonym. Jedna
+nieznana próba pełnego przedziału odniesienia wystarcza do użycia <code>short_coverage</code> (<code>reason</code> to
+<code>reference_probe_failed</code>), a przedział, którego własna próba jest nieznana, nie ma poziomu.</p>
+<p>Czas jednej próby zależy od strategii i od liczby przedziałów w horyzoncie planowania.
+<code>self_sufficiency</code> i <code>backup_ready</code> utrzymują <code>SELF_CONSUME</code> przez całą noc, a reguła podążania za
+obciążeniem wielokrotnie wydłuża ich próby. Próby ze znanym kosztem przy domyślnych limitach, cenach
+kwadransowych i godzinnym przedziale wyświetlania, zmierzone na szybkim komputerze biurkowym (Apple
+M4 Max):</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Horyzont planowania</th>
+<th><code>cost_min</code>, <code>pv_swap</code>, <code>max_export</code>, <code>grid_friendly</code></th>
+<th><code>self_sufficiency</code></th>
+<th><code>backup_ready</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>12 h (48 przedziałów), 12 prób</td>
+<td>12 z 12</td>
+<td>12 z 12</td>
+<td>12 z 12</td>
+</tr>
+<tr>
+<td>24 h (96 przedziałów, domyślnie), 24 próby</td>
+<td>24 z 24</td>
+<td>0 z 24</td>
+<td>2 z 24</td>
+</tr>
+<tr>
+<td>48 h (192 przedziały), 24 próby</td>
+<td>7–23 z 24</td>
+<td>żadna</td>
+<td>żadna</td>
+</tr>
+</tbody>
+</table></section>
+<p>Przy <code>self_sufficiency</code> albo <code>backup_ready</code> poziomy zużycia są więc nieznane dla prawie każdego
+przedziału już na domyślnym horyzoncie 24 h, a na horyzoncie 48 h żadna strategia nie kończy swoich
+prób (przy przedziale wyświetlania 15 minut znanych jest 18–67 z 96). Przy 48 h plan bazowy tych
+dwóch strategii dochodzi też do <code>solve_time_limit_s</code> i jest publikowany jako <code>time_limited</code>.
+<code>minimum_mode_minutes = 0</code> nie znosi ograniczenia: przy 24 h znanych jest 13 z 24 (<code>self_sufficiency</code>)
+i 20 z 24 (<code>backup_ready</code>) prób, czyli nadal <code>short_coverage</code>. Wolniejszy komputer, na przykład
+Raspberry Pi, dochodzi do każdego z tych ograniczeń przy krótszym horyzoncie.</p>
+<p><a href="#głębokość-elastycznego-zużycia">Głębokość elastycznego zużycia</a> podlega tym samym dwóm ustawieniom:
+każde z jej pięciu obliczeń dostaje <code>probe_time_limit_s</code>, w ramach tego, co próby zostawiły z
+<code>total_time_limit_s</code>. Przy <code>self_sufficiency</code> albo <code>backup_ready</code> i 24 h żadne z pięciu nie skończyło
+się w domyślnych 2 s, więc głębokość jest nieznana (profile <code>UNKNOWN</code>, powód <code>timeout</code>); <code>cost_min</code>
+przy 24 h i <code>self_sufficiency</code> przy 12 h dostały wszystkie pięć.</p>
+<p>Co według pomiarów pomaga na tym samym komputerze, przy domyślnym horyzoncie 24 h:</p>
+<ul>
+<li><code>backup_ready</code>: <code>probe_time_limit_s</code> 10 i <code>total_time_limit_s</code> 120 dały wszystkie 24 próby (47 s
+  liczenia prób na każde przeliczenie) oraz, przy tym samym limicie próby, wszystkie pięć obliczeń
+  głębokości elastycznego zużycia (kolejne 21 s). Przy <code>probe_time_limit_s</code> 5 jedna próba nadal się spóźniała
+  i poziomy zostawały przy <code>short_coverage</code>.</li>
+<li><code>self_sufficiency</code>: dopiero maksimum obu ustawień, <code>probe_time_limit_s</code> 30 i
+  <code>total_time_limit_s</code> 300, dało wszystkie 24 próby, po 199 s liczenia prób na każde przeliczenie, a
+  pięć obliczeń głębokości elastycznego zużycia zajęło kolejne 48 s. Nie zostawia to zapasu na
+  wolniejszy komputer ani trudniejszy dzień.</li>
+<li>Horyzont planowania 12 h dał wszystkie 12 prób dla obu strategii przy domyślnych limitach, przy
+  czym najwolniejsza próba <code>self_sufficiency</code> zajęła 1,5 s z limitu 2 s; plan patrzy wtedy tylko
+  12 h naprzód.</li>
+</ul>
+<p>Tabela, czasy poszczególnych prób i polecenie, które je odtwarza, są w
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/runtime-validation.md#consumption-probe-limits"><code>docs/runtime-validation.md</code></a>.</p>
 <h2 id="okna-i-głębokość-elastycznego-zużycia">Okna i głębokość elastycznego zużycia</h2>
 <h3 id="okna">Okna</h3>
 <p>Sąsiednie przedziały tego samego poziomu łączą się w okna. <code>next_boost_start</code>, <code>next_cheap_start</code>
@@ -1757,6 +1896,19 @@ są oba warunki:</p>
 <p>W przeciwnym razie ten start jest proponowany wyłącznie jako <strong>CHARGE_GRID</strong>, według zwykłych zasad
 ładowania z sieci i sufitu ceny, więc solver może wybrać tanie okno sieciowe. Sam plan dyspozycji nadal
 używa serii mediany. Bez tego źródła nic się nie zmienia.</p>
+<p>Solver wycenia każde okno na serii mediany, gdzie nadwyżka PV może pokryć odrzucone okno
+<strong>CHARGE_GRID</strong>, więc kilka startów kosztowałoby tyle samo. Żeby o wyborze nie decydował przypadek
+kończący się w drogim przedziale, każde okno <strong>CHARGE_GRID</strong> proponowane przy obecnej serii
+pesymistycznej (także takie, które jest <strong>CHARGE_GRID</strong> już na samej serii mediany) ma koszt rankingowy: energia, którą seria
+pesymistyczna zostawia sieci, czyli to, czego baterii nadal brakuje do progu na starcie okna, plus
+zużycie niepokryte przez PV w obrębie okna, po cenach zakupu z okna. Solver dolicza do kosztu okna 5 %
+jego nadwyżki ponad najtańsze okno, które solver może wybrać, więc okno, które seria pesymistyczna nadal wspiera
+(<strong>CHARGE_PV</strong>), wygrywa z odrzuconym, a wśród odrzuconych wygrywa najtańsze. Dopłata nie przekracza
+połowy kosztu pominięcia balansu. Okno ze startem 0, do którego bateria nie dotrze (zaczyna poniżej
+progu), jest pomijane w tym porównaniu, więc nie przesuwa pozostałych okien w stronę pominięcia;
+ranking może jednak przeważyć w bliskim przypadku przeciw balansowi. To preferencja, nie ścisły
+rozstrzygacz remisów: start tańszy na serii mediany o więcej niż 5 % różnicy kosztu rankingowego nadal
+wygrywa. Nie wchodzi do kosztu planu.</p>
 <p>Uwaga: test baterii liczy wyłącznie nadwyżkę PV. Start, do którego bateria dotarłaby dopiero po
 naładowaniu z sieci przed oknem, jest proponowany tylko jako <strong>CHARGE_GRID</strong> i odpada, gdy sufit ceny
 ładowania z sieci blokuje przedział okna — wtedy może pojawić się <code>balance_no_window_in_horizon</code> tam, gdzie
@@ -1871,7 +2023,7 @@ powrót do mediany następuje przy najbliższym okresowym przeliczeniu (<code>re
 </tr>
 <tr>
 <td><code>mip_gap</code></td>
-<td>Względna luka MIP zgłoszona przez solver dla opublikowanego planu: <code>0</code> = udowodnione optimum; dla planu <code>time_limited</code> górna granica odległości jego celu od optimum (np. <code>0.017</code> = 1,7 %).</td>
+<td>Względna luka MIP zgłoszona przez solver dla opublikowanego planu: <code>0</code> = udowodnione optimum (udowodniony plan zwykle ma <code>0</code> albo najwyżej <code>0.0001</code>, gdy żaden próg epizodu nie jest aktywny; to nie twarda granica: HiGHS zatrzymuje się też na luce bezwzględnej <code>1e-6</code>, której nie da się wyłączyć, więc gdy <a href="#co-zmienia-każda-strategia">cel ważony, który minimalizuje solver</a>, mieści się w granicach około ±0,01 od zera, luka względna może być większa, do około <code>1e-6 / |cel|</code>, czyli powyżej 1, gdy cel jest bliżej zera niż <code>1e-6</code>; ten cel to koszt planu plus rezerwy epizodów i kary strategii, więc może być bliski zera, gdy koszt planu nie jest, i odwrotnie; udowodniony plan od nieudowodnionego odróżnia <code>time_limited</code>, nie <code>mip_gap == 0</code>); dla planu <code>time_limited</code> górna granica odległości ważonego celu solvera od optimum (np. <code>0.017</code> = 1,7 %). Nie ogranicza kosztu planu w walucie, a sam plan może różnić się od udowodnionego w wielu interwałach (zob. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/runtime-validation.md#how-far-the-time-limit-leaves-the-plan-from-the-proof"><code>docs/runtime-validation.md</code></a>).</td>
 </tr>
 <tr>
 <td><code>cap_violation_kwh</code></td>
@@ -2611,11 +2763,22 @@ rejestratora), SOC baterii oraz liczniki energii PV/importu/eksportu (tylko licz
 atrybut Home Assistant <code>state_class</code> to <code>total</code>/<code>total_increasing</code>);
 plan każdego rozwiązania Compass wraz z wejściami cen/PV/zużycia; kilka atrybutów instalacji (moc PV
 w kWp, moc przyłączeniowa w kW, jeśli ją podasz, pojemność baterii nominalna i użyteczna, próg SOC,
-wersja Compass) oraz przybliżona
-lokalizacja strefy domowej Home Assistant jako komórka H3 o rozdzielczości 6 (sześciokąt o
-powierzchni ok. 36 km², dzięki czemu Atlas zalicza Twoją instalację do właściwego województwa).
-Komórka jest liczona raz, przy starcie wysyłki, a dokładne współrzędne nigdy nie są zapisywane ani
-wysyłane. Nic więcej — brak tekstu taryfy czy modelu falownika, a samo poświadczenie rejestracyjne
+wersja Compass) oraz gmina,
+w której leży strefa domowa Home Assistant, jako jej 7-cyfrowy identyfikator. Atlas pokazuje gminę
+<strong>z nazwy</strong> obok wartości Twojego domu. Compass znajduje gminę wewnątrz Home Assistant: pobiera
+publiczne pliki z granicami, które serwuje Atlas (te same dla każdego domu, wskazane przez
+<code>GET /v1/public/geo</code>), i porównuje je z położeniem Twojego domu na miejscu, więc Twoje
+współrzędne zostają w Home Assistant, a żadne żądanie ich nie zawiera. Poza Home Assistant trafiają
+tylko dwie rzeczy z nich wynikające: identyfikator województwa w nazwie pobieranego pliku gmin oraz
+identyfikator gminy w atrybutach. Dom położony do 50 m od granicy gminy może zostać pokazany
+w sąsiedniej gminie, bo granice są uproszczone. Dom poza każdą polską gminą (za granicą, na morzu)
+lub bez współrzędnych nie wysyła lokalizacji i jest liczony tylko w sumie floty. Pliki są pobierane
+ponownie tylko wtedy, gdy Atlas opublikuje nową wersję albo dom się przeniesie (o wersję Atlas jest
+pytany przy starcie i najwyżej raz na 24 h); gdy Atlas jest nieosiągalny, zachowana zostaje ostatnio
+znaleziona gmina — także po restarcie Home Assistant, w pamięci integracji obok klucza witryny, razem
+ze współrzędnymi i wersją granic, dla których ją znaleziono, nigdy niewysyłana — a wyszukiwanie jest
+ponawiane najwyżej raz na godzinę, bez opóźniania telemetrii.
+Nic więcej — brak tekstu taryfy czy modelu falownika, a samo poświadczenie rejestracyjne
 <strong>nigdy nie jest zapisywane</strong> — przechowywany jest tylko klucz witryny wydany w zamian za nie.</p>
 <p><strong>Jak wysyłane są wartości</strong>: moce w W. Powiąż <strong>Moc baterii</strong> tak, by + oznaczał rozładowanie (jak
 w przykładowych dashboardach); Atlas otrzymuje ją jako + = ładowanie. Odczyty spoza zakresów
