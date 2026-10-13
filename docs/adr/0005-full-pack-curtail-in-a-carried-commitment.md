@@ -874,7 +874,9 @@ plan now may say so.
 Status: implemented and swept on T-078. Measured on main `d917b02` (T-066 merged over `a5cfb1e`, which had T-086
 and T-087 over `bb70c60`) against the branch head `33e388d`, the merge of that main; `dispatch_policy.py` is the only
 engine file in which it differs from main (rule 1 of `_offer_curtail` and its docstring), `benchmarks/` is the same on
-both, and the commits after `33e388d` change documents only. The earlier versions of this amendment were measured on
+both, and the commits after `33e388d` change documents only; the merge of main `1b55893` (the native controller's
+run cadence) after them changes nothing in `engine/` or `benchmarks/` (`git diff d917b02 1b55893` of both is empty), so
+the sweeps stand for it. The earlier versions of this amendment were measured on
 `06f935e` (reviewed there), `ef55de2` and `bb70c60`, with the same counts on all three. T-066 moved some of them on
 `d917b02`, since it plans more draws of sites that cannot curtail and the rule matters there too: the tables below are
 the `d917b02` ones, and the text names each count that moved. Decision 3 of the T-069 amendment (rung 2 is decided
