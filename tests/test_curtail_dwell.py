@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 from test_dispatch_policy import dispatch
 
-from benchmarks.curtail_sweep import follow, make_depleted, rungs
+from benchmarks.curtail_sweep import follow, make_depleted, make_reserve, rungs
 from benchmarks.curtail_sweep import roll as sweep
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
 from custom_components.energy_compass.engine.dispatch_policy import (
@@ -1093,16 +1093,81 @@ def test_the_commitments_hold_is_not_carried_to_the_next_boundary(monkeypatch):
     assert second["dispatch_policy"]["safety_exception"] is None
 
 
+def _beyond_then_within(*, initial=1.0, minutes=30):
+    """Two committed intervals: the first has PV the pack cannot take, the second only what it can (T-078).
+
+    Draw 143 of seed 33 of `benchmarks/curtail_sweep.py resrun`, cut to its first two intervals:
+    1.36 kWh above the house, a 3 kW pack (0.75 kWh) and an export cap of 0.5 kWh leave 0.11 kWh
+    to curtail, so the first interval is a CURTAIL that charges; the second has 0.84 kWh, which
+    the pack and the cap take between them. The commitment began `minutes` before the first
+    interval and lasts 60: the default 30 keeps both intervals inside it.
+    """
+    problem = dispatch(
+        ((1.18, 0.12, 1.38, 0.02), (1.05, 0.36, 1.24, 0.4)),
+        minimum_mode_minutes=60,
+        minimum_mode_power_kw=0.1,
+    )
+    return replace(
+        problem,
+        site=SiteLimits(3, 8, 2, True),
+        battery=replace(
+            problem.battery,
+            minimum_soc_fraction=0.1,
+            initial_kwh=initial,
+            charge_kw=3,
+            discharge_kw=1,
+            eta_charge=0.95,
+            eta_discharge=0.95,
+            wear_per_kwh=0,
+            allow_battery_export=False,
+        ),
+        initial_dispatch_mode="SELF_CONSUME",
+        initial_dispatch_mode_since=problem.slots[0].start - timedelta(minutes=minutes),
+    )
+
+
+@pytest.mark.parametrize("initial", [1.0, 2.0])
+def test_a_curtail_run_that_the_pv_beyond_the_pack_opens_goes_on_through_its_duration(
+    initial,
+):
+    # The CURTAIL of the first interval starts a CURTAIL run with the commitment's minimum
+    # duration (the coordinator stores it so), and the second interval is inside it: a
+    # CHARGE_PV there changes the mode inside the run, and CURTAIL was offered only where
+    # the pack had been full or the PV was beyond it, so the release had no plan at all
+    # (T-078, 90 of 900 `resrun` draws planned only as the commitment's own HOLD).
+    problem = _beyond_then_within(initial=initial)
+    plan, solved = solve_released(problem)
+    assert solved == problem
+    assert [flow.dispatch_mode for flow in plan.flows] == ["CURTAIL", "CURTAIL"]
+    assert plan.flows[0].charge_kwh > 0.5
+    validate_modes(problem, plan.flows, plan.carried_bridges)
+    # With the commitment over before the second interval nothing binds it: the same plan.
+    free = _beyond_then_within(initial=initial, minutes=45)
+    assert solve(free).flows[0].dispatch_mode == "CURTAIL"
+
+
+def test_the_resrun_draw_the_release_could_not_plan_is_the_first_rung():
+    rng = random.Random(33)
+    for _ in range(144):
+        problem = make_reserve(rng)
+    plan, solved = solve_released(problem)
+    assert not solved.initial_dispatch_reserve_hold
+    assert solved.initial_dispatch_mode == "SELF_CONSUME"
+    # The plan lists a dry interval after the CURTAIL run too, which the validator reads
+    # as that run going on whether it is listed or not.
+    validate_modes(solved, plan.flows)
+
+
 def _stranded():
     """A carried CHARGE_PV, the pack just above the reserve, that no plan can keep (T-058).
 
-    Draw 12 of seed 11 of `benchmarks/curtail_sweep.py deprun`: the commitment's minimum
-    duration (120 minutes) meets a pack of 0.05 kWh and a charge power of 1 kW. The same
-    state has no plan on `main`, and neither has the release nor the commitment's own HOLD;
-    only the last rung of `solve_released` plans it.
+    Draw 16 of seed 33 of `benchmarks/curtail_sweep.py deprun` (draw 12 of seed 11, the first
+    one of this test, has a plan since T-078): a commitment of 60 minutes meets a pack of 0.01
+    kWh and a charge power of 3 kW. The same state has no plan on `main`, and neither has the
+    release nor the commitment's own HOLD; only the last rung of `solve_released` plans it.
     """
-    rng = random.Random(11)
-    for _ in range(13):
+    rng = random.Random(33)
+    for _ in range(17):
         problem = make_depleted(rng)
     return problem
 

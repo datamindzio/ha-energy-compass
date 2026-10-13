@@ -848,11 +848,19 @@ def _offer_curtail(
     the pack cannot take by its charge power: CHARGE_PV has no flow there and the
     inverter curtails beside the charging pack whatever the pack held before (T-064), so
     there is nothing to wait for.
+
+    A CURTAIL under way goes on whatever the pack has seen: the run that `beyond_the_pack`
+    opens has its minimum duration, and the interval after it may be one the pack takes
+    whole (T-078).
     """
     if beyond_the_pack is True:
         return
     beyond_the_pack = beyond_the_pack or {}
-    model.constrain({v["mode_CURTAIL"]: 1, **seen_full, **beyond_the_pack}, -np.inf, 0)
+    model.constrain(
+        {v["mode_CURTAIL"]: 1, **seen_full, **beyond_the_pack, **curtailing},
+        -np.inf,
+        0,
+    )
     model.constrain(
         {
             v["mode_CURTAIL"]: 1,
@@ -1465,7 +1473,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                         )
                     held = {v["mode_HOLD"]: -1, **going_on}
                     kept[v["mode_HOLD"]] = 1
-                if seen_full or beyond is not None:
+                if seen_full or beyond is not None or curtailing:
                     _offer_curtail(
                         model,
                         v,

@@ -843,7 +843,10 @@ Zasady (domyślnie 60 min, 0,1 kW):
   słońca przy zerowym eksporcie, baterii 1 kW i 3,6 kW PV), to jest sam plan, a nie plan awaryjny.
   W przeniesionym zobowiązaniu `CURTAIL` jest oferowany w takim przedziale niezależnie od tego, co
   bateria miała wcześniej; przy próbce elastycznego zużycia tylko dla obciążeń próbki, przy których PV
-  zostaje poza baterią. Przy wyłączonym `allow_curtailment` taki przedział jest planowany tylko jako
+  zostaje poza baterią. `CURTAIL`, który otwiera taki przebieg, trwa przez jego minimalny czas: kolejne
+  przedziały zobowiązania oferują `CURTAIL`, dopóki przebieg trwa, także tam, gdzie PV nie przekracza już
+  tego, co przyjmie bateria (nie ładuje wtedy), bo przebieg nie może zmienić trybu w swoim czasie, a
+  `CHARGE_PV` zobowiązania nie jest z niego wyjściem. Przy wyłączonym `allow_curtailment` taki przedział jest planowany tylko jako
   wymuszone przycięcie, czyli gdy bateria ma mniej miejsca niż PV, którego instalacja nie przepuści:
   przedział `CURTAIL` ładuje wtedy tyle, ile bateria przyjmie, i przycina resztę. Bateria, która ma
   miejsce na to PV, nadal nie ma tam planu.

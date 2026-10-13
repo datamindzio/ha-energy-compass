@@ -670,8 +670,8 @@ Consequences:
 - The executed mode can change at the boundary after a rung-2 row inside the commitment's minimum duration, and go
   back to `CURTAIL` one interval later. The model's gap (no plan that charges at the charge power and curtails the
   rest) was closed by T-064 and the contradicted boundaries stayed (80 of 306 after a rung-2 row, table after T-064):
-  the rung-2 rows that remain are those of a commitment the release cannot keep with its minimum duration. The
-  remedy is not a longer `CURTAIL` either; it is open and not decided here (T-078).
+  the rung-2 rows that remain are those of a commitment the release cannot keep with its minimum duration. T-078
+  found why the release had no plan there and closed it (amendment below): the decision of this amendment stands.
 - `tests/test_curtail_dwell.py::test_the_commitments_hold_is_not_carried_to_the_next_boundary` pins it at the
   runtime and the coordinator: after a rung-2 plan the stored commitment is unchanged and the next recalculation
   plans the release, with no exception reported once it has a plan.
@@ -790,3 +790,79 @@ both seeds.
 Still `infeasible`: `allow_curtailment = false` with PV above what the pack takes by its charge power while the pack
 has room for it (no forced spill; T-066), `preserve_initial`
 whose terminal state of charge is out of reach (T-065, T-070), and a carried commitment no plan can keep (rung 3).
+
+## Amendment (T-078): a CURTAIL run that PV beyond the pack opens goes on through its minimum duration
+
+Status: implemented and swept on T-078. Measured against main `06f935e` (T-075 and T-064 merged); `origin/main` had
+not moved when the sweeps were taken, so the tables are of this branch merged with main. Decision 3 of the T-069
+amendment (rung 2 is decided afresh, nothing is stored) stands: the finding is a gap in the release problem, not a
+reason to carry the commitment's `HOLD`.
+
+After T-064 the draws planned only on rung 2 were 90 of 900 `resrun` and 124 of 1200 `resroll` boundaries (80 of 306
+boundaries after a rung-2 row contradicted the next plan). The question was why the release problem, rung 1, had no
+plan for them, and whether the model should have one.
+
+32. **The release had no plan because `CURTAIL` was not offered inside a `CURTAIL` run.** The first interval of such
+    a draw has PV the pack cannot take (point 30), so it is `CURTAIL`, and a `CURTAIL` first row is what the
+    coordinator stores as the new commitment, with the commitment's minimum duration. The next interval has PV the
+    pack and the export cap take between them, so `beyond` is empty there; the pack has not been full, so
+    `seen_full` is empty; and the released `HOLD` is not in play. `_offer_curtail` was therefore never called for it,
+    `CURTAIL` had no licence, and the dwell rows of the run (`holding`) forbade leaving `CURTAIL` before the minimum
+    duration was over: the interval had no mode, and the problem no plan. The case is the rung-2 draw whose
+    commitment is the `SELF_CONSUME` of a pack at the reserve and whose first release row is the `CURTAIL` that
+    charges (`tests/test_curtail_dwell.py::test_a_curtail_run_that_the_pv_beyond_the_pack_opens_goes_on_through_its_duration`).
+33. **A `CURTAIL` under way is a licence to go on curtailing.** `_offer_curtail` takes the `curtailing` terms of
+    `constrain_modes` (the `CURTAIL` of the interval before) in its first rule as well, next to `seen_full`, `beyond`
+    and the released `HOLD`: `CURTAIL <= seen_full + beyond + curtailing`, and the offer is made when `curtailing` is
+    non-empty. The second rule (`full`, `curtailing`, `released`, `beyond`) had it already. A first `CURTAIL` still
+    needs one of the other licences, and `CURTAIL` to `CURTAIL` needs no dwell rule (`validate_modes` checks the dwell
+    groups only), so the validator did not change; the plans the new offer opens are legal under it
+    (`test_the_resrun_draw_the_release_could_not_plan_is_the_first_rung` solves draw 144 of seed 33 `resrun` on rung 1
+    and validates it).
+34. **The licence is the previous interval's `CURTAIL`, not the minimum duration.** The chain is not cut where the
+    minimum duration ends, and it is not a way to start a `CURTAIL` the pack could take as `CHARGE_PV`: the row
+    still curtails at least the activity of the mode and, where the PV is not beyond the pack, charges nothing (point 29), and the first row of a chain is licensed as before.
+    The commitment the coordinator stores is the same; the rungs of point 24 are as they were.
+
+Measured with `benchmarks/curtail_sweep.py`, seeds 11, 22, 33 and 44 × 300 = 1200 draws per kind, this branch against
+main `06f935e`, both solved through `solve_released`. `compare` counts, main → head:
+
+| Kind | Newly infeasible | Newly planned | Solver failure | Objective worse | better |
+| --- | --- | --- | --- | --- | --- |
+| `run` | 0 | 0 | 0 | 1 | 2 |
+| `negrun` | 0 | 0 | 0 | 1 | 1 |
+| `probe` | 0 | 0 | 0 | 2 | 3 |
+| `deprun` | 0 | 0 | 0 | 21 | 20 |
+| `deprobe` | 0 | 0 | 0 | 32 | 40 |
+| `resrun` | 0 | 0 | 0 | 23 | 9 |
+| `fullrun` | 0 | 0 | 0 | 0 | 0 |
+
+The plan sets are the same (no plan is gained or lost); what changes is the rung. `rungs` counts, draws per rung,
+main → head over 1200:
+
+| Kind | Rung 1 | Rung 2 | Rung 3 | No plan |
+| --- | --- | --- | --- | --- |
+| `resrun` | 1024 → 1148 | 124 → 0 | 0 → 0 | 52 → 52 |
+| `deprun` | 1026 → 1122 | 11 → 0 | 93 → 8 | 70 → 70 |
+| `run` | 1181 → 1187 | 0 → 0 | 10 → 4 | 9 → 9 |
+| `negrun` | 1175 → 1182 | 0 → 0 | 13 → 6 | 12 → 12 |
+| `fullrun` | 1140 → 1140 | 0 → 0 | 25 → 25 | 35 → 35 |
+
+The objective is higher in the draws that main planned on rung 2 or 3 and head plans on rung 1: a plan that keeps the
+commitment costs more than one that leaves it, as after T-064, and it is the plan the commitment asked for. The
+rolled kinds (`rollcompare`, 1200 draws each): no draw is newly infeasible while followed, none is fixed, and the
+first failing boundary never moves. Rung-2 rows over the rolls fall from 308 to 0 in `resroll` and from 32 to 0 in
+`deproll`; rung-3 rows from 30 to 14 and from 95 to 9. Boundaries where the next plan contradicts the one before
+(draws with one): `resroll` 219 (199) → 129 (117), `deproll` 70 (63) → 59 (52), `roll` 118 (105) and `negroll` 134
+(106) as before, `fullroll` 963 (618) as before. The 129 that remain in `resroll` are not after a rung-2 row (there
+is none): they are what the release problem does with a changed forecast, not the commitment's `HOLD`.
+
+The scripts behind these numbers (`sweep.sh`, `cmp.sh`, `rungs.sh`, `rolltot.py`, `find.py`, `exp.py`) are kept with the
+task's artifacts, not in the repository.
+
+Consequences:
+
+- The coordinator and the stored commitment are unchanged; `safety_exception` `observed_soc_minimum` is reported by
+  rung 2 for the observed-SoC exception only, which the sweeps do not draw.
+- The guides and `docs/model.md` say it in one sentence in the minimum-duration paragraph: a `CURTAIL` run that the PV
+  beyond the pack opened goes on through its minimum duration.
