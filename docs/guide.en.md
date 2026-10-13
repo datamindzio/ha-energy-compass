@@ -817,6 +817,7 @@ Rules (defaults: 60 min, 0.1 kW):
   power in one interval, neither `CHARGE_PV` (which curtails nothing) nor a `CURTAIL` that charged
   nothing could hold it; the inverter charges at the charge power and curtails the rest, and so does
   the plan: the interval is `CURTAIL`, with the charge between zero and the PV left after the house.
+  What the pack takes there is PV only: a `CURTAIL` interval that charges imports nothing, not even for the house.
   Where the pack is at the reserve under a carried `CHARGE_PV`/`SELF_CONSUME` commitment (a sunrise
   on a zero-export site with a 1 kW pack and 3.6 kW of PV) this is the plan itself, not a fallback.
   In a carried commitment `CURTAIL` is offered in such an interval whatever the pack held before;
@@ -1709,7 +1710,10 @@ charge 0 A, and there is at most one per percentage point of SOC movement; witho
 inverter's own draw and `HOLD` tops it up from the grid, a cycle of hours. `CHARGE_PV` and `SELF_CONSUME` need no
 hysteresis, because below 100 % they write the same values. `CHARGE_GRID` (it keeps `voltage_grid_charge_ceiling`
 and its 0 A charge current at 100 %), `CURTAIL`, the balance hold and `Capacity` mode behave as before. `CURTAIL` runs the `HOLD` profile with a warning, because the
-controller cannot limit PV.
+controller cannot limit PV. That profile writes `hold_grid_current` (1 A by default) as the charge current and as the grid
+current, so a `CURTAIL` interval in which the plan charges the pack (PV the site cannot pass, `charge_kwh` above 0) charges
+at about 50 W on the inverter, and the planned end state of charge of that interval is not reached; the next
+recalculation reads the real state of charge and plans from it (follow-up T-076).
 
 Only battery modes listed in `commissioned_battery_modes` are controlled; any other mode (for example
 Voltage before its thresholds were proven) keeps the base profile. With Voltage allowed, a target

@@ -838,6 +838,7 @@ Zasady (domyślnie 60 min, 0,1 kW):
   przyjmie mocą ładowania w jednym przedziale, ani `CHARGE_PV` (nic nie przycina), ani `CURTAIL`,
   który nic nie ładował, nie pomieściłyby go; falownik ładuje mocą ładowania i przycina resztę, i tak
   samo robi plan: przedział to `CURTAIL`, z ładowaniem od zera do PV zostającego po odjęciu domu.
+  Bateria bierze tam wyłącznie PV: przedział `CURTAIL`, który ładuje, nic nie importuje, także na dom.
   Gdy bateria stoi na rezerwie przy przeniesionym zobowiązaniu `CHARGE_PV`/`SELF_CONSUME` (wschód
   słońca przy zerowym eksporcie, baterii 1 kW i 3,6 kW PV), to jest sam plan, a nie plan awaryjny.
   W przeniesionym zobowiązaniu `CURTAIL` jest oferowany w takim przedziale niezależnie od tego, co
@@ -1739,7 +1740,11 @@ zaczyna się od ładowania 0 A, i przypada najwyżej jedna na punkt procentowy z
 poborze własnym falownika, a `HOLD` doładowuje go z sieci, w cyklu liczonym w godzinach. `CHARGE_PV` i `SELF_CONSUME`
 nie potrzebują histerezy, bo poniżej 100 % zapisują te same wartości. `CHARGE_GRID` (zachowuje
 `voltage_grid_charge_ceiling` i prąd ładowania 0 A przy 100 %), `CURTAIL`,
-trzymanie balansu i tryb `Capacity` działają jak dotąd. `CURTAIL` wykonuje profil `HOLD` z ostrzeżeniem, bo sterownik nie ogranicza PV.
+trzymanie balansu i tryb `Capacity` działają jak dotąd. `CURTAIL` wykonuje profil `HOLD` z ostrzeżeniem, bo sterownik nie ogranicza PV. Ten profil zapisuje `hold_grid_current`
+(domyślnie 1 A) jako prąd ładowania i prąd z sieci, więc przedział `CURTAIL`, w którym plan ładuje pakiet (PV, którego
+instalacja nie przepuści, `charge_kwh` powyżej 0), ładuje na falowniku mocą około 50 W, a planowany końcowy stan
+naładowania tego przedziału nie jest osiągany; następne przeliczenie odczytuje rzeczywisty stan naładowania i planuje od
+niego (zadanie następcze T-076).
 
 Sterowane są tylko tryby baterii z listy `commissioned_battery_modes`; każdy inny tryb (np. Voltage
 przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Voltage cel poza zakresem
