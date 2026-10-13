@@ -3317,11 +3317,11 @@ tego wychodzi, wyceniają dwa rachunki:</p>
 <tbody>
 <tr>
 <td><code>annual</code></td>
-<td>depozyt D = 1,23 × V (V = wartość oddanej energii po <code>max(sell, 0)</code>) płaci część energetyczną E poboru; zwrot to <code>min(D − min(D, E), ρ × V)</code></td>
+<td>depozyt D = 1,23 × V (V = wartość oddanej energii po <code>max(sell, 0)</code>) płaci zobowiązanie E⁺ = Σ max(E<sub>t</sub>, 0) z miesięcznych części energetycznych E<sub>t</sub> poboru; zwrot to <code>min(D − min(D, E⁺), ρ × V)</code>. Miesiąc z ujemną częścią energetyczną (cena dynamiczna bez podłogi indeksu, ładowanie w godzinach z ujemną ceną) nie tworzy zobowiązania i nigdy nie zasila depozytu: zostaje na rachunku w pełnej wartości, bez zwrotu, limitu i umorzenia (ADR-0031 Amendment T-471). Rachunek = opłaty stałe + Σ pobór × cena zakupu − zaliczone − zwrot, a część energetyczna ze znakiem (także ujemny miesiąc) jest w Σ pobór × cena zakupu</td>
 </tr>
 <tr>
 <td><code>ledger</code></td>
-<td>depozyt każdego miesiąca to rocznik księgowany w miesiącu następnym, wykorzystywany od najstarszego, ważny 12 miesięcy; po wygaśnięciu wraca <code>min(niewykorzystane, ρ × V miesiąca)</code>, reszta przepada. To stan okresowy powtarzanego roku: <code>D ≤ E</code> daje wynik roczny, <code>D &gt; E</code> rok rozbiegowy od pełnego konta (każdy żywy rocznik z całym depozytem), potem rok mierzony</td>
+<td>depozyt każdego miesiąca to rocznik księgowany w miesiącu następnym, wykorzystywany od najstarszego, ważny 12 miesięcy; po wygaśnięciu wraca <code>min(niewykorzystane, ρ × V miesiąca)</code>, reszta przepada. To stan okresowy powtarzanego roku: <code>D ≤ E⁺</code> daje wynik roczny, <code>D &gt; E⁺</code> rok rozbiegowy od pełnego konta (każdy żywy rocznik z całym depozytem), potem rok mierzony</td>
 </tr>
 </tbody>
 </table></section>
@@ -3329,7 +3329,7 @@ tego wychodzi, wyceniają dwa rachunki:</p>
 python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
 </code></pre>
 <p>Wypisuje (albo z <code>--json</code> zwraca) oba rachunki, <code>wear</code>, dryf SOC (początkowy minus końcowy SOC po
-średniej cenie zakupu), <code>K</code> = rachunek roczny + zużycie + dryf SOC (<code>KL</code> z księgą), <code>D</code>, <code>V</code>, <code>E</code> oraz
+średniej cenie zakupu), <code>K</code> = rachunek roczny + zużycie + dryf SOC (<code>KL</code> z księgą), <code>D</code>, <code>V</code>, <code>E</code> (ze znakiem), <code>E_owed</code> (E⁺; w wyniku tekstowym podpis <code>E+ liability</code>) oraz
 zwrot i przepadek każdego rachunku. Dwa przebiegi porównuje różnica <code>K</code> (albo <code>KL</code>); <code>--self-use</code> daje
 punkt odniesienia bez planera. Wejście to jeden obiekt JSON (<code>timezone</code>, <code>start</code>, <code>rho</code>, <code>fixed</code>,
 <code>initial_soc_percent</code>, <code>settings</code> i <code>hours[]</code>) albo CSV, jeden wiersz na <strong>godzinę</strong> z <code>start</code>, <code>buy</code>,
@@ -3348,7 +3348,9 @@ godzinie to pierwsze wystąpienie; podaj przesunięcie, by oznaczyć drugie.</p>
 <p>Ograniczenia: część stała rachunku to jedna liczba z wejścia i nie podąża za przepływem, więc pasmo
 opłaty zależne od rocznego poboru nie jest modelowane (<code>fixed</code> weź z rachunku bez magazynu i licz się z
 niewielkim stałym błędem tam, gdzie pasmo jest inne); odcinek krótszy niż rok jest czytany jak rok z
-pustymi miesiącami; wynik jest tak dobry, jak podany szereg prognoz.</p>
+pustymi miesiącami; <code>buy_energy</code> pozostaje nieujemne jak w silniku, więc miesiąc z ujemną częścią
+energetyczną trafia do rachunków tylko jako lista części energetycznych ze znakiem przez API Pythona
+(<code>bill()</code>), nie przez wejście godzinowe; wynik jest tak dobry, jak podany szereg prognoz.</p>
 <h2 id="słownik-kodów-powodów">Słownik kodów powodów</h2>
 <h3 id="powody-pokrycia--jakości-atrybuty-reason-reasons">Powody pokrycia / jakości (atrybuty <code>reason</code>, <code>reasons</code>)</h3>
 <section class="table-scroll"><table>
