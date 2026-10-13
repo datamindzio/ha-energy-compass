@@ -130,6 +130,7 @@
       · <a href="index.html">Przewodnik po encjach i obliczeniach (EN)</a></p>
     <nav aria-label="Spis treści">
       <ul>
+        <li><a href="#instalacja">Instalacja</a></li>
         <li><a href="#jak-to-działa">Jak to działa</a></li>
         <li><a href="#przegląd-encji">Przegląd encji</a></li>
         <li><a href="#stan-optymalizatora--cykl-obliczeń">Stan optymalizatora — cykl obliczeń</a></li>
@@ -155,13 +156,14 @@
 <p>Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
 <strong>0.1.39</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
-instalację i dashboardy — <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">przewodnik instalacji</a> (EN).</p>
+instalację opisuje sekcja <a href="#instalacja">Instalacja</a>, a dashboardy — <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">przewodnik instalacji</a> (EN).</p>
 <p>Energy Compass jest <strong>doradczy</strong>. Liczy plan i publikuje go jako encje Home Assistant. Sam nie wysyła
 powiadomień, a ustawienia falownika zapisuje tylko wtedy, gdy włączysz opcjonalny sterownik Deye
 (domyślnie wyłączony), i robi to przez integrację Solarman; blueprinty powiadomień i inne sterowniki same
 decydują, czy wykonać plan. Zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika Deye</a>.</p>
 <h2 id="spis-treści">Spis treści</h2>
 <ol>
+<li><a href="#instalacja">Instalacja</a></li>
 <li><a href="#jak-to-działa">Jak to działa</a></li>
 <li><a href="#przegląd-encji">Przegląd encji</a></li>
 <li><a href="#stan-optymalizatora--cykl-obliczeń">Stan optymalizatora — cykl obliczeń</a></li>
@@ -178,8 +180,99 @@ decydują, czy wykonać plan. Zob. <a href="#sterownik-falownika-deye-solarman">
 <li><a href="#narzędzie-replay-offline">Narzędzie replay (offline)</a></li>
 <li><a href="#słownik-kodów-powodów">Słownik kodów powodów</a></li>
 </ol>
+<h2 id="instalacja">Instalacja</h2>
+<p>Ta sekcja prowadzi krok po kroku od czystego Home Assistanta do pierwszego planu. Potrzebujesz
+działającego Home Assistanta i — by skorzystać w pełni — falownika z baterią; nie musisz znać wcześniej
+Energy Compass. Główną ścieżką jest polska instalacja (PLN, taryfa G12, cena sprzedaży RCE,
+net-billing); te same kroki dotyczą każdej innej waluty i taryfy.</p>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-b4d2fb704e82-dark.svg"><img src="assets/diagrams/diagram-b4d2fb704e82.svg" alt="Diagram 1" loading="lazy"></picture></figure>
+<h3 id="wymagania">Wymagania</h3>
+<ul>
+<li>Home Assistant <strong>2026.9.1 lub nowszy</strong>.</li>
+<li><code>scipy</code>, solver numeryczny. Integracja instaluje dokładnie przypiętą wersję ze swojego manifestu
+  (<code>scipy==1.18.1</code>); sam niczego nie instalujesz.</li>
+<li>Raspberry Pi i inne hosty ARM64 działają. Przetestowane połączenie ARM64 Core/Python/solver i
+  reprezentatywne wyniki benchmarków opisuje <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/runtime-validation.md">walidacja środowiska</a> (EN).</li>
+</ul>
+<h3 id="instalacja-integracji">Instalacja integracji</h3>
+<ol>
+<li><strong>HACS (zalecane).</strong> W HACS otwórz <strong>Custom repositories</strong> i dodaj
+   <code>https://github.com/datamindzio/ha-energy-compass</code> jako <strong>Integration</strong>. Pobierz Energy Compass i
+   zrestartuj Home Assistanta.</li>
+<li><strong>Ręcznie.</strong> Skopiuj katalog <code>custom_components/energy_compass</code> z tego repozytorium do katalogu
+   <code>custom_components</code> w konfiguracji Home Assistanta i zrestartuj.</li>
+</ol>
+<h3 id="dodanie-integracji">Dodanie integracji</h3>
+<p>Otwórz <strong>Ustawienia → Urządzenia i usługi → Dodaj integrację → Energy Compass</strong>. Konfiguracja to krótki
+kreator; nic nie jest zapisywane przed jego ostatnim krokiem.</p>
+<ol>
+<li><strong>Pierwszy formularz.</strong> Wpisz <strong>Nazwa</strong>, <strong>Waluta</strong> (bez automatycznej konwersji) i <strong>Strefa
+   czasowa</strong>, wybierz <strong>Opcjonalny profil dostawcy</strong> (preset) oraz ustaw
+   <strong>Włącz fotowoltaikę</strong> i <strong>Włącz baterię</strong>. Ten sam formularz oferuje trzy opcjonalne profile startowe:
+   <strong>Rozliczenie prosumenckie</strong>, <strong>Polska taryfa dystrybucyjna</strong> i <strong>Falownik</strong>. Jednorazowo wypełniają
+   edytowalne wartości nowej instalacji i nigdy nie ustawiają ceny; profile polskie wymagają waluty
+   PLN. Co wypełnia każdy profil, opisują <a href="#profile-startowe-nowe-instalacje">Profile startowe</a>.</li>
+<li><strong>Wykryte źródła.</strong> Energy Compass szuka Solcasta, <code>rce_pse</code>, Solarmana (Deye) i źródeł panelu Energia
+   po tożsamości integracji, nie po nazwie encji, i proponuje je jako wiersze. Zostaw te, które chcesz,
+   i przejdź dalej: zostaną powiązane i otworzy się <strong>Podgląd i zapis</strong>. Gdy nic nie znaleziono albo nic
+   nie zostawisz, otworzy się menu główne. Zob. <a href="#wykryte-źródła-nowe-instalacje">Wykryte źródła</a>;
+   PV może też korzystać z <a href="#prognoza-pv-z-panelu-energia">prognozy PV z panelu Energia</a>.</li>
+<li><strong>Menu główne.</strong> Przejdź przez potrzebne grupy; każdą możesz później otworzyć ponownie w
+   <strong>Konfiguruj</strong>.
+   - <strong>Taryfy → Źródło ceny zakupu</strong> — cena zakupu. Dla polskich G11/G12/G12w wybierz <strong>Taryfa OSD</strong>,
+     która nie wymaga YAML: wskaż operatora i grupę, a następnie wpisz stawkę szczytową (<em>Cena zakupu</em>)
+     i, dla G12/G12w, <em>Cena zakupu poza szczytem</em> w <strong>Taryfy → Stałe stawki i przeliczenia</strong>. Strefy,
+     zegar i święta opisują <a href="#wbudowane-taryfy-osd">Wbudowane taryfy OSD</a>.
+   - <strong>Taryfy → Źródło ceny sprzedaży</strong> — cena sprzedaży. W Polsce wybierz <strong>Cena rynkowa RCE (PSE)</strong>,
+     która używa sensora integracji <code>rce_pse</code>.
+   - <strong>Prognoza zużycia</strong> — liczby stojące za prognozą zużycia domu. Nowa instalacja startuje od
+     dobowego szacunku, który tu wpisujesz (<strong>Dobowe zużycie domu</strong>, domyślnie 10 kWh/dobę). Historia
+     rekordera jest używana, gdy powiązane jest źródło zużycia domu: zostaw wiersz <strong>Historia zużycia
+     domu</strong> w <strong>Wykrytych źródłach</strong> albo użyj <strong>Źródła danych → Dodaj źródło → Zużycie</strong>. <strong>Prognoza
+     zużycia</strong> dostraja wtedy okno historii (<strong>Długość historii</strong>, <strong>Minimalna liczba próbek</strong>) i
+     rozwiązanie zapasowe.
+   - <strong>Źródła danych</strong> — przegląd i edycja wszystkich powiązanych źródeł, także PV; <strong>Bateria</strong> i
+     <strong>Możliwości sprzętu</strong> zawierają limity baterii i limit importu z sieci. Grupy planowania,
+     prognozy kosztu zużycia, wydajności i prezentacji pojawiają się po <strong>Pokaż ustawienia eksperckie</strong>
+     (zob. <a href="#ustawienia-eksperckie">Ustawienia eksperckie</a>).</li>
+<li><strong>Podgląd i zapis.</strong> Podgląd normalizuje dane wejściowe, pokazuje ich pokrycie, jednostki i wiek oraz
+   przed zapisem rozwiązuje ograniczony plan bazowy. Plan bazowy musi być wykonalny, by dało się
+   zapisać. Przy pierwszej konfiguracji zaznaczasz też potwierdzenia pokazanego źródła zakupu i źródła
+   zużycia domu (zerowa stała cena zakupu oznacza darmowy import; domyślny szacunek zużycia to
+   10 kWh/dobę), a potem potwierdzasz zapis.</li>
+</ol>
+<p>Aby wypróbować Energy Compass bez żadnych encji dostawców, utwórz konfigurację syntetyczną: nazwa
+<code>Synthetic</code>, waluta <code>EUR</code>, strefa <code>UTC</code>, preset <code>Generic</code>, PV i bateria wyłączone; pozostałe wartości
+podaje README (<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/README.md#install">English</a>, <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/README.pl.md#instalacja">Polski</a>).</p>
+<h3 id="po-instalacji">Po instalacji</h3>
+<p>Integracja tworzy jedno urządzenie z natywnymi sensorami, sensorami binarnymi i selectem <strong>Strategia</strong>
+opisanymi w <a href="#przegląd-encji">Przeglądzie encji</a>. Zaraz po zapisie sensor <strong>Stan optymalizatora</strong>
+pokazuje <code>calculating</code> i przechodzi w <code>ready</code>, gdy opublikowany zostanie pierwszy zwalidowany plan. Jeśli
+zgłasza <code>invalid_input</code>, <code>timeout</code> lub <code>infeasible</code>, powód opisuje
+<a href="#stan-optymalizatora--cykl-obliczeń">Stan optymalizatora</a>.</p>
+<p>Po aktualizacji przez HACS zrestartuj Home Assistanta i odśwież stronę w przeglądarce (w aplikacji
+mobilnej uruchom ją ponownie). Interfejs przechowuje etykiety integracji w pamięci podręcznej, więc bez
+odświeżenia nowe ustawienia, np. <strong>Energy Atlas</strong>, mogą pojawić się jako puste pozycje.</p>
+<h3 id="opcjonalne-kolejne-kroki">Opcjonalne kolejne kroki</h3>
+<p>Każdy krok jest niezależny; szczegóły są w podlinkowanej sekcji. <strong>Opcje</strong> i <strong>Konfiguruj</strong> to ten sam
+przycisk na stronie integracji w <strong>Ustawienia → Urządzenia i usługi</strong>.</p>
+<ul>
+<li><strong>Sterownik Deye.</strong> Aby Energy Compass zapisywał plan na falowniku Deye przez Solarman, otwórz
+  <strong>Opcje → Sterownik Deye</strong>. Domyślnie wyłączony; zob. <a href="#włączenie-sterownika">Włączenie sterownika</a>.</li>
+<li><strong>Powiadomienia.</strong> Włącz <strong>Włącz powiadomienia</strong> w <strong>Ustawienia powiadomień</strong>, a potem skopiuj
+  blueprint powiadomień, który leży poza folderem instalowanym przez HACS. Zob.
+  <a href="#powiadomienia-o-oknach">Powiadomienia o oknach</a> i
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">Opt-in notifications</a> (EN).</li>
+<li><strong>Automatyczne przełączanie strategii.</strong> Blueprint <code>strategy_switch</code> wybiera jedną strategię
+  dyspozycji na dobę. Zob. <a href="#automatyczne-przełączanie-strategii">Automatyczne przełączanie strategii</a> i
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#import-the-strategy-switch-blueprint">Import the strategy switch blueprint</a> (EN).</li>
+<li><strong>Dashboardy i karta kosztów.</strong> Gotowe przykłady dashboardów i kartę kosztów opisują
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">Dashboard examples</a> (EN) i <a href="#karta-kosztów">Karta kosztów</a>.</li>
+<li><strong>Energy Atlas.</strong> Opcjonalna usługa telemetrii jest w <strong>Konfiguruj → Energy Atlas</strong>; zob.
+  <a href="#energy-atlas-opcjonalnie">Energy Atlas</a>.</li>
+</ul>
 <h2 id="jak-to-działa">Jak to działa</h2>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-a9f83deb834c-dark.svg"><img src="assets/diagrams/diagram-a9f83deb834c.svg" alt="Diagram 1" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-a9f83deb834c-dark.svg"><img src="assets/diagrams/diagram-a9f83deb834c.svg" alt="Diagram 2" loading="lazy"></picture></figure>
 <p>Każde obliczenie przebiega tak:</p>
 <ol>
 <li><strong>Migawka i walidacja wejść.</strong> Ceny, prognoza PV, prognoza zużycia (z historii recordera), SOC
@@ -202,7 +295,7 @@ decydują, czy wykonać plan. Zob. <a href="#sterownik-falownika-deye-solarman">
    zapisywane ponownie.</li>
 </ol>
 <h3 id="kadencja-przeliczeń">Kadencja przeliczeń</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-baf6f443c8a8-dark.svg"><img src="assets/diagrams/diagram-baf6f443c8a8.svg" alt="Diagram 2" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-baf6f443c8a8-dark.svg"><img src="assets/diagrams/diagram-baf6f443c8a8.svg" alt="Diagram 3" loading="lazy"></picture></figure>
 <ul>
 <li><strong>Okresowo:</strong> <code>refresh_minutes</code> (domyślnie 15, maks. 60), wyrównane do zegara; profil startowy
   Deye hybrydowy wypełnia wartość 60.</li>
@@ -884,9 +977,9 @@ ustawieniem <strong>LFP balance</strong>; jego atrybuty to <code>last_completed<
 <code>planned_start</code>, <code>planned_end</code>, <code>planned_mode</code>, <code>pv_series</code>, <code>hold_progress_minutes</code>, <code>hold_required_minutes</code>
 i <code>threshold_percent</code>.</p>
 <h3 id="reguła-dostępności">Reguła dostępności</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-2f6bcf12dd4c-dark.svg"><img src="assets/diagrams/diagram-2f6bcf12dd4c.svg" alt="Diagram 3" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-2f6bcf12dd4c-dark.svg"><img src="assets/diagrams/diagram-2f6bcf12dd4c.svg" alt="Diagram 4" loading="lazy"></picture></figure>
 <h2 id="stan-optymalizatora--cykl-obliczeń">Stan optymalizatora — cykl obliczeń</h2>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-16e32e6be2ed-dark.svg"><img src="assets/diagrams/diagram-16e32e6be2ed.svg" alt="Diagram 4" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-16e32e6be2ed-dark.svg"><img src="assets/diagrams/diagram-16e32e6be2ed.svg" alt="Diagram 5" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -1070,7 +1163,7 @@ nowe obliczenie. Zmiany konfiguracji, rejestru i błędne wejścia odrzucają wy
 przedziału dała znany poziom. Pozostałe atrybuty: <code>coverage_end</code>, <code>requested_end</code>,
 <code>coverage_complete</code>, <code>input_ages</code>, <code>missing_sources</code>, <code>load_quality</code>.</p>
 <h3 id="alert-binary_sensor_alert">Alert (<code>binary_sensor.&lt;name&gt;_alert</code>)</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-9b1c16eb2ff5-dark.svg"><img src="assets/diagrams/diagram-9b1c16eb2ff5.svg" alt="Diagram 5" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-9b1c16eb2ff5-dark.svg"><img src="assets/diagrams/diagram-9b1c16eb2ff5.svg" alt="Diagram 6" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -1110,7 +1203,7 @@ przedziału dała znany poziom. Pozostałe atrybuty: <code>coverage_end</code>, 
 <p>Atrybuty: <code>code</code>, <code>reason</code>, <code>since</code>, <code>plan_retained</code>, <code>last_successful_plan_at</code>. Ponowna próba
 nie gasi alertu; gasi go dopiero udany nowy plan.</p>
 <h3 id="zachowanie-planu">Zachowanie planu</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-22d3cdeb80e2-dark.svg"><img src="assets/diagrams/diagram-22d3cdeb80e2.svg" alt="Diagram 6" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-22d3cdeb80e2-dark.svg"><img src="assets/diagrams/diagram-22d3cdeb80e2.svg" alt="Diagram 7" loading="lazy"></picture></figure>
 <p>Zachowany plan nigdy nie jest wydłużany poza pierwotne pokrycie i nie przetrwa przeładowania
 integracji ani restartu Home Assistant. Zapis w Konfiguracji nie przeładowuje integracji, więc nie
 kończy planu: zob. <a href="#zapis-opcji">Zapis opcji</a>. <a href="#sterownik-falownika-deye-solarman">Sterownik Deye</a>
@@ -1174,7 +1267,7 @@ HOLD.</p>
 korzystają z <code>CHARGE_PV</code> lub <code>CHARGE_GRID</code> i mają <code>balance_hold: true</code> w atrybucie <code>intervals</code>
 planu.</p>
 <h3 id="przejścia-i-minimalny-czas-trwania">Przejścia i minimalny czas trwania</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-deee00837d67-dark.svg"><img src="assets/diagrams/diagram-deee00837d67.svg" alt="Diagram 7" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-deee00837d67-dark.svg"><img src="assets/diagrams/diagram-deee00837d67.svg" alt="Diagram 8" loading="lazy"></picture></figure>
 <p>Diagram jest uproszczony — HOLD pokazano jako węzeł centralny: po minimalnym czasie każdy tryb może
 przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <p>Zasady (domyślnie 60 min, 0,1 kW):</p>
@@ -1593,7 +1686,7 @@ liczy plan z dodatkowym obciążeniem <code>probe_kwh</code> (domyślnie 1 kWh).
 z próbą − koszt planu bazowego) ÷ dodana energia. Bateria i sieć są przy tym optymalizowane od
 nowa, więc to prawdziwy koszt krańcowy — może różnić się od ceny taryfowej (np. energia z PV,
 którą inaczej by sprzedano, kosztuje utraconą wartość eksportu).</p>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-510177a65394-dark.svg"><img src="assets/diagrams/diagram-510177a65394.svg" alt="Diagram 8" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-510177a65394-dark.svg"><img src="assets/diagrams/diagram-510177a65394.svg" alt="Diagram 9" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -1742,7 +1835,7 @@ pokryciu zamiast zgadywać.</p>
 <h3 id="głębokość-elastycznego-zużycia">Głębokość elastycznego zużycia</h3>
 <p>Odpowiada na pytanie: „ile energii odkładalnej mogę tanio zużyć?”. Solver niezależnie rozmieszcza
 bloki 3, 5, 10, 15 i 20 kWh z mocą do <code>flexible_load_max_power_kw</code> (domyślnie 3 kW).</p>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-7d4323995127-dark.svg"><img src="assets/diagrams/diagram-7d4323995127.svg" alt="Diagram 9" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-7d4323995127-dark.svg"><img src="assets/diagrams/diagram-7d4323995127.svg" alt="Diagram 10" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2144,7 +2237,7 @@ powrót do mediany następuje przy najbliższym okresowym przeliczeniu (<code>re
 </tbody>
 </table></section>
 <h3 id="zwolnienie-przy-zmianie-strategii">Zwolnienie przy zmianie strategii</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-5f066db1a147-dark.svg"><img src="assets/diagrams/diagram-5f066db1a147.svg" alt="Diagram 10" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-5f066db1a147-dark.svg"><img src="assets/diagrams/diagram-5f066db1a147.svg" alt="Diagram 11" loading="lazy"></picture></figure>
 <p>Zmiana strategii to <strong>reset</strong>: przeniesione zobowiązanie trybu jest zwalniane, aby nowa strategia
 nie utknęła w minimalnym czasie starego trybu. Trwający epizod eksportu jest zachowany, żeby jego
 próg nie został naliczony dwa razy.</p>
@@ -2153,7 +2246,7 @@ próg nie został naliczony dwa razy.</p>
 wybiera jedną strategię na dobę. Działa o <strong>14:05</strong> (po publikacji cen RCE na następny dzień i
 Solcast), ponawia co godzinę do <strong>20:00</strong>, jeśli brak cen na jutro, a przy starcie Home Assistant
 dokańcza przerwany zapis.</p>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-af06a9a9d333-dark.svg"><img src="assets/diagrams/diagram-af06a9a9d333.svg" alt="Diagram 11" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-af06a9a9d333-dark.svg"><img src="assets/diagrams/diagram-af06a9a9d333.svg" alt="Diagram 12" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2202,7 +2295,7 @@ informuje domowników, kiedy dodatkowe zużycie jest tanie (okno korzystne) albo
 drogie okno <code>LIMIT</code>. Sam Energy Compass niczego nie wysyła; głównym przełącznikiem jest
 <strong>Włącz powiadomienia</strong> w opcjach integracji. Konfiguracja:
 <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">przewodnik instalacji</a> (EN).</p>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-d7f8dd1c26f0-dark.svg"><img src="assets/diagrams/diagram-d7f8dd1c26f0.svg" alt="Diagram 12" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-d7f8dd1c26f0-dark.svg"><img src="assets/diagrams/diagram-d7f8dd1c26f0.svg" alt="Diagram 13" loading="lazy"></picture></figure>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2541,7 +2634,7 @@ jako <code>run_history</code>. Wpis w dzienniku zdarzeń podaje stary i nowy kod
 </tbody>
 </table></section>
 <h3 id="tryby">Tryby</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-ac9c2721d676-dark.svg"><img src="assets/diagrams/diagram-ac9c2721d676.svg" alt="Diagram 13" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-ac9c2721d676-dark.svg"><img src="assets/diagrams/diagram-ac9c2721d676.svg" alt="Diagram 14" loading="lazy"></picture></figure>
 <p><strong>Auto</strong> zapisuje; <strong>Simulation</strong> oblicza wszystkie cele i zapisuje je w <code>runtime</code>, nie dotykając
 falownika; <strong>Off</strong> zwalnia sterowanie. Przejście z Auto do Off raz przywraca profil bazowy, potwierdza
 go i zostawia późniejsze ręczne nastawy. Wyłączenie samej <em>automatyzacji</em> pomija to przywrócenie.
