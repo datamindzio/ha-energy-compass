@@ -13,7 +13,7 @@ from .balance import REACH_TOL, fallback_costs
 from .charge_benefit import constrain_charge_benefit, validate_charge_benefit
 from .charge_price import price_allows_grid_charge
 from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fractions
-from .dispatch_policy import MODES, constrain_modes, validate_modes
+from .dispatch_policy import MODES, _curtail_need, constrain_modes, validate_modes
 from .export_benefit import constrain_export_benefit, validate_export_benefit
 from .idle_drain import cumulative, drain_schedule
 from .mode_noise import settle_mode_noise
@@ -310,9 +310,16 @@ def _validate_solution(
         charge = value("bc") if battery else 0.0
         discharge = value("bd") if battery else 0.0
         _check(
-            curt <= (slot.pv_kwh if problem.site.allow_curtailment else 0) + _TOL,
+            curt <= _curtail_limit(problem, slot, extra_load) + _TOL,
             "curtailment limit",
         )
+        if curt > _TOL and not problem.site.allow_curtailment:
+            # Forced spill: the pack takes nothing more, because it is full.
+            _check(
+                previous_energy
+                >= _full_gate(problem, index, drains, lifted) - _FULL_TOL,
+                "forced spill with room in the pack",
+            )
         _check(
             gin <= problem.site.grid_import_kw * duration + _TOL, "grid import limit"
         )
@@ -520,6 +527,92 @@ def solve_flexible_load(
     )
 
 
+# The pack counts as full for a forced spill this far below its ceiling (kWh, validator).
+_FULL_TOL = 1e-3
+
+
+def _curtail_limit(problem: Problem, slot, extra_load: float = 0.0) -> float:
+    """Largest curtailment (kWh) a slot may carry.
+
+    A site that can curtail may curtail all its PV. One that cannot still spills
+    what the grid export cap or the inverter rating leaves it no way to pass
+    once the pack is full (a forced spill, T-041): the inverter throttles by
+    itself, and the plan reads that as CURTAIL.
+    """
+    if problem.site.allow_curtailment:
+        return slot.pv_kwh
+    if not problem.battery:
+        return 0
+    # An integer zero keeps the mode rows built from this bound identical to a site that
+    # never spills (the golden model hash).
+    return _curtail_need(problem, slot, extra_load) or 0
+
+
+def _full_gate(problem: Problem, index: int, drains, lifted) -> float:
+    """Energy at the start of a slot from which the pack counts as full.
+
+    The ceiling less the standby loss the slot takes: a pack left on the ceiling
+    ends below it by that much, and the inverter tops it up from the surplus.
+    """
+    battery = problem.battery
+    ceiling = battery.capacity_kwh * (
+        1 if index in lifted else battery.maximum_soc_fraction
+    )
+    return ceiling - drains[index]
+
+
+def _gate_forced_spill(
+    model, problem, v, index, drains, previous_energy_index, flexible_load
+) -> None:
+    """Let a site that cannot curtail spill only the PV it cannot pass, into a full pack."""
+    if problem.site.allow_curtailment or model.upper[v["curt"]] <= 0:
+        return
+    battery = problem.battery
+    gate = _full_gate(problem, index, drains, frozenset(problem.balance_lift_slots))
+    upper = model.upper[v["curt"]]
+    if gate <= 0 or (
+        previous_energy_index is None and battery.initial_kwh < gate - 1e-6
+    ):
+        model.upper[v["curt"]] = 0
+        return
+    slot = problem.slots[index]
+    hours = (slot.end - slot.start).total_seconds() / 3600
+    # `spill` opens the slot's forced spill: the pack is full at its start.
+    spill = None
+    if previous_energy_index is not None or flexible_load:
+        spill = v["spill_open"] = model.variable(binary=True)
+        model.constrain({v["curt"]: 1, spill: -upper}, -np.inf, 0)
+    if previous_energy_index is not None:
+        model.constrain({previous_energy_index: 1, spill: -gate}, 0, np.inf)
+    if not flexible_load:
+        return
+    # A flexible load takes from what the export cap leaves to spill, not from what the
+    # inverter rating does: the need is `max(export part - load, inverter part)`.
+    flex_upper = model.upper[v["flex_load"]]
+    inverter_part = max(slot.pv_kwh - problem.site.inverter_kw * hours, 0.0)
+    if inverter_part <= 0:
+        # curt + flex <= upper where it spills; no limit on the load where it does not.
+        model.constrain(
+            {v["curt"]: 1, v["flex_load"]: 1, spill: flex_upper},
+            -np.inf,
+            upper + flex_upper,
+        )
+    elif upper > inverter_part:
+        export_part = model.variable(binary=True)
+        v["spill_export_part"] = export_part
+        model.constrain(
+            {v["curt"]: 1, export_part: -(upper - inverter_part)},
+            -np.inf,
+            inverter_part,
+        )
+        reach = upper + flex_upper
+        model.constrain(
+            {v["curt"]: 1, v["flex_load"]: 1, export_part: reach},
+            -np.inf,
+            upper + reach,
+        )
+
+
 def _solve(
     problem: Problem,
     *,
@@ -564,9 +657,7 @@ def _solve(
                 cost=-problem.export_weight
                 * (planning_sell(problem, slot) - problem.pv_export_margin),
             ),
-            "curt": model.variable(
-                upper=slot.pv_kwh if problem.site.allow_curtailment else 0
-            ),
+            "curt": model.variable(upper=_curtail_limit(problem, slot)),
             "pv_load": model.variable(upper=slot.pv_kwh),
             "pv_grid": model.variable(upper=slot.pv_kwh),
             "grid_load": model.variable(upper=problem.site.grid_import_kw * duration),
@@ -688,6 +779,9 @@ def _solve(
                 {v["bd"]: 1, v["battery_mode"]: battery.discharge_kw * duration},
                 -np.inf,
                 battery.discharge_kw * duration,
+            )
+            _gate_forced_spill(
+                model, problem, v, index, drains, previous_energy_index, flexible_load
             )
             energy = {
                 v["energy"]: 1,

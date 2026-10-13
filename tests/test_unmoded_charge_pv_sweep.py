@@ -136,11 +136,11 @@ def test_every_unmoded_problem_is_planned_or_infeasible_never_rejected():
             continue
         planned += 1
         assert partial_charges(problem, plan.flows) == [], index
-    # A quarter of the corpus has no plan whatever the rule (a terminal rule the pack
-    # cannot meet, load above the grid limit): 228 of 300 had one before the rule,
-    # and an export cap or an inverter below the PV with curtailment off costs the
-    # few more that the pinned problems below stand for.
-    assert planned >= 227
+    # A fifth of the corpus has no plan whatever the rule (a terminal rule the pack
+    # cannot meet, load above the grid limit): 228 of 300 had one before the rule, 227
+    # with it (an export cap or an inverter below the PV, curtailment off, the pack full
+    # before the last surplus), and 241 with the forced spill of T-041.
+    assert planned >= 241
 
 
 def test_unmoded_flexible_load_probes_are_planned_or_infeasible_never_rejected():
@@ -180,19 +180,29 @@ def quarter_problem(rows, *, site, battery) -> Problem:
     )
 
 
-# Both problems below have a plan with a partial charge beside export without the
-# rule, and none with it. The mode model (`minimum_mode_minutes` 15 and 60) is
-# infeasible on them too: the surplus has nowhere to go but the pack, the rule
-# makes every charge the whole surplus, and the pack is full before the last
-# surplus. docs/model.md (CHARGE_PV) states the limit.
+# Both problems below had a plan with a partial charge beside export without the rule and
+# none with it (T-034): the surplus has nowhere to go but the pack, the rule makes every
+# charge the whole surplus, and the pack is full before the last surplus. T-041 plans the
+# rest as a forced spill: the inverter throttles what the site cannot pass once the pack
+# is full, and the plan reads that as CURTAIL although the site cannot curtail
+# (docs/model.md, CHARGE_PV). tests/test_forced_spill.py covers the rule itself.
 
 
-def test_export_cap_without_curtailment_leaves_no_plan_when_the_pack_fills_early():
+def spilled(problem, plan) -> list[int]:
+    """List the intervals that spill PV on a site that cannot curtail."""
+    return [
+        i
+        for i, flow in enumerate(plan.flows)
+        if machine_state(problem.slots[i], flow) == "CURTAIL"
+    ]
+
+
+def test_export_cap_without_curtailment_spills_the_last_surplus_into_the_full_pack():
     # 1 kW of export takes 0.25 kWh a quarter hour, the rest of the PV has to charge
     # the pack: 0.95, 0.45 and 0.45 kWh beside that export without the rule (the pack
     # ends on 4.94 of 5 kWh). With it the first charge is the full 1 kWh of the power
     # limit and the second the whole 0.7 kWh surplus, so the pack is full before the
-    # last quarter, which then has a quarter kWh nowhere to go.
+    # last quarter, which spills the 0.45 kWh the cap and the house leave over.
     problem = quarter_problem(
         (
             (1.01, 0.75, 0.05, 0),
@@ -203,17 +213,18 @@ def test_export_cap_without_curtailment_leaves_no_plan_when_the_pack_fills_early
         site=SiteLimits(8, 8, 1, False),
         battery=Battery(5, 0.1, 1, 3.295, 4, 3, 0.9, 1, 0, True, False, 0.02),
     )
-    with pytest.raises(SolveError) as error:
-        solve(problem)
-    assert error.value.reason == "infeasible"
+    plan = solve(problem)
+    assert spilled(problem, plan) == [3]
+    assert partial_charges(problem, plan.flows) == []
+    assert plan.flows[3].curtail_kwh == pytest.approx(0.45, abs=1e-4)
 
 
-def test_inverter_below_the_pv_without_curtailment_leaves_no_plan_when_the_pack_fills_early():
+def test_inverter_below_the_pv_without_curtailment_spills_into_the_full_pack():
     # PV of 1.2 kWh a quarter hour against a 0.75 kWh inverter: at least 0.45 kWh
     # of each sunny quarter has to charge the pack. Without the rule 0.45 charged
     # beside 0.75 of export at both ends; with it the first quarter takes the 0.6 kWh
-    # of room (the pack ends full) and the 0.375 kWh the house draws in between
-    # leaves 0.375 of room for the last quarter's 0.45.
+    # of room (the pack ends full), the pack is topped up from the grid between, and
+    # the last quarter spills the 0.45 kWh the inverter cannot pass.
     problem = quarter_problem(
         (
             (1.0, 0.5, 1.2, 0),
@@ -225,6 +236,7 @@ def test_inverter_below_the_pv_without_curtailment_leaves_no_plan_when_the_pack_
         site=SiteLimits(3, 8, 8, False),
         battery=Battery(10, 0.1, 1, 9.4, 3, 0.5, 1, 1, 0, True, False, 0),
     )
-    with pytest.raises(SolveError) as error:
-        solve(problem)
-    assert error.value.reason == "infeasible"
+    plan = solve(problem)
+    assert spilled(problem, plan) == [4]
+    assert partial_charges(problem, plan.flows) == []
+    assert plan.flows[4].curtail_kwh == pytest.approx(0.45, abs=1e-4)
