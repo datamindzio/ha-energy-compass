@@ -801,11 +801,11 @@ Zasady (domyślnie 60 min, 0,1 kW):
   bateria opadła w tym czasie poniżej pełnej. Instalacja, która przepuści swoje PV, działa jak
   dotąd.
   Pomiar na powtarzalnie losowanych problemach (2400 problemów rozwiązanych raz): z przycięciem
-  plan powstaje w 538 z 589 przy minimalnym czasie trwania 0, 568 z 606 przy 15 minutach, 583 z
-  620 przy 30 minutach i 502 z 585 przy 60 minutach (bez niego 190, 180, 164 i 107). Dzień o
+  plan powstaje w 533 z 589 przy minimalnym czasie trwania 0, 565 z 606 przy 15 minutach, 582 z
+  620 przy 30 minutach i 503 z 585 przy 60 minutach (bez niego 171, 160, 149 i 97). Dzień o
   dzwonowym przebiegu PV, śledzony przedział po przedziale do końca, zachowuje plan przez cały
-  czas w 207 z 214 dni przy 15 minutach, 170 z 189 przy 30 minutach i 152 z 197 przy 60 minutach
-  (bez przycięcia 27, 23 i 20); większość pozostałych nie ma planu od pierwszego
+  czas w 207 z 214 dni przy 15 minutach, 172 z 189 przy 30 minutach i 158 z 197 przy 60 minutach
+  (bez przycięcia 27, 23 i 23); większość pozostałych nie ma planu od pierwszego
   przedziału. Reszta nadal nie ma planu, jak dotąd, głównie z dwóch powodów, których plan jeszcze
   nie obejmuje: bateria z wolnym miejscem, której moc ładowania jest poniżej nadwyżki, oraz
   przeniesione zobowiązanie, którego model nie umie zakończyć, częściej przy 60 minutach

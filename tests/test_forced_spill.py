@@ -465,6 +465,36 @@ def test_pinned_limit_hold_that_lost_the_full_level_has_no_plan_for_a_need():
     assert lossless.flows[2].dispatch_mode == "CURTAIL"
 
 
+def test_pinned_limit_curtail_run_with_a_gap_in_the_need_has_no_plan_at_60_minutes():
+    # Pinned limit (docs/model.md, forced spill), rolled sweep negroll seed 12, problem
+    # 65, fourth plan: PV around the inverter rating (0.75 kWh a quarter hour at 3 kW).
+    # The first need opens a CURTAIL run of 60 minutes, the second interval has none (a
+    # bridge) and the third has 0.02 kWh, less than the room two standby losses have made
+    # (0.025 kWh): the relay rides the interval before, which is no CURTAIL, the gate reads
+    # room, and the run's clock forbids the charge. The roll reaches it through the safety
+    # exception: a CHARGE_PV commitment on a full pack keeps its clock over the forced
+    # CURTAIL (`_commit_battery_direction`), so the next plan starts the run afresh.
+    gap = (
+        (1.0, 0.1, 0.81, 0.1),
+        (1.0, 0.1, 0.75, 0.0),
+        (1.0, 0.1, 0.77, 0.0),
+        (1.0, 0.1, 0.75, 0.0),
+    )
+    site = {"cap_kw": 8, "inverter_kw": 3, "drain_kw": 0.05}
+    with pytest.raises(SolveError) as error:
+        solve(problem(gap, minutes=60, **site))
+    assert error.value.reason == "infeasible"
+    steady = (gap[0], gap[2], gap[2], gap[2])
+    plan = solve(problem(steady, minutes=60, **site))
+    assert [flow.dispatch_mode for flow in plan.flows] == ["CURTAIL"] * 4
+    lossless = solve(problem(gap, minutes=60, **{**site, "drain_kw": 0.0}))
+    assert [flow.dispatch_mode for flow in lossless.flows][::2] == ["CURTAIL"] * 2
+    shorter = solve(problem(gap, minutes=30, **site))
+    assert shorter.flows[2].dispatch_mode == "CHARGE_PV"
+    able = solve(problem(gap, minutes=60, curtail=True, **site))
+    assert able.flows[2].dispatch_mode == "CURTAIL"
+
+
 def test_pack_refilled_after_a_carried_curtail_run_ends_the_pv_follow_run_in_hold():
     # Rolled sweep (negroll, seed 12, problem 79, fourth plan): the spill that began the
     # CURTAIL run is behind the horizon. The pack lost 0.0375 kWh to standby in the run,
