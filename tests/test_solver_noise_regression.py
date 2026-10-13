@@ -1143,7 +1143,9 @@ BD_GAP_WITHIN_TOLERANCE = {
 BD_GAP_IN_THE_BALANCE = {k: g for k, g in BD_GAP_WITHIN_TOLERANCE.items() if g < 1e-6}
 
 
-@pytest.mark.parametrize("gap", BD_GAP_WITHIN_TOLERANCE.values(), ids=list(BD_GAP_WITHIN_TOLERANCE))
+@pytest.mark.parametrize(
+    "gap", BD_GAP_WITHIN_TOLERANCE.values(), ids=list(BD_GAP_WITHIN_TOLERANCE)
+)
 def test_unmoded_settle_gives_the_charge_back_and_imports_the_residual_a_zeroed_bd_leaves(
     gap,
 ):
