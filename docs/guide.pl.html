@@ -1203,12 +1203,11 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   prawdziwy przebieg <code>HOLD</code>, tak jak w każdym innym przedziale
   (<code>dispatch_policy.carried_idle_starts</code> wymienia przemostkowane przedziały). Przy pełnej baterii
   w instalacji, która nie może oddać PV, taki przedział może być też <code>CURTAIL</code>, jak każdy inny
-  przedział zobowiązania; nie jest wtedy przemostkowany. Plan jest
-  <code>infeasible</code> (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
+  przedział zobowiązania; nie jest wtedy przemostkowany. Gdy potem nie da się spełnić reguły końcowej
   (<code>preserve_initial</code> bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
-  dom; sonda obciążenia elastycznego daje plan tylko wtedy, gdy jej obciążenie zostawia każdemu
-  przedziałowi zobowiązania coś do naśladowania albo sprowadza nadwyżkę poniżej minimalnej
-  aktywności) albo gdy dzienny budżet przepustowości nie
+  dom), przedział to <code>HOLD</code> z pełnym importem, jak przy wyczerpanej baterii, a bateria kończy tam,
+  gdzie zaczęła. Plan jest <code>infeasible</code> (niewykonalny) do końca zobowiązania, gdy dzienny budżet
+  przepustowości nie
   pokryje minimalnej aktywności, której wymaga zobowiązanie; rzadkie pozostałe przypadki opisuje
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a> (EN). Kierunek
   zablokowany przez dawną blokadę kierunku (<code>initial_battery_mode</code>) nie jest otwarty: bateria,
@@ -1238,7 +1237,10 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   instalacja nie przepuści, bo <code>HOLD</code> nie ma tam legalnego przepływu: plan wykonany przez jeden
   przedział dotarłby inaczej do następnej granicy z przeniesionym zobowiązaniem i bez planu. <code>HOLD</code>
   zwolniony przy pełnej baterii tam nie wraca: przez granicę zachowuje własny zegar, a tam, gdzie
-  instalacja nie przepuści PV, jest <code>CURTAIL</code> (wyżej). Powrót to dalszy ciąg zobowiązania, a nie nowy
+  instalacja nie przepuści PV, jest <code>CURTAIL</code> (wyżej). Nie wraca też dlatego, że regułę końcową
+  wyczerpała bateria: to liczy się przy zwolnieniu i przy powrocie <code>HOLD</code>, który zaczął się na
+  rozładowanej baterii (koordynator przenosi go jako zwolniony), a nie przy tym, który wraca tylko
+  wtedy, gdy bateria jest rozładowana sama w sobie. Powrót to dalszy ciąg zobowiązania, a nie nowy
   przebieg: jedynym zegarem pozostaje termin zobowiązania. Bateria, która opróżni się ponownie w
   tym samym zobowiązaniu, jest znowu zwalniana i znowu wraca, tyle razy, ile trwa zobowiązanie.
   Zwolnienie przechodzi przez granicę przedziału: plan oznacza wiersze takiego <code>HOLD</code>
