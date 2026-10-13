@@ -945,7 +945,7 @@ def _solve(
         for i, v in enumerate(vectors)
         if "hold_run" in v and values[v["hold_run"]] < 0.5
     )
-    validate_modes(
+    released = validate_modes(
         mode_problem,
         flows,
         bridges,
@@ -1022,6 +1022,7 @@ def _solve(
             time_limited=model.time_limited,
             mip_gap=model.mip_gap,
             carried_bridges=bridges,
+            released_holds=tuple(sorted(released)),
         ),
         probe,
     )

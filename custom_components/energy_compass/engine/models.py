@@ -103,6 +103,10 @@ class Problem:
     minimum_mode_power_kw: float = 0.1
     initial_dispatch_mode: MachineState | None = None
     initial_dispatch_mode_since: datetime | None = None
+    # The interval before the first was a HOLD released from the PV-follow commitment
+    # above because its pack was depleted: the commitment and its clock stay, and the
+    # HOLD may go back to it (ADR-0005).
+    initial_dispatch_released: bool = False
     minimum_export_episode_benefit: float = 1.0
     initial_export_active: bool = False
     minimum_grid_charge_episode_benefit: float = 0.0
@@ -170,6 +174,9 @@ class Plan:
     # HOLD rows that carry a commitment: nothing for a PV-follow commitment to follow,
     # or too little PV for a CURTAIL run to go on. The commitment and its clock stay.
     carried_bridges: tuple[int, ...] = ()
+    # HOLD rows of a run released from a PV-follow commitment whose pack was depleted:
+    # the commitment and its clock stay, and the run may go back to it.
+    released_holds: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)

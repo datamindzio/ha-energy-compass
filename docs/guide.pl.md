@@ -701,7 +701,18 @@ Zasady (domyślnie 60 min, 0,1 kW):
   instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
   falownik przy pełnej baterii. Zwolniony `HOLD` nie ma własnego zegara — jedynym zegarem jest
   termin zobowiązania — więc może przejść w `CURTAIL` (który startuje własny zegar) przed tym
-  terminem; nie wraca do `CHARGE_PV`/`SELF_CONSUME`. Pierwszy przedział zobowiązania jest oceniany tak samo
+  terminem. `HOLD` zwolniony przy pełnej baterii nie wraca do `CHARGE_PV`/`SELF_CONSUME`; zwolniony
+  przy rozładowanej baterii wraca, w każdym późniejszym przedziale zobowiązania, dopóki bateria jest
+  rozładowana: bateria przyjmuje nadwyżkę, a `HOLD` nie przepuściłby PV powyżej limitu eksportu (przy
+  `grid_export_kw = 0` tak jest każdego wschodu słońca). Powrót to dalszy ciąg zobowiązania, a nie nowy
+  przebieg: jedynym zegarem pozostaje termin zobowiązania. Bateria, która opróżni się ponownie w
+  tym samym zobowiązaniu, jest znowu zwalniana i znowu wraca, tyle razy, ile trwa zobowiązanie.
+  Zwolnienie przechodzi przez granicę przedziału: plan oznacza wiersze takiego `HOLD`
+  (`dispatch_policy.released_hold_starts`), a koordynator zachowuje zobowiązanie i jego początek,
+  oznaczone jako zwolnione, zamiast zapisywać `HOLD` z własnym zegarem, więc następny plan wraca do
+  `CHARGE_PV` tak jak pierwszy opublikowany. Taki `HOLD` może też trwać po terminie zobowiązania
+  bez zegara; powrót do `CHARGE_PV`/`SELF_CONSUME` po terminie to osobny przebieg i dostaje
+  nowy początek. Pierwszy przedział zobowiązania jest oceniany tak samo
   względem zaobserwowanego stanu naładowania: bateria, która jest już w obrębie obniżonej górnej
   granicy tego przedziału (na przykład po wykonaniu przedziału, który ją napełnił), może od razu
   przejść w `HOLD` lub `CURTAIL`, w obu trybach grupy. Zaobserwowany stan naładowania na górnej
