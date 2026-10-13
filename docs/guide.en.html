@@ -2592,9 +2592,13 @@ changes and at most once a minute for other changes. Acceptances, revocations, s
 changes, imports and device changes go to a history of 50 entries in the store and in the integration's
 diagnostics (<code>deye_controller</code>); no events are fired.</p>
 <p>With the native engine the runtime sensor also has <code>last_run</code> (not recorded): what triggered the last run, the
-decision, the planned commands, each write with its outcome (sent, failed, confirmed or blocked) and how the run
-ended. The last 50 runs are kept in memory, not in the store, and appear in the diagnostics as <code>run_history</code>. A
-logbook entry names the old and new runtime code and confirmed mode whenever either changes.</p>
+decision, the planned commands, each write with its outcome (sent, failed, confirmed or blocked), the register
+layout probe result when one ran (<code>probe</code>: <code>passed</code> or <code>failed: &lt;entities&gt;</code>) and how the run ended. The last 50 runs
+are kept in memory, not in the store, and appear in the diagnostics as <code>run_history</code>; the last 20 runs that sent a
+command or ended with a runtime code other than <code>ok</code> are kept separately as <code>run_history_notable</code>, so routine runs
+cannot push them out. The engine runs when something it reads changes (a plan, the mode, a pause, the TOU facts, the
+next row or TOU boundary), on each full minute and when an inverter value changes; it does not run on every
+refresh of Energy Compass. A logbook entry names the old and new runtime code and confirmed mode whenever either changes.</p>
 <h3 id="services">Services</h3>
 <section class="table-scroll"><table>
 <thead>
@@ -2939,8 +2943,9 @@ the Home Assistant language (Polish for <code>pl</code>, English otherwise); the
 <ul>
 <li>the runtime sensor's <code>reason</code> and <code>reason_code</code>, and its attribute <code>last_run</code> (not recorded): trigger,
   decision, planned commands, each write with its outcome (sent, failed, confirmed, blocked) and how the run ended;</li>
-<li>the integration's diagnostics (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code> and <code>run_history</code>, the last 50 runs
-  (kept in memory, so a restart empties it);</li>
+<li>the integration's diagnostics (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code>, <code>run_history</code>, the last 50 runs, and
+  <code>run_history_notable</code>, the last 20 that wrote or ended with a code other than <code>ok</code> (both kept in memory, so a restart
+  empties them);</li>
 <li>a logbook entry on the runtime sensor whenever the runtime code or the confirmed mode changes;</li>
 <li>the runtime code <code>error</code> and the repair issues "Deye controller runs are failing" and "Deye blueprint
   automation is still on", so a stopped controller is visible without reading logs.</li>

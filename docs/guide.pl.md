@@ -1771,9 +1771,13 @@ sesji, zmiany trybu, importy i zmiany urządzenia trafiają do historii 50 wpis�
 diagnostyce integracji (`deye_controller`); zdarzenia nie są wysyłane.
 
 Przy silniku natywnym sensor stanu pracy ma też `last_run` (nie jest zapisywany w historii): co uruchomiło ostatni
-przebieg, decyzję, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony lub zablokowany) i jak
-przebieg się zakończył. Ostatnie 50 przebiegów jest przechowywane w pamięci, nie w magazynie, i widnieje w diagnostyce
-jako `run_history`. Wpis w dzienniku zdarzeń podaje stary i nowy kod stanu pracy oraz potwierdzony tryb, gdy któryś się zmieni.
+przebieg, decyzję, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony lub zablokowany), wynik
+próby układu rejestrów, gdy była wykonana (`probe`: `passed` lub `failed: <encje>`), i jak przebieg się zakończył.
+Ostatnie 50 przebiegów jest przechowywane w pamięci, nie w magazynie, i widnieje w diagnostyce jako `run_history`;
+ostatnie 20 przebiegów, które wysłały polecenie lub zakończyły się kodem stanu pracy innym niż `ok`, jest osobno jako
+`run_history_notable`, żeby zwykłe przebiegi ich nie wypychały. Silnik działa, gdy zmieni się coś, co czyta (plan,
+tryb, pauza, fakty TOU, najbliższa granica wiersza lub TOU), co pełną minutę i gdy zmieni się wartość falownika; nie
+działa przy każdym odświeżeniu Energy Compass. Wpis w dzienniku zdarzeń podaje stary i nowy kod stanu pracy oraz potwierdzony tryb, gdy któryś się zmieni.
 
 ### Usługi
 
@@ -1970,8 +1974,9 @@ Blueprint zostawiał ślad automatyzacji na każdy przebieg; silnik natywny zast
 
 - `reason` i `reason_code` sensora stanu pracy oraz jego atrybut `last_run` (nie jest zapisywany w historii): wyzwalacz,
   decyzja, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony, zablokowany) i jak przebieg się zakończył;
-- diagnostyka integracji (`deye_controller`): `engine`, `hardware` i `run_history`, ostatnie 50 przebiegów
-  (w pamięci, więc restart je czyści);
+- diagnostyka integracji (`deye_controller`): `engine`, `hardware`, `run_history`, ostatnie 50 przebiegów, oraz
+  `run_history_notable`, ostatnie 20, które zapisały lub zakończyły się kodem innym niż `ok` (oba w pamięci, więc
+  restart je czyści);
 - wpis w dzienniku zdarzeń sensora stanu pracy za każdym razem, gdy zmieni się kod stanu pracy lub potwierdzony tryb;
 - kod `error` oraz problemy w Naprawach „Przebiegi sterownika Deye kończą się błędem” i „Automatyzacja blueprintu
   Deye nadal działa”, więc zatrzymany sterownik widać bez czytania logów.

@@ -1738,9 +1738,13 @@ changes, imports and device changes go to a history of 50 entries in the store a
 diagnostics (`deye_controller`); no events are fired.
 
 With the native engine the runtime sensor also has `last_run` (not recorded): what triggered the last run, the
-decision, the planned commands, each write with its outcome (sent, failed, confirmed or blocked) and how the run
-ended. The last 50 runs are kept in memory, not in the store, and appear in the diagnostics as `run_history`. A
-logbook entry names the old and new runtime code and confirmed mode whenever either changes.
+decision, the planned commands, each write with its outcome (sent, failed, confirmed or blocked), the register
+layout probe result when one ran (`probe`: `passed` or `failed: <entities>`) and how the run ended. The last 50 runs
+are kept in memory, not in the store, and appear in the diagnostics as `run_history`; the last 20 runs that sent a
+command or ended with a runtime code other than `ok` are kept separately as `run_history_notable`, so routine runs
+cannot push them out. The engine runs when something it reads changes (a plan, the mode, a pause, the TOU facts, the
+next row or TOU boundary), on each full minute and when an inverter value changes; it does not run on every
+refresh of Energy Compass. A logbook entry names the old and new runtime code and confirmed mode whenever either changes.
 
 ### Services
 
@@ -1936,8 +1940,9 @@ The blueprint left an automation trace per run; the native engine replaces it wi
 
 - the runtime sensor's `reason` and `reason_code`, and its attribute `last_run` (not recorded): trigger,
   decision, planned commands, each write with its outcome (sent, failed, confirmed, blocked) and how the run ended;
-- the integration's diagnostics (`deye_controller`): `engine`, `hardware` and `run_history`, the last 50 runs
-  (kept in memory, so a restart empties it);
+- the integration's diagnostics (`deye_controller`): `engine`, `hardware`, `run_history`, the last 50 runs, and
+  `run_history_notable`, the last 20 that wrote or ended with a code other than `ok` (both kept in memory, so a restart
+  empties them);
 - a logbook entry on the runtime sensor whenever the runtime code or the confirmed mode changes;
 - the runtime code `error` and the repair issues "Deye controller runs are failing" and "Deye blueprint
   automation is still on", so a stopped controller is visible without reading logs.
