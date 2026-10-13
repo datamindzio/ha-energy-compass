@@ -1,6 +1,7 @@
 """Physical operating modes and elapsed-time advice commitments."""
 
 import math
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, timedelta
 
@@ -35,7 +36,8 @@ IDLE_FLOWS = {
 # Import this small is solver noise, not a plan.
 _IMPORT_TOLERANCE = 1e-5
 # HiGHS accepts each binary within 1e-6 and each row within 1e-6: a follow row written
-# with big-M `m` (`bc >= m * (x - full)`) leaves up to 1e-6 * (2m + 1) kWh short.
+# with big-M `m` (`bc >= m * (x - full)`) leaves up to 1e-6 * (2m + 1) kWh short, and
+# 1e-6 * (3m + 1) with a flexible load, whose rows add a power binary.
 _ROW_TOLERANCE = 1e-6
 _EMPTY_TOLERANCE = 1e-4
 # A bridge's realised probe stays this far below the activity that would open the slot.
@@ -1127,13 +1129,24 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             model.constrain(holding, -np.inf, current_const)
 
 
-def _follow_tolerance(big_m: float) -> float:
-    """Import or export the noise of a follow row of bound `big_m` kWh may leave."""
-    return max(_IMPORT_TOLERANCE, _ROW_TOLERANCE * (2 * big_m + 1))
+def _follow_tolerance(big_m: float, binaries: int = 2) -> float:
+    """Import or export the noise of a follow row of bound `big_m` kWh may leave.
+
+    `binaries` is how many of the row's binaries (mode, relief, and with a flexible
+    load the power one) carry the bound: each leaves 1e-6 of it.
+    """
+    return max(_IMPORT_TOLERANCE, _ROW_TOLERANCE * (binaries * big_m + 1))
 
 
-def _check_load_following(problem: Problem, slot, flow, mode) -> None:
-    """Reject import beside a partial discharge in a SELF_CONSUME interval."""
+def _check_load_following(
+    problem: Problem, slot, flow, mode, flex_max: float = 0.0
+) -> None:
+    """Reject import beside a partial discharge in a SELF_CONSUME interval.
+
+    `flex_max` is the flexible load's largest draw in the interval (kWh): its rows
+    carry a third binary and a bound that includes it, while `slot` holds the load
+    the plan realised (the base load plus the probe it drew).
+    """
     if mode != "SELF_CONSUME":
         return
     hours = (
@@ -1143,8 +1156,11 @@ def _check_load_following(problem: Problem, slot, flow, mode) -> None:
         problem.battery.discharge_kw * hours,
         problem.site.inverter_kw * hours - slot.pv_kwh,
     )
-    # Bound of every row's M (docs/model.md): the power limit, or the net load below the slot's load.
-    tolerance = _follow_tolerance(max(power_limit, slot.load_kwh))
+    # Bound of every row's M (docs/model.md): the power limit, or the net load plus
+    # the flexible load's largest draw (the base load is at most the realised one).
+    tolerance = _follow_tolerance(
+        max(power_limit, slot.load_kwh + flex_max), 3 if flex_max > 0 else 2
+    )
     if flow.grid_import_kwh <= tolerance:
         return
     reserve = problem.battery.capacity_kwh * problem.battery.minimum_soc_fraction
@@ -1158,13 +1174,20 @@ def _check_load_following(problem: Problem, slot, flow, mode) -> None:
         )
 
 
-def _check_surplus_following(problem: Problem, slot, flow, mode, index) -> None:
-    """Reject export beside a partial charge in a CHARGE_PV interval."""
+def _check_surplus_following(
+    problem: Problem, slot, flow, mode, index, flex_max: float = 0.0
+) -> None:
+    """Reject export beside a partial charge in a CHARGE_PV interval.
+
+    `flex_max` is as for `_check_load_following`: a third binary on the surplus row.
+    """
     if mode != "CHARGE_PV":
         return
     hours = _hours(slot)
     # Bound of every row's M (docs/model.md): the charge limit, or the surplus below the slot's PV.
-    tolerance = _follow_tolerance(max(problem.battery.charge_kw * hours, slot.pv_kwh))
+    tolerance = _follow_tolerance(
+        max(problem.battery.charge_kw * hours, slot.pv_kwh), 3 if flex_max > 0 else 2
+    )
     if flow.grid_export_kwh <= tolerance:
         return
     ceiling = problem.battery.capacity_kwh * (
@@ -1182,7 +1205,9 @@ def _check_surplus_following(problem: Problem, slot, flow, mode, index) -> None:
         )
 
 
-def validate_modes(problem: Problem, flows, bridges=None) -> None:
+def validate_modes(
+    problem: Problem, flows, bridges=None, flex_max: Sequence[float] = ()
+) -> None:
     """Independently certify labels, activity, coverage and carried commitments.
 
     `bridges` lists the committed idle rows the plan reads as a bridge, the rest
@@ -1196,6 +1221,10 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
     where a commitment (or a CURTAIL run) can be under way, and the validator accepts
     any idle HOLD row as one while the carried commitment lasts. The solver passes the
     model's own bridges; the readings are for callers that have none.
+
+    `flex_max` gives, per interval, the largest draw (kWh) of the flexible load the
+    plan was solved with; `problem` then holds the load the plan realised. It widens
+    the follow checks to the bound of the rows a flexible load adds. Empty: none.
     """
     if bridges is None and problem.battery and problem.minimum_mode_minutes:
         previous, _ = _initial(problem)
@@ -1216,20 +1245,28 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
         failure = None
         for reading in readings:
             try:
-                return _certify_modes(problem, flows, reading)
+                return _certify_modes(problem, flows, reading, flex_max)
             except SolveError as error:
                 failure = failure or error
         raise failure
-    _certify_modes(problem, flows, frozenset(bridges or ()))
+    _certify_modes(problem, flows, frozenset(bridges or ()), flex_max)
 
 
-def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
+def _certify_modes(
+    problem: Problem, flows, bridges: frozenset[int], flex_max: Sequence[float] = ()
+) -> None:
     """Certify the flows of a plan that reads the committed idle rows in `bridges` as bridges."""
     if not problem.battery:
         return
     if not problem.minimum_mode_minutes:
-        for slot, flow in zip(problem.slots, flows, strict=True):
-            _check_load_following(problem, slot, flow, machine_state(slot, flow))
+        for index, (slot, flow) in enumerate(zip(problem.slots, flows, strict=True)):
+            _check_load_following(
+                problem,
+                slot,
+                flow,
+                machine_state(slot, flow),
+                flex_max[index] if flex_max else 0.0,
+            )
         return
     previous, since = _initial(problem)
     dwell = timedelta(minutes=problem.minimum_mode_minutes)
@@ -1276,8 +1313,9 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
             raise SolveError(
                 "solver_failure", "invalid solver result: physical dispatch mode"
             )
-        _check_load_following(problem, slot, flow, mode)
-        _check_surplus_following(problem, slot, flow, mode, index)
+        flexible = flex_max[index] if flex_max else 0.0
+        _check_load_following(problem, slot, flow, mode, flexible)
+        _check_surplus_following(problem, slot, flow, mode, index, flexible)
         if (
             problem.initial_battery_mode is not None
             and start < problem.initial_battery_mode_since.astimezone(UTC) + dwell
