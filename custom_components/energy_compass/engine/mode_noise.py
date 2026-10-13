@@ -16,16 +16,20 @@ def idle_flows(v: dict[str, int], values: np.ndarray) -> tuple[str, ...]:
     With mode variables the chosen mode names them. Without (minimum duration 0) the
     rows that gate them are the battery direction `battery_mode` and, with the export
     benefit hurdle, the export indicator `export_active` (and `export_side`, which
-    picks the gated flow when it is off): `bc` or `bd`, `bd` or `gout`.
+    picks the gated flow when it is off): `bc` or `bd`, `bd` or `gout`. The export pair
+    `min(bd, gout)` is already satisfied when the battery direction idles `bd`, so only
+    the other direction (`bc` idle) adds a flow for it.
     """
     present = [m for m in MODES if f"mode_{m}" in v]
     if present:
         mode = next((m for m in present if values[v[f"mode_{m}"]] > 0.5), None)
         return IDLE_FLOWS[mode] if mode else ()
-    idle = ["bd" if values[v["battery_mode"]] > 0.5 else "bc"]
+    if values[v["battery_mode"]] > 0.5:
+        return ("bd",)
+    idle = ["bc"]
     if "export_side" in v and values[v["export_active"]] < 0.5:
         idle.append("gout" if values[v["export_side"]] > 0.5 else "bd")
-    return tuple(dict.fromkeys(idle))
+    return tuple(idle)
 
 
 def _settle(
@@ -53,9 +57,9 @@ def _settle(
             settled[name] = 0.0
             left += _SUPPLY_LEFT[name] * flow[name]
     if left > 0:
-        # Too much supply: import less, then export the rest. SELF_CONSUME may not
-        # export, so there the battery delivers less, as a discharge without mode
-        # variables does.
+        # Too much supply: import less, then export the rest. Where the grid may not
+        # take it (SELF_CONSUME, an idle `gout`) or a discharge is working without mode
+        # variables, the battery delivers less instead.
         # A flow HiGHS returned a hair below zero has nothing to give.
         imported = max(min(settled["gin"], left), 0.0)
         settled["gin"] -= imported

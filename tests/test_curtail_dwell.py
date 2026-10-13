@@ -1033,6 +1033,54 @@ def test_the_runtime_plans_the_commitments_hold_when_the_release_has_no_plan(
     assert len(problems) == 1
 
 
+def test_the_commitments_hold_is_not_carried_to_the_next_boundary(monkeypatch):
+    # ADR-0005 point 26 (T-069). The fallback is the safety exception, read afresh at
+    # every boundary: the coordinator stores nothing for it, so the next boundary plans
+    # the release first and follows it once it has a plan, whatever the plan before
+    # published up to the commitment's deadline.
+    from test_export_benefit import native_config
+
+    from custom_components.energy_compass import runtime
+
+    config = native_config()
+    config["settings"].update(minimum_mode_minutes=60)
+    now = datetime(2026, 9, 18, 1, tzinfo=UTC)
+    commitment = {
+        "mode": "SELF_CONSUME",
+        "since": (now - timedelta(minutes=15)).isoformat(),
+    }
+    real = runtime.solve
+    problems = []
+    release_has_a_plan = False
+
+    def solve_or_not(problem, **kwargs):
+        problems.append(problem)
+        if not problem.initial_dispatch_reserve_hold and not release_has_a_plan:
+            raise SolveError("infeasible")
+        return real(problem, **kwargs)
+
+    monkeypatch.setattr(runtime, "solve", solve_or_not)
+
+    def compute(at, held):
+        states = {"sensor.soc": {"state": "0", "attributes": {}, "last_updated": at}}
+        return runtime.compute(config, states, at, battery_commitment=held)
+
+    first = compute(now, commitment)
+    assert first["dispatch_policy"]["safety_exception"]["reason"] == (
+        "observed_soc_minimum"
+    )
+    coordinator = SimpleNamespace(_battery_commitment=dict(commitment))
+    EnergyCompassCoordinator._commit_battery_direction(coordinator, first)
+    assert coordinator._battery_commitment == commitment
+
+    problems.clear()
+    release_has_a_plan = True
+    second = compute(now + timedelta(minutes=15), coordinator._battery_commitment)
+    assert problems
+    assert not any(problem.initial_dispatch_reserve_hold for problem in problems)
+    assert second["dispatch_policy"]["safety_exception"] is None
+
+
 def _stranded():
     """A carried CHARGE_PV, the pack just above the reserve, that no plan can keep (T-058).
 
