@@ -295,10 +295,11 @@ def test_a_bridge_row_stays_idle_under_the_realised_probe():
 
 
 def test_the_pinned_problems_without_a_probe_keep_their_status():
-    # 44 and 917 have no plan without a probe either, on the base of T-025 as well;
-    # 62 and 1424 are planned.
+    # 917 has no plan without a probe either, on the base of T-025 as well; 62 and 1424
+    # are planned, and so is 44 since T-065 (its pack could not end at its initial
+    # energy after the house had drawn from it: the interval is a released HOLD now).
     for problem, planned in (
-        (PROBE_44, False),
+        (PROBE_44, True),
         (PROBE_62, True),
         (PROBE_917, False),
         (PROBE_1424, True),
@@ -313,14 +314,15 @@ def test_the_pinned_problems_without_a_probe_keep_their_status():
 
 def test_a_probe_that_puts_load_into_every_committed_interval_plans_what_a_small_one_cannot():
     # Base 34d6e1f planned the 0.1 kWh probe by HOLD on a chargeable surplus. The
-    # problem without a probe has no other plan: its pack must end at its initial energy
-    # while the commitment carries SELF_CONSUME through a net load of 0.4 kWh. Neither
-    # has the probe of this size, which stays infeasible until the commitment ends
-    # (docs/model.md). A larger one leaves the later intervals load to follow.
-    with pytest.raises(SolveError) as error:
-        solve_flexible_load(PROBE_44, FlexibleLoadRequest(0.1, 0.5))
-    assert error.value.reason == "infeasible"
-    for request in (FlexibleLoadRequest(0.3, 2.0), FlexibleLoadRequest(1.0, 2.0)):
+    # problem without a probe had no other plan until T-065: its pack must end at its
+    # initial energy while the commitment carries SELF_CONSUME through a net load of
+    # 0.4 kWh. The lock floor counts that terminal requirement now, so the interval is
+    # a HOLD released from the pack, with or without a probe, of any size.
+    for request in (
+        FlexibleLoadRequest(0.1, 0.5),
+        FlexibleLoadRequest(0.3, 2.0),
+        FlexibleLoadRequest(1.0, 2.0),
+    ):
         solve_flexible_load(PROBE_44, request)
 
 
@@ -457,7 +459,10 @@ def test_a_slot_exactly_at_the_activity_reads_by_float_arithmetic():
     assert policy.idle_slots(TIE_761) == {0, 1, 2}
     plan = solve(TIE_761)
     assert modes(plan) == ["HOLD", "HOLD", "HOLD"]
-    assert plan.carried_bridges == (0, 1, 2)
+    # Interval 2 is a bridge or, since T-065, a released HOLD run (the pack cannot refill
+    # for the terminal rule): the same cost, the same flows, the solver's tie.
+    assert plan.carried_bridges in ((0, 1), (0, 1, 2))
+    policy.validate_modes(TIE_761, plan.flows, plan.carried_bridges)
 
 
 # Flexible-load seed 202 #105: the solver returns a probe of -3e-17 kWh in interval 0,

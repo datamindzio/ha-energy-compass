@@ -712,12 +712,11 @@ Zasady (domyślnie 60 min, 0,1 kW):
   prawdziwy przebieg `HOLD`, tak jak w każdym innym przedziale
   (`dispatch_policy.carried_idle_starts` wymienia przemostkowane przedziały). Przy pełnej baterii
   w instalacji, która nie może oddać PV, taki przedział może być też `CURTAIL`, jak każdy inny
-  przedział zobowiązania; nie jest wtedy przemostkowany. Plan jest
-  `infeasible` (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
+  przedział zobowiązania; nie jest wtedy przemostkowany. Gdy potem nie da się spełnić reguły końcowej
   (`preserve_initial` bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
-  dom; sonda obciążenia elastycznego daje plan tylko wtedy, gdy jej obciążenie zostawia każdemu
-  przedziałowi zobowiązania coś do naśladowania albo sprowadza nadwyżkę poniżej minimalnej
-  aktywności) albo gdy dzienny budżet przepustowości nie
+  dom), przedział to `HOLD` z pełnym importem, jak przy wyczerpanej baterii, a bateria kończy tam,
+  gdzie zaczęła. Plan jest `infeasible` (niewykonalny) do końca zobowiązania, gdy dzienny budżet
+  przepustowości nie
   pokryje minimalnej aktywności, której wymaga zobowiązanie; rzadkie pozostałe przypadki opisuje
   [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget) (EN). Kierunek
   zablokowany przez dawną blokadę kierunku (`initial_battery_mode`) nie jest otwarty: bateria,
@@ -747,7 +746,10 @@ Zasady (domyślnie 60 min, 0,1 kW):
   instalacja nie przepuści, bo `HOLD` nie ma tam legalnego przepływu: plan wykonany przez jeden
   przedział dotarłby inaczej do następnej granicy z przeniesionym zobowiązaniem i bez planu. `HOLD`
   zwolniony przy pełnej baterii tam nie wraca: przez granicę zachowuje własny zegar, a tam, gdzie
-  instalacja nie przepuści PV, jest `CURTAIL` (wyżej).
+  instalacja nie przepuści PV, jest `CURTAIL` (wyżej). Nie wraca też dlatego, że regułę końcową
+  wyczerpała bateria: to liczy się przy zwolnieniu i przy powrocie `HOLD`, który zaczął się na
+  rozładowanej baterii (koordynator przenosi go jako zwolniony), a nie przy tym, który wraca tylko
+  wtedy, gdy bateria jest rozładowana sama w sobie.
   Bateria dokładnie na rezerwie (zwykły stan
   pusty falownika) jest rozładowana w tym sensie, a nie wyjątkiem bezpieczeństwa: przeniesione
   `SELF_CONSUME` jest tam zwalniane i ładuje jak 0,01 kWh nad rezerwą. Gdy zwolniony `HOLD` nie ma

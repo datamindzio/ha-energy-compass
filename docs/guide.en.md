@@ -701,12 +701,11 @@ Rules (defaults: 60 min, 0.1 kW):
   starts a real `HOLD` run there as in any other interval
   (`dispatch_policy.carried_idle_starts` lists the bridged intervals). With a full battery on a
   site that cannot pass the PV, such an interval may be `CURTAIL` as well, like any other
-  committed interval; it is then not bridged. The plan is
-  `infeasible` until the commitment ends when the
+  committed interval; it is then not bridged. When the
   terminal rule cannot be met afterwards (`preserve_initial` with no later PV or grid charge to
-  refill what the house drew; a flexible-load probe plans it only if its load leaves every
-  committed interval something to follow or takes a surplus below the minimum activity) or when the daily
-  throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
+  refill what the house drew) the interval is a `HOLD` with full import, as for a spent battery,
+  and the battery ends where it began. The plan is `infeasible` until the commitment ends when
+  the daily throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
   cases are listed in
   [model and limitations](model.md#operating-mode-duration-and-pv-export-budget). A direction the
   legacy direction guard blocks (`initial_battery_mode`) is not open: a pack that may not charge
@@ -733,6 +732,9 @@ Rules (defaults: 60 min, 0.1 kW):
   legal flow: a plan followed one interval would otherwise reach the next boundary with a carried
   commitment and no plan. A `HOLD` released from a full pack does not go back there: it keeps its
   own clock across the boundary, and where the site cannot pass the PV it is `CURTAIL` (above).
+  Nor does it go back because the terminal rule has spent the pack: that counts for the release
+  and for the return of a `HOLD` that began on a depleted pack (the coordinator carries it as
+  released), not for this one, which returns only when the pack is depleted in itself.
   A pack exactly at the reserve (the inverter's usual
   empty state) is depleted in this sense, not a safety exception: a carried `SELF_CONSUME` there is
   released and charges like one 0.01 kWh above the reserve. Where that released `HOLD` has no plan
