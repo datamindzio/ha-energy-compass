@@ -2928,6 +2928,47 @@ the replay needs are returned by the <code>recorder/statistics_during_period</co
 Compass plan attribute <code>intervals</code> (or the Solcast/forecast history) recorded at plan time; using
 the realized value as the forecast gives an idealised plan with no forecast error.
 Use <code>interval_minutes: 60</code> for hourly statistics.</p>
+<h3 id="annual-settlement-oracle">Annual settlement oracle</h3>
+<p><code>tools/replay_year.py</code> is the yearly counterpart of the day replay, for the questions a day cannot
+answer: what a <a href="#net-billing-deposit-value">deposit setting</a> does to the <strong>bill of a year</strong>. It
+replays consecutive hours as the integration runs them: a receding <code>horizon_hours</code> (24 h) window,
+re-planned every <code>--refresh-hours</code> hours (default 6) on the forecast, the state of charge carried
+over midnight, the daily PV-export counters reset at <strong>local</strong> midnight, every plan executed on the
+realized series, a failed solve run as self-consumption. The hourly import and export it produces
+are valued by two bills:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Bill</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>annual</code></td>
+<td>the deposit D = 1.23 × V (V = value of the exported energy at <code>max(sell, 0)</code>) pays the energy part E of the imports; the refund is <code>min(D − min(D, E), ρ × V)</code></td>
+</tr>
+<tr>
+<td><code>ledger</code></td>
+<td>the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry <code>min(unused, ρ × V of the month)</code> comes back and the rest is void. It is the steady state of a repeated year: <code>D ≤ E</code> gives the annual result, <code>D &gt; E</code> a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year</td>
+</tr>
+</tbody>
+</table></section>
+<pre><code>python tools/replay_year.py site.json --set deposit_model=manual --set export_value_factor=0.3
+python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
+</code></pre>
+<p>It prints (or, with <code>--json</code>, returns) both bills, <code>wear</code>, the SOC drift (initial minus final SOC at
+the mean buy price), <code>K</code> = annual bill + wear + SOC drift (<code>KL</code> with the ledger), <code>D</code>, <code>V</code>, <code>E</code>, and
+the refund and the void of each bill. Compare two runs by the difference of <code>K</code> (or <code>KL</code>); <code>--self-use</code>
+gives the no-planner reference. The input is one JSON object (<code>timezone</code>, <code>start</code>, <code>rho</code>, <code>fixed</code>,
+<code>initial_soc_percent</code>, <code>settings</code> and <code>hours[]</code>) or a CSV, one row per <strong>hour</strong> with <code>start</code>, <code>buy</code>,
+<code>sell</code>, <code>buy_energy</code>, <code>pv_forecast</code>, <code>load_forecast</code>, <code>pv</code>, <code>load</code> — the same values as above; the
+format is in the tool's docstring, <code>--rho</code>, <code>--fixed</code> and <code>--initial-soc</code> override the file. Hours
+must be consecutive.</p>
+<p>Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
+charge band that depends on the annual import is not modelled (take <code>fixed</code> from the no-battery bill
+and expect a small constant error where the band differs); a stretch shorter than a year is read as
+a year with empty months; the result is only as good as the forecast series you give it.</p>
 <h2 id="reason-code-reference">Reason code reference</h2>
 <h3 id="coverage--quality-reasons-reason-reasons-attributes">Coverage / quality reasons (<code>reason</code>, <code>reasons</code> attributes)</h3>
 <section class="table-scroll"><table>

@@ -2961,6 +2961,47 @@ pobór z sieci + PV − eksport do sieci). <code>pv_forecast</code> i <code>load
 encje prognoz <strong>przed</strong> interwałem — atrybut planu Compass <code>intervals</code> (albo historia Solcast/prognozy)
 zapisany w chwili planowania; użycie wartości rzeczywistej jako prognozy daje wyidealizowany plan
 bez błędu prognozy. Dla statystyk godzinowych ustaw <code>interval_minutes: 60</code>.</p>
+<h3 id="roczna-wyrocznia-rozliczenia">Roczna wyrocznia rozliczenia</h3>
+<p><code>tools/replay_year.py</code> to roczny odpowiednik replayu dni, do pytań, na które doba nie odpowie: co
+<a href="#wartość-depozytu-w-net-billingu">ustawienie depozytu</a> robi z <strong>rachunkiem za rok</strong>. Odtwarza kolejne
+godziny tak, jak pracuje integracja: kroczące okno <code>horizon_hours</code> (24 h), przeplanowywane co
+<code>--refresh-hours</code> godzin (domyślnie 6) na prognozie, stan naładowania przenoszony przez północ,
+dobowe liczniki eksportu PV zerowane o <strong>lokalnej</strong> północy, każdy plan wykonany na szeregu
+rzeczywistym, nieudane rozwiązanie wykonane jako autokonsumpcja. Godzinowy pobór i eksport, który z
+tego wychodzi, wyceniają dwa rachunki:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Rachunek</th>
+<th>Reguła</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>annual</code></td>
+<td>depozyt D = 1,23 × V (V = wartość oddanej energii po <code>max(sell, 0)</code>) płaci część energetyczną E poboru; zwrot to <code>min(D − min(D, E), ρ × V)</code></td>
+</tr>
+<tr>
+<td><code>ledger</code></td>
+<td>depozyt każdego miesiąca to rocznik księgowany w miesiącu następnym, wykorzystywany od najstarszego, ważny 12 miesięcy; po wygaśnięciu wraca <code>min(niewykorzystane, ρ × V miesiąca)</code>, reszta przepada. To stan okresowy powtarzanego roku: <code>D ≤ E</code> daje wynik roczny, <code>D &gt; E</code> rok rozbiegowy od pełnego konta (każdy żywy rocznik z całym depozytem), potem rok mierzony</td>
+</tr>
+</tbody>
+</table></section>
+<pre><code>python tools/replay_year.py site.json --set deposit_model=manual --set export_value_factor=0.3
+python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
+</code></pre>
+<p>Wypisuje (albo z <code>--json</code> zwraca) oba rachunki, <code>wear</code>, dryf SOC (początkowy minus końcowy SOC po
+średniej cenie zakupu), <code>K</code> = rachunek roczny + zużycie + dryf SOC (<code>KL</code> z księgą), <code>D</code>, <code>V</code>, <code>E</code> oraz
+zwrot i przepadek każdego rachunku. Dwa przebiegi porównuje różnica <code>K</code> (albo <code>KL</code>); <code>--self-use</code> daje
+punkt odniesienia bez planera. Wejście to jeden obiekt JSON (<code>timezone</code>, <code>start</code>, <code>rho</code>, <code>fixed</code>,
+<code>initial_soc_percent</code>, <code>settings</code> i <code>hours[]</code>) albo CSV, jeden wiersz na <strong>godzinę</strong> z <code>start</code>, <code>buy</code>,
+<code>sell</code>, <code>buy_energy</code>, <code>pv_forecast</code>, <code>load_forecast</code>, <code>pv</code>, <code>load</code> — te same wartości co wyżej; format
+opisuje docstring narzędzia, a <code>--rho</code>, <code>--fixed</code> i <code>--initial-soc</code> nadpisują plik. Godziny muszą
+następować kolejno.</p>
+<p>Ograniczenia: część stała rachunku to jedna liczba z wejścia i nie podąża za przepływem, więc pasmo
+opłaty zależne od rocznego poboru nie jest modelowane (<code>fixed</code> weź z rachunku bez magazynu i licz się z
+niewielkim stałym błędem tam, gdzie pasmo jest inne); odcinek krótszy niż rok jest czytany jak rok z
+pustymi miesiącami; wynik jest tak dobry, jak podany szereg prognoz.</p>
 <h2 id="słownik-kodów-powodów">Słownik kodów powodów</h2>
 <h3 id="powody-pokrycia--jakości-atrybuty-reason-reasons">Powody pokrycia / jakości (atrybuty <code>reason</code>, <code>reasons</code>)</h3>
 <section class="table-scroll"><table>

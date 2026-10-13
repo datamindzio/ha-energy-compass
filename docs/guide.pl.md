@@ -1914,6 +1914,40 @@ encje prognoz **przed** interwałem — atrybut planu Compass `intervals` (albo 
 zapisany w chwili planowania; użycie wartości rzeczywistej jako prognozy daje wyidealizowany plan
 bez błędu prognozy. Dla statystyk godzinowych ustaw `interval_minutes: 60`.
 
+### Roczna wyrocznia rozliczenia
+
+`tools/replay_year.py` to roczny odpowiednik replayu dni, do pytań, na które doba nie odpowie: co
+[ustawienie depozytu](#wartość-depozytu-w-net-billingu) robi z **rachunkiem za rok**. Odtwarza kolejne
+godziny tak, jak pracuje integracja: kroczące okno `horizon_hours` (24 h), przeplanowywane co
+`--refresh-hours` godzin (domyślnie 6) na prognozie, stan naładowania przenoszony przez północ,
+dobowe liczniki eksportu PV zerowane o **lokalnej** północy, każdy plan wykonany na szeregu
+rzeczywistym, nieudane rozwiązanie wykonane jako autokonsumpcja. Godzinowy pobór i eksport, który z
+tego wychodzi, wyceniają dwa rachunki:
+
+| Rachunek | Reguła |
+| --- | --- |
+| `annual` | depozyt D = 1,23 × V (V = wartość oddanej energii po `max(sell, 0)`) płaci część energetyczną E poboru; zwrot to `min(D − min(D, E), ρ × V)` |
+| `ledger` | depozyt każdego miesiąca to rocznik księgowany w miesiącu następnym, wykorzystywany od najstarszego, ważny 12 miesięcy; po wygaśnięciu wraca `min(niewykorzystane, ρ × V miesiąca)`, reszta przepada. To stan okresowy powtarzanego roku: `D ≤ E` daje wynik roczny, `D > E` rok rozbiegowy od pełnego konta (każdy żywy rocznik z całym depozytem), potem rok mierzony |
+
+```
+python tools/replay_year.py site.json --set deposit_model=manual --set export_value_factor=0.3
+python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
+```
+
+Wypisuje (albo z `--json` zwraca) oba rachunki, `wear`, dryf SOC (początkowy minus końcowy SOC po
+średniej cenie zakupu), `K` = rachunek roczny + zużycie + dryf SOC (`KL` z księgą), `D`, `V`, `E` oraz
+zwrot i przepadek każdego rachunku. Dwa przebiegi porównuje różnica `K` (albo `KL`); `--self-use` daje
+punkt odniesienia bez planera. Wejście to jeden obiekt JSON (`timezone`, `start`, `rho`, `fixed`,
+`initial_soc_percent`, `settings` i `hours[]`) albo CSV, jeden wiersz na **godzinę** z `start`, `buy`,
+`sell`, `buy_energy`, `pv_forecast`, `load_forecast`, `pv`, `load` — te same wartości co wyżej; format
+opisuje docstring narzędzia, a `--rho`, `--fixed` i `--initial-soc` nadpisują plik. Godziny muszą
+następować kolejno.
+
+Ograniczenia: część stała rachunku to jedna liczba z wejścia i nie podąża za przepływem, więc pasmo
+opłaty zależne od rocznego poboru nie jest modelowane (`fixed` weź z rachunku bez magazynu i licz się z
+niewielkim stałym błędem tam, gdzie pasmo jest inne); odcinek krótszy niż rok jest czytany jak rok z
+pustymi miesiącami; wynik jest tak dobry, jak podany szereg prognoz.
+
 ## Słownik kodów powodów
 
 ### Powody pokrycia / jakości (atrybuty `reason`, `reasons`)
