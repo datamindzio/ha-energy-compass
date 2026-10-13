@@ -634,6 +634,38 @@ def test_the_return_to_the_commitment_is_not_a_run_of_its_own():
     assert [flow.dispatch_mode for flow in plan.flows] == ["HOLD", "CHARGE_PV"]
 
 
+@pytest.mark.parametrize("export_cap", [0, 2])
+def test_a_depleted_pack_leaves_and_re_enters_the_commitment_more_than_once(export_cap):
+    # ADR-0005 point 17: the commitment's deadline is the only clock, so each time the
+    # pack is empty again it may be released into HOLD, and each return is the
+    # commitment going on. Two hours, the pack empties twice (T-050).
+    pv = (0, 0.25, 0, 0, 0, 0.25, 0, 0)
+    problem = dispatch(
+        tuple((1.0, 0.9, value, 0.1) for value in pv), minimum_mode_minutes=120
+    )
+    problem = carried(
+        replace(
+            problem,
+            site=replace(problem.site, grid_export_kw=export_cap),
+            battery=replace(problem.battery, initial_kwh=0.0),
+        ),
+        since=timedelta(0),
+    )
+    plan = solve(problem)
+    validate_modes(problem, plan.flows, plan.carried_bridges)
+    assert [flow.dispatch_mode for flow in plan.flows] == [
+        "HOLD",
+        "CHARGE_PV",
+        "SELF_CONSUME",
+        "SELF_CONSUME",
+        "HOLD",
+        "CHARGE_PV",
+        "SELF_CONSUME",
+        "SELF_CONSUME",
+    ]
+    assert plan.released_holds == (0, 4)
+
+
 def depleted(pv, *, mode="CHARGE_PV", export_cap=2, allow_curtailment=True, **changes):
     """A sunrise on an empty pack, a PV-follow commitment carried in (T-050)."""
     problem = carried(capped(pv, initial=0.01, export_cap=export_cap), mode=mode)

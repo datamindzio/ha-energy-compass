@@ -694,7 +694,14 @@ Rules (defaults: 60 min, 0.1 kW):
   pack does, in any later interval of the commitment while the pack is still depleted: the pack
   takes the surplus, and a `HOLD` could not pass the PV above the export cap (on a site with
   `grid_export_kw = 0` that is every sunrise). The return is the commitment going on, not a new
-  run: the commitment's deadline stays the only clock. The first committed interval is judged the same way against the
+  run: the commitment's deadline stays the only clock. A pack that empties again inside the same
+  commitment is released again and goes back again, as often as the commitment lasts. The release
+  survives the interval boundary: the plan marks the rows of such a `HOLD`
+  (`dispatch_policy.released_hold_starts`) and the coordinator keeps the commitment and its start,
+  flagged as released, instead of recording a `HOLD` with a clock of its own, so the next plan
+  goes back to `CHARGE_PV` as the first one published. That `HOLD` may go on past the
+  commitment's deadline without a clock; a return to `CHARGE_PV`/`SELF_CONSUME` after the
+  deadline is a run of its own and gets a fresh start. The first committed interval is judged the same way against the
   observed state of charge: a pack already within the lowered ceiling of that interval (for
   example after the interval that filled it was carried out) may be `HOLD` or `CURTAIL` at once,
   in either member mode. An observed state of charge at the upper bound is the safety exception
