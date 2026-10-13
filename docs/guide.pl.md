@@ -673,11 +673,23 @@ Zasady (domyślnie 60 min, 0,1 kW):
   i nie kończy zobowiązania: plan go przemostkowuje (nie startuje zegar `HOLD`, a zapisane
   zobowiązanie zachowuje tryb i start) albo, gdy bateria jest wyczerpana lub pełna, zaczyna tam
   prawdziwy przebieg `HOLD`, tak jak w każdym innym przedziale
-  (`dispatch_policy.carried_idle_starts` wymienia przemostkowane przedziały). Plan jest
+  (`dispatch_policy.carried_idle_starts` wymienia przemostkowane przedziały). Przy pełnej baterii
+  w instalacji, która nie może oddać PV, taki przedział może być też `CURTAIL`, jak każdy inny
+  przedział zobowiązania; nie jest wtedy przemostkowany. Plan jest
   `infeasible` (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
   (`preserve_initial` bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
-  dom); rzadkie pozostałe przypadki opisuje
-  [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget) (EN).
+  dom; sonda obciążenia elastycznego daje plan tylko wtedy, gdy jej obciążenie zostawia każdemu
+  przedziałowi zobowiązania coś do naśladowania albo sprowadza nadwyżkę poniżej minimalnej
+  aktywności) albo gdy dzienny budżet przepustowości nie
+  pokryje minimalnej aktywności, której wymaga zobowiązanie; rzadkie pozostałe przypadki opisuje
+  [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget) (EN). Kierunek
+  zablokowany przez dawną blokadę kierunku (`initial_battery_mode`) nie jest otwarty: bateria,
+  która nie może się ładować, nie ma `CHARGE_PV` do naśladowania, a ta, która nie może się
+  rozładowywać, nie ma `SELF_CONSUME`, więc przedział z tylko takim kierunkiem też jest
+  przemostkowany. Sonda obciążenia elastycznego jest mostkowana tak samo, dopóki zabrane przez nią
+  obciążenie zostawia przedział bez aktywności; nadwyżka PV sprowadzona przez sondę poniżej
+  minimalnej aktywności nie jest nadwyżką, którą bateria mogłaby przyjąć, więc `HOLD` może się na
+  niej zacząć.
 - **`CHARGE_PV` podąża za nadwyżką.** Falownik ładuje każdym watem, którego dom nie zużywa, więc plan
   nigdy nie łączy częściowego ładowania z eksportem do sieci: w przedziale `CHARGE_PV` bateria
   przejmuje całą nadwyżkę PV, a eksport pojawia się dopiero, gdy ładowanie jest na limicie mocy

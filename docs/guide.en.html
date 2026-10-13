@@ -1151,11 +1151,21 @@ directly by any other available mode.</p>
   classification and does not end the commitment: the plan bridges it (no <code>HOLD</code> clock starts,
   and the persisted commitment keeps its mode and start) or, when the battery is spent or full,
   starts a real <code>HOLD</code> run there as in any other interval
-  (<code>dispatch_policy.carried_idle_starts</code> lists the bridged intervals). The plan is
+  (<code>dispatch_policy.carried_idle_starts</code> lists the bridged intervals). With a full battery on a
+  site that cannot pass the PV, such an interval may be <code>CURTAIL</code> as well, like any other
+  committed interval; it is then not bridged. The plan is
   <code>infeasible</code> until the commitment ends when the
   terminal rule cannot be met afterwards (<code>preserve_initial</code> with no later PV or grid charge to
-  refill what the house drew); the rare remaining cases are listed in
-  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>.</li>
+  refill what the house drew; a flexible-load probe plans it only if its load leaves every
+  committed interval something to follow or takes a surplus below the minimum activity) or when the daily
+  throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
+  cases are listed in
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>. A direction the
+  legacy direction guard blocks (<code>initial_battery_mode</code>) is not open: a pack that may not charge
+  has no <code>CHARGE_PV</code> to follow and one that may not discharge has no <code>SELF_CONSUME</code>, so an interval
+  with only that direction to follow is bridged too. A flexible-load probe is bridged the same
+  way, as long as the probe it takes leaves the interval idle; a PV surplus it takes below the
+  minimum activity is not one the pack could take, so <code>HOLD</code> may start on it.</li>
 <li><strong><code>CHARGE_PV</code> follows the surplus.</strong> The inverter charges with every watt the house does not
   use, so the plan never pairs a partial charge with grid export: in a <code>CHARGE_PV</code> interval the
   battery takes the whole PV surplus, and export appears only once the charge is at its interval
