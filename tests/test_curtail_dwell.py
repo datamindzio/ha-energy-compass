@@ -18,17 +18,24 @@ from custom_components.energy_compass.engine.dispatch_policy import (
     dwell_group,
     validate_modes,
 )
-from custom_components.energy_compass.engine.models import Flow, SolveError
-from custom_components.energy_compass.engine.optimize import solve
+from custom_components.energy_compass.engine.models import (
+    FlexibleLoadRequest,
+    Flow,
+    SolveError,
+)
+from custom_components.energy_compass.engine.optimize import (
+    solve,
+    solve_flexible_load,
+)
 
 CURTAIL = Flow(0, 0.5, 0, 0, 0.3, 10, None, "CURTAIL")
 HOLD = Flow(0.1, 0, 0, 0, 0, 10, None, "HOLD")
 SELF = Flow(0, 0, 0, 0.1, 0, 9.9, "discharge", "SELF_CONSUME")
 
 
-def capped(pv, *, initial=10.0, export_cap=2, **changes):
+def capped(pv, *, initial=10.0, export_cap=2, sell=0.9, **changes):
     problem = dispatch(
-        tuple((1.0, 0.9, value, 0.1) for value in pv), minimum_mode_minutes=60
+        tuple((1.0, sell, value, 0.1) for value in pv), minimum_mode_minutes=60
     )
     return replace(
         problem,
@@ -240,9 +247,24 @@ def test_curtail_bridge_follows_the_run_not_any_forced_interval_before_it():
         "HOLD",
     ]
     # Since T-047 the CURTAIL of the 0.62 kWh interval may take a HOLD over, so the plan
-    # no longer grid-charges to keep clear of it and the dry intervals after the early
-    # CURTAILs are bridges as well; the last one is, and it follows the run of 6-7.
+    # no longer grid-charges to keep clear of it. Its dry intervals are bridges as well,
+    # and a dry interval is one only after a CURTAIL row or another bridge row.
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    assert modes == [
+        "HOLD",
+        "CURTAIL",
+        "HOLD",
+        "CURTAIL",
+        "HOLD",
+        "HOLD",
+        "CURTAIL",
+        "CURTAIL",
+        "HOLD",
+    ]
     assert 8 in plan.carried_bridges
+    for index in plan.carried_bridges:
+        assert modes[index] == "HOLD"
+        assert modes[index - 1] == "CURTAIL" or index - 1 in plan.carried_bridges
 
 
 def test_hold_after_a_long_curtail_run_is_not_a_bridge():
@@ -491,3 +513,62 @@ def test_hold_after_the_run_that_took_a_hold_over_has_its_own_clock():
     assert modes[5:] == ["HOLD"] * 3
     with pytest.raises(SolveError, match="minimum mode duration"):
         validate_modes(problem, (HOLD, *(CURTAIL,) * 4, HOLD, HOLD, SELF))
+
+
+def test_validator_does_not_read_curtail_as_taking_over_a_released_hold():
+    # A HOLD released from a PV-follow commitment (the pack depleted, not full) has no
+    # clock of its own to take over; a CURTAIL after it is the commitment going on, and
+    # the commitment is not ended by a CURTAIL (ADR-0005, still infeasible: T-050).
+    problem = capped((0.0, *(0.9,) * 5), initial=0.01)
+    problem = carried(problem, mode="SELF_CONSUME")
+    idle = Flow(0, 0, 0, 0, 0, 0.01, None, "HOLD")
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (idle, *(CURTAIL,) * 5))
+
+
+def probed(problem, energy, power):
+    """Plan the problem with a flexible load; the plan is certified against its probe."""
+    return solve_flexible_load(problem, FlexibleLoadRequest(energy, power))
+
+
+@pytest.mark.parametrize("mode", ["HOLD", "CHARGE_PV"])
+def test_probe_that_makes_hold_legal_is_planned_under_a_negative_sell_price(mode):
+    # The sell price below zero makes a takeover CURTAIL worth more than a HOLD that the
+    # probe made legal. The takeover is offered only for the probe loads that leave the
+    # PV a need as realised (the validator reads it so), and `solve_flexible_load`
+    # raised solver_failure "minimum mode duration" where the model offered it for all.
+    problem = carried(capped((0.9,) * 8, sell=-0.5), mode=mode)
+    plan = probed(problem, 4.0, 2).plan
+    assert [flow.dispatch_mode for flow in plan.flows] == [
+        *("HOLD",) * 3,
+        *("CURTAIL",) * 5,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("pv", "modes"),
+    [
+        ((0.9, *(0.0,) * 5), ["HOLD"] * 6),
+        ((0.1, *(0.9,) * 5), ["HOLD", *("CURTAIL",) * 5]),
+    ],
+)
+def test_probe_in_a_hold_that_must_last_is_planned_under_a_negative_sell_price(
+    pv, modes
+):
+    problem = carried(capped(pv, sell=-0.5), mode="HOLD")
+    plan = probed(problem, 0.5, 2).plan
+    assert [flow.dispatch_mode for flow in plan.flows] == modes
+
+
+@pytest.mark.parametrize("energy", [0.25, 0.5, 1.0, 1.5])
+@pytest.mark.parametrize("sell", [-0.5, 0.0, 0.9])
+@pytest.mark.parametrize(
+    "pv", [(0.9,) * 6, (0.1, *(0.9,) * 5), (0.9, 0.9, 0.0, 0.0, 0.0, 0.9)]
+)
+def test_probes_around_the_need_are_planned_in_a_hold_that_must_last(pv, sell, energy):
+    # The need is 0.3 kWh in a 0.9 kWh interval; the probes run from none to more than
+    # the need in an interval, at a power that leaves a need and at one that does not.
+    for power in (1.2, 2.0):
+        problem = carried(capped(pv, sell=sell), mode="HOLD")
+        plan = probed(problem, energy, power).plan
+        assert len(plan.flows) == len(pv)

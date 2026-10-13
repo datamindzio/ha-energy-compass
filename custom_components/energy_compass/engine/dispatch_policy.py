@@ -440,6 +440,19 @@ def _curtail_need(problem, slot, extra_load=0.0) -> float:
     )
 
 
+def _takeover_room(problem, slot) -> float:
+    """Tell how much flexible load a slot takes while `_curtail_need` stays positive.
+
+    The inverter rating needs no help from the load, so PV above it is a need whatever
+    a probe adds (inf). Otherwise the load takes from the export cap's need what it
+    uses: the need is positive for a probe load below what is returned (negative: none).
+    """
+    hours = _hours(slot)
+    if slot.pv_kwh - problem.site.inverter_kw * hours > 0:
+        return math.inf
+    return slot.pv_kwh - slot.load_kwh - problem.site.grid_export_kw * hours
+
+
 def _lock_ceiling(problem, drains, index, extra_load=0.0) -> float:
     """Energy above which the battery cannot keep CHARGE_PV active in a slot.
 
@@ -753,14 +766,18 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
     # but CURTAIL, which the inverter does by itself. That CURTAIL takes the HOLD over
     # (`takeover`): the HOLD's remaining duration is the CURTAIL run's from then on
     # (it lasts longer), and a HOLD after the run starts its own clock. Only where the
-    # site cannot pass the PV, so it is no label to leave the duration with.
+    # site cannot pass the PV, so it is no label to leave the duration with. A probe's
+    # load is part of what the site passes: the takeover is offered for the probe
+    # loads that leave the need as realised (`_takeover_room`), as the validator reads it.
     takes = {}
     taken = {}
+    margin = _PROBE_MARGIN if flexible_load else 0.0
+    rooms = [_takeover_room(problem, slot) - margin for slot in problem.slots]
     if any(
-        model.upper[v["mode_CURTAIL"]] > 0 and _curtail_need(problem, slot) > 0
-        for slot, v in zip(problem.slots, vectors, strict=True)
+        model.upper[v["mode_CURTAIL"]] > 0 and room > 0
+        for room, v in zip(rooms, vectors, strict=True)
     ):
-        for i, (slot, v) in enumerate(zip(problem.slots, vectors, strict=True)):
+        for i, (room, v) in enumerate(zip(rooms, vectors, strict=True)):
             takeover = v["takeover"] = model.variable(upper=1.0)
             taken[i] = takeover
             # The CURTAIL under way (a bridge row is that run going on).
@@ -774,13 +791,19 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 continues[taken[i - 1]] = -1
             if (
                 model.upper[v["mode_CURTAIL"]] > 0
-                and _curtail_need(problem, slot) > 0
+                and room > 0
                 and (i or previous == "HOLD")
             ):
                 # The run begins here, from the HOLD of the interval before.
                 begins = takes[i] = v["takeover_start"] = model.variable(upper=1.0)
                 model.constrain({begins: 1, v["mode_CURTAIL"]: -1}, -np.inf, 0)
                 continues[begins] = -1
+                top = model.upper[v["flex_load"]] if flexible_load else 0
+                if room < top:
+                    # Only for the probe loads that leave the PV a need.
+                    model.constrain(
+                        {v["flex_load"]: 1, begins: top - room}, -np.inf, top
+                    )
             model.constrain(continues, -np.inf, 0)
     # Per idle committed interval, the binary that tells a real HOLD run from a bridge.
     runs = {}
@@ -1298,10 +1321,12 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
                 curtails = mode == "CURTAIL" and (
                     carried and full or released and full_seen
                 )
-                # A CURTAIL where the site cannot pass the PV takes a HOLD over: the
+                # A CURTAIL where the site cannot pass the PV takes a HOLD with a clock of
+                # its own over (not one released from a commitment, which has none): the
                 # HOLD has no legal flow there, and the run's own clock goes on.
                 takes_over = (
                     previous == "HOLD"
+                    and not released
                     and mode == "CURTAIL"
                     and _curtail_need(problem, slot) > 0
                 )

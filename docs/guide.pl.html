@@ -1217,7 +1217,11 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   przejmuje <code>HOLD</code> i od tej chwili jest zwykłym przebiegiem <code>CURTAIL</code> z własnym minimalnym czasem
   (dłuższym niż reszta czasu <code>HOLD</code>; przerwa w PV w jego trakcie jest pokryta jak wyżej). Tylko tam,
   gdzie instalacja nie przepuści PV: gdziekolwiek indziej <code>CURTAIL</code> w czasie <code>HOLD</code> byłby etykietą
-  do wyjścia z niego i nie jest oferowany. <code>HOLD</code> po przebiegu ma własny zegar.</li>
+  do wyjścia z niego i nie jest oferowany. <code>HOLD</code> po przebiegu ma własny zegar. <code>HOLD</code> zwolniony z
+  przeniesionego zobowiązania <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> nie ma własnego zegara i nie jest
+  przejmowany. Próbka elastycznego zużycia się liczy: jej obciążenie jest częścią tego, co
+  instalacja przepuszcza, więc przejęcie jest oferowane tylko dla obciążeń próbki, przy których PV
+  nadal przekracza limit.</li>
 <li><strong>Grupa podążania za PV:</strong> <code>CHARGE_PV</code> i <code>SELF_CONSUME</code> dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.</li>

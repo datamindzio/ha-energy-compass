@@ -730,7 +730,11 @@ Zasady (domyślnie 60 min, 0,1 kW):
   przejmuje `HOLD` i od tej chwili jest zwykłym przebiegiem `CURTAIL` z własnym minimalnym czasem
   (dłuższym niż reszta czasu `HOLD`; przerwa w PV w jego trakcie jest pokryta jak wyżej). Tylko tam,
   gdzie instalacja nie przepuści PV: gdziekolwiek indziej `CURTAIL` w czasie `HOLD` byłby etykietą
-  do wyjścia z niego i nie jest oferowany. `HOLD` po przebiegu ma własny zegar.
+  do wyjścia z niego i nie jest oferowany. `HOLD` po przebiegu ma własny zegar. `HOLD` zwolniony z
+  przeniesionego zobowiązania `CHARGE_PV`/`SELF_CONSUME` nie ma własnego zegara i nie jest
+  przejmowany. Próbka elastycznego zużycia się liczy: jej obciążenie jest częścią tego, co
+  instalacja przepuszcza, więc przejęcie jest oferowane tylko dla obciążeń próbki, przy których PV
+  nadal przekracza limit.
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.

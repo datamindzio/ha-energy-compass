@@ -718,7 +718,10 @@ Rules (defaults: 60 min, 0.1 kW):
   from then on is an ordinary `CURTAIL` run with its own minimum duration (which outlasts the
   `HOLD`'s remainder; a PV gap inside it is bridged as above). Only where the site cannot pass the
   PV: anywhere else `CURTAIL` inside a `HOLD`'s duration would be a label to leave it with, and is
-  not offered. The `HOLD` after the run starts its own clock.
+  not offered. The `HOLD` after the run starts its own clock. A `HOLD` released from a carried
+  `CHARGE_PV`/`SELF_CONSUME` commitment has no clock of its own and is not taken over. A
+  flexible-load probe counts: its load is part of what the site passes, so the takeover is offered
+  only for the probe loads that leave PV above the cap.
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
