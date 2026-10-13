@@ -139,8 +139,9 @@ def test_every_unmoded_problem_is_planned_or_infeasible_never_rejected():
     # A fifth of the corpus has no plan whatever the rule (a terminal rule the pack
     # cannot meet, load above the grid limit): 228 of 300 had one before the rule, 227
     # with it (an export cap or an inverter below the PV, curtailment off, the pack full
-    # before the last surplus), and 241 with the forced spill of T-041.
-    assert planned >= 241
+    # before the last surplus), and 247 with the forced spill of T-041 (a pack with room
+    # whose charge power is below the surplus has no plan: docs/model.md, forced spill).
+    assert planned >= 247
 
 
 def test_unmoded_flexible_load_probes_are_planned_or_infeasible_never_rejected():

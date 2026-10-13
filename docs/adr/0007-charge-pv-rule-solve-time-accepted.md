@@ -154,8 +154,9 @@ corpus median for any strategy, or when the owner asks for consumption levels on
 - No engine change. ADR-0006 no longer leaves the regression open; its consequence line points here.
 - The reference point of T-042 (default-mode solve time) is an accepted state, not an open regression, and T-042
   itself is decided (decision 6): the rule ships with `minimum_mode_minutes = 0` in T-034.
-- T-041's first problem (no plan on a capped site when the pack fills early) is solved by the forced spill
-  of the Amendment, not by lazy rows (decision 4), which are not a measured remedy for it.
+- T-041's first problem (no plan on a capped site when the pack fills early) is planned by the forced spill
+  of the Amendment, not by lazy rows (decision 4), which are not a measured remedy for it; the Amendment
+  names what stays unplanned.
 - Consumption levels on a 48 h horizon do not depend on this rule alone: on the irregular corpus the rule-free
   model needs 4.7-8.1 s (median) for five of the six strategies against a 2 s probe limit. Removing the rule
   would not bring them back there; it did on the regular benchmark shape.
@@ -164,20 +165,42 @@ corpus median for any strategy, or when the owner asks for consumption levels on
 
 ## Amendment (T-041, owner decision T-062 B)
 
-The no-plan class of decision 6 is closed by building the exception the rule needed. A site that cannot
-curtail (`allow_curtailment` off) and whose export cap or inverter rating is below the PV spills the PV that
-a full pack cannot take: the inverter throttles by itself, so the plan carries it as `CURTAIL` at cost 0
-(the Deye controller runs its `HOLD` profile) instead of ending `infeasible`.
+The no-plan class of decision 6 is narrowed by building the exception the rule needed, not closed: most of it
+is planned now and the rest is measured and named below. A site that cannot curtail (`allow_curtailment` off)
+and whose export cap or inverter rating is below the PV spills the PV that its pack cannot take: the inverter
+throttles by itself, so the plan carries it as `CURTAIL` at cost 0 (the Deye controller runs its `HOLD`
+profile) instead of ending `infeasible`.
 
 - The spill is the need `max(PV − load − flexible load − grid_export_kw × h, PV − inverter_kw × h, 0)` and no
-  more, only on a site with a battery, only in an interval that starts with a full pack (`previous energy ≥
-  ceiling − standby loss`), and never because the sell price is negative: a pack with room charges.
-  `engine.optimize._gate_forced_spill` writes it (one binary per interval with a need); the solution
-  validator re-checks both limits independently. The mode model takes the same bound.
-- Seeded sweep of `tests/test_unmoded_charge_pv_sweep.py`: 241 of 300 problems planned against 227 on main
-  before the change; no problem planned on main became infeasible, none ended in a solver failure.
-  `benchmarks/spill_sweep.py` extends the comparison to the mode model, probes and rolling
-  solve → follow → solve horizons, with the export-episode hurdle at zero so that a "worse" plan is not a
-  hurdle artefact: no newly infeasible problem anywhere.
+  more (with a minimum mode duration at least the minimum activity: a smaller need is offered as that much),
+  only on a site with a battery, only in an interval whose pack cannot take the need (`previous energy ≥
+  ceiling + standby loss − eta_charge × need`, `dispatch_policy.spill_gate`), and never because the sell price
+  is negative: a pack that can take the need charges. The gate reads the room of the pack, so a pack with
+  0.05 kWh of room spills where one with 1 kWh does not; reading "full" (the first version) left every pack
+  with less room than the need without a plan in any mode. `engine.optimize._gate_forced_spill` writes it (one
+  binary per interval with a need); the solution validator re-checks both limits independently.
+- With a minimum mode duration a `CURTAIL` interval charges and discharges nothing, so the pack of a run that
+  began at the gate drifts below it by its standby loss: the next interval's gate stays open when the interval
+  before it was `CURTAIL` (`_relay_forced_spill`), and the validator accepts a spill only from an interval
+  that starts at the gate or from a `CURTAIL` chain rooted at one. The unmoded model charges the loss back and
+  needs no relay. The first version closed the gate after two intervals of standby loss.
+- A PV-follow dwell may end in a forced `CURTAIL` (a fresh `CHARGE_PV` run that fills the pack inside its
+  minimum duration): ADR-0005's release for a carried PV-follow commitment with a full pack, applied to a run
+  begun inside the plan. The dwell is not shortened or restarted; only the way it may end is wider.
+- Measured with `benchmarks/spill_sweep.py` (same seeds on main f6eb8f2 and here, 300 per seed, the
+  export-episode hurdle at zero so that a "worse" plan is not a hurdle artefact): of 3000 problems drawn once
+  (random PV, negative prices, flexible-load probes, a bell-shaped day with cloud dips) 915 of 998 are
+  planned at minimum mode duration 0 (main 314), 923 of 1018 at 15 minutes (266), 795 of 984 at 60 minutes
+  (213); of 1500 problems followed one interval at a time, 1233 are followed to the end (main 301). No problem
+  planned on main became infeasible, none ended in a solver failure, no plan is dearer beyond 1e-6 and no
+  rolling problem stops at a boundary now. `tests/test_unmoded_charge_pv_sweep.py`: 247 of 300 against 227 on
+  main. The table of `docs/model.md` has every draw.
+- Still unplanned, measured and pinned by `tests/test_forced_spill.py` (`test_pinned_limit_*`), follow-up
+  T-066: a pack with room whose charge power is below the surplus (the gate reads room, not charge power; the
+  plan may not call throttling a spill while the pack can still charge), and a carried dwell the model cannot
+  end (a `CURTAIL` commitment on a pack with room; some 60-minute `SELF_CONSUME` and `CHARGE_PV` dwells even
+  from a full pack, not characterized). 367 of the 3000 problems have no plan (main: 2207); they have none on
+  main either. In the mode model a `CURTAIL` interval charges nothing, so the room of a pack below the gate
+  stays empty while the surplus lasts, until replanning reads the real state of charge.
 - Solve time: the benchmark site can pass its PV, so the rows and variables are identical to main f6eb8f2 and
   the per-strategy table of `docs/model.md` shows only measurement noise.

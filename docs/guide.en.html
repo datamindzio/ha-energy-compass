@@ -1148,7 +1148,7 @@ hours: <code>activity = minimum_mode_power_kw × h</code> (default 0.1 kW) and
 <td><code>CURTAIL</code></td>
 <td>Curtail PV</td>
 <td>Curtailment ≥ activity, no battery activity.</td>
-<td><code>allow_curtailment</code> on; without it, only the PV a full pack cannot take and the export cap or inverter rating cannot pass (a forced spill, below).</td>
+<td><code>allow_curtailment</code> on; without it, only the PV that the export cap or the inverter rating cannot pass and the pack has no room for (a forced spill, below).</td>
 </tr>
 </tbody>
 </table></section>
@@ -1223,10 +1223,22 @@ directly by any other available mode.</p>
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>). A site that
   cannot curtail (<code>allow_curtailment</code> off) with grid export capped, or the inverter rated below
   the PV, would be left with PV that has nowhere to go once the pack is full. It is planned
-  anyway: the PV above what the cap and the inverter can pass is spilled in an interval that
-  starts with a full pack, labelled <code>CURTAIL</code> (the inverter throttles by itself; the Deye
-  controller runs its <code>HOLD</code> profile), and only then. A pack with room never spills, whatever the
-  sell price, and a site that can pass its PV is unchanged. The mode model takes the same rule.</li>
+  rather than reported as infeasible: the PV above what the cap and the inverter can pass (the
+  curtail need; with a minimum duration at least the minimum activity) is spilled in an interval
+  whose pack cannot take it, labelled <code>CURTAIL</code> (the inverter throttles by itself; the Deye
+  controller runs its <code>HOLD</code> profile). The gate is the room of the pack: the interval starts at or
+  above the ceiling less what the pack would have to absorb, so a pack with a little room that
+  cannot take the surplus spills too, and a pack that can take it never does, whatever the sell
+  price. With a minimum duration a <code>CURTAIL</code> run keeps the next interval's gate open (it charges
+  nothing, so the pack only drifts down by its standby loss), a <code>CHARGE_PV</code> or <code>SELF_CONSUME</code> run
+  may end in <code>CURTAIL</code> when the pack fills inside it, and room left below the gate stays empty
+  during a <code>CURTAIL</code> interval until the next replanning reads the real state of charge. A site
+  that can pass its PV is unchanged.
+  Measured on seeded sweeps (3000 problems drawn at the three minimum durations): 2633 are planned
+  with the spill against 793 without it. The rest stay without a plan, as before, for two reasons
+  the plan does not yet cover: a pack with room whose charge power is below the surplus, and a
+  carried <code>CURTAIL</code> (or some 60-minute <code>SELF_CONSUME</code>/<code>CHARGE_PV</code>) commitment the model cannot end
+  (<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>, follow-up T-066).</li>
 <li><strong><code>CURTAIL</code> goes on through a PV gap.</strong> A <code>CURTAIL</code> run lasts the minimum duration, and PV can
   drop inside it. A <code>HOLD</code> in an interval with PV below the minimum activity (<code>minimum_mode_power_kw × h</code>)
   inside that duration is the run going on, not a new <code>HOLD</code>: the inverter has nothing to curtail

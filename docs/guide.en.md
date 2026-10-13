@@ -642,7 +642,7 @@ hours: `activity = minimum_mode_power_kw × h` (default 0.1 kW) and
 | `DISCHARGE_GRID` | Discharge with export | Discharge ≥ activity **and** grid export ≥ activity — the battery sells energy. | `allow_battery_export` on; grid export capacity > 0; Sell only PV budget and export-benefit hurdle allow it. |
 | `SELF_CONSUME` | Self-consumption | Discharge ≥ activity, no charge, no export, no curtailment — the battery covers the house. Load-following: grid import only while the discharge is at its power limit or the battery is emptied to its reserve. | SOC above operating reserve. |
 | `HOLD` | Hold | No charge, no discharge, no curtailment — the battery idles; the grid/PV cover load. | Always available. |
-| `CURTAIL` | Curtail PV | Curtailment ≥ activity, no battery activity. | `allow_curtailment` on; without it, only the PV a full pack cannot take and the export cap or inverter rating cannot pass (a forced spill, below). |
+| `CURTAIL` | Curtail PV | Curtailment ≥ activity, no battery activity. | `allow_curtailment` on; without it, only the PV that the export cap or the inverter rating cannot pass and the pack has no room for (a forced spill, below). |
 
 When mode duration is disabled (`minimum_mode_minutes = 0`), the display state is derived from flows
 by precedence: CURTAIL → CHARGE_GRID → CHARGE_PV → DISCHARGE_GRID → SELF_CONSUME → HOLD.
@@ -737,10 +737,22 @@ Rules (defaults: 60 min, 0.1 kW):
   [model and limitations](model.md#operating-mode-duration-and-pv-export-budget)). A site that
   cannot curtail (`allow_curtailment` off) with grid export capped, or the inverter rated below
   the PV, would be left with PV that has nowhere to go once the pack is full. It is planned
-  anyway: the PV above what the cap and the inverter can pass is spilled in an interval that
-  starts with a full pack, labelled `CURTAIL` (the inverter throttles by itself; the Deye
-  controller runs its `HOLD` profile), and only then. A pack with room never spills, whatever the
-  sell price, and a site that can pass its PV is unchanged. The mode model takes the same rule.
+  rather than reported as infeasible: the PV above what the cap and the inverter can pass (the
+  curtail need; with a minimum duration at least the minimum activity) is spilled in an interval
+  whose pack cannot take it, labelled `CURTAIL` (the inverter throttles by itself; the Deye
+  controller runs its `HOLD` profile). The gate is the room of the pack: the interval starts at or
+  above the ceiling less what the pack would have to absorb, so a pack with a little room that
+  cannot take the surplus spills too, and a pack that can take it never does, whatever the sell
+  price. With a minimum duration a `CURTAIL` run keeps the next interval's gate open (it charges
+  nothing, so the pack only drifts down by its standby loss), a `CHARGE_PV` or `SELF_CONSUME` run
+  may end in `CURTAIL` when the pack fills inside it, and room left below the gate stays empty
+  during a `CURTAIL` interval until the next replanning reads the real state of charge. A site
+  that can pass its PV is unchanged.
+  Measured on seeded sweeps (3000 problems drawn at the three minimum durations): 2633 are planned
+  with the spill against 793 without it. The rest stay without a plan, as before, for two reasons
+  the plan does not yet cover: a pack with room whose charge power is below the surplus, and a
+  carried `CURTAIL` (or some 60-minute `SELF_CONSUME`/`CHARGE_PV`) commitment the model cannot end
+  ([model and limitations](model.md#operating-mode-duration-and-pv-export-budget), follow-up T-066).
 - **`CURTAIL` goes on through a PV gap.** A `CURTAIL` run lasts the minimum duration, and PV can
   drop inside it. A `HOLD` in an interval with PV below the minimum activity (`minimum_mode_power_kw × h`)
   inside that duration is the run going on, not a new `HOLD`: the inverter has nothing to curtail

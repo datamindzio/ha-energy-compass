@@ -149,7 +149,7 @@ starts in the gap, PV returns inside its hour). Repros: `tests/test_curtail_dwel
 Decision:
 
 10. **A `CURTAIL` where the site cannot pass the PV takes a `HOLD` over.** In an interval with
-    `_curtail_need > 0` (PV above the house and the export cap, or above the inverter rating) the inverter
+    `curtail_need > 0` (`_curtail_need` until T-041 made it public; PV above the house and the export cap, or above the inverter rating) the inverter
     curtails whatever the mode, so a `HOLD` run inside its minimum duration goes on as a `CURTAIL` run (a
     *takeover*), for a carried `HOLD`, a `HOLD` released by the safety exception and a `HOLD` that began
     earlier in the plan alike. The `CURTAIL` run has its own minimum duration (point 5 applies: its dry
@@ -162,7 +162,7 @@ Decision:
     clock of its own to take over, and `validate_modes` accepts a takeover only from a `HOLD` that has one.
 12. **The need is the one as realised.** A flexible-load probe's load is part of what the site passes, and the
     plan is certified against it (`validate_modes` reads the slots with the probe's load in them). The model
-    offers the takeover in an interval only for the probe loads that leave `_curtail_need` positive there
+    offers the takeover in an interval only for the probe loads that leave `curtail_need` positive there
     (`flex_load ≤ need − margin` for the export-cap term, `_takeover_room`; the inverter term does not depend
     on the load), so model and validator agree for every probe value. Without it a sell price below zero made
     the solver prefer a takeover in an interval where the probe had made a `HOLD` legal, and

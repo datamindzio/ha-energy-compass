@@ -1157,7 +1157,7 @@ przechowuje własną kopię zaakceptowanego planu przez przeładowanie wpisu, al
 <td><code>CURTAIL</code></td>
 <td>Ograniczanie PV</td>
 <td>Ograniczenie produkcji ≥ activity, bateria nieaktywna.</td>
-<td><code>allow_curtailment</code> włączone; bez niego tylko PV, którego nie przyjmie pełna bateria i nie przepuści limit eksportu ani moc falownika (wymuszone przycięcie, niżej).</td>
+<td><code>allow_curtailment</code> włączone; bez niego tylko PV, którego nie przepuści limit eksportu ani moc falownika i na które bateria nie ma miejsca (wymuszone przycięcie, niżej).</td>
 </tr>
 </tbody>
 </table></section>
@@ -1239,11 +1239,24 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN). Instalacja,
   która nie może ograniczać produkcji PV (<code>allow_curtailment</code> wyłączone), z limitem eksportu do
   sieci albo falownikiem o mocy poniżej PV zostałaby z PV bez miejsca, gdy bateria jest pełna.
-  Plan i tak powstaje: PV ponad to, co przepuści limit i falownik, jest tracone w przedziale, który
-  zaczyna się z pełną baterią, ma etykietę <code>CURTAIL</code> (falownik przycina sam; sterownik Deye
-  wykonuje wtedy profil <code>HOLD</code>) i tylko wtedy. Bateria z wolnym miejscem nigdy nie traci PV, bez
-  względu na cenę sprzedaży, a instalacja, która przepuści swoje PV, działa jak dotąd. Model z
-  trybami ma tę samą regułę.</li>
+  Plan powstaje zamiast wyniku „brak planu” (<code>infeasible</code>): PV ponad to, co przepuści limit i
+  falownik (potrzeba przycięcia; przy minimalnym czasie trwania co najmniej minimalna aktywność),
+  jest tracone w przedziale, w którym bateria nie może go przyjąć, i ma etykietę <code>CURTAIL</code>
+  (falownik przycina sam; sterownik Deye wykonuje wtedy profil <code>HOLD</code>). Bramką jest wolne miejsce
+  w baterii: przedział zaczyna się na poziomie górnej granicy pomniejszonej o to, co bateria
+  musiałaby przyjąć, więc bateria z niewielkim wolnym miejscem, która nie przyjmie nadwyżki, też
+  ją traci, a bateria, która ją przyjmie, nigdy, bez względu na cenę sprzedaży. Przy minimalnym
+  czasie trwania przebieg <code>CURTAIL</code> utrzymuje bramkę następnego przedziału otwartą (nic nie ładuje,
+  więc bateria opada tylko o straty postojowe), przebieg <code>CHARGE_PV</code> lub <code>SELF_CONSUME</code> może
+  zakończyć się w <code>CURTAIL</code>, gdy bateria napełni się w jego trakcie, a wolne miejsce poniżej
+  bramki zostaje puste w przedziale <code>CURTAIL</code> do następnego przeliczenia, które odczyta
+  rzeczywisty stan naładowania. Instalacja, która przepuści swoje PV, działa jak dotąd.
+  Pomiar na powtarzalnie losowanych problemach (3000 problemów w trzech minimalnych czasach trwania): z
+  przycięciem plan powstaje w 2633, bez niego w 793. Reszta nadal nie ma planu, jak dotąd, z dwóch
+  powodów, których plan jeszcze nie obejmuje: bateria z wolnym miejscem, której moc ładowania jest
+  poniżej nadwyżki, oraz przeniesione zobowiązanie <code>CURTAIL</code> (lub niektóre 60-minutowe
+  <code>SELF_CONSUME</code>/<code>CHARGE_PV</code>), którego model nie umie zakończyć
+  (<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN; zadanie T-066).</li>
 <li><strong><code>CURTAIL</code> trwa mimo przerwy w PV.</strong> Przebieg <code>CURTAIL</code> trwa minimalny czas, a PV może w tym
   czasie spaść. <code>HOLD</code> w przedziale z PV poniżej minimalnej aktywności (<code>minimum_mode_power_kw × h</code>)
   w trakcie tego czasu to ten sam przebieg, a nie nowy <code>HOLD</code>: falownik nie ma czego przycinać,
