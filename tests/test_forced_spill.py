@@ -166,13 +166,45 @@ def test_pack_with_less_room_than_the_need_has_a_plan(initial, minutes):
 
 
 def test_mode_model_spill_charges_nothing_below_the_full_level():
-    # Pinned limit (docs/model.md, forced spill): a CURTAIL interval charges nothing, so a
-    # pack 0.5 kWh below full stays there while the surplus lasts. CHARGE_PV cannot take
+    # Pinned limit (docs/model.md, forced spill): a CURTAIL interval whose need the pack
+    # could take by its charge power (4 kW here) charges nothing, so a pack 0.5 kWh below
+    # full stays there while the surplus lasts. CHARGE_PV cannot take
     # 0.95 kWh into 0.5 kWh of room and the unmoded rule forbids it a partial charge.
     rows = ((1.0, 0.1, 1.2, 0),) * 4
     plan = solve(problem(rows, initial=4.5, minutes=60))
     assert [flow.dispatch_mode for flow in plan.flows] == ["CURTAIL"] * 4
     assert [flow.end_soc_kwh for flow in plan.flows] == pytest.approx([4.5] * 4)
+
+
+@pytest.mark.parametrize("minutes", [15, 60])
+def test_forced_spill_beyond_the_charge_power_charges_beside_the_spill(minutes):
+    # Curtailment off (T-064): the need is 0.95 kWh a quarter hour, the pack has 0.5 kWh
+    # of room (less than the need: the gate is open) and takes 0.25 kWh a quarter hour.
+    # The forced CURTAIL row charges what the pack takes and spills the rest, from PV
+    # only; the evening asks for more than the pack holds, so what it took is worth 3.
+    rows = ((1.0, 0.1, 1.2, 0),) * 4 + ((3.0, 0.1, 0, 1.0),) * 6
+    site = problem(rows, initial=4.5, minutes=minutes, charge_kw=1)
+    assert not site.site.allow_curtailment
+    plan = solve(site)
+    dispatch_policy.validate_modes(site, plan.flows, ())
+    sun = plan.flows[:4]
+    assert [flow.dispatch_mode for flow in sun] == ["CURTAIL"] * 4
+    assert sum(flow.charge_kwh for flow in sun) == pytest.approx(0.5, abs=1e-5)
+    assert max(flow.charge_kwh for flow in sun) == pytest.approx(0.25, abs=1e-5)
+    for flow in sun:
+        assert flow.grid_import_kwh == pytest.approx(0, abs=1e-6)
+        assert flow.discharge_kwh == pytest.approx(0, abs=1e-6)
+        assert flow.charge_kwh + flow.curtail_kwh == pytest.approx(0.95, abs=1e-5)
+    assert sun[-1].end_soc_kwh == pytest.approx(5.0, abs=1e-5)
+
+
+def test_forced_spill_beyond_the_charge_power_needs_the_gate_open():
+    # The same site with 1 kWh of room (more than the need): no spill is forced, the pack
+    # cannot take the need by its charge power, and there is still no plan (T-066).
+    rows = ((1.0, 0.1, 1.2, 0),) * 4 + ((3.0, 0.1, 0, 1.0),) * 6
+    with pytest.raises(SolveError) as error:
+        solve(problem(rows, initial=4.0, minutes=60, charge_kw=1))
+    assert error.value.reason == "infeasible"
 
 
 @pytest.mark.parametrize("minutes", [15, 60])

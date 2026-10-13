@@ -369,7 +369,8 @@ def _validate_solution(
         if battery and not problem.site.allow_curtailment:
             # Forced spill: the pack cannot take the PV the site cannot pass, or a CURTAIL
             # run that began at that gate goes on (the pack only drifted by its standby
-            # loss, CURTAIL moving nothing in or out).
+            # loss, CURTAIL discharging nothing; a row beyond the pack may charge, which
+            # only raises it).
             open_gate = (
                 relayed
                 or previous_energy
@@ -676,8 +677,9 @@ def _gate_forced_spill(
 
     `spill_open` opens the slot's forced spill: the pack cannot take the slot's need at
     its start (`spill_gate`). With minimum mode durations a CURTAIL run under way also
-    keeps the next slot open (`_relay_forced_spill`): CURTAIL charges nothing, so the pack
-    drifts below the gate by its standby loss while the inverter throttles. The gate is
+    keeps the next slot open (`_relay_forced_spill`): CURTAIL discharges nothing, so the pack
+    drifts below the gate by its standby loss at most while the inverter throttles (a row
+    beyond the pack may charge: it only rises). The gate is
     the strictest the flexible load allows, so what the model plans the certificate
     (written with the load realised) accepts.
     Returns the slot's gate for the relay, or None where the slot has no need or is shut.
@@ -744,8 +746,8 @@ def _gate_forced_spill(
 def _relay_forced_spill(model, vectors, spills) -> None:
     """Keep a CURTAIL run's spill open while the run lasts (minimum mode duration).
 
-    CURTAIL charges and discharges nothing, so the pack of a run that began at the gate
-    only drifts by its standby loss: the next slot's gate row takes the run's mode as the
+    CURTAIL discharges nothing (it charges only the PV beyond the pack), so the pack of a
+    run that began at the gate only drifts below it by its standby loss: the next slot's gate row takes the run's mode as the
     reason to stay open, and CURTAIL itself is allowed only where the gate is open. A
     chain rooted that way ends at a slot whose pack was at the gate, which is what the
     certificate reads (`_validate_solution`). Without minimum durations the pack charges

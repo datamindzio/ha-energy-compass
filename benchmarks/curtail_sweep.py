@@ -44,6 +44,10 @@ T-058 adds `resrun`/`resroll`: an ordinary draw with SELF_CONSUME carried and th
 the reserve (`make_reserve`; almost every draw reaches the safety exception, where `deprun` reaches
 it in about one draw in ten), the generator aimed at the reserve rule. `planned` goes through
 `solve_released`, so a tree with the fallback plans the commitment's HOLD when the release has none.
+T-064 lets a CURTAIL interval charge: a pack whose charge power cannot take the PV above the export cap is
+planned in one interval. `rungs <kind> <seed> <count>` counts which rung of `solve_released` plans each draw
+(`first`, `reserve_hold`, `uncommitted`, or `none`); it is how the draws that moved from rung 2 or 3 to rung 1
+are counted (ADR-0005 amendment T-064).
 Invoked by path, like the other benchmarks: the repository root must be on PYTHONPATH.
 """
 
@@ -536,8 +540,38 @@ def draws(kind, seed, count):
     return [roll(makers[kind](rng)) for _ in range(count)]
 
 
+def rungs(kind, seed, count):
+    """Count the rung of `solve_released` that plans each draw of an ordinary kind."""
+    makers = {
+        "run": make,
+        "negrun": make_negative,
+        "deprun": make_depleted,
+        "resrun": make_reserve,
+        "fullrun": make_full,
+    }
+    rng = random.Random(seed)
+    counts = {}
+    for _ in range(count):
+        problem = makers[kind](rng)
+        try:
+            _, solved = optimize.solve_released(problem)
+        except SolveError:
+            rung = "none"
+        else:
+            if solved.initial_dispatch_reserve_hold:
+                rung = "reserve_hold"
+            elif problem.initial_dispatch_mode and not solved.initial_dispatch_mode:
+                rung = "uncommitted"
+            else:
+                rung = "first"
+        counts[rung] = counts.get(rung, 0) + 1
+    return counts
+
+
 if __name__ == "__main__":
-    if sys.argv[1] == "compare":
+    if sys.argv[1] == "rungs":
+        print(rungs(sys.argv[2], int(sys.argv[3]), int(sys.argv[4])))
+    elif sys.argv[1] == "compare":
         compare(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "rollcompare":
         roll_compare(sys.argv[2], sys.argv[3])

@@ -652,7 +652,7 @@ Sensor **Kompas energii** pokazuje tryb pracy bieżącego przedziału; każdy wi
 | `DISCHARGE_GRID` | Rozładowanie z eksportem | Rozładowanie ≥ activity **i** eksport do sieci ≥ activity — bateria sprzedaje energię. | `allow_battery_export` włączone; moc eksportu > 0; pozwala na to budżet Sell only PV i próg korzyści eksportu. |
 | `SELF_CONSUME` | Autokonsumpcja | Rozładowanie ≥ activity, bez ładowania, eksportu i ograniczania — bateria zasila dom. Podąża za obciążeniem: import z sieci tylko przy rozładowaniu na limicie mocy albo gdy bateria jest opróżniona do rezerwy. | SOC powyżej rezerwy operacyjnej. |
 | `HOLD` | Wstrzymanie | Brak ładowania, rozładowania i ograniczania — bateria stoi; dom zasila sieć/PV. | Zawsze dostępny. |
-| `CURTAIL` | Ograniczanie PV | Ograniczenie produkcji ≥ activity, bateria nieaktywna. | `allow_curtailment` włączone; bez niego tylko PV, którego nie przepuści limit eksportu ani moc falownika i na które bateria nie ma miejsca (wymuszone przycięcie, niżej). |
+| `CURTAIL` | Ograniczanie PV | Ograniczenie produkcji ≥ activity, bez rozładowania; bateria ładuje obok tylko tam, gdzie PV powyżej tego, co instalacja przepuszcza, przekracza to, co przyjmie moc ładowania (niżej). | `allow_curtailment` włączone; bez niego tylko PV, którego nie przepuści limit eksportu ani moc falownika i na które bateria nie ma miejsca (wymuszone przycięcie, niżej). |
 
 Przy wyłączonym minimalnym czasie trybu (`minimum_mode_minutes = 0`) stan wyświetlany wynika z
 przepływów wg pierwszeństwa: CURTAIL → CHARGE_GRID → CHARGE_PV → DISCHARGE_GRID → SELF_CONSUME →
@@ -753,8 +753,7 @@ Zasady (domyślnie 60 min, 0,1 kW):
   Bateria dokładnie na rezerwie (zwykły stan
   pusty falownika) jest rozładowana w tym sensie, a nie wyjątkiem bezpieczeństwa: przeniesione
   `SELF_CONSUME` jest tam zwalniane i ładuje jak 0,01 kWh nad rezerwą. Gdy zwolniony `HOLD` nie ma
-  planu (moc ładowania nie przyjmie PV powyżej limitu eksportu, a ładowanie i ucinanie w jednym
-  przedziale nie jest modelowane), dom i tak nigdy nie zostaje bez planu. Planem jest pierwszy z
+  planu (zobowiązanie, którego żaden plan nie utrzyma), dom i tak nigdy nie zostaje bez planu. Planem jest pierwszy z
   poniższych, który ma rozwiązanie, każdy próbowany dopiero wtedy, gdy poprzedni go nie ma, a
   wszystkie w jednym budżecie czasu przeliczenia: zwolnienie; własny `HOLD` zobowiązania z jego
   zegarem, jak wyjątek bezpieczeństwa poniżej, który ucina tam, gdzie ucinanie jest dozwolone; plan
@@ -792,8 +791,8 @@ Zasady (domyślnie 60 min, 0,1 kW):
   w baterii: przedział zaczyna się na poziomie górnej granicy pomniejszonej o to, co bateria
   musiałaby przyjąć, więc bateria z niewielkim wolnym miejscem, która nie przyjmie nadwyżki, też
   ją traci, a bateria, która ją przyjmie, nigdy, bez względu na cenę sprzedaży. Przy minimalnym
-  czasie trwania przebieg `CURTAIL` utrzymuje bramkę następnego przedziału otwartą (nic nie ładuje,
-  więc bateria opada tylko o straty postojowe), przebieg `CHARGE_PV` lub `SELF_CONSUME` może
+  czasie trwania przebieg `CURTAIL` utrzymuje bramkę następnego przedziału otwartą (nie rozładowuje
+  baterii, więc ta opada najwyżej o straty postojowe, a rośnie tam, gdzie przedział ładuje), przebieg `CHARGE_PV` lub `SELF_CONSUME` może
   zakończyć się w `CURTAIL`, gdy bateria napełni się w jego trakcie (albo w `HOLD`, gdy skończy
   się też PV, które musiał przyjąć), a wolne miejsce poniżej bramki zostaje puste w przedziale
   `CURTAIL` do następnego przeliczenia, które odczyta rzeczywisty stan naładowania. Przebieg
@@ -834,6 +833,20 @@ Zasady (domyślnie 60 min, 0,1 kW):
   przejmowany. Próbka elastycznego zużycia się liczy: jej obciążenie jest częścią tego, co
   instalacja przepuszcza, więc przejęcie jest oferowane tylko dla obciążeń próbki, przy których PV
   nadal przekracza limit.
+- **`CURTAIL` ładuje tyle, ile bateria przyjmie.** Gdy PV powyżej tego, co instalacja przepuszcza
+  (powyżej limitu eksportu po odjęciu domu albo powyżej mocy falownika), przekracza to, co bateria
+  przyjmie mocą ładowania w jednym przedziale, ani `CHARGE_PV` (nic nie przycina), ani `CURTAIL`,
+  który nic nie ładował, nie pomieściłyby go; falownik ładuje mocą ładowania i przycina resztę, i tak
+  samo robi plan: przedział to `CURTAIL`, z ładowaniem od zera do PV zostającego po odjęciu domu.
+  Bateria bierze tam wyłącznie PV: przedział `CURTAIL`, który ładuje, nic nie importuje, także na dom.
+  Gdy bateria stoi na rezerwie przy przeniesionym zobowiązaniu `CHARGE_PV`/`SELF_CONSUME` (wschód
+  słońca przy zerowym eksporcie, baterii 1 kW i 3,6 kW PV), to jest sam plan, a nie plan awaryjny.
+  W przeniesionym zobowiązaniu `CURTAIL` jest oferowany w takim przedziale niezależnie od tego, co
+  bateria miała wcześniej; przy próbce elastycznego zużycia tylko dla obciążeń próbki, przy których PV
+  zostaje poza baterią. Przy wyłączonym `allow_curtailment` taki przedział jest planowany tylko jako
+  wymuszone przycięcie, czyli gdy bateria ma mniej miejsca niż PV, którego instalacja nie przepuści:
+  przedział `CURTAIL` ładuje wtedy tyle, ile bateria przyjmie, i przycina resztę. Bateria, która ma
+  miejsce na to PV, nadal nie ma tam planu.
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.
@@ -1739,7 +1752,11 @@ zaczyna się od ładowania 0 A, i przypada najwyżej jedna na punkt procentowy z
 poborze własnym falownika, a `HOLD` doładowuje go z sieci, w cyklu liczonym w godzinach. `CHARGE_PV` i `SELF_CONSUME`
 nie potrzebują histerezy, bo poniżej 100 % zapisują te same wartości. `CHARGE_GRID` (zachowuje
 `voltage_grid_charge_ceiling` i prąd ładowania 0 A przy 100 %), `CURTAIL`,
-trzymanie balansu i tryb `Capacity` działają jak dotąd. `CURTAIL` wykonuje profil `HOLD` z ostrzeżeniem, bo sterownik nie ogranicza PV.
+trzymanie balansu i tryb `Capacity` działają jak dotąd. `CURTAIL` wykonuje profil `HOLD` z ostrzeżeniem, bo sterownik nie ogranicza PV. Ten profil zapisuje `hold_grid_current`
+(domyślnie 1 A) jako prąd ładowania i prąd z sieci, więc przedział `CURTAIL`, w którym plan ładuje pakiet (PV, którego
+instalacja nie przepuści, `charge_kwh` powyżej 0), ładuje na falowniku mocą około 50 W, a planowany końcowy stan
+naładowania tego przedziału nie jest osiągany; następne przeliczenie odczytuje rzeczywisty stan naładowania i planuje od
+niego (zadanie następcze T-076).
 
 Sterowane są tylko tryby baterii z listy `commissioned_battery_modes`; każdy inny tryb (np. Voltage
 przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Voltage cel poza zakresem
