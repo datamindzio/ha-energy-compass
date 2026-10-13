@@ -42,6 +42,7 @@ def factors(cap_pressure: float, refund_share: float) -> tuple[float, float]:
 
 def manual_pressure(export_value_factor: float, refund_share: float) -> float:
     """π that reproduces a user-stated export value factor (clamped to [ρp, 1])."""
+    # Guard for direct callers: the settings cap the share at 1 / 1.23.
     if refund_share >= 1:
         return 0.0
     return min(max((1 - export_value_factor) / (1 - refund_share), 0.0), 1.0)

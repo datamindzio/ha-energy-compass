@@ -821,8 +821,8 @@ planning sell = φx × max(sell, 0) + min(sell, 0)
 
 - **`manual`** (experimental): `φx` is your `export_value_factor` as typed, even below ρp. Only π is
   derived from it, `π = clamp((1 − φx) / (1 − ρp), 0, 1)`, so `φe = 1 − π` follows (a value at or
-  below ρp devalues the energy part of imports fully). The floor of `φx` is `ρp = ρ / 1.23`, not
-  ρ: 0.244 for 30 %, 0.163 for 20 %. With `deposit_refund_percent` 100 the floor is 1/1.23, not 1;
+  below ρp devalues the energy part of imports fully). At the cap (π = 1) `φx` is `ρp = ρ / 1.23`,
+  not ρ: 0.244 for 30 %, 0.163 for 20 %. With `deposit_refund_percent` 100 it is 1/1.23, not 1;
   the setting that never cancels anything is `deposit_model: off`.
 - **No distribution part** (the distribution rates are 0): the whole buy
   price would count as deposit-payable and an import would look free. With π above 0 `φe` is

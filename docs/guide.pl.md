@@ -838,9 +838,10 @@ cena sprzedaży w planie = φx × max(sell, 0) + min(sell, 0)
 
 - **`manual`** (eksperymentalny): `φx` to Twój `export_value_factor` dokładnie tak, jak go wpisano,
   także poniżej ρp. Z niego wynika tylko π, `π = clamp((1 − φx) / (1 − ρp), 0, 1)`, a `φe = 1 − π`
-  idzie za nim (wartość równa ρp lub niższa w pełni wyzerowuje część energetyczną importu). Podłogą
-  `φx` jest `ρp = ρ / 1,23`, a nie ρ: 0,244 dla 30 %, 0,163 dla 20 %. Przy `deposit_refund_percent`
-  100 podłogą jest 1/1,23, nie 1; ustawieniem, które niczego nie anuluje, jest `deposit_model: off`.
+  idzie za nim (wartość równa ρp lub niższa w pełni wyzerowuje część energetyczną importu). Przy
+  limicie (π = 1) `φx` to `ρp = ρ / 1,23`, a nie ρ: 0,244 dla 30 %, 0,163 dla 20 %. Przy
+  `deposit_refund_percent` 100 jest to 1/1,23, nie 1; ustawieniem, które niczego nie anuluje, jest
+  `deposit_model: off`.
 - **Brak części dystrybucyjnej** (stawki dystrybucji równe 0): cała cena zakupu byłaby liczona jako
   pokrywana z depozytu i import wyglądałby na darmowy. Przy π powyżej 0 `φe` jest więc wymuszone na 1,
   a `reason` to `split_missing`; `φx` nadal działa. Aby użyć modelu, ustaw stawki dystrybucji.

@@ -142,7 +142,7 @@ manual:  φx = export_value_factor (as typed)
          π  = clamp((1 - φx) / (1 - ρp), 0, 1), used for φe
 ```
 
-At the cap `φx` is 0.244 for ρ = 30 % and 0.163 for 20 %; with `deposit_refund_percent` 100 the floor is 1/1.23, not 1 (the "nothing is ever cancelled" case is `deposit_model: off`). A seller that refunds a share of the deposit is 36.9 / 24.6. The model is stateless: there is no settlement Store and no daily evaluation. When π > 0 and no slot has a distribution part (`dist` is 0 everywhere), the whole buy price would be energy and an import would look free: φe is forced to 1 and `reason` is `split_missing`, φx unchanged. The deposit balance is not an input.
+At the cap `φx` is 0.244 for ρ = 30 % and 0.163 for 20 %; with `deposit_refund_percent` 100 it is 1/1.23, not 1 (the "nothing is ever cancelled" case is `deposit_model: off`). A seller that refunds a share of the deposit is 36.9 / 24.6. The model is stateless: there is no settlement Store and no daily evaluation. When π > 0 and no slot has a distribution part (`dist` is 0 everywhere), the whole buy price would be energy and an import would look free: φe is forced to 1 and `reason` is `split_missing`, φx unchanged. The deposit balance is not an input.
 
 Stays at invoice prices: `Plan.grid_cost`, `Plan.objective`, `plan_monetary_cost()` and the net cost in the plan attributes, the consumption probes' reported cost, the `maximum_grid_charge_price` comparison, the autonomy and peak-reserve rankings (`buy_plan ≤ buy`, so their dominance holds), the Atlas solve payload, the Deye controller, the cost card and the export value counter. The strategy weights, `import_penalty_per_kwh` and the episode hurdles act on top of the planning prices, unscaled.
 
