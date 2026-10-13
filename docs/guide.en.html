@@ -1192,12 +1192,11 @@ directly by any other available mode.</p>
   starts a real <code>HOLD</code> run there as in any other interval
   (<code>dispatch_policy.carried_idle_starts</code> lists the bridged intervals). With a full battery on a
   site that cannot pass the PV, such an interval may be <code>CURTAIL</code> as well, like any other
-  committed interval; it is then not bridged. The plan is
-  <code>infeasible</code> until the commitment ends when the
+  committed interval; it is then not bridged. When the
   terminal rule cannot be met afterwards (<code>preserve_initial</code> with no later PV or grid charge to
-  refill what the house drew; a flexible-load probe plans it only if its load leaves every
-  committed interval something to follow or takes a surplus below the minimum activity) or when the daily
-  throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
+  refill what the house drew) the interval is a <code>HOLD</code> with full import, as for a spent battery,
+  and the battery ends where it began. The plan is <code>infeasible</code> until the commitment ends when
+  the daily throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
   cases are listed in
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>. A direction the
   legacy direction guard blocks (<code>initial_battery_mode</code>) is not open: a pack that may not charge

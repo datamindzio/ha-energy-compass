@@ -701,12 +701,11 @@ Rules (defaults: 60 min, 0.1 kW):
   starts a real `HOLD` run there as in any other interval
   (`dispatch_policy.carried_idle_starts` lists the bridged intervals). With a full battery on a
   site that cannot pass the PV, such an interval may be `CURTAIL` as well, like any other
-  committed interval; it is then not bridged. The plan is
-  `infeasible` until the commitment ends when the
+  committed interval; it is then not bridged. When the
   terminal rule cannot be met afterwards (`preserve_initial` with no later PV or grid charge to
-  refill what the house drew; a flexible-load probe plans it only if its load leaves every
-  committed interval something to follow or takes a surplus below the minimum activity) or when the daily
-  throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
+  refill what the house drew) the interval is a `HOLD` with full import, as for a spent battery,
+  and the battery ends where it began. The plan is `infeasible` until the commitment ends when
+  the daily throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
   cases are listed in
   [model and limitations](model.md#operating-mode-duration-and-pv-export-budget). A direction the
   legacy direction guard blocks (`initial_battery_mode`) is not open: a pack that may not charge

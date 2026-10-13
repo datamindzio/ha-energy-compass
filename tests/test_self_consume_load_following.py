@@ -289,19 +289,21 @@ def test_flexible_load_above_pv_surplus_without_battery_export_or_grid_charge():
     assert_flexible_follows_net_load(problem, plan)
 
 
-def test_carried_lock_without_a_way_to_refill_has_no_plan():
+def test_carried_lock_without_a_way_to_refill_releases_to_hold():
     # A carried PV-follow commitment makes the inverter drain the battery for
     # the house. With no PV and no grid charge the preserve_initial terminal
-    # cannot be met, so the answer is "infeasible" rather than a trickle plan
-    # the inverter would not follow.
+    # cannot be met after that (T-065: this had no plan, "infeasible", until the
+    # commitment ran out), so the interval is a HOLD released from the pack, as
+    # it is once the commitment has run out, not a trickle plan the inverter
+    # would not follow.
     problem = flat_night(slots=8)
     problem = replace(
         problem, battery=replace(problem.battery, allow_grid_charge=False)
     )
-    with pytest.raises(SolveError) as caught:
-        solve(problem)
-    assert caught.value.reason == "infeasible"
-    # Once the commitment has run out the same problem is plannable again.
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == ["HOLD"] * 8
+    assert all(flow.discharge_kwh == pytest.approx(0) for flow in plan.flows)
+    assert plan.flows[-1].end_soc_kwh >= problem.battery.initial_kwh - 1e-6
     expired = replace(
         problem,
         initial_dispatch_mode_since=problem.slots[0].start - timedelta(hours=2),

@@ -62,7 +62,7 @@ The released rows are `HOLD` with full import, the mode the unlocked solver pick
   newly feasible, none newly infeasible, and no first-interval release where the commitment could be kept.
 - `owed` is a best case, so the release never ends a commitment the battery could keep. The price is a rare
   remaining `infeasible`: scattered PV surplus that the minimum mode durations do not let the plan bank.
-- Not changed: `preserve_initial` that cannot be met after the forced discharge stays `infeasible` (T-001).
+- Not changed here: `preserve_initial` that cannot be met after the forced discharge stayed `infeasible` (T-001); the T-065 follow-up below releases it.
 - Found here, fixed in T-025 (below): a committed interval in which neither `SELF_CONSUME` nor `CHARGE_PV`
   reaches the minimum activity (net load and surplus both below it) was `infeasible` unless the interval before
   left the pack empty; it predates T-001. Requiring `CHARGE_PV` instead of `HOLD` in a released interval with PV
@@ -197,3 +197,26 @@ cost; main picks between the two the same way, by the order of the rows, which t
 of round 3 (`t038_review4_tie.py`, seeds 12001 and 12002, 3000 probes) against the same main: no planned problem
 `infeasible`, no `solver_failure`. G1, #151, #581 and #604 are pinned in
 `tests/test_carried_commitment_guard_probes.py`.
+
+## Follow-up (T-065): the terminal rule is owed too
+
+A carried `CHARGE_PV` with the pack just above the reserve, PV below the load in the first interval and
+`preserve_initial` had no plan: the pack was not spent, so `HOLD` was not open, `SELF_CONSUME` draws the net load
+(0.105 kWh) and the PV surplus later (0.095 kWh) cannot put it back. At the boundary before, with a longer horizon, the
+same slot was planned `SELF_CONSUME`, so the plan disappeared at the next boundary (sweep `deproll` seed 11 draw 293,
+found in T-058; the state is the first test of `tests/test_carried_terminal_release.py`).
+
+`_owed` now starts its backward recursion from the terminal requirement (`initial - total standby loss`, the bound
+`optimize.py` puts on the last energy variable) instead of 0 when `terminal_mode` is `preserve_initial`. Everything else
+is unchanged: the lock floor, the first-interval test, the `depleted` release, `validate_modes`. A pack that cannot
+follow a committed interval and still reach the terminal even with the best-case recharge is released to `HOLD` with
+full import, the same row as for the standby loss, and ends where it began. A problem that has a plan should keep
+its objective (the states that open the release already violate the terminal bound on every path that follows); the
+sweeps below agree, and the idle-interval bridge versus released `HOLD` run label can differ at a tie (`TIE_761`).
+
+Checked against `main` (b2d6ffb) on `benchmarks/curtail_sweep.py`, seeds 11, 22 and 33, 300 problems each, for `run`,
+`negrun`, `deprun`, `probe`, `deprobe`, `roll`, `negroll` and `deproll`: no problem newly infeasible, none worse
+(`probe` seeds 11 and 22: two better and one 1e-6 worse, all probes solved to the MIP gap), 15 newly planned
+and 8 rolls fixed while followed.
+Pinned problem #44 and the night with no refill (`test_carried_lock_without_a_way_to_refill_releases_to_hold`) are
+planned now; #917 stays `infeasible` without a probe.

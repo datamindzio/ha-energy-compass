@@ -323,8 +323,8 @@ def _owed(problem, drains, held_until) -> tuple[float, ...]:
     Best case for the pack: every later slot charges all it may, from PV surplus
     and, outside the carried commitment, from the grid where grid charging is
     open. Ending a slot below this value cannot stay above the relaxed reserve
-    floor later whatever the plan does, so it is a bound the energy rows already
-    imply, not a new requirement.
+    floor later, or meet the `preserve_initial` terminal rule, whatever the plan
+    does, so it is a bound the energy rows already imply, not a new requirement.
     """
     battery = problem.battery
     reserve = min(
@@ -332,7 +332,11 @@ def _owed(problem, drains, held_until) -> tuple[float, ...]:
     )
     drained = cumulative(drains)
     owed = []
-    later = 0.0
+    later = (
+        battery.initial_kwh - sum(drains)
+        if problem.terminal_mode == "preserve_initial"
+        else 0.0
+    )
     for slot, drain, lost in zip(
         reversed(problem.slots), reversed(drains), reversed(drained), strict=True
     ):
