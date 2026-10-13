@@ -44,6 +44,13 @@ T-058 adds `resrun`/`resroll`: an ordinary draw with SELF_CONSUME carried and th
 the reserve (`make_reserve`; almost every draw reaches the safety exception, where `deprun` reaches
 it in about one draw in ten), the generator aimed at the reserve rule. `planned` goes through
 `solve_released`, so a tree with the fallback plans the commitment's HOLD when the release has none.
+
+T-070 adds a carried PV-follow commitment under `preserve_initial` with PV near the load
+(`aimrun`, `aimroll`): the terminal rule asks the pack to bank surplus that an idle interval,
+the last minimum duration of the horizon or a full pack cannot take, which the other kinds
+(random terminal mode, PV well away from the load) do not draw. After T-065, 126 of 1600
+first-boundary problems (seeds 101, 202, 303, 404 x 400) were infeasible with a plan once the
+commitment or the terminal rule was dropped; T-070 brings that to 51 (docs/model.md, ADR-0004).
 Invoked by path, like the other benchmarks: the repository root must be on PYTHONPATH.
 """
 
@@ -224,6 +231,60 @@ def make_depleted_probe(rng):
     room = power * 0.25 * len(problem.slots)
     energy = round(min(rng.choice((0.25, 0.5, 1, 2, 4)), 0.8 * room), 2)
     return problem, FlexibleLoadRequest(energy, power)
+
+
+def make_aimed(rng):
+    """A carried PV-follow commitment under `preserve_initial`, PV within 0.3 kWh of the load (T-070).
+
+    Any pack from nearly empty to full, a standby loss of 0 to 0.2 kW, an export cap of 0,
+    0.5, 2 or 8 kW and a commitment that has run 0 to 45 minutes of a 60 or 120 minute
+    minimum duration. Where the pack cannot bank the surplus the terminal rule asks for
+    (idle intervals, the last minimum duration of the horizon, a pack at its ceiling) the
+    commitment and the terminal rule cannot both hold: the problem is infeasible with both
+    and has a plan without either. The base draws almost never ask for that.
+    """
+    base = make(rng) if rng.random() < 0.6 else make_full(rng)
+    slots = tuple(
+        replace(
+            s,
+            pv_kwh=round(
+                max(
+                    0.0,
+                    s.load_kwh
+                    + rng.choice((-0.3, -0.1, -0.05, -0.02, 0, 0.02, 0.05, 0.1, 0.3)),
+                ),
+                3,
+            ),
+        )
+        for s in base.slots
+    )
+    b = base.battery
+    low = b.capacity_kwh * b.minimum_soc_fraction
+    cap = b.capacity_kwh
+    initial = rng.choice(
+        (
+            cap,
+            cap - 0.01,
+            cap - 0.02,
+            cap - 0.3,
+            low + 0.05,
+            low + 0.3,
+            round(rng.uniform(low, cap), 3),
+        )
+    )
+    return replace(
+        base,
+        slots=slots,
+        battery=replace(
+            b, initial_kwh=initial, idle_drain_kw=rng.choice((0, 0.02, 0.05, 0.2))
+        ),
+        terminal_mode="preserve_initial",
+        site=replace(base.site, grid_export_kw=rng.choice((0, 0.5, 2, 8))),
+        minimum_mode_minutes=rng.choice((60, 120)),
+        initial_dispatch_mode=rng.choice(("CHARGE_PV", "SELF_CONSUME")),
+        initial_dispatch_mode_since=START
+        - timedelta(minutes=rng.choice((0, 15, 29, 45))),
+    )
 
 
 def make_full(rng):
@@ -509,6 +570,7 @@ def draws(kind, seed, count):
         "deprun": make_depleted,
         "resrun": make_reserve,
         "fullrun": make_full,
+        "aimrun": make_aimed,
     }
     if kind in makers:
         return [run(makers[kind](rng)) for _ in range(count)]
@@ -518,6 +580,7 @@ def draws(kind, seed, count):
         "deproll": make_depleted,
         "resroll": make_reserve,
         "fullroll": make_full,
+        "aimroll": make_aimed,
     }
     return [roll(makers[kind](rng)) for _ in range(count)]
 
@@ -530,7 +593,7 @@ if __name__ == "__main__":
     else:
         out = draws(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
         Path(sys.argv[4]).write_text(json.dumps(out))
-        if sys.argv[1] in ("roll", "negroll", "deproll", "resroll", "fullroll"):
+        if sys.argv[1] in ("roll", "negroll", "deproll", "resroll", "fullroll", "aimroll"):
             print(
                 sum(row[0] == "ok" for row in out),
                 "followed to the end, of",

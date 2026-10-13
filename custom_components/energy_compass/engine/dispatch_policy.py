@@ -363,12 +363,108 @@ def idle_slots(problem) -> frozenset[int]:
     )
 
 
-def _owed(problem, drains, held_until, terminal=True) -> tuple[float, ...]:
+def _chargeable(
+    problem, held_until, flex: Sequence[float] = ()
+) -> tuple[tuple[bool, bool], ...]:
+    """Tell per slot whether a PV-follow run and a grid-charge run can be under way in it.
+
+    The commitment goes on until `held_until`. A run of either kind that begins
+    later has to see out its minimum duration inside the horizon (the model does
+    not start a mode the plan does not cover for as long) and in slots where its
+    mode is open, so it can begin only where every slot up to `start + dwell` is
+    open and the horizon reaches that far; it then goes on as long as the mode
+    stays open. The last `dwell` of the horizon therefore banks only what a run
+    begun earlier carries over, and an idle slot ends a run and starts a HOLD that
+    keeps the next slots from starting one for its own minimum duration. Open means the slot
+    is not idle for the mode: for PV-follow a net load or a surplus the pack can
+    follow (`_follow_open`), for grid charging the price and the grid import allow it.
+
+    `flex` is the largest load a flexible load may add per interval. The bound must
+    not rise between the model and the certificate of its plan, which reads the load
+    the plan realised: the model passes twice its bound, the certificate once, so
+    the slots the model reads as open are a superset of the certificate's.
+    """
+    battery = problem.battery
+    dwell = timedelta(minutes=problem.minimum_mode_minutes)
+    starts = [slot.start.astimezone(UTC) for slot in problem.slots]
+    end = problem.slots[-1].end.astimezone(UTC)
+    # The fullest the pack can be, charging all it may: SELF_CONSUME discharges only
+    # to a pack that stays at or above the reserve (`_follow_load`), so a slot whose
+    # net load nobody else covers is open to it only while that pack allows.
+    reserve = battery.capacity_kwh * battery.minimum_soc_fraction
+    ceiling = battery.capacity_kwh
+    highest = battery.initial_kwh
+    open_ = []
+    for index, (slot, drain) in enumerate(
+        zip(problem.slots, drain_schedule(problem), strict=True)
+    ):
+        hours = _hours(slot)
+        grid = bool(battery.allow_grid_charge) and price_allows_grid_charge(
+            problem, slot
+        )
+        # A net load a flexible load may add opens SELF_CONSUME, never CHARGE_PV.
+        loaded = replace(slot, load_kwh=slot.load_kwh + flex[index]) if flex else slot
+        covers = (
+            highest
+            - drain
+            - problem.minimum_mode_power_kw * hours / battery.eta_discharge
+            >= reserve - 1e-9
+        )
+        open_.append(
+            (
+                _takes_surplus(problem, slot)
+                or (covers and _follow_open(problem, loaded)),
+                grid,
+            )
+        )
+        charge = max(slot.pv_kwh - slot.load_kwh, 0) + (
+            problem.site.grid_import_kw * hours if grid else 0.0
+        )
+        highest = min(
+            ceiling,
+            highest
+            - drain
+            + battery.eta_charge * min(battery.charge_kw * hours, charge),
+        )
+
+    def startable(index, kind) -> bool:
+        if starts[index] + dwell > end:
+            return False
+        return all(
+            flags[kind]
+            for start, flags in zip(starts[index:], open_[index:], strict=True)
+            if start < starts[index] + dwell
+        )
+
+    follow = grid = False
+    # A slot where neither mode is open is a HOLD, and the HOLD that starts there
+    # (after the commitment's own window) cannot be left before its minimum duration.
+    blocked = held_until
+    runs = []
+    for index, start in enumerate(starts):
+        if start < held_until:
+            follow, grid = True, False
+        elif start < blocked:
+            follow = grid = False
+        else:
+            follow = open_[index][0] and (follow or startable(index, 0))
+            grid = open_[index][1] and (grid or startable(index, 1))
+            if not (open_[index][0] or open_[index][1]):
+                blocked = start + dwell
+        runs.append((follow, grid))
+    return tuple(runs)
+
+
+def _owed(
+    problem, drains, held_until, terminal=True, flex: Sequence[float] = ()
+) -> tuple[float, ...]:
     """Energy each slot must end with so the standby loss of later slots stays payable.
 
     Best case for the pack: every later slot charges all it may, from PV surplus
     and, outside the carried commitment, from the grid where grid charging is
-    open. Ending a slot below this value cannot stay above the relaxed reserve
+    open. A slot charges only where a run that can charge is possible in it
+    (`_chargeable`) and, from PV, only a surplus of at least the minimum activity.
+    Ending a slot below this value cannot stay above the relaxed reserve
     floor later, or meet the `preserve_initial` terminal rule, whatever the plan
     does, so it is a bound the energy rows already imply, not a new requirement.
     `terminal` False leaves the terminal rule out: the bound of a pack that is
@@ -379,24 +475,31 @@ def _owed(problem, drains, held_until, terminal=True) -> tuple[float, ...]:
         battery.capacity_kwh * battery.minimum_soc_fraction, battery.initial_kwh
     )
     drained = cumulative(drains)
+    runs = _chargeable(problem, held_until, flex)
     owed = []
     later = (
         battery.initial_kwh - sum(drains)
         if terminal and problem.terminal_mode == "preserve_initial"
         else 0.0
     )
-    for slot, drain, lost in zip(
-        reversed(problem.slots), reversed(drains), reversed(drained), strict=True
+    for slot, drain, lost, (follow, grid) in zip(
+        reversed(problem.slots),
+        reversed(drains),
+        reversed(drained),
+        reversed(runs),
+        strict=True,
     ):
         hours = _hours(slot)
         owed.append(max(reserve - lost, later, 0.0))
-        charge = max(slot.pv_kwh - slot.load_kwh, 0)
-        if (
-            battery.allow_grid_charge
-            and slot.start.astimezone(UTC) >= held_until
-            and price_allows_grid_charge(problem, slot)
-        ):
-            charge += problem.site.grid_import_kw * hours
+        surplus = max(slot.pv_kwh - slot.load_kwh, 0)
+        # PV surplus below the minimum activity is not a charge CHARGE_PV takes.
+        charge = (
+            surplus
+            if follow and surplus >= problem.minimum_mode_power_kw * hours - 1e-9
+            else 0.0
+        )
+        if grid:
+            charge = surplus + problem.site.grid_import_kw * hours
         later = (
             owed[-1]
             + drain
@@ -1098,12 +1201,18 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         members = _members(dwell_group(previous))
         follows_pv = "SELF_CONSUME" in members
         follows_hold = dwell_group(previous) == "HOLD"
-        owed = _owed(problem, drains, held_until) if follows_pv else ()
+        # The wider reading of a flexible load's net load (see `_chargeable`).
+        flex = (
+            tuple(2 * model.upper[v["flex_load"]] for v in vectors)
+            if flexible_load
+            else ()
+        )
+        owed = _owed(problem, drains, held_until, flex=flex) if follows_pv else ()
         # The same without the terminal rule: where the two floors differ, a pack above
         # this one is spent only by the terminal rule, which a HOLD released from a
         # full pack does not go back on (the coordinator does not carry it as released).
         owed_physical = (
-            _owed(problem, drains, held_until, terminal=False)
+            _owed(problem, drains, held_until, terminal=False, flex=flex)
             if follows_pv and problem.terminal_mode == "preserve_initial"
             else owed
         )
@@ -1651,10 +1760,20 @@ def _certify_modes(
     drains = drain_schedule(problem)
     carried = dwell_group(previous) == "PV_FOLLOW"
     released = full_seen = False
-    owed = _owed(problem, drains, since.astimezone(UTC) + dwell) if carried else ()
+    owed = (
+        _owed(problem, drains, since.astimezone(UTC) + dwell, flex=flex_max)
+        if carried
+        else ()
+    )
     # Without the terminal rule: the floor a HOLD released from a full pack goes back on.
     physical = (
-        _owed(problem, drains, since.astimezone(UTC) + dwell, terminal=False)
+        _owed(
+            problem,
+            drains,
+            since.astimezone(UTC) + dwell,
+            terminal=False,
+            flex=flex_max,
+        )
         if carried
         else ()
     )

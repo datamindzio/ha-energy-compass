@@ -26,7 +26,8 @@ Keep the release mechanism and make its threshold, the lock floor, aware of the 
 
 1. `owed[i]` — the energy interval `i` must end with so that the relaxed reserve floor of every later interval
    can still be met with the **best-case recharge**: every later interval charges all the PV surplus the pack
-   can take and, outside the commitment, from the grid where grid charging is open. It is a backward
+   can take and, outside the commitment, from the grid where grid charging is open (T-070 narrows what
+   "can take" means, the follow-up at the end). It is a backward
    recursion over constants (`_owed`), and a bound the energy rows already imply.
 2. Lock floor of interval `i` (`_lock_floor`): unchanged (`reserve + standby loss + activity / eta`) while
    `owed[i]` is at or below the reserve. Above it the pack cannot end on its reserve, so `SELF_CONSUME` needs
@@ -259,3 +260,54 @@ Checked against `main` 0778580 (T-057, T-052, T-473 and T-474 included; the bran
 
 Pinned problem #44 and the night with no refill (`test_carried_lock_without_a_way_to_refill_releases_to_hold`) are
 planned now; #917 stays `infeasible` without a probe.
+
+## Follow-up (T-070): the best-case recharge counts what a run can take
+
+After T-065 a carried commitment with `preserve_initial` was still `infeasible` where `main` could not have planned
+it either, because `_owed` counted every later PV surplus the pack could take: a bound that is too low lowers the
+lock floor, the release is refused, and the commitment and the terminal rule cannot both hold. The aimed generator
+of `benchmarks/curtail_sweep.py` (`aimrun`, `aimroll`: a carried `CHARGE_PV` or `SELF_CONSUME`, `preserve_initial`,
+PV within 0.3 kWh of the load, any pack, standby loss 0 to 0.2 kW, export cap 0 to 8 kW, a minimum duration of
+60 or 120 minutes, 0 to 45 minutes run) drew 126 problems of 1600 that had a plan once the commitment or the
+terminal rule was dropped.
+
+`_chargeable` now says, per slot, whether a PV-follow run and a grid-charge run can be under way in it, and `_owed`
+charges only there:
+
+1. A PV surplus below `minimum_mode_power_kw × h` is not charged (CHARGE_PV is not open on it).
+2. A run that begins after the carried commitment needs every slot up to its minimum duration open for its mode and
+   the horizon to reach that far: the last minimum duration of the horizon banks only what a run begun earlier
+   carries over.
+3. An idle slot ends a run and starts a HOLD whose own minimum duration keeps the next slots from starting one.
+4. SELF_CONSUME is open on a net load only where the fullest the pack can be (charged as far as it can) still gives
+   the minimum activity above the reserve.
+5. With a flexible load the model reads twice its largest probe (`flex`), the certificate the load the plan realised,
+   so the model's bound stays at or below the certificate's, as for every other row.
+
+### Evidence (T-070)
+
+Checked against `main` 991a587 (T-065 included, the branch's base) on `benchmarks/curtail_sweep.py` (the branch's copy run on both
+trees), `run` seeds 11, 22, 33, `negrun`, `deprun`, `fullrun`, `probe`, `deprobe` seed 11, `roll`, `negroll`,
+`deproll`, `fullroll` seed 11 (300 problems per seed, 150 rolls) and the new `aimrun` (seeds 101, 202, 303, 404 of
+400) and `aimroll` (150 rolls each), read with `compare` and `rollcompare`:
+
+- plans: 0 newly infeasible, 0 new solver failures, 0 worse. `aimrun`: 84 newly planned (343 infeasible on main, 259 on the
+  branch) and 4 better. The other kinds: `run` 3 newly planned and 1 better, `negrun` 1 newly planned, `probe`, `deprun`,
+  `deprobe` and `fullrun` unchanged;
+- rolls followed one interval at a time: `aimroll` 159 failed rolls on main, 96 on the branch (64 fixed while followed,
+  18 with a different trace that both followed to the end, 1 newly infeasible while followed, below), `roll`, `negroll` and
+  `deproll` 1 fixed each, `fullroll` unchanged; no first failure earlier or later, no plan contradicted at the next
+  boundary that was not on main.
+
+What stays infeasible, with numbers: of the 126, 75 are planned now and 51 are not. All 51 are planned with
+`minimum_mode_minutes` = 0: 27 on a pack within 0.05 kWh of its ceiling, 7 within 0.3 kWh of the reserve, 17 mid-pack.
+They are the minimum-duration rows against the terminal rule, not the recharge bound; `docs/model.md` lists them.
+
+The one roll lost, `aimroll` seed 202 draw 117 (a carried `SELF_CONSUME` released at the first boundary from a pack
+at 4.99 of 5 kWh, standby loss 0.05 kW, export cap 0): the plan at the second boundary (pack 4.985 kWh) curtails its
+second interval because the pack was at that interval's ceiling (4.98125 kWh) when it began (`seen_full`), the standby loss
+takes it to 4.98 kWh, and at the third boundary that interval is first and idle (0.02 kWh of
+surplus under the 0.025 kWh activity) and HOLD has no place for the surplus (IIS: PV balance, charge flag, `mode_HOLD`
+fixed at 1). `main` is infeasible on that state too (the pickled problem, `main` 991a587); it reaches another state
+because its lock floor refuses the release at the first boundary. Left as it is: the release memory is the T-057
+design and a change there reaches every released HOLD.
