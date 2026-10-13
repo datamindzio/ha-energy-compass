@@ -305,6 +305,7 @@ class DeyeController:
         self._unsub_tou: CALLBACK_TYPE | None = None
         self._unsub_registry: CALLBACK_TYPE | None = None
         self._timer: CALLBACK_TYPE | None = None
+        self.advances = 0
         self._stopped = False
         self._device_sensor: str | None = None
         self.hardware = hardware.HardwareFacts()
@@ -506,10 +507,25 @@ class DeyeController:
         """
         if self._stopped:
             raise ControllerUnavailable("stopped")
-        result = self.async_update_runtime(runtime, restore_pending)
+        if self._unchanged(runtime, restore_pending):
+            result = self.async_update_runtime(None, None)
+        else:
+            result = self.async_update_runtime(runtime, restore_pending)
         if durable and (runtime is not None or restore_pending is not None):
             await self._store.async_save(self.state.to_dict())
         return result["runtime"], result["restore_pending"]
+
+    def _unchanged(self, runtime: Mapping | None, restore_pending: bool | None) -> bool:
+        """Whether storing this would leave the runtime and the flag as they are.
+
+        Storing it anyway would move `runtime_written_at`, rewrite the store and wake
+        the listeners for nothing.
+        """
+        return (
+            runtime is None or core.validate_runtime(runtime) == self.state.runtime
+        ) and (
+            restore_pending is None or restore_pending == self.state.restore_pending
+        )
 
     def fallback_battery(self) -> dict[str, float]:
         return self._fallback_battery()
@@ -709,6 +725,7 @@ class DeyeController:
     @callback
     def _advance(self, now: datetime) -> None:
         self._timer = None
+        self.advances += 1
         self._evaluate()
 
     def _notify(self, listeners: list[Callable[[], None]]) -> None:
