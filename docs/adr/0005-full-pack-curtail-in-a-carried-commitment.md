@@ -803,7 +803,8 @@ plan now may say so.
 - **A forced part needs no gate.** `dispatch_policy.forced_spill_limit` is `curtail_need − charge_kw × h`
   (`_beyond_the_pack`) at most the curtailment bound, at least the minimum activity with a minimum mode duration, and
   0 where nothing is beyond the pack, on a site that cannot curtail. In `optimize._gate_forced_spill` the spill row
-  is `curt ≤ forced + (bound − forced) × spill_open`; the gate row (`previous energy ≥ gate × spill_open`) is as before,
+  is `curt ≤ forced + extra` with `extra ≤ (bound − forced) × spill_open` (one row with an offset was solved worse by
+  HiGHS: ADR-0007 amendment T-066); the gate row (`previous energy ≥ gate × spill_open`) is as before,
   and `mode_CURTAIL ≤ spill_open` is left out where the forced part is positive. The part is taken at the flexible
   load's upper bound, where the load lowers the export part of the need, so the model never offers more than the
   certificate reads at the realised load. The first interval, which spilled nothing below the gate, has the forced
@@ -815,10 +816,13 @@ plan now may say so.
 - **What is not changed:** the Deye controller (still the `HOLD` profile in a `CURTAIL` interval, see the T-064
   amendment), the owner decision of T-062 B (a pack that can take the need never spills), a site that can curtail,
   and every interval where nothing is beyond the pack (the model rows are those of before; `tests/test_strategy_golden.py`).
-- **Measured** (`benchmarks/spill_sweep.py` seeds 11 and 22 × 300 per draw, main `06f935e` against this branch, the
-  tables are in `docs/model.md`): problems solved once without a plan `run` 64 → 13, `negrun` 40 → 14, `probe` 63 → 29,
-  `bell` 59 → 20 of 600 each; followed one interval at a time not followed `roll` 65 → 19, `negroll` 54 → 12,
-  `bellroll` 71 → 26 of 600 each; 0 newly infeasible and 0 solver failures anywhere, 133 more followed to the end;
+- **Measured** (`benchmarks/spill_sweep.py` seeds 11 and 22 × 300 per draw, main `dd40906` against this branch with
+  that main merged in, `9200d27`; the tables are in `docs/model.md`): problems solved once without a plan `run` 64 → 13,
+  `negrun` 40 → 14, `probe` 63 → 29, `bell` 59 → 20 of 600 each; followed one interval at a time not followed `roll`
+  65 → 19, `negroll` 54 → 12, `bellroll` 71 → 26 of 600 each; 0 newly infeasible and 0 solver failures anywhere,
+  133 more followed to the end. The rolls are 0 of 1800 newly infeasible on these seeds and 1 of 1800 on the seeds 5
+  and 77 of the T-066 review (`bellroll` seed 77 index 237 stops at boundary 36 on a problem with no plan on any
+  site, the class of T-057 and T-074);
   `curtail_sweep.py deprobe` seeds 11, 22, 33 and 44: 62 newly planned, 0 newly infeasible. The 76 draws still without
   a plan are none infeasible with curtailment on: 42 of the 47 base draws start from a carried `HOLD` or `CURTAIL`
   commitment with room in the pack (pinned: `test_pinned_limit_*`), the rest are listed in the model document.

@@ -791,7 +791,7 @@ Zasady (domyślnie 60 min, 0,1 kW):
   w baterii: przedział zaczyna się na poziomie górnej granicy pomniejszonej o to, co bateria
   musiałaby przyjąć, więc bateria z niewielkim wolnym miejscem, która nie przyjmie nadwyżki, też
   ją traci, a bateria, która ją przyjmie, nigdy, bez względu na cenę sprzedaży. Część, której bateria
-  nie przyjmie swoją mocą ładowania (PV ponad potrzebę przycięcia pomniejszoną o `charge_kw × h`),
+  nie przyjmie swoją mocą ładowania (potrzeba przycięcia pomniejszona o `charge_kw × h`),
   jest tracona bez względu na wolne miejsce: bateria ładuje z pełną mocą, a falownik przycina resztę
   w tym samym przedziale, więc bateria z wolnym miejscem i mocą ładowania poniżej nadwyżki ma plan.
   Przy minimalnym
@@ -814,8 +814,10 @@ Zasady (domyślnie 60 min, 0,1 kW):
   gdy bateria ma wolne miejsce, częściej przy 60 minutach, oraz część losowań z próbką
   elastycznego zużycia. Część wymuszona (T-066) zmniejszyła liczbę z 2400 problemów rozwiązanych
   raz bez planu z 226 do 76, a liczbę losowań śledzonych przedział po przedziale i niedoprowadzonych
-  do końca z 190 do 57 z 1800, bez nowego problemu „brak planu” (`infeasible`) wśród tych, które
-  main planował
+  do końca z 190 do 57 z 1800, bez nowego problemu „brak planu” (`infeasible`) wśród rozwiązanych
+  raz, które main planował; z 3600 dni śledzonych przedział po przedziale na czterech ziarnach
+  jeden, który main prowadzi do końca, zatrzymuje się na granicy, w której nie ma planu na żadnej
+  instalacji (liczby i commity w dokumencie modelu)
   ([model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget), EN).
 - **`CURTAIL` trwa mimo przerwy w PV.** Przebieg `CURTAIL` trwa minimalny czas, a PV może w tym
   czasie spaść. `HOLD` w przedziale z PV poniżej minimalnej aktywności (`minimum_mode_power_kw × h`)

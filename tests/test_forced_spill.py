@@ -756,3 +756,73 @@ def test_pinned_limit_highs_without_presolve_calls_a_worse_plan_optimal(monkeypa
     assert second.status == 0
     assert second.fun == pytest.approx(-1.7465, abs=1e-3)
     assert second.fun > first.fun + 2.5
+
+
+# T-066 review: one draw of `benchmarks/spill_sweep.py probe` (seed 77, index 282): a pack
+# at 9.9 of 10 kWh behind a 0.5 kW export cap, a flexible load of 2 kWh at 2 kW.
+PROBE_DAY = (
+    (1.01, 0.57, 1.94, 0.05),
+    (0.8, -0.46, 1.54, 0.1),
+    (0.85, -0.57, 1.72, 0.02),
+    (1.45, 0.18, 2.11, 0.2),
+    (1.13, 0.52, 1.94, 0.4),
+    (1.4, 0.23, 1.61, 0.2),
+    (0.55, 0.29, 1.88, 0.2),
+    (1.13, -0.35, 1.32, 0.1),
+    (1.45, 0.41, 1.61, 0.02),
+    (1.3, 0.19, 1.7, 0.2),
+    (1.44, 0.75, 1.82, 0.05),
+    (0.37, -0.4, 1.6, 0.05),
+    (0.44, 0.25, 1.56, 0.4),
+    (0.79, 0.62, 2.13, 0.05),
+)
+
+
+def probe_day() -> Problem:
+    start = datetime(2026, 12, 18, 11, tzinfo=UTC)
+    return Problem(
+        tuple(
+            Slot(start + i * QUARTER, start + (i + 1) * QUARTER, *row)
+            for i, row in enumerate(PROBE_DAY)
+        ),
+        SiteLimits(8, 8, 0.5, False),
+        Battery(10, 0, 1, 9.9, 4, 4, 0.95, 0.95, 0.01, True, True, 0.05),
+        "value",
+        0,
+        (),
+        "UTC",
+        minimum_mode_minutes=0,
+        minimum_export_episode_benefit=0.0,
+    )
+
+
+def test_probe_with_a_spill_beyond_the_charge_power_is_planned_at_the_certified_cost():
+    # A plan at -0.396053 satisfies every row of the model (also of the model before the
+    # spill row was split into an ungated and a gated part, where HiGHS called -0.339803
+    # optimal with status 0, gap 0 and no fractional binary: the default run was the
+    # worse one and the second attempt never fired).
+    plan = solve_flexible_load(probe_day(), FlexibleLoadRequest(2, 2)).plan
+    assert plan.objective <= -0.396053 + 1e-4
+
+
+def test_both_solver_switches_find_the_certified_cost_of_the_probe_day(monkeypatch):
+    # T-066 review, LESSONS solver-defect-pinned-on-one-switch: the same matrix solved with
+    # and without presolve, each against the certified point.
+    seen = {}
+    run = optimize._Model._run
+
+    def kept(self, matrix, time_limit_s, **options):
+        result = run(self, matrix, time_limit_s, **options)
+        seen.setdefault("first", (self, matrix, options, result))
+        return result
+
+    monkeypatch.setattr(optimize._Model, "_run", kept)
+    solve_flexible_load(probe_day(), FlexibleLoadRequest(2, 2))
+    model, matrix, options, first = seen["first"]
+    assert model.second_attempt
+    assert options == {}
+    assert first.status == 0
+    assert first.fun <= -0.396053 + 1e-4
+    unprocessed = run(model, matrix, 30.0, presolve=False)
+    assert unprocessed.status == 0
+    assert unprocessed.fun <= -0.396053 + 1e-4

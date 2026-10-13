@@ -1282,7 +1282,7 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   w baterii: przedział zaczyna się na poziomie górnej granicy pomniejszonej o to, co bateria
   musiałaby przyjąć, więc bateria z niewielkim wolnym miejscem, która nie przyjmie nadwyżki, też
   ją traci, a bateria, która ją przyjmie, nigdy, bez względu na cenę sprzedaży. Część, której bateria
-  nie przyjmie swoją mocą ładowania (PV ponad potrzebę przycięcia pomniejszoną o <code>charge_kw × h</code>),
+  nie przyjmie swoją mocą ładowania (potrzeba przycięcia pomniejszona o <code>charge_kw × h</code>),
   jest tracona bez względu na wolne miejsce: bateria ładuje z pełną mocą, a falownik przycina resztę
   w tym samym przedziale, więc bateria z wolnym miejscem i mocą ładowania poniżej nadwyżki ma plan.
   Przy minimalnym
@@ -1305,8 +1305,10 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   gdy bateria ma wolne miejsce, częściej przy 60 minutach, oraz część losowań z próbką
   elastycznego zużycia. Część wymuszona (T-066) zmniejszyła liczbę z 2400 problemów rozwiązanych
   raz bez planu z 226 do 76, a liczbę losowań śledzonych przedział po przedziale i niedoprowadzonych
-  do końca z 190 do 57 z 1800, bez nowego problemu „brak planu” (<code>infeasible</code>) wśród tych, które
-  main planował
+  do końca z 190 do 57 z 1800, bez nowego problemu „brak planu” (<code>infeasible</code>) wśród rozwiązanych
+  raz, które main planował; z 3600 dni śledzonych przedział po przedziale na czterech ziarnach
+  jeden, który main prowadzi do końca, zatrzymuje się na granicy, w której nie ma planu na żadnej
+  instalacji (liczby i commity w dokumencie modelu)
   (<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN).</li>
 <li><strong><code>CURTAIL</code> trwa mimo przerwy w PV.</strong> Przebieg <code>CURTAIL</code> trwa minimalny czas, a PV może w tym
   czasie spaść. <code>HOLD</code> w przedziale z PV poniżej minimalnej aktywności (<code>minimum_mode_power_kw × h</code>)

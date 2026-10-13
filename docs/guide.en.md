@@ -773,7 +773,7 @@ Rules (defaults: 60 min, 0.1 kW):
   controller runs its `HOLD` profile). The gate is the room of the pack: the interval starts at or
   above the ceiling less what the pack would have to absorb, so a pack with a little room that
   cannot take the surplus spills too, and a pack that can take it never does, whatever the sell
-  price. The part the pack cannot take by its charge power (the PV beyond the curtail need less
+  price. The part the pack cannot take by its charge power (the curtail need less
   `charge_kw × h`) is spilled whatever the room: the pack charges at its power and the inverter
   throttles the rest in the same interval, so a pack with room and a charge power below the
   surplus has a plan. With a minimum duration a `CURTAIL` run keeps the next interval's gate open (it discharges
@@ -792,8 +792,10 @@ Rules (defaults: 60 min, 0.1 kW):
   plan does not cover: a carried `HOLD` or `CURTAIL` commitment whose duration the model cannot
   end while the pack has room, more often at 60 minutes, and some draws with a flexible-load
   probe. The forced part (T-066) cut the 2400 problems solved once without a plan from 226 to 76,
-  and the rolling draws not followed from 190 to 57 of 1800, with no problem that main planned
-  newly infeasible
+  and the rolling draws not followed from 190 to 57 of 1800, with no problem solved once that main
+  planned newly infeasible; of 3600 days followed interval by interval on four seeds one that main
+  follows to its end stops at a boundary with no plan on any site (counts and commits in the model
+  document)
   ([model and limitations](model.md#operating-mode-duration-and-pv-export-budget)).
 - **`CURTAIL` goes on through a PV gap.** A `CURTAIL` run lasts the minimum duration, and PV can
   drop inside it. A `HOLD` in an interval with PV below the minimum activity (`minimum_mode_power_kw × h`)

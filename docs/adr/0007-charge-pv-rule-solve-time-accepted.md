@@ -257,7 +257,8 @@ SciPy 1.18.1 with HiGHS 1.12.0 in the test image, scripts and model files in the
   the unused columns removed solve it. The forced-spill rows are needed for the wrong result on this day and
   are not the whole cause.
 - Not re-measured here, from the T-041 review: 2 wrong optima without presolve in about 860 planned problems
-  of 48, 96 and 192 slots, none where the default run was the worse one, 0 of 457 with curtailment on, a false
+  of 48, 96 and 192 slots, none where the default run was the worse one (the T-066 review found one, see its
+  amendment below), 0 of 457 with curtailment on, a false
   infeasible with presolve in 1 of 60 at 96 slots. The 0 of 457 does not clear the models without forced-spill
   rows (at 2 in 860, 457 clean problems happen 35 % of the time); those models never take the run without
   presolve, and no wrong result of their default run is known.
@@ -306,11 +307,37 @@ The gate of the forced spill reads the room of the pack (`spill_gate`). It was a
 whose charge power is below the surplus (139 of the 217 draws of the T-041 table without a plan) had no plan,
 because the plan may not call a spill what the pack could still charge. T-064 let a `CURTAIL` row charge; since the
 inverter throttles the part the pack cannot take by its charge power whatever the room, `forced_spill_limit` now
-offers exactly that part without the gate (`curt ≤ forced + (bound − forced) × spill_open`), and the spill the pack
-could take still needs it. The gate rows, the relay and the owner decision (T-062 B: a pack that can take the need
+offers exactly that part without the gate (`curt ≤ forced + extra`, `extra ≤ (bound − forced) × spill_open`, see
+below), and the spill the pack could take still needs it. The gate rows, the relay and the owner decision (T-062 B: a pack that can take the need
 never spills) are unchanged; the first interval relays a forced `CURTAIL` like any other (ADR-0005 amendment T-066).
 
-The model has the same binaries and one constant more on the right-hand side of the `curt` row. The solve time of
-the default mode is not re-measured by this amendment: it stays an accepted state as above.
+The model has the same binaries and, where a forced part is positive, one continuous variable (`extra`) and one row
+more per gated slot. The solve time of the default mode is not re-measured by this amendment: it stays an accepted
+state as above; the sweeps of the amendment run in the same time on main, the first form of the row and the split
+(`spill_sweep.py bell` and `probe`, seed 77 × 300 alone on the machine: 32, 31, 29 s and 23, 25, 24 s).
 `test_pinned_limit_highs_without_presolve_calls_a_worse_plan_optimal` pins HiGHS on the matrix of before this
 amendment (it patches `forced_spill_limit` to 0), because the forced part changes the matrix it pinned.
+
+**The first form of the row was solved worse (review of T-066).** The spill row was one row with an offset,
+`curt − (bound − forced) × spill_open ≤ forced`. On `spill_sweep.py probe` seed 77 index 282 (14 slots, export cap
+0.5 kW, pack 9.9 of 10 kWh, charge power 4 kW, a flexible load of 2 kWh at 2 kW) the default run reported `Optimal`,
+status 0, gap 0, no fractional binary, at −0.339803; main's plan at −0.396053 satisfies every row and bound of that
+matrix (2.8e-15), the run without presolve returns −0.396053 on it, and so does the default run with the forced part
+set to 0. The plan was 16 % dearer and the certificate accepted it, as it accepts any plan that obeys the rows: the
+second attempt of `_Model.solve` fires only on an infeasible answer or a fractional binary. Per LESSONS
+(solver-defect-pinned-on-one-switch) both switches were solved against the certified point, and the row was split
+into the ungated part and the gated one, `curt − extra ≤ forced` and `extra − (bound − forced) × spill_open ≤ 0`
+with `extra ∈ [0, bound − forced]` (the same set of plans), after which the draw is −0.396053 in both runs
+(`tests/test_forced_spill.py` `test_probe_with_a_spill_beyond_the_charge_power_is_planned_at_the_certified_cost`
+and `test_both_solver_switches_find_the_certified_cost_of_the_probe_day`; both fail on the first form).
+
+*What this does and does not show.* `benchmarks/switch_audit.py` solves every matrix of a draw with the default run,
+`presolve=False`, `mip_rel_gap=0` and both, and counts those where the default run is dearer than another by more
+than 1e-6 plus 1e-4 of the cost. On the same 5700 draws (`probe` seeds 5, 11, 22, 33, 44, 77, 91 and `run`,
+`negrun`, `bell` seeds 5, 11, 22, 77, 300 each): main `dd40906` 2 of 7086 matrices (`probe` seed 5 index 7,
+−0.206387 against −0.263997, and seed 22 index 294, −1.174629 against −1.226629: the default run is wrong on
+main too), the first form of the row 1 of 7584, the split row 0 of 7584. The split removed the known draw; at main's
+rate of 2.8e-4 per matrix, 7584 clean matrices happen 12 % of the time, so it is not a clearance and the sentence
+above, "none where the default run was the worse one", holds for the T-041 corpus only. The alternative the review
+named, solving a forced-spill model with both switches and keeping the cheaper certified plan, doubles the solve
+inside the same time limit and is not shipped; T-085 decides it with the draws above.
