@@ -509,7 +509,7 @@ Preview adds a line `PV source: Energy dashboard solar forecast …` for this mo
 ### Expert settings
 
 The main menu of Setup, Configure and Reconfigure starts with the common groups only: Installation,
-Sources, Battery, Hardware, Tariffs, Load forecasting and Notification preferences. **Show expert
+Sources, Battery, Hardware capabilities, Tariffs, Load forecasting and Notification preferences. **Show expert
 settings** adds the four expert groups, **Planning**, **Consumption outlook**, **Performance and
 input quality** and **Presentation**, and **Numeric helper bindings**; **Hide expert settings** hides
 them again. The view is per flow and is not stored. Hidden settings keep their values and keep

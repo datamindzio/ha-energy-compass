@@ -1135,6 +1135,37 @@ async def async_balance_history(hass, config, now):
     return tuple(samples)
 
 
+def _log_released_rung(read: Problem, plan, solved: Problem) -> None:
+    """One debug line where `solve_released` planned on rung 2 or 3 (ADR-0004), none on rung 1.
+
+    Rung 2 is the carried commitment's own HOLD (`initial_dispatch_reserve_hold`); rung 3 the
+    plan without the commitment. The same test as `benchmarks/curtail_sweep.rung_and_mode`.
+    """
+    if solved.initial_dispatch_reserve_hold:
+        rung = 2
+    elif read.initial_dispatch_mode and not solved.initial_dispatch_mode:
+        rung = 3
+    else:
+        return
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    first = solved.slots[0]
+    pack = solved.battery
+    _LOGGER.debug(
+        "solve_released planned on rung %d: carried mode %s since %s, first planned mode %s, "
+        "first interval forecast PV %.3f kWh and load %.3f kWh, pack at %s",
+        rung,
+        read.initial_dispatch_mode,
+        read.initial_dispatch_mode_since,
+        plan.flows[0].dispatch_mode,
+        first.pv_kwh,
+        first.load_kwh,
+        f"{100 * pack.initial_kwh / pack.capacity_kwh:.1f}%"
+        if pack and pack.capacity_kwh
+        else "n/a",
+    )
+
+
 def compute(
     config: dict,
     states: dict,
@@ -1159,6 +1190,7 @@ def compute(
     started = perf_counter()
     problem, values, quality = build_problem(config, states, now, **history)
     settlement = quality.pop("settlement")
+    read = problem
     plan, problem = solve_released(
         problem,
         time_limit_s=min(values["solve_time_limit_s"], values["total_time_limit_s"]),
@@ -1168,6 +1200,7 @@ def compute(
         accept_incumbent=True,
         solver=solve,
     )
+    _log_released_rung(read, plan, problem)
     remaining = values["total_time_limit_s"] - (perf_counter() - started)
     if remaining <= 0:
         raise SolveError("timeout")

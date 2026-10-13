@@ -1,4 +1,4 @@
-"""Compare the native Deye decision with the blueprint's own, minute by minute, offline.
+r"""Compare the native Deye decision with the blueprint's own, minute by minute, offline.
 
 The native engine cannot run in Simulation beside a blueprint in Auto (one mode per
 controller), so the comparison replays recorded states instead. Input: a directory
@@ -17,12 +17,50 @@ which the blueprint stored in the controller runtime sensor (`runtime.desired`,
             the dump was taken between the blueprint's run and a change of time
     STALE   different and the runtime is older than --stale-seconds: the blueprint
             has not run since, so the two were never meant to agree
+    REFRESH different only in `retained` and/or `slot_energy`, with `desired` and
+            `state` equal: the plan was being refreshed when the dump was taken
+    REPORT  a dump without `.reported.json` where the native decision is invalid for
+            the telemetry rule (a report older than 30 s) and the blueprint's is
+            valid: the REST `last_reported` is a cached copy of `last_updated`, so a
+            sensor whose value changes rarely looks stale; not a real difference
     DIFF    different and not explained by timing: a real difference
     NOREF   no blueprint decision in the dump
 
-Exit status: 0 all EQUAL, 1 any DIFF or STALE (a stuck or switched-off blueprint must
-not look acceptable; --allow-stale downgrades STALE to the TIMING status), 2 only TIMING
-differences, 3 nothing could be compared. The setup file:
+Exit status: 0 all EQUAL, 1 any DIFF, STALE or REPORT (a stuck or switched-off
+blueprint must not look acceptable; --allow-stale downgrades STALE and
+--allow-rest-reported downgrades REPORT to the TIMING status), 2 only TIMING, REFRESH
+(and allowed STALE or REPORT) differences, 3 nothing could be compared.
+
+The REST `GET /api/states` serves `last_reported` equal to `last_updated` (the
+serialized state is cached), while in memory Home Assistant updates it on every
+report. The telemetry rule needs each telemetry entity reported within 30 s, so
+record the in-memory value too: next to each dump put a sidecar of the same base
+name with the suffix `.reported.json` (`2026-10-13T08:28:06+00:00.json` and
+`2026-10-13T08:28:06+00:00.reported.json`), a JSON object
+`{entity_id: unix timestamp or ISO string}` for at least the telemetry entities. Its
+values replace the dump's `last_reported` for the listed entities. Without a sidecar
+the script still runs, marks affected minutes REPORT and warns on stderr at the end.
+
+Collection loop, one dump and sidecar per minute, 5 s after the minute (adjust the
+token file, address and the entity list; the sidecar template reads the live state
+machine, so list the telemetry entities of the setup file):
+
+    TOKEN=$(cat ~/.ha_token); URL=https://192.168.1.110:8123; OUT=dumps; mkdir -p "$OUT"
+    ENTITIES="['sensor.soc','sensor.battery_voltage']"
+    while true; do
+      sleep $(( (65 - 10#$(date +%S)) % 60 ))
+      T=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)
+      curl -sk -H "Authorization: Bearer $TOKEN" "$URL/api/states" -o "$OUT/.$T.json.tmp" &&
+      curl -sk -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+        -d "{\"template\": \"{% set ns = namespace(d={}) %}{% for e in $ENTITIES %}{% set ns.d = ns.d | combine({e: as_timestamp(states[e].last_reported, none)}) %}{% endfor %}{{ ns.d | tojson }}\"}" \
+        "$URL/api/template" -o "$OUT/.$T.reported.json.tmp" &&
+      mv "$OUT/.$T.reported.json.tmp" "$OUT/$T.reported.json" &&
+      mv "$OUT/.$T.json.tmp" "$OUT/$T.json"
+      sleep 1
+    done
+
+The sidecar is renamed first, so a dump is never visible without its sidecar. The
+setup file:
 
     {
       "timezone": "Europe/Warsaw",
@@ -44,7 +82,7 @@ import json
 import re
 import sys
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 from zoneinfo import ZoneInfo
@@ -57,6 +95,7 @@ from custom_components.energy_compass.controller import timestamp
 
 ATTRIBUTES = ("min", "max", "step", "options", "current")
 STALE_SECONDS = 75
+RESULTS = ("EQUAL", "TIMING", "REFRESH", "REPORT", "STALE", "DIFF", "NOREF")
 ROLES = ("charge", "discharge", "grid", "operation", "soc", "voltage")
 # The blueprint writes its decision into the runtime in Polish, whatever the language.
 LANGUAGE = "pl"
@@ -100,6 +139,22 @@ def limits_from(setup: Mapping) -> profile.Limits:
 
 def states_of(dump: list) -> dict:
     return {item["entity_id"]: item for item in dump}
+
+
+def sidecar_of(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.reported.json")
+
+
+def apply_reported(states: dict, reported: Mapping) -> None:
+    """Replace `last_reported` with the in-memory values from the sidecar."""
+    for entity, value in reported.items():
+        if entity not in states:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            continue
+        if not isinstance(value, str):
+            value = datetime.fromtimestamp(value, UTC).isoformat()
+        states[entity] = {**states[entity], "last_reported": value}
 
 
 def reference(states: Mapping, setup: Mapping) -> tuple[dict | None, str | None]:
@@ -198,8 +253,17 @@ def differences(expected: Mapping, native: Mapping) -> list[str]:
     return found
 
 
+def differing_keys(expected: Mapping, native: Mapping) -> set[str]:
+    return {key for key, value in native.items() if expected.get(key) != value}
+
+
 def compare(
-    states: Mapping, setup: Mapping, limits: profile.Limits, now: datetime, stale: float
+    states: Mapping,
+    setup: Mapping,
+    limits: profile.Limits,
+    now: datetime,
+    stale: float,
+    reported: bool = True,
 ) -> tuple[str, str, float | None, str | None]:
     """(result, detail, runtime age in seconds, when the runtime was written)."""
     runtime, written = reference(states, setup)
@@ -208,7 +272,8 @@ def compare(
     zone = now.tzinfo
     snapshot = snapshot_of(states, setup, now, runtime)
     ceiling = {}
-    native = decision_fields(profile.decide(snapshot, limits, ceiling))
+    decision = profile.decide(snapshot, limits, ceiling)
+    native = decision_fields(decision)
     found = differences(runtime, native)
     stamp = timestamp(written, 0.0)
     age = now.timestamp() - stamp if stamp else None
@@ -230,6 +295,16 @@ def compare(
             return "TIMING", "; ".join(found[:3]), age, written
     if age is not None and age > stale:
         return "STALE", "; ".join(found[:3]), age, written
+    if (
+        not reported
+        and decision.reason_code == "telemetry_stale"
+        and not decision.valid
+        and runtime.get("code") == "ok"
+    ):
+        return "REPORT", "; ".join(found[:3]), age, written
+    keys = differing_keys(runtime, native)
+    if keys <= {"retained", "slot_energy"}:
+        return "REFRESH", "; ".join(found[:3]), age, written
     return "DIFF", "; ".join(found[:3]), age, written
 
 
@@ -243,21 +318,36 @@ def main(argv=None) -> int:
         action="store_true",
         help="report STALE minutes with exit status 2 instead of 1",
     )
+    parser.add_argument(
+        "--allow-rest-reported",
+        action="store_true",
+        help="report REPORT minutes with exit status 2 instead of 1",
+    )
     args = parser.parse_args(argv)
     setup = load_setup(args.setup)
     limits = limits_from(setup)
     zone = ZoneInfo(setup.get("timezone") or "UTC")
-    files = sorted(path for path in args.dumps.iterdir() if path.suffix == ".json")
+    files = sorted(
+        path
+        for path in args.dumps.iterdir()
+        if path.suffix == ".json" and not path.name.endswith(".reported.json")
+    )
     if not files:
         print("no dumps found", file=sys.stderr)
         return 3
-    counts = {"EQUAL": 0, "TIMING": 0, "STALE": 0, "DIFF": 0, "NOREF": 0}
+    counts = dict.fromkeys(RESULTS, 0)
+    unreported = 0
     print(f"{'dump':<26} {'runtime written':<26} {'age s':>6}  {'result':<6}  detail")
     for path in files:
         dump_time = parse_time(path.stem).astimezone(zone)
         states = states_of(json.loads(path.read_text()))
+        sidecar = sidecar_of(path)
+        if sidecar.is_file():
+            apply_reported(states, json.loads(sidecar.read_text()))
+        else:
+            unreported += 1
         result, detail, age, written = compare(
-            states, setup, limits, dump_time, args.stale_seconds
+            states, setup, limits, dump_time, args.stale_seconds, sidecar.is_file()
         )
         counts[result] += 1
         shown = "" if age is None else f"{age:.0f}"
@@ -266,11 +356,21 @@ def main(argv=None) -> int:
             f"{result:<6}  {detail}"
         )
     print(", ".join(f"{key} {value}" for key, value in counts.items()))
-    if counts["EQUAL"] + counts["TIMING"] + counts["STALE"] + counts["DIFF"] == 0:
+    if unreported:
+        print(
+            f"{unreported} dumps without .reported.json: last_reported comes from the"
+            " REST cache and may be stale; telemetry-age differences are not reliable",
+            file=sys.stderr,
+        )
+    if counts["NOREF"] == sum(counts.values()):
         return 3
-    if counts["DIFF"] or (counts["STALE"] and not args.allow_stale):
+    if (
+        counts["DIFF"]
+        or (counts["STALE"] and not args.allow_stale)
+        or (counts["REPORT"] and not args.allow_rest_reported)
+    ):
         return 1
-    if counts["TIMING"] or counts["STALE"]:
+    if any(counts[key] for key in ("TIMING", "REFRESH", "STALE", "REPORT")):
         return 2
     return 0
 

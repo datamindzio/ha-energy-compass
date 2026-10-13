@@ -1,4 +1,5 @@
-"""The native Deye controller against the frozen v0.1.37 blueprint.
+"""The native Deye controller against the frozen 0.1.38 blueprint
+(frozen from main at 7888645: 0.1.37 plus #41 and #46).
 
 Decision parity runs a seeded corpus of plan, telemetry, runtime and settings
 variations through the blueprint's DECISION and BASE_DECISION templates (the oracle)
@@ -302,7 +303,7 @@ def scenario(h, rng: random.Random, apply_limits=True):
         h.now = h.now.replace(hour=rng.randint(0, 23))
         for x in h.data.values():
             x["last_reported"] = h.now.isoformat()
-    # The frozen 0.1.37 blueprint holds every CURTAIL row; a CURTAIL row that charges
+    # The frozen 0.1.38 blueprint holds every CURTAIL row; a CURTAIL row that charges
     # (T-064) is a deliberate divergence of the native engine, pinned in
     # tests/test_controller_native_curtail.py. No rng draw: the corpus is unchanged.
     if row["state"] == "CURTAIL":

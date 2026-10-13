@@ -1,6 +1,6 @@
 """Pure Deye profile: the decision, the write plan and the register layout.
 
-No Home Assistant imports. Every rule is a port of the 0.1.37 blueprint templates
+No Home Assistant imports. Every rule is a port of the 0.1.38 blueprint templates (0.1.37 plus #41 and #46)
 (`tools/deye_controller/build.py` DECISION, BASE_DECISION, DIFF, GUARD,
 CAP_ONLY_REPLAN, WRITE) and is proven against the frozen blueprint by
 `tests/test_controller_native_parity.py`. The order of operations, rounding modes
@@ -359,7 +359,7 @@ def decide(
     state = row.get("state", "BASE") if valid else "BASE"
     if base or snapshot.mode == "Off":
         state = "BASE"
-    # Deliberate divergence from the 0.1.37 blueprint, whose template raises on such a
+    # Deliberate divergence from the 0.1.38 blueprint, whose template raises on such a
     # row: the native controller holds BASE instead of acting on invented zeros.
     if valid and _row_malformed(row, state):
         valid = False
