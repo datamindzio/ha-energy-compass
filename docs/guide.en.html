@@ -396,12 +396,42 @@ you did not edit. Binding that template through
 <p>Net-metering's <code>sell_multiplier</code> is a one-time copy of the ratio, not a link to the buy price: it is
 an approximation (the yearly kWh bank and G12 band mismatch are not modelled), and a later edit to
 the buy price does not update it.</p>
+<p><strong>A net-metering installation runs the battery in the inverter's own self-use mode.</strong> Set the inverter
+to self-use (load first, no grid charging, no battery export), keep <code>allow_grid_charge</code> off and
+<code>allow_battery_export</code> off (both are off by default and stay off with these profiles), and do not enable the
+<a href="#enabling-the-controller">Deye controller</a>. Net-metering is not settled per hour: under the Renewable
+Energy Sources Act (consolidated text Dz.U. 2026 poz. 68, art. 4) fed-in energy is settled against energy
+drawn at the ratio 1 : 0.8 (1 : 0.7 above 10 kW) and the balance is carried forward for 12 months, so an
+exported kWh is worth <code>ratio</code> kWh of a later import — nothing once the year's credit covers the year's
+import — and the fixed part of the bill steps with the annual draw (capacity-fee bands at 500, 1 200 and
+2 800 kWh). None of that is a price per hour or lies inside a 24-48 h horizon, so the plan cannot lower the
+yearly bill. The planner stands down there: no engine, strategy or profile change, and the costs shown
+(<code>expected_net_cost</code>, <code>consumption_cost</code>, the cost card, <code>tools/replay.py</code>) stay hourly prices — the kWh are
+exact, the money is an approximation.</p>
+<p>Measured on 40 simulated homes (G11 and G12, ratio 0.8, 10 kWh battery, one year re-planned every hour
+against the same battery in plain self-consumption, valued with the annual bill, <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/adr/0008-net-metering-plain-self-consumption.md">ADR-0008</a>):
+the default plan (<code>cost_min</code>, as the profile ships) changes the yearly cost by −93…+70 PLN (mean −1),
+never lowers the bill by more than 10 PLN, and raises the annual import by +33…+704 kWh. Priced hour by
+hour, as Home Assistant reports it, the same G12 plan shows a gain of +343 PLN per year that the settlement
+does not pay. With <strong>Allow grid charge</strong> on (13 homes) the yearly cost moves by −209…+139 PLN against
+self-use, and the import rises by +897 kWh (median). Limits: simulated homes, one battery size
+(10 kWh), one year of prices, hourly intervals, G12 zones netted as one mean rate.</p>
 <p>Preview shows setup-profile provenance for a profiled new entry: which keys each axis pre-filled, the
 buy source pre-selected by a <code>buy_tariff</code> profile, any value edited after pre-fill (including a
 helper-bound key, with the helper's effective value), and settlement notes — Sell only PV off, a sell
 source that already applies its own settlement multiplier, raw RCE prices not floored at 0 (with the
 RCE market price shortcut as the fix) or floored while the 1.23 multiplier is missing, or a
-net-metering sell that no longer tracks buy — shown only for installations that used a setup profile.</p>
+net-metering sell that no longer tracks buy — shown only for installations that used a setup profile.
+For a net-metering profile Preview always adds two more notes (English only):</p>
+<ul>
+<li>"Note: net-metering is settled on yearly kWh (an exported kWh takes back 0.8 kWh within 12 months),
+  not on hourly prices: price-driven dispatch does not lower the yearly bill and the costs shown are an
+  hourly approximation. Run the battery in the inverter's own self-use mode and do not let a controller
+  follow this plan." (0.7 on the 70 % profile.)</li>
+<li>when <strong>Allow grid charge</strong> or <strong>Allow battery export</strong> is on, "Note: Allow grid charge is on: under
+  net-metering energy sent through the grid comes back at 0.8 and raises the yearly import; turn it
+  off." (naming the one that is on, or "Allow grid charge and Allow battery export are on").</li>
+</ul>
 <p>The selection, together with the setup-profiles revision that resolved it, is stored on the config
 entry (<code>setup_profiles</code>) and included in diagnostics.</p>
 <h3 id="built-in-polish-tariffs">Built-in Polish tariffs</h3>
@@ -2205,6 +2235,8 @@ inverter device (it is preselected when there is only one). Energy Compass finds
 refuses the device when a program is missing or disabled, when the entity IDs do not share one
 prefix, or when another Energy Compass entry already controls it. Enabling reloads the entry once;
 moving the controller to another device applies live. Both are refused while the mode is not <code>Off</code> or a restore is pending: select <code>Off</code> and wait until <code>restore_pending</code> is off first, otherwise nothing could restore the base profile. The step is visible without the expert toggle.</p>
+<p>Do not enable the controller on a net-metering installation: the right plan there is the inverter's own
+self-use mode (see <a href="#setup-profiles-new-installations">Setup profiles</a>).</p>
 <p>An installation that ran the 0.1.36 package, has one Energy Compass entry and exactly one Solarman device
 with all six programs gets the controller enabled automatically at the first start of 0.1.37. The mode
 starts at <code>Off</code>, so nothing is written until you choose one; see
@@ -2915,6 +2947,9 @@ into days by the local date of <code>start</code>; settings come only from <code
   discharges the planned energy, <code>HOLD</code> parks the battery. Grid export beyond <code>grid_export_kw</code> is
   curtailed, and stored energy is not exported beyond the PV produced so far when <strong>Sell only PV</strong>
   (<code>limit_export_to_pv</code>) is on.</li>
+<li><strong>On a net-metering file the costs are hourly prices, not the settlement.</strong> Net-metering is settled on
+  yearly kWh (<a href="#setup-profiles-new-installations">Setup profiles</a>), so <code>plan − self_use</code> is not a saving
+  there; do not compare strategies by it.</li>
 <li>The <a href="#peak-period-reserve">peak-period reserve</a> (<code>peak_reserve_margin_kwh</code>) is replayed as in the integration: it needs
   <code>limit_grid_charge_price</code> (its ceiling is the cheap price), else a warning says it has no effect.</li>
 <li>Not replayed: LFP balance windows, the autonomy tail beyond the data, and carried export or

@@ -183,12 +183,43 @@ Net-metering's `sell_multiplier` is a one-time copy of the ratio, not a link to 
 an approximation (the yearly kWh bank and G12 band mismatch are not modelled), and a later edit to
 the buy price does not update it.
 
+**A net-metering installation runs the battery in the inverter's own self-use mode.** Set the inverter
+to self-use (load first, no grid charging, no battery export), keep `allow_grid_charge` off and
+`allow_battery_export` off (both are off by default and stay off with these profiles), and do not enable the
+[Deye controller](#enabling-the-controller). Net-metering is not settled per hour: under the Renewable
+Energy Sources Act (consolidated text Dz.U. 2026 poz. 68, art. 4) fed-in energy is settled against energy
+drawn at the ratio 1 : 0.8 (1 : 0.7 above 10 kW) and the balance is carried forward for 12 months, so an
+exported kWh is worth `ratio` kWh of a later import — nothing once the year's credit covers the year's
+import — and the fixed part of the bill steps with the annual draw (capacity-fee bands at 500, 1 200 and
+2 800 kWh). None of that is a price per hour or lies inside a 24-48 h horizon, so the plan cannot lower the
+yearly bill. The planner stands down there: no engine, strategy or profile change, and the costs shown
+(`expected_net_cost`, `consumption_cost`, the cost card, `tools/replay.py`) stay hourly prices — the kWh are
+exact, the money is an approximation.
+
+Measured on 40 simulated homes (G11 and G12, ratio 0.8, 10 kWh battery, one year re-planned every hour
+against the same battery in plain self-consumption, valued with the annual bill, [ADR-0008](adr/0008-net-metering-plain-self-consumption.md)):
+the default plan (`cost_min`, as the profile ships) changes the yearly cost by −93…+70 PLN (mean −1),
+never lowers the bill by more than 10 PLN, and raises the annual import by +33…+704 kWh. Priced hour by
+hour, as Home Assistant reports it, the same G12 plan shows a gain of +343 PLN per year that the settlement
+does not pay. With **Allow grid charge** on (13 homes) the yearly cost moves by −209…+139 PLN against
+self-use, and the import rises by +897 kWh (median). Limits: simulated homes, one battery size
+(10 kWh), one year of prices, hourly intervals, G12 zones netted as one mean rate.
+
 Preview shows setup-profile provenance for a profiled new entry: which keys each axis pre-filled, the
 buy source pre-selected by a `buy_tariff` profile, any value edited after pre-fill (including a
 helper-bound key, with the helper's effective value), and settlement notes — Sell only PV off, a sell
 source that already applies its own settlement multiplier, raw RCE prices not floored at 0 (with the
 RCE market price shortcut as the fix) or floored while the 1.23 multiplier is missing, or a
 net-metering sell that no longer tracks buy — shown only for installations that used a setup profile.
+For a net-metering profile Preview always adds two more notes (English only):
+
+- "Note: net-metering is settled on yearly kWh (an exported kWh takes back 0.8 kWh within 12 months),
+  not on hourly prices: price-driven dispatch does not lower the yearly bill and the costs shown are an
+  hourly approximation. Run the battery in the inverter's own self-use mode and do not let a controller
+  follow this plan." (0.7 on the 70 % profile.)
+- when **Allow grid charge** or **Allow battery export** is on, "Note: Allow grid charge is on: under
+  net-metering energy sent through the grid comes back at 0.8 and raises the yearly import; turn it
+  off." (naming the one that is on, or "Allow grid charge and Allow battery export are on").
 
 The selection, together with the setup-profiles revision that resolved it, is stored on the config
 entry (`setup_profiles`) and included in diagnostics.
@@ -1408,6 +1439,9 @@ refuses the device when a program is missing or disabled, when the entity IDs do
 prefix, or when another Energy Compass entry already controls it. Enabling reloads the entry once;
 moving the controller to another device applies live. Both are refused while the mode is not `Off` or a restore is pending: select `Off` and wait until `restore_pending` is off first, otherwise nothing could restore the base profile. The step is visible without the expert toggle.
 
+Do not enable the controller on a net-metering installation: the right plan there is the inverter's own
+self-use mode (see [Setup profiles](#setup-profiles-new-installations)).
+
 An installation that ran the 0.1.36 package, has one Energy Compass entry and exactly one Solarman device
 with all six programs gets the controller enabled automatically at the first start of 0.1.37. The mode
 starts at `Off`, so nothing is written until you choose one; see
@@ -1866,6 +1900,9 @@ into days by the local date of `start`; settings come only from `--set`.
   discharges the planned energy, `HOLD` parks the battery. Grid export beyond `grid_export_kw` is
   curtailed, and stored energy is not exported beyond the PV produced so far when **Sell only PV**
   (`limit_export_to_pv`) is on.
+- **On a net-metering file the costs are hourly prices, not the settlement.** Net-metering is settled on
+  yearly kWh ([Setup profiles](#setup-profiles-new-installations)), so `plan − self_use` is not a saving
+  there; do not compare strategies by it.
 - The [peak-period reserve](#peak-period-reserve) (`peak_reserve_margin_kwh`) is replayed as in the integration: it needs
   `limit_grid_charge_price` (its ceiling is the cheap price), else a warning says it has no effect.
 - Not replayed: LFP balance windows, the autonomy tail beyond the data, and carried export or
