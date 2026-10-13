@@ -152,11 +152,14 @@ def test_validator_accepts_the_charge_a_follow_row_leaves_short_by_its_noise(lim
     """T-049: `bc >= M * (x_CHARGE_PV - full)` is met within 1e-6 * (2M + 1), M the limit.
 
     HiGHS took the CHARGE_PV binary at 1 - 1e-6 and charged 2.5e-5 kWh under the 25 kWh
-    limit of a real 48-slot problem (T-036 corpus, seed 108); the surplus beyond it is
-    exported by the site balance, which is no partial charge.
+    limit of a real 48-slot problem (T-036 corpus, seed 108, pinned in
+    test_solver_noise_regression.py); the surplus beyond it is exported by the site
+    balance, which is no partial charge. The shortfall here is the most that row allows,
+    above the fixed 1e-5 kWh the check used before.
     """
     problem = big_battery(99, 16, limit)
-    short = 1e-6 * limit
+    short = 0.99e-6 * (2 * limit + 1)
+    assert short > 1e-5
     charge = limit - short
     flow = Flow(0, 83 - charge, charge, 0, 0, charge, "charge", "CHARGE_PV")
 

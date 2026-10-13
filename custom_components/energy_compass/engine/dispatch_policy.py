@@ -1064,7 +1064,7 @@ def _check_load_following(problem: Problem, slot, flow, mode) -> None:
         problem.battery.discharge_kw * hours,
         problem.site.inverter_kw * hours - slot.pv_kwh,
     )
-    # The row's M is the power limit or the net load, which is below the slot's load.
+    # Bound of every row's M (docs/model.md): the power limit, or the net load below the slot's load.
     tolerance = _follow_tolerance(max(power_limit, slot.load_kwh))
     if flow.grid_import_kwh <= tolerance:
         return
@@ -1084,7 +1084,7 @@ def _check_surplus_following(problem: Problem, slot, flow, mode, index) -> None:
     if mode != "CHARGE_PV":
         return
     hours = _hours(slot)
-    # The row's M is the charge limit or the surplus, which is below the slot's PV.
+    # Bound of every row's M (docs/model.md): the charge limit, or the surplus below the slot's PV.
     tolerance = _follow_tolerance(max(problem.battery.charge_kw * hours, slot.pv_kwh))
     if flow.grid_export_kwh <= tolerance:
         return
