@@ -1191,7 +1191,13 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   terminem. <code>HOLD</code> zwolniony przy pełnej baterii nie wraca do <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>; zwolniony
   przy rozładowanej baterii wraca, w każdym późniejszym przedziale zobowiązania, dopóki bateria jest
   rozładowana: bateria przyjmuje nadwyżkę, a <code>HOLD</code> nie przepuściłby PV powyżej limitu eksportu (przy
-  <code>grid_export_kw = 0</code> tak jest każdego wschodu słońca). Powrót to dalszy ciąg zobowiązania, a nie nowy
+  <code>grid_export_kw = 0</code> tak jest każdego wschodu słońca). Bateria dokładnie na rezerwie (zwykły stan
+  pusty falownika) jest rozładowana w tym sensie, a nie wyjątkiem bezpieczeństwa: przeniesione
+  <code>SELF_CONSUME</code> jest tam zwalniane i ładuje jak 0,01 kWh nad rezerwą. Gdy zwolniony <code>HOLD</code> nie ma
+  planu (moc ładowania nie przyjmie PV powyżej limitu eksportu, a ładowanie i ucinanie w jednym
+  przedziale nie jest modelowane) i ucinanie jest dozwolone, planem jest własny <code>HOLD</code> zobowiązania
+  z jego zegarem, jak wyjątek bezpieczeństwa poniżej, który ucina: dom nigdy nie zostaje bez planu.
+  Powrót to dalszy ciąg zobowiązania, a nie nowy
   przebieg: jedynym zegarem pozostaje termin zobowiązania. Bateria, która opróżni się ponownie w
   tym samym zobowiązaniu, jest znowu zwalniana i znowu wraca, tyle razy, ile trwa zobowiązanie.
   Zwolnienie przechodzi przez granicę przedziału: plan oznacza wiersze takiego <code>HOLD</code>
@@ -1242,7 +1248,8 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <li><strong>Pokrycie:</strong> nowy aktywny tryb wymaga pełnego minimalnego czasu pokrycia prognozą.</li>
 <li><strong>Wyjątek bezpieczeństwa (pauza, nie reset):</strong> w trakcie niewygasłego aktywnego zobowiązania
   bieżący wiersz pokazuje HOLD, gdy obserwowany SOC jest już na górnej granicy (tryby ładowania —
-  <code>observed_soc_maximum</code>) lub na/poniżej rezerwy (tryby rozładowania — <code>observed_soc_minimum</code>),
+  <code>observed_soc_maximum</code>) lub na/poniżej rezerwy (tryby rozładowania — <code>observed_soc_minimum</code>; nie przeniesione <code>SELF_CONSUME</code>,
+  które wyżej jest zwalniane jak rozładowana bateria, chyba że to zwolnienie nie ma planu),
   albo gdy przeniesione <code>CHARGE_GRID</code> trafia przed terminem na cenę powyżej sufitu
   (<code>grid_charge_price_limit</code>). Przerwany tryb i termin pozostają zapisane; przed tym terminem nie
   może wystartować żaden inny tryb, poza <code>CURTAIL</code>, który przejmuje <code>HOLD</code> tam, gdzie instalacja
@@ -3074,7 +3081,7 @@ bez błędu prognozy. Dla statystyk godzinowych ustaw <code>interval_minutes: 60
 </tr>
 <tr>
 <td><code>observed_soc_minimum</code></td>
-<td>Aktywne zobowiązanie rozładowania, a SOC na lub poniżej rezerwy.</td>
+<td>Aktywne zobowiązanie rozładowania, a SOC na lub poniżej rezerwy (przeniesione SELF_CONSUME tylko wtedy, gdy jego zwolnienie z pustej baterii nie ma planu).</td>
 </tr>
 <tr>
 <td><code>grid_charge_price_limit</code></td>

@@ -39,7 +39,12 @@ from .engine.consumption import (
     serialize_opportunity,
 )
 from .engine.daily_energy import daily_export_rows
-from .engine.dispatch_policy import MODES, dwell_group, safety_exception
+from .engine.dispatch_policy import (
+    MODES,
+    dwell_group,
+    reserve_fallback,
+    safety_exception,
+)
 from .engine.models import (
     Battery,
     CompassSettings,
@@ -1165,11 +1170,18 @@ def compute(
     settlement = quality.pop("settlement")
     settlement_state = quality.pop("settlement_state")
     settlement_held = history.get("settlement_state")
-    plan = solve(
-        problem,
-        time_limit_s=min(values["solve_time_limit_s"], values["total_time_limit_s"]),
-        accept_incumbent=True,
-    )
+    solve_limit = min(values["solve_time_limit_s"], values["total_time_limit_s"])
+    try:
+        plan = solve(problem, time_limit_s=solve_limit, accept_incumbent=True)
+    except SolveError as err:
+        # The house is never left without a plan: a PV-follow commitment with the pack at
+        # the reserve is released first (ADR-0005 point 13); where the released HOLD
+        # cannot take the PV above the export cap, the commitment's own HOLD is planned.
+        fallback = reserve_fallback(problem) if err.reason == "infeasible" else None
+        if fallback is None:
+            raise
+        problem = fallback
+        plan = solve(problem, time_limit_s=solve_limit, accept_incumbent=True)
     remaining = values["total_time_limit_s"] - (perf_counter() - started)
     if remaining <= 0:
         raise SolveError("timeout")

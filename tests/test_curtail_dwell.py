@@ -9,7 +9,7 @@ what the cap forces ends in the same release as a full pack.
 """
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +18,7 @@ from test_dispatch_policy import dispatch
 from benchmarks.curtail_sweep import follow
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
 from custom_components.energy_compass.engine.dispatch_policy import (
+    reserve_fallback,
     safety_exception,
     validate_modes,
 )
@@ -578,7 +579,13 @@ def test_probes_around_the_need_are_planned_in_a_hold_that_must_last(pv, sell, e
 @pytest.mark.parametrize(
     ("pv", "export_cap", "initial", "committed", "released"),
     [
-        ((0, 0.9, 0.9, 0.9, 0.9, 0.9), 2, 0.01, ("HOLD", "CHARGE_PV", "CHARGE_PV"), (0,)),
+        (
+            (0, 0.9, 0.9, 0.9, 0.9, 0.9),
+            2,
+            0.01,
+            ("HOLD", "CHARGE_PV", "CHARGE_PV"),
+            (0,),
+        ),
         (
             (0.05, 0.3, 0.5, 0.7, 0.9, 0.9),
             0,
@@ -804,7 +811,9 @@ def test_a_release_needs_a_pv_follow_commitment_to_come_from():
     for mode in ("HOLD", "CURTAIL"):
         with pytest.raises(InputError, match="released HOLD"):
             validate_problem(
-                replace(problem, initial_dispatch_mode=mode, initial_dispatch_released=True)
+                replace(
+                    problem, initial_dispatch_mode=mode, initial_dispatch_released=True
+                )
             )
     with pytest.raises(InputError, match="released HOLD"):
         validate_problem(
@@ -937,3 +946,82 @@ def test_a_carried_release_whose_pack_drops_to_the_reserve_is_not_locked_again(m
 def test_a_discharge_grid_commitment_at_the_reserve_is_still_a_safety_exception():
     problem = carried(capped((0.9,) * 4, initial=0.0), mode="DISCHARGE_GRID")
     assert safety_exception(problem)["reason"] == "observed_soc_minimum"
+
+
+def _unreleasable():
+    """A depleted release the pack's charge power cannot take: only the old HOLD fits."""
+    problem = depleted((0, *(0.9,) * 7), mode="SELF_CONSUME", export_cap=0)
+    battery = replace(problem.battery, initial_kwh=0.0, charge_kw=1.0)
+    return replace(problem, battery=battery)
+
+
+def test_a_release_without_a_plan_falls_back_to_the_commitments_own_hold():
+    # The charge power of the pack cannot take the PV above the export cap, and the
+    # model does not charge and curtail in one interval: the released HOLD has no plan.
+    # The house is never left without one (T-060): the commitment's HOLD with its clock,
+    # which curtails, is planned and reported as the safety exception it was.
+    problem = _unreleasable()
+    with pytest.raises(SolveError) as error:
+        solve(problem)
+    assert error.value.reason == "infeasible"
+    assert safety_exception(problem) is None
+    fallback = reserve_fallback(problem)
+    assert fallback.initial_dispatch_reserve_hold
+    assert safety_exception(fallback)["reason"] == "observed_soc_minimum"
+    plan = solve(fallback)
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    assert modes[0] == "HOLD"
+    assert "CURTAIL" in modes
+    validate_modes(fallback, plan.flows, plan.carried_bridges)
+
+
+def test_the_fallback_is_for_a_commitment_at_the_reserve_only():
+    problem = _unreleasable()
+    assert reserve_fallback(replace(problem, initial_dispatch_mode="CHARGE_PV")) is None
+    above = replace(problem, battery=replace(problem.battery, initial_kwh=0.5))
+    assert reserve_fallback(above) is None
+    assert reserve_fallback(reserve_fallback(problem)) is None
+
+
+def test_the_runtime_plans_the_commitments_hold_when_the_release_has_no_plan(
+    monkeypatch,
+):
+    from test_export_benefit import native_config
+
+    from custom_components.energy_compass import runtime
+
+    config = native_config()
+    config["settings"].update(minimum_mode_minutes=60)
+    now = datetime(2026, 9, 18, 1, tzinfo=UTC)
+    states = {"sensor.soc": {"state": "0", "attributes": {}, "last_updated": now}}
+    commitment = {
+        "mode": "SELF_CONSUME",
+        "since": (now - timedelta(minutes=15)).isoformat(),
+    }
+    real = runtime.solve
+    problems = []
+
+    def release_has_no_plan(problem, **kwargs):
+        problems.append(problem)
+        if not problem.initial_dispatch_reserve_hold:
+            raise SolveError("infeasible")
+        return real(problem, **kwargs)
+
+    monkeypatch.setattr(runtime, "solve", release_has_no_plan)
+    result = runtime.compute(config, states, now, battery_commitment=commitment)
+    assert [p.initial_dispatch_reserve_hold for p in problems] == [False, True]
+    assert result["intervals"][0]["dispatch_mode"] == "HOLD"
+    assert result["dispatch_policy"]["safety_exception"]["reason"] == (
+        "observed_soc_minimum"
+    )
+    # Nothing but a solver failure reaches the fallback.
+    problems.clear()
+
+    def timeout(problem, **kwargs):
+        problems.append(problem)
+        raise SolveError("timeout")
+
+    monkeypatch.setattr(runtime, "solve", timeout)
+    with pytest.raises(SolveError, match="timeout"):
+        runtime.compute(config, states, now, battery_commitment=commitment)
+    assert len(problems) == 1

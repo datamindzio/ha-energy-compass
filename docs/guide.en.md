@@ -693,7 +693,13 @@ Rules (defaults: 60 min, 0.1 kW):
   from a full pack does not go back to `CHARGE_PV`/`SELF_CONSUME`; one released from a depleted
   pack does, in any later interval of the commitment while the pack is still depleted: the pack
   takes the surplus, and a `HOLD` could not pass the PV above the export cap (on a site with
-  `grid_export_kw = 0` that is every sunrise). The return is the commitment going on, not a new
+  `grid_export_kw = 0` that is every sunrise). A pack exactly at the reserve (the inverter's usual
+  empty state) is depleted in this sense, not a safety exception: a carried `SELF_CONSUME` there is
+  released and charges like one 0.01 kWh above the reserve. Where that released `HOLD` has no plan
+  (the charge power cannot take the PV above the export cap, and charging and curtailing in one
+  interval is not modelled) and curtailment is allowed, the plan is the commitment's own `HOLD`
+  with its clock, as the safety exception below, which curtails: the house is never left without
+  one. The return is the commitment going on, not a new
   run: the commitment's deadline stays the only clock. A pack that empties again inside the same
   commitment is released again and goes back again, as often as the commitment lasts. The release
   survives the interval boundary: the plan marks the rows of such a `HOLD`
@@ -742,7 +748,8 @@ Rules (defaults: 60 min, 0.1 kW):
 - **Coverage:** a new active mode needs a full duration of forecast coverage remaining.
 - **Safety exception (pause, not reset):** during an unexpired active commitment the current row
   shows HOLD when the observed SOC is already at the upper bound (charging modes —
-  `observed_soc_maximum`) or at/below the reserve (discharge modes — `observed_soc_minimum`), or
+  `observed_soc_maximum`) or at/below the reserve (discharge modes — `observed_soc_minimum`; not a carried `SELF_CONSUME`, which is
+  released as a depleted pack above, unless that release has no plan), or
   when a carried `CHARGE_GRID` meets a price above the ceiling before its deadline
   (`grid_charge_price_limit`). The interrupted mode and deadline stay stored; no other mode may
   start before that deadline, except the `CURTAIL` that takes the `HOLD` over where the site cannot pass the PV (above). Exposed in `dispatch_policy.safety_exception`.
@@ -1925,7 +1932,7 @@ Use `interval_minutes: 60` for hourly statistics.
 | Code | Meaning |
 | --- | --- |
 | `observed_soc_maximum` | Charging commitment active but SOC already at the maximum. |
-| `observed_soc_minimum` | Discharge commitment active but SOC at or below the reserve. |
+| `observed_soc_minimum` | Discharge commitment active but SOC at or below the reserve (a carried SELF_CONSUME only when its release from the empty pack has no plan). |
 | `grid_charge_price_limit` | Carried CHARGE_GRID would continue above the grid-charge price ceiling. |
 
 ### Balance warnings

@@ -90,12 +90,13 @@ def safety_exception(problem: Problem) -> dict | None:
     )
     if problem.slots[0].start.astimezone(UTC) >= deadline:
         return None
-    if mode == "SELF_CONSUME":
+    if mode == "SELF_CONSUME" and not problem.initial_dispatch_reserve_hold:
         # A PV-follow commitment whose pack is at the reserve is not interrupted: the
         # inverter stops at the minimum SOC, that is its usual empty state, and the
         # commitment is released into a HOLD with no clock of its own that may go back
         # to the surplus (ADR-0005 point 13). A HOLD with the commitment's clock would
-        # curtail beside the empty pack or leave the plan infeasible (T-058).
+        # curtail beside the empty pack or leave the plan infeasible (T-058); it is
+        # the last resort of `reserve_fallback` when the released plan has no solution.
         return None
     charging = mode in ("CHARGE_GRID", "CHARGE_PV")
     bound = battery.capacity_kwh * (
@@ -121,6 +122,20 @@ def safety_exception(problem: Problem) -> dict | None:
         "interrupted_mode": mode,
         "deadline": deadline.isoformat(),
     }
+
+
+def reserve_fallback(problem: Problem) -> Problem | None:
+    """Return the problem with the pack-at-the-reserve HOLD kept, or None if it changes nothing.
+
+    The released HOLD of a PV-follow commitment at the reserve cannot always take the PV
+    above the export cap (charge power; charge and curtail in one interval are not
+    modelled), and the house must never be left without a plan. Solving this problem
+    instead gives the previous plan: a HOLD with the commitment's clock, which may curtail.
+    """
+    if problem.initial_dispatch_reserve_hold:
+        return None
+    fallback = replace(problem, initial_dispatch_reserve_hold=True)
+    return fallback if safety_exception(fallback) else None
 
 
 def _initial(problem):

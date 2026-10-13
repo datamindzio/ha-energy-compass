@@ -39,6 +39,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
+from custom_components.energy_compass.engine import dispatch_policy
 from custom_components.energy_compass.engine.models import (
     Battery,
     FlexibleLoadRequest,
@@ -187,13 +188,29 @@ def make_depleted_probe(rng):
     return problem, FlexibleLoadRequest(energy, power)
 
 
+def planned(problem, request=None):
+    """Solve as the runtime does: a depleted release without a plan falls back (T-058).
+
+    Returns the plan and the problem it was solved for. A tree without
+    `reserve_fallback` (a checkout of main to compare with) never falls back.
+    """
+    try:
+        if request is None:
+            return solve(problem), problem
+        return solve_flexible_load(problem, request).plan, problem
+    except SolveError as error:
+        fallback = getattr(dispatch_policy, "reserve_fallback", None)
+        fallback = (
+            fallback(problem) if fallback and error.reason == "infeasible" else None
+        )
+        if fallback is None:
+            raise
+    return planned(fallback, request)
+
+
 def run(problem, request=None):
     try:
-        plan = (
-            solve(problem)
-            if request is None
-            else solve_flexible_load(problem, request).plan
-        )
+        plan, _ = planned(problem, request)
     except SolveError as error:
         return ["err", str(error)[:40]]
     return [
@@ -228,13 +245,16 @@ def commit(problem, plan):
         coordinator,
         {
             "generated_at": first,
-            "intervals": [{"dispatch_mode": plan.flows[0].dispatch_mode, "start": first}],
+            "intervals": [
+                {"dispatch_mode": plan.flows[0].dispatch_mode, "start": first}
+            ],
             "dispatch_policy": {
                 "enabled": True,
                 "minimum_mode_minutes": problem.minimum_mode_minutes,
                 "released_hold_starts": [first]
                 if 0 in getattr(plan, "released_holds", ())
                 else [],
+                "safety_exception": dispatch_policy.safety_exception(problem),
             },
         },
         carried_idle=0 in plan.carried_bridges,
@@ -253,6 +273,9 @@ def follow(problem, plan):
         if "initial_dispatch_released" in Problem.__dataclass_fields__
         else {}
     )
+    if "initial_dispatch_reserve_hold" in Problem.__dataclass_fields__:
+        # The fallback is decided afresh at every boundary.
+        released["initial_dispatch_reserve_hold"] = False
     return replace(
         problem,
         slots=problem.slots[1:],
@@ -273,11 +296,13 @@ def roll(problem, steps=8):
         if len(problem.slots) < 2:
             break
         try:
-            plan = solve(problem)
+            plan, problem = planned(problem)
         except SolveError as error:
             return ["err", step, str(error)[:40], trace]
         trace.append(
-            plan.flows[0].dispatch_mode + ("*" if 0 in plan.carried_bridges else "")
+            plan.flows[0].dispatch_mode
+            + ("*" if 0 in plan.carried_bridges else "")
+            + ("!" if getattr(problem, "initial_dispatch_reserve_hold", False) else "")
         )
         problem = follow(problem, plan)
     return ["ok", len(trace), "", trace]
