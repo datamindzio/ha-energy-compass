@@ -48,8 +48,8 @@ class _Model:
         self.exact_mip_gap = False
         self.accept_incumbent = False
         self.time_limited = False
-        # Set by the rows HiGHS's presolve is known to misjudge (`solve`).
-        self.presolve_unsound = False
+        # Set by the rows HiGHS is known to misjudge (`solve`).
+        self.second_attempt = False
         self.mip_gap: float | None = 0.0
         self.cost: list[float] = []
         self.lower: list[float] = []
@@ -108,15 +108,19 @@ class _Model:
         ).tocsc()
         started = perf_counter()
         result = self._run(matrix, time_limit_s)
-        if self.presolve_unsound and (
+        if self.second_attempt and (
             result.status == 2 or result.x is not None and self._fractional(result.x)
         ):
-            # HiGHS's presolve is not sound on the forced-spill rows (T-041): it handed
-            # back, as optimal, a point with CURTAIL at 0.16 (a need below the minimum
-            # activity), and called a model infeasible whose plan the same solver finds
-            # without presolve. A model with those rows that comes back infeasible, or
-            # with a fractional binary, is solved again without it, in what is left of
-            # the time limit.
+            # HiGHS is not sound on models with the forced-spill rows (T-041, T-072). With
+            # presolve it handed back, as optimal, a point with CURTAIL at 0.16 (a need
+            # below the minimum activity), and called a model infeasible whose plan the
+            # same solver finds without presolve. Without presolve its root cuts have cut
+            # the optimum off and it called a far worse plan optimal (HiGHS 1.8.1 to
+            # 1.15.1). So a model with those rows that comes back infeasible, or with a
+            # fractional binary, gets a second attempt without presolve, in what is left
+            # of the time limit. Neither run is a proof: the plan is accepted by the
+            # certificate (`_validate_solution`), its gap is only what HiGHS reports, and
+            # an infeasible second run may still have a plan.
             result = self._run(
                 matrix,
                 max(time_limit_s - (perf_counter() - started), 1e-3),
@@ -265,6 +269,8 @@ def _validate_balance(
 def _validate_settled(problem: Problem, settled: list[dict[str, float]]) -> None:
     """The published rows keep one direction per slot, whatever noise the solver left."""
     for flow in settled:
+        # Cannot fire after `settle_mode_noise` (it nets a grid import beside an export
+        # last); it holds that netting to account.
         _check(min(flow["gin"], flow["gout"]) <= _TOL, "simultaneous grid directions")
         if problem.battery:
             _check(
@@ -363,7 +369,8 @@ def _validate_solution(
         if battery and not problem.site.allow_curtailment:
             # Forced spill: the pack cannot take the PV the site cannot pass, or a CURTAIL
             # run that began at that gate goes on (the pack only drifted by its standby
-            # loss, CURTAIL moving nothing in or out).
+            # loss, CURTAIL discharging nothing; a row beyond the pack may charge, which
+            # only raises it).
             open_gate = (
                 relayed
                 or previous_energy
@@ -608,6 +615,22 @@ def solve_released(
     raise failure
 
 
+def later_rungs(problem: Problem) -> tuple[Problem, ...]:
+    """The problems of the rungs after the one `problem` was solved on, in the order of the ladder.
+
+    The ladder of `solve_released` for a flexible-load probe: a level that has no solution on
+    the problem the plan was solved for (the model bounds what a probe may take from a pack
+    that is just full by its largest draw, so a plan on that edge has no probe) is tried on
+    these. Each is a different problem, so a level solved on one is priced against a plan
+    solved on that same problem, never against the plan of another rung.
+    """
+    return tuple(
+        rung
+        for rung in (reserve_fallback(problem), uncommitted_fallback(problem))
+        if rung is not None
+    )
+
+
 def solve_flexible_load(
     problem: Problem,
     request: FlexibleLoadRequest,
@@ -654,8 +677,9 @@ def _gate_forced_spill(
 
     `spill_open` opens the slot's forced spill: the pack cannot take the slot's need at
     its start (`spill_gate`). With minimum mode durations a CURTAIL run under way also
-    keeps the next slot open (`_relay_forced_spill`): CURTAIL charges nothing, so the pack
-    drifts below the gate by its standby loss while the inverter throttles. The gate is
+    keeps the next slot open (`_relay_forced_spill`): CURTAIL discharges nothing, so the pack
+    drifts below the gate by its standby loss at most while the inverter throttles (a row
+    beyond the pack may charge: it only rises). The gate is
     the strictest the flexible load allows, so what the model plans the certificate
     (written with the load realised) accepts.
     Returns the slot's gate for the relay, or None where the slot has no need or is shut.
@@ -683,7 +707,7 @@ def _gate_forced_spill(
         previous_energy_index is not None and gate > model.lower[previous_energy_index]
     )
     if gated or flexible_load:
-        model.presolve_unsound = True
+        model.second_attempt = True
         spill.binary = spill_open = v["spill_open"] = model.variable(binary=True)
         model.constrain({v["curt"]: 1, spill_open: -upper}, -np.inf, 0)
     if gated:
@@ -722,8 +746,8 @@ def _gate_forced_spill(
 def _relay_forced_spill(model, vectors, spills) -> None:
     """Keep a CURTAIL run's spill open while the run lasts (minimum mode duration).
 
-    CURTAIL charges and discharges nothing, so the pack of a run that began at the gate
-    only drifts by its standby loss: the next slot's gate row takes the run's mode as the
+    CURTAIL discharges nothing (it charges only the PV beyond the pack), so the pack of a
+    run that began at the gate only drifts below it by its standby loss: the next slot's gate row takes the run's mode as the
     reason to stay open, and CURTAIL itself is allowed only where the gate is open. A
     chain rooted that way ends at a slot whose pack was at the gate, which is what the
     certificate reads (`_validate_solution`). Without minimum durations the pack charges

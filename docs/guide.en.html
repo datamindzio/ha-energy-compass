@@ -1154,7 +1154,7 @@ hours: <code>activity = minimum_mode_power_kw × h</code> (default 0.1 kW) and
 <tr>
 <td><code>CURTAIL</code></td>
 <td>Curtail PV</td>
-<td>Curtailment ≥ activity, no battery activity.</td>
+<td>Curtailment ≥ activity, no discharge; the pack charges beside it only where the PV above what the site passes is more than the charge power takes (below).</td>
 <td><code>allow_curtailment</code> on; without it, only the PV that the export cap or the inverter rating cannot pass and the pack has no room for (a forced spill, below).</td>
 </tr>
 </tbody>
@@ -1229,8 +1229,7 @@ directly by any other available mode.</p>
   A pack exactly at the reserve (the inverter's usual
   empty state) is depleted in this sense, not a safety exception: a carried <code>SELF_CONSUME</code> there is
   released and charges like one 0.01 kWh above the reserve. Where that released <code>HOLD</code> has no plan
-  (the charge power cannot take the PV above the export cap, and charging and curtailing in one
-  interval is not modelled) the house is still never left without one. The plan is the first of
+  (a commitment no plan can keep) the house is still never left without one. The plan is the first of
   these that has a solution, each tried only when the one before has none and all within the
   recalculation's one time budget: the release; the commitment's own <code>HOLD</code> with its clock, as the
   safety exception below, which curtails where curtailment is allowed; the plan without the
@@ -1265,8 +1264,8 @@ directly by any other available mode.</p>
   controller runs its <code>HOLD</code> profile). The gate is the room of the pack: the interval starts at or
   above the ceiling less what the pack would have to absorb, so a pack with a little room that
   cannot take the surplus spills too, and a pack that can take it never does, whatever the sell
-  price. With a minimum duration a <code>CURTAIL</code> run keeps the next interval's gate open (it charges
-  nothing, so the pack only drifts down by its standby loss), a <code>CHARGE_PV</code> or <code>SELF_CONSUME</code> run
+  price. With a minimum duration a <code>CURTAIL</code> run keeps the next interval's gate open (it discharges
+  nothing, so the pack only drifts down by its standby loss, or rises where the row charges), a <code>CHARGE_PV</code> or <code>SELF_CONSUME</code> run
   may end in <code>CURTAIL</code> when the pack fills inside it (or in <code>HOLD</code> when the PV it had to take is
   over as well), and room left below the gate stays empty during a <code>CURTAIL</code> interval until the
   next replanning reads the real state of charge. A <code>CURTAIL</code> run carried into the next plan
@@ -1304,6 +1303,19 @@ directly by any other available mode.</p>
   <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment has no clock of its own and is not taken over. A
   flexible-load probe counts: its load is part of what the site passes, so the takeover is offered
   only for the probe loads that leave PV above the cap.</li>
+<li><strong><code>CURTAIL</code> charges what the pack can take.</strong> When the PV above what the site passes (above the
+  export cap after the house, or above the inverter rating) is more than the pack takes by its charge
+  power in one interval, neither <code>CHARGE_PV</code> (which curtails nothing) nor a <code>CURTAIL</code> that charged
+  nothing could hold it; the inverter charges at the charge power and curtails the rest, and so does
+  the plan: the interval is <code>CURTAIL</code>, with the charge between zero and the PV left after the house.
+  What the pack takes there is PV only: a <code>CURTAIL</code> interval that charges imports nothing, not even for the house.
+  Where the pack is at the reserve under a carried <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment (a sunrise
+  on a zero-export site with a 1 kW pack and 3.6 kW of PV) this is the plan itself, not a fallback.
+  In a carried commitment <code>CURTAIL</code> is offered in such an interval whatever the pack held before;
+  with a flexible-load probe, only for the probe loads that leave PV beyond the pack. With
+  <code>allow_curtailment</code> off such an interval is planned only as a forced spill, where the pack has
+  less room than the PV the site cannot pass: the <code>CURTAIL</code> interval then charges what the pack
+  takes and spills the rest. A pack with room for that PV still has no plan there.</li>
 <li><strong>PV-follow group:</strong> <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.</li>
@@ -1728,6 +1740,14 @@ than guessing.</p>
 </tbody>
 </table></section>
 <p>Groups: <code>small</code> (3/5 kWh), <code>medium</code> (10/15 kWh), <code>large</code> (20 kWh).</p>
+<p>A block that has no solution on the problem the plan was solved for is tried again on the later rungs of
+the plan's own ladder (the commitment's <code>HOLD</code>, then the plan without the commitment), each against the plan
+of that rung, so a level is never priced against a plan of another problem. It is only a carried
+<code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment whose plan sits on the edge of a full pack that needs this. Two
+neighbouring levels solved on different rungs have no block cost between them, and a level on another
+rung than the first (anchor) level is not judged against the anchor's allowed price: both are <code>UNKNOWN</code>.
+A level is published with the reason that ended it: <code>infeasible</code> only if every rung it reached had no
+solution, while a timeout or another solver error ends it at once as that error.</p>
 <h2 id="dispatch-strategies">Dispatch strategies</h2>
 <p><code>select.&lt;name&gt;_strategy</code> chooses which objective bundle the solver uses. Every strategy keeps all
 hard physical constraints; strategies change only <strong>planning weights</strong> and a small set of
@@ -2620,7 +2640,10 @@ charge 0 A, and there is at most one per percentage point of SOC movement; witho
 inverter's own draw and <code>HOLD</code> tops it up from the grid, a cycle of hours. <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> need no
 hysteresis, because below 100 % they write the same values. <code>CHARGE_GRID</code> (it keeps <code>voltage_grid_charge_ceiling</code>
 and its 0 A charge current at 100 %), <code>CURTAIL</code>, the balance hold and <code>Capacity</code> mode behave as before. <code>CURTAIL</code> runs the <code>HOLD</code> profile with a warning, because the
-controller cannot limit PV.</p>
+controller cannot limit PV. That profile writes <code>hold_grid_current</code> (1 A by default) as the charge current and as the grid
+current, so a <code>CURTAIL</code> interval in which the plan charges the pack (PV the site cannot pass, <code>charge_kwh</code> above 0) charges
+at about 50 W on the inverter, and the planned end state of charge of that interval is not reached; the next
+recalculation reads the real state of charge and plans from it (follow-up T-076).</p>
 <p>Only battery modes listed in <code>commissioned_battery_modes</code> are controlled; any other mode (for example
 Voltage before its thresholds were proven) keeps the base profile. With Voltage allowed, a target
 outside 495–560 V is refused.</p>

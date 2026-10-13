@@ -1,7 +1,7 @@
 # ADR-0005: A full pack ends a carried PV-follow commitment in HOLD or CURTAIL, a released HOLD has no clock, and a CURTAIL run goes on through a PV gap
 
 Status: accepted
-Date: 2026-10-12 (amended 2026-10-13, T-037, T-047, T-050, T-057, T-058)
+Date: 2026-10-12 (amended 2026-10-13, T-037, T-047, T-050, T-057, T-058, T-064)
 Amends: [ADR-0004](0004-carried-lock-release-for-standby-loss.md) (the released `HOLD` clock)
 
 ## Context
@@ -133,7 +133,7 @@ Still `infeasible`, found by the rolling sweep and out of scope here:
   `CURTAIL` run.
 - A free plan whose horizon ends before the minimum duration of the run it needs; `preserve_initial` and a
   standby loss that make the terminal state of charge unreachable; `allow_curtailment = false` with PV above
-  the cap; a case where charging and curtailing in one interval would be needed to keep the state of charge.
+  the cap; a case where charging and curtailing in one interval would be needed to keep the state of charge (planned since T-064, below).
 
 ## Amendment (T-047): CURTAIL takes over a HOLD that cannot pass the PV
 
@@ -197,7 +197,7 @@ the same seeds; the sweep script is the same on both sides):
 Still `infeasible`, found by the same sweep and out of scope here (98 of 900): `allow_curtailment = false` with
 PV above the cap, `preserve_initial` whose terminal state of charge is out of reach, a carried
 `CHARGE_PV`/`SELF_CONSUME` with a pack that cannot take the PV above the cap by its charge power (charging and
-curtailing in one interval would be needed), and the `HOLD` released from a carried PV-follow commitment whose
+curtailing in one interval would be needed; planned since T-064, below), and the `HOLD` released from a carried PV-follow commitment whose
 pack is depleted (no clock of its own, so nothing for a `CURTAIL` to take over): PV above the cap inside the
 commitment's duration is infeasible for it, which is every sunrise on a zero-export site (planned since T-050,
 below).
@@ -312,7 +312,7 @@ cancelled as merged.
 
 Still `infeasible` and out of scope: the cases listed in the T-037 and T-047 amendments, in particular
 `allow_curtailment = false` with PV above the cap, a pack that cannot take the PV above the cap by its charge
-power (charging and curtailing in one interval would be needed), and a terminal state of charge out of reach.
+power (charging and curtailing in one interval would be needed; planned since T-064), and a terminal state of charge out of reach.
 
 ## Amendment (T-057): a released HOLD goes back where the site cannot pass the PV
 
@@ -437,7 +437,36 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
     the coordinator stores nothing for an exception; the benchmark's `commit` calls the coordinator's own
     `_commit_battery_direction` with the commitment of the problem as built. With `allow_curtailment` false and no plan on any rung the problem stays infeasible, as
     before. Charging at the charge power and curtailing the rest in one interval is the proper plan for rung 2's
-    class (T-064; forced spill with room: T-066; the unmoded CHARGE_PV rule: T-041).
+    class: planned since T-064 (amendment below), which makes rung 2 rarer, not the safety exception only (the
+    T-069 amendment measures what is left); forced spill with room is T-066, the unmoded CHARGE_PV rule T-041.
+26. **A flexible-load level takes the ladder too (T-067).** The base plan of the draw above is `CHARGE_PV` five
+    times and then `CURTAIL`, the pack just full where the `CURTAIL` interval starts. `lock_full` (the pack at the next
+    interval's ceiling) is set in the probe's model with the largest draw the probe may make in that interval
+    (`extra`), which keeps the plan valid for any load up to it; the realised load the certificate reads is
+    smaller, so a probe of 0.25 kWh at 2 kW has no solution anywhere in the horizon, while 0.05 kWh at 0.5 kW, 0.5 kWh at 2 kW, a pack
+    of 4 or 6 kWh or a commitment of 75 minutes each have one. Making the ceiling follow the realised load needs a
+    disjunction per interval (the ceiling is concave in the load, so no single linear bound is both sound and as
+    loose as the constant), so the model is left as it is, and `consumption.analyze_flexible_loads` takes the ladder instead: a level that is `infeasible`
+    on the problem the plan was solved for is solved on `optimize.later_rungs(problem)` in order (`reserve_fallback`,
+    then `uncommitted_fallback`; a problem that is already rung 2 has only the last), against the plan of that
+    rung (solved once, only when a level needs it, with the probe time limit). A level is priced only against
+    a plan of its own problem; the block between two levels on different rungs is `None` and the second is
+    `UNKNOWN`, and so is a level on another rung than the anchor (the first level), which is not judged against the
+    anchor's allowed price. A level is published with the reason that ended it: `infeasible` only where every rung it
+    reached had no solution (a rung whose own base plan is `infeasible` is skipped); a timeout or any other solver
+    error, on the probe or on the base plan of a rung, ends it at once as that error. The rung's base plan and the
+    probe each get what is left of the total limit, and a base plan that returns after it leaves no probe to start
+    (`timeout`; the first version passed the probe a limit of zero, an `InputError` that dropped the plan in the
+    coordinator, found in review). `benchmarks/curtail_sweep.py` plans a probe the same way, and a rung only when its
+    base plan has a solution. Measured with `deprobe` seeds 11, 22, 33, 44 × 300, this branch's
+    `benchmarks/curtail_sweep.py` run on every tree so that the draws and the need of a base plan are the same. Head
+    is this branch merged with main `fde1cc5`. Against main `fde1cc5`: 0 newly infeasible, and 0, 0, 1 and 1 newly
+    planned (seed 33 draw 230 and seed 44 draw 10, both priced on rung 1). Against `38d560f` (T-052, T-057 and T-065
+    merged, solved once, as for point 24's table): 0 newly infeasible (main `fde1cc5` without this change: 1, seed
+    44 draw 10), 105, 101, 107 and 121 newly planned. The `curtail_sweep.py` of `38d560f` itself probes without
+    a base plan, so a comparison made with it counts 14 newly infeasible draws (5, 5, 4 and 0): every one has
+    `allow_curtailment` false and no base plan on `38d560f` or on head (T-041, T-064 and T-066 as below), and the
+    runtime never probes a problem without a plan.
 
 Measured with `benchmarks/curtail_sweep.py` (its `run`/`roll` solve through `solve_released` where the tree has
 it; `resrun`/`resroll` draw the pack exactly at the reserve with a `SELF_CONSUME` commitment carried 0 to 45
@@ -471,7 +500,7 @@ main `0778580`, before T-065 landed). All 17 fail on a carried `CHARGE_PV` insid
 commitment and every one has a plan with the terminal value instead of the requirement: the part of rung 3's
 class T-065 left open (rung 3 is its answer; T-070 measured what is left, ADR-0004). The one newly infeasible `deprobe` draw (seed 44, draw 10) is the base plan solving on
 rung 1 while the 0.25 kWh probe on that same problem has no solution (it has one on rungs 2 and 3): one consumption
-level reports `infeasible`, the plan is untouched; it is T-067. Every draw with no plan on any rung (79 of 1200
+level reports `infeasible`, the plan is untouched; closed by point 26 (T-067). Every draw with no plan on any rung (79 of 1200
 `deprun`, 55 `resrun`, 83 `run`) has `allow_curtailment` false: T-041, T-064 and T-066, which main has as well;
 the 575 `fullrun` draws without a plan have none on main either.
 
@@ -485,7 +514,8 @@ boundaries of `resroll`, 12 are a rung-3 row (the plan before kept the commitmen
 `CHARGE_PV`, then `CURTAIL`): the rung-2 plan publishes the commitment's `HOLD`/`CURTAIL` to its deadline and the
 next boundary can release after all, so the pack takes the PV where the plan before said `CURTAIL`. More plans
 hold up than before (the "no longer" counts), but a rung-2 plan is not a promise for its later intervals, and the
-mode can change inside the minimum duration there. Whether to carry rung 2 across the boundary is T-069.
+mode can change inside the minimum duration there. Whether to carry rung 2 across the boundary was T-069: it is
+not carried (the amendment below, points 26 to 28).
 
 On draws that main also plans, a plan's cost is not comparable between the readings (`deprun` 21 higher, 20 lower;
 `resrun` 287 higher, 250 lower): the commitment now binds, so the pack takes the surplus where main idled in a
@@ -504,3 +534,260 @@ rest rung 1; over `resroll` (7791 rows) rung 2 1225 rows (1091 `CURTAIL`, 134 `H
 in the charge-power class) and rung 3 19 rows (16 `HOLD`, 2 `CURTAIL`, 1 `CHARGE_GRID`; 45 before T-065). `roll` and `negroll` use
 rung 3 for 39 and 45 rows, `fullroll` for one, and rung 2 never. The rolls carry the commitment the coordinator
 holds (that of the problem as built, also after rung 3), so the traces are what ships.
+
+## Amendment (T-069): a rung-2 plan is not carried across the boundary
+
+Status: decided in this amendment. No engine or coordinator change; one test pins it. Measured on main `5baf226`
+(T-058 merged). The numbers of the T-058 amendment above are this main's against its engine before T-058: `git diff
+87e8410 5baf226 -- custom_components benchmarks` is empty, and so is `547bf7f..40886b4` (the first parent of the
+T-058 merge) for those paths. T-064 re-measured it on its head (main `fde1cc5` with the engine of `3679099`, below the
+first table): rung 2 is still reached after T-064, and the decision stands on the new numbers.
+
+A rung-2 plan (point 24) publishes the commitment's `HOLD`/`CURTAIL` up to the commitment's deadline. The ladder is
+decided afresh at every boundary, so at the next one the release (rung 1) may have a plan again and the first
+interval is `CHARGE_PV` or the released `HOLD` where the plan before said `CURTAIL`: `resroll` seed 11, draw 15, a
+`SELF_CONSUME` carried since 10:45 with a 60 minute duration executes `CURTAIL`, `CURTAIL` on rung 2 at 11:00 and
+11:15, `CHARGE_PV` (0.18 kWh into the pack) at 11:30 and `CURTAIL` from 11:45. The question the T-058 review left:
+accept that, or store that rung 2 was taken and keep its `HOLD` to the deadline.
+
+26. **Rung 2 is decided afresh at every boundary and nothing is stored for it.** It is the safety exception
+    `observed_soc_minimum`, and every safety exception is read from the observed state at each recalculation: the
+    coordinator stores nothing for it (`_commit_battery_direction` returns before it touches the commitment), so
+    the next boundary builds the problem of point 23 and plans the release first. Where the release has a plan it is
+    the plan. A rung-2 plan is a promise for its first interval only; its later rows up to the deadline hold while
+    the release still has no plan. The published plan says so: `dispatch_policy.safety_exception` is set on a rung-2
+    plan and on no rung-1 plan of a carried `SELF_CONSUME`.
+27. **The `CHARGE_PV` after it is the commitment going on, not a new run** (points 14 and 17). The exception paused
+    the commitment and never moved its clock; `CHARGE_PV` and `SELF_CONSUME` are one PV-follow commitment, a
+    depleted pack may leave it and re-enter it more than once, and the deadline stays the commitment's. What the
+    minimum duration does not give here is a fixed inverter mode inside it: the executed row can go `CURTAIL`,
+    `CHARGE_PV`, `CURTAIL`. That is accepted, for the reasons of point 28.
+28. **Rejected: carrying rung 2 to the deadline.** Three forms, one executed result:
+    1. *The coordinator stores that the commitment is held as `HOLD` to its deadline* and the next problem is built
+       with `initial_dispatch_reserve_hold` set (option (b) of T-069). A new key in the stored commitment, read by
+       `restore_commitment`, `build_problem` and `validate_problem` the way `released` is (point 16) and by the
+       benchmark's `follow`, for one of the three exceptions; the others stay unstored.
+    2. *Rung 2 tried first when the plan before was a rung-2 plan* (the ladder reordered inside the engine). The
+       engine has no memory, so it needs the same stored fact as 1.
+    3. *Deciding after T-064.* T-064 (charge and curtail in one interval) was expected to remove most of rung 2's
+       class. It took `resroll` from 1225 rung-2 rows to 308 (table after T-064, below) and not the rest, which is
+       a release problem with no plan under the commitment's minimum duration, so the rule for what is left does
+       not depend on T-064.
+
+    Why not, for 1 and 2: (i) the owner's rule (T-060) is that the house is never left without a plan, and rung 2
+    exists only for the boundary where no other plan does. Kept past that boundary it is `CURTAIL` beside an empty
+    pack where a charging plan exists, the outcome points 13 and 23 were written against. (ii) It does not make the
+    rung-2 plan a promise either: the carried `HOLD` is re-planned too, and the contradicted boundaries move rather
+    than go (below). (iii) The measurement: a small gain in boundaries for PV that is curtailed instead of stored.
+
+Measured with a throwaway roll on `benchmarks/curtail_sweep.py` (`carry_rung2.py`, kept with the task's artifacts,
+not in the repository): the same draws rolled twice, `ship` the benchmark's own roll and `carry` planning
+`reserve_fallback` first at a boundary whose plan before was a rung-2 plan, while the coordinator holds the same
+commitment and `reserve_fallback` still applies (pack at the reserve, before the deadline), the ordinary ladder
+where that has no plan. Before T-064: seeds 11, 22, 33, 44 × 300 on main `5baf226`; `ship` reproduces the benchmark's
+`resroll` and `deproll` rows and `changed` lists of the T-058 sweep on 1200 of 1200 draws each. These are absolute counts on this
+main, not the "newly against the engine before T-058" counts of the amendment above (`roll`, `negroll` and
+`fullroll` never use rung 2, so both rolls are the same there):
+
+| | `resroll` ship | `resroll` carry | `deproll` ship | `deproll` carry |
+| --- | --- | --- | --- | --- |
+| Draws followed to the end (of 1200) | 1145 | 1145 | 1121 | 1121 |
+| Rung-2 rows (of 7791 / 7701) | 1225 | 1519 | 228 | 236 |
+| Boundaries contradicted, all rungs | 238 | 201 | 81 | 75 |
+| – rung 1 after rung 1 (no fallback involved) | 129 | 122 | 71 | 71 |
+| – directly after a rung-2 row | 93 | 64 | 9 | 3 |
+| Draws with a contradicted boundary | 210 | 179 | 73 | 67 |
+| Executed mode changes | 1803 | 1733 | 1514 | 1504 |
+| Charged into the pack, kWh | 880.7 | 837.1 | 571.9 | 567.7 |
+| Curtailed, kWh | 2155.6 | 2187.6 | 4311.7 | 4315.5 |
+| Exported, kWh | 1313.2 | 1324.9 | 846.8 | 847.1 |
+
+In `resroll`, the generator aimed at the reserve (374 of 1200 draws use rung 2), 1174 boundaries follow a rung-2
+row: 851 are rung 2 again and 323 are rung 1. Of the 323, 200 are at or after the commitment's deadline, where the
+exception is over in either reading (186 as the plan before promised). 123 leave rung 2 before the deadline, the
+class of this task: 53 are the `HOLD` the plan before promised, 55 are `CHARGE_PV` and 15 the released `HOLD` where
+it promised `CURTAIL`. So 70 of 1174 boundaries after a rung-2 row (6 %) are contradicted inside the minimum
+duration; `deproll` has 7 of 214, all `CHARGE_PV`. Over half of all contradicted boundaries involve no fallback at
+all (129 of 238, 71 of 81): a plan re-optimised over a horizon one interval shorter, as on main before T-058.
+
+Carrying rung 2 changes the executed trace in 63 `resroll` draws (7 `deproll`). It has fewer contradicted boundaries
+in 37 of them, more in 2 and as many in 24: of the 64 left directly after a rung-2 row, 42 are the carried plan
+itself going from the promised `CURTAIL` to `HOLD` (9 in `ship`) and 22 are rung-1 plans at or after the deadline. It
+executes 70 fewer mode changes of 1803 (4 %). For that the pack takes 43.6 kWh less in those 63 draws (it ends the
+roll lower in 53 and higher in 1, 40.3 kWh in all), 32.0 kWh more PV is curtailed and 11.6 kWh more exported;
+`CHARGE_PV` rows 1997 → 1915, `CURTAIL` 2574 → 2633. No draw gains or loses a plan. In the example above `carry`
+executes `CURTAIL` eight times and the pack ends the roll 0.15 kWh lower.
+
+After T-064, the same roll on this branch: main `fde1cc5` with the engine of `3679099`, seeds 11, 22, 33, 44 × 300,
+`carry_rung2.py` unchanged; `ship` reproduces the benchmark's `resroll` and `deproll` rows and `changed` lists of that
+head on 1200 of 1200 draws each. Main moved between the two tables (`5baf226` to `fde1cc5`, T-063 among it) and T-064
+added the charging `CURTAIL`, so the tables are compared as two dated measurements, not as a one-change difference:
+
+| | `resroll` ship | `resroll` carry | `deproll` ship | `deproll` carry |
+| --- | --- | --- | --- | --- |
+| Draws followed to the end (of 1200) | 1148 | 1148 | 1130 | 1130 |
+| Rung-2 rows (of 7814 / 7772) | 308 | 545 | 32 | 43 |
+| Boundaries contradicted, all rungs | 219 | 178 | 70 | 63 |
+| – rung 1 after rung 1 (no fallback involved) | 122 | 116 | 58 | 58 |
+| – directly after a rung-2 row | 84 | 49 | 11 | 4 |
+| – rung 3 after rung 1 | 13 | 13 | 1 | 1 |
+| Draws with a contradicted boundary | 199 | 163 | 63 | 56 |
+| Executed mode changes | 1877 | 1794 | 1693 | 1681 |
+| Charged into the pack, kWh | 1190.3 | 1148.3 | 1068.7 | 1064.4 |
+| Curtailed, kWh | 1862.6 | 1894.9 | 3881.2 | 3885.0 |
+| Exported, kWh | 1312.2 | 1321.9 | 826.7 | 827.1 |
+
+Rung 2 is still reached after T-064, and the sentence of the first measurement that its remedy is T-064 is withdrawn.
+124 of 1200 `resroll` draws (374 before) have a rung-2 row, 308 rows (1225 before), and 11 `deproll` draws, 32 rows
+(228). T-064 took the rows of the class it closes, a pack that cannot take the PV beyond the cap by its charge power.
+What stays on rung 2 is the commitment's `HOLD` where the release problem has no plan with the commitment's minimum
+duration: of the 90 `resrun` draws (of 900) on rung 2, all 90 plan when the minimum duration is dropped (63 are at 120
+minutes, 23 at 60 and 4 at 30), none plans with a `value` terminal rule in place of `preserve_initial` (44 of them have
+it) and curtailment is allowed in all (`why2.py`).
+
+In `resroll`, 306 boundaries follow a rung-2 row (1174 before): 184 are rung 2 again, 15 are rung 3 and 107 are rung 1,
+every one of them before the commitment's deadline (before T-064, 200 of the 323 were at or after it). Of the 107, 80
+are contradicted inside the minimum duration: 63 are `CURTAIL` promised and `CHARGE_PV` executed, 13 `CURTAIL` and
+`HOLD`, 1 `CURTAIL` and `SELF_CONSUME`, 3 `HOLD` and `SELF_CONSUME`; 27 are the `HOLD` that was promised
+(`leave.py`). So 80 of 306 boundaries after a rung-2 row (26 %) are contradicted, against 70 of 1174 (6 %) before
+T-064: the count did not go down, the denominator did. `deproll` has 10 of 32 (7 of 214 before), all `CURTAIL`
+promised and `CHARGE_PV` executed. Most contradicted boundaries still involve no rung-2 row before them (135 of 219
+in `resroll`, 59 of 70 in `deproll`).
+
+Carrying rung 2 changes the executed trace in 59 `resroll` draws (7 `deproll`). It has fewer contradicted boundaries
+in 39 of them and as many in 20, none with more: of the 49 left directly after a rung-2 row, 28 are the carried plan
+itself going from the promised `CURTAIL` to `HOLD` (3 in `ship`). It executes 83 fewer mode changes of 1877 (4 %). For
+that the pack takes 41.0 kWh less in those 59 draws (it ends the roll lower in 52 and as high in 7: 36.9 kWh in all),
+31.2 kWh more PV is curtailed and 9.7 kWh more exported; `CHARGE_PV` rows 2048 → 1975, `CURTAIL` 2571 → 2626. The cost
+of the executed flows is lower with carry in 50 of the 59 draws and higher in 8 (−313.3 against −310.8 over the 1148
+draws, 0.8 %), and it does not value the 36.9 kWh the packs hold less at the end of the roll. No draw gains or
+loses a plan. The decision of points 26 to 28 stands on these numbers: reasons (i) and (ii) do not depend on them,
+and (iii) is the same trade as before, a fifth of the contradicted boundaries for PV curtailed instead of stored.
+
+Consequences:
+
+- A rung-2 plan's rows after the first are the plan only while the release has none. A consumer that needs to know
+  reads `dispatch_policy.safety_exception` (`observed_soc_minimum`, `interrupted_mode` `SELF_CONSUME`).
+- The executed mode can change at the boundary after a rung-2 row inside the commitment's minimum duration, and go
+  back to `CURTAIL` one interval later. The model's gap (no plan that charges at the charge power and curtails the
+  rest) was closed by T-064 and the contradicted boundaries stayed (80 of 306 after a rung-2 row, table after T-064):
+  the rung-2 rows that remain are those of a commitment the release cannot keep with its minimum duration. The
+  remedy is not a longer `CURTAIL` either; it is open and not decided here (T-078).
+- `tests/test_curtail_dwell.py::test_the_commitments_hold_is_not_carried_to_the_next_boundary` pins it at the
+  runtime and the coordinator: after a rung-2 plan the stored commitment is unchanged and the next recalculation
+  plans the release, with no exception reported once it has a plan.
+- No guide change: the behaviour is that of the T-058 amendment, and the guides already describe the ladder per
+  plan ("the first of these that has a solution").
+
+## Amendment (T-064): a CURTAIL interval charges the pack and curtails the rest
+
+Status: implemented and swept on T-064. Measured against main `fde1cc5` (T-069 and T-063 merged on top of T-041), with
+this branch's engine at `3679099`; the commits after it change documents and tests only. Main `f7f9ae1` (T-067, T-072)
+was merged afterwards; the tables below were not re-swept, and `probe` and `deprobe` seed 11 × 300 were re-run on the
+merge against main `f7f9ae1` in review (0 newly infeasible, 0 new solver failure). It closes the class that the T-037,
+T-047 and T-058 amendments list as out of scope: a pack whose charge power cannot take the PV above what the site
+passes.
+
+The mode rules gave `CHARGE_PV` the pack's whole surplus and no curtailment, and `CURTAIL` no charge, so an
+interval with more PV above the export cap (or the inverter rating) than `charge_kw × h` had no mode at all: the
+pack could not take it in `CHARGE_PV`, and `CURTAIL` could not charge. The inverter does both at once. The released
+`HOLD` of a carried `SELF_CONSUME` at the reserve with `grid_export_kw = 0` and a 1 kW pack beside 3.6 kW of PV was
+the case (T-058 planned the commitment's `HOLD` with `CURTAIL`, rung 2).
+
+29. **A `CURTAIL` row may charge, and what it charges is PV.** `CURTAIL` keeps its discharge at zero and its
+    curtailment of at least the activity, but the charge is free between zero and the PV left after the house and
+    the curtailment (`validate_modes`: `0 <= charge <= max(PV - curtailment - load, 0)`, plus the solver's noise). A
+    row that charges and curtails reads `CURTAIL` (the classifier gives it precedence), as a row that only curtails
+    always did. A charging row takes no grid energy, for the pack or beside it: where the direction flag says charge,
+    `grid_load + grid_battery <= cap × (2 - CURTAIL - battery_mode)` is zero, so a plan with a negative buy price and
+    grid charging allowed does not import into a `CURTAIL` row (the flag could otherwise stand for a grid-fed house
+    with the PV going to the pack, one flow as good as the other); the validator reads the same bound, so a
+    `CURTAIL` row that charges from the grid is not a valid mode. The rows are added only for an interval where the PV
+    beyond what the pack takes (`curtail_need` less `charge_kw × h`) is positive, so a problem without such an
+    interval has the same model as before (`tests/test_strategy_golden.py` pins the rows of the default strategy). A
+    flexible-load probe takes its load first: the charge from the PV it leaves is bounded by `bc + flex_load <=
+    surplus`, one `curtail_charge` binary per interval. Pinned by `tests/test_curtail_dwell.py`
+    (`test_a_curtail_row_charges_only_from_the_pv_left_after_the_house`,
+    `test_a_curtail_row_that_charges_from_the_grid_is_not_valid`).
+30. **PV beyond the pack is a reason to curtail in a carried commitment.** `CURTAIL` is offered in a committed
+    interval after a full pack (point 11) and where a released `HOLD` returns (point 13). It is also offered
+    where the pack cannot take the PV above what the site passes by its charge power, whatever the pack held
+    before: `CHARGE_PV` has no flow in the interval, so there is nothing to wait for. Only for a `CHARGE_PV`/
+    `SELF_CONSUME` commitment, and for a probe only for the loads below what leaves the PV beyond the pack
+    (`_open_beyond`). A `HOLD` that lasts the commitment still has no flow for PV above the cap, so the
+    interval is `CURTAIL`; the T-047 takeover applies as before. The validator reads such a `CURTAIL` as legal
+    (`_beyond_the_pack`); it reads the realised slot, the probe load already in it, so it is looser than the model's
+    offer by the probe margin of 1e-5 kWh only.
+31. **The rungs of point 24 are rarer.** Rung 2 (the commitment's own `HOLD`) serves the observed-SoC safety
+    exception and the releases the minimum duration does not let the release problem keep (below); rung 1 plans the
+    released `HOLD` of the sunrise on a pack that cannot take the PV, and rung 3 stays for the commitments no plan
+    can keep (T-070 class).
+
+`allow_curtailment = false` with PV above the cap and above what the pack takes by its charge power is planned only
+as a forced spill (T-041), that is where the pack cannot take the need by its room and the gate is open. Point 29
+holds on any row where `CURTAIL` can be chosen, so that row now charges what the pack takes and spills the rest,
+where it spilled everything before: a site that cannot curtail is changed by this amendment as well. In a reviewer's
+draw (bell-shaped days rolled to the end, seed 81 × 150, 64 of them with `allow_curtailment` off, this branch merged
+with main `f7f9ae1` against main `f7f9ae1`) 22 of those plans have a charging `CURTAIL` row, none imports in it, 21
+are cheaper, 1 is newly planned and none is newly infeasible; `tests/test_forced_spill.py` pins the row. A pack with
+room for the need still has no plan there (point 24 end): no spill is forced and nothing else can take the surplus.
+What the house does then (report over-capacity, throttle in the plan) is an owner decision, tracked in T-066 with the
+forced-spill cases.
+
+The Deye controller is not changed here, and it does not carry out the charge of such a row: `CURTAIL` runs the `HOLD`
+profile, whose maximum charge current and grid current are both `hold_grid_current` (1 A by default, about 50 W;
+`controller_profile.py`, the profiles table of the guide), with the planned end state of charge rounded down as the
+target. In a `CURTAIL` interval that charges, the pack takes about 50 W on the inverter where the plan has it take up
+to the charge power, so the end state of charge the plan publishes is not reached there and the `SELF_CONSUME` it
+pays for later starts lower; the next recalculation reads the real state of charge and plans from it. What the
+controller should write for a charging `CURTAIL` row (the `CHARGE_PV` charge cap without a grid direction is the
+candidate) is T-076, filed from the review of this task; the frozen blueprint and its goldens stay as they are. Until
+then the plan is right for the model and the pack on the inverter is lower than it says.
+
+Measured with `benchmarks/curtail_sweep.py`, seeds 11, 22, 33 × 300 = 900 draws per kind, this branch (engine
+`3679099`, main `fde1cc5` merged in) against main `fde1cc5`, both solved through `solve_released`. Main's tree was
+checked identical to `git archive fde1cc5` for `custom_components` and `benchmarks`; the draws of the compared files
+are the same on both trees:
+
+| Kind | Planned, main → head | Newly infeasible | Newly planned |
+| --- | --- | --- | --- |
+| `run` | 893 → 893 | 0 | 0 |
+| `negrun` | 889 → 891 | 0 | 2 |
+| `probe` | 870 → 879 | 0 | 9 |
+| `deprun` | 854 → 854 | 0 | 0 |
+| `deprobe` | 830 → 830 | 0 | 0 |
+| `resrun` | 863 → 863 | 0 | 0 |
+| `fullrun` | 872 → 872 | 0 | 0 |
+| `roll` | 893 → 893 | 0 | 0 |
+| `negroll` | 889 → 891 | 0 | 2 |
+| `deproll` | 854 → 854 | 0 | 0 |
+| `resroll` | 863 → 863 | 0 | 0 |
+| `fullroll` | 835 → 835 | 0 | 0 |
+
+No draw is newly infeasible, newly infeasible while followed, or a new solver failure, and the rolled kinds' first
+failing boundary never moves earlier (`rollcompare`: 0 in all five kinds; two `negroll` draws that main's roll could
+not follow to the end are followed). Draws with a boundary where the next plan contradicts the one before that main
+did not contradict (`rollcompare`: `roll`, `negroll`, `deproll`, `resroll`, `fullroll`): 10, 10, 5, 21 and 3; draws
+where main's contradicted boundary is none on head: 5, 1, 16, 26 and 3.
+
+What changes is which rung plans a draw (`python benchmarks/curtail_sweep.py rungs <kind> <seed> <count>` prints the
+counts): the draws planned only on rung 3 (the commitment dropped) fall from 310 to 73 of the 900 `deprun` draws (310
+to 87 `deprobe`, 32 to 9 `run`, 30 to 10 `negrun`, 33 to 19 `probe`), and those on rung 2 (the commitment's own `HOLD`)
+from 38 to 10 (`deprun`; 33 to 9 `deprobe`; `resrun` 279 to 90); the others are planned by rung 1 now. Draws with no
+plan on any rung are the same on both trees: 46 of 900 `deprun`, 69 `deprobe`, 37 `resrun`, 28 `fullrun`. The
+objective is lower than main's in 144, 135, 128, 175, 174, 120 and 34 draws (`run`, `negrun`, `probe`, `deprun`,
+`deprobe`, `resrun`, `fullrun`): the pack takes what main curtailed. It is higher in 2, 1, 0, 69, 56, 15 and 0 draws,
+and each one of those 143 draws is one that main planned on rung 2 or 3 and head plans on rung 1: a plan that keeps
+the commitment costs more than one that leaves it.
+
+The scripts behind these numbers (`rung_list.py`, `why2.py`, `probe.py`, `cmp.py`, `carry_rung2.py`,
+`carry_rung2_analyse.py`, `leave.py`) are kept with the task's artifacts, not in the repository.
+
+A reviewer's probe, rerun on this head (`probe.py`: 300 bell-shaped days, seeds 71 and 72 × 150, a small charge power,
+rolled to the end): 135 plans contain a charging `CURTAIL` row, none imports in such a row and none charges where the
+PV is not beyond the pack; 0 newly infeasible, 0 solver failures, 150 of 150 followed to the end on both trees in
+both seeds.
+
+Still `infeasible`: `allow_curtailment = false` with PV above what the pack takes by its charge power while the pack
+has room for it (no forced spill; T-066), `preserve_initial`
+whose terminal state of charge is out of reach (T-065, T-070), and a carried commitment no plan can keep (rung 3).
