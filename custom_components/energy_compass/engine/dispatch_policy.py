@@ -34,6 +34,9 @@ IDLE_FLOWS = {
 }
 # Import this small is solver noise, not a plan.
 _IMPORT_TOLERANCE = 1e-5
+# HiGHS accepts each binary within 1e-6 and each row within 1e-6: a follow row written
+# with big-M `m` (`bc >= m * (x - full)`) leaves up to 1e-6 * (2m + 1) kWh short.
+_ROW_TOLERANCE = 1e-6
 _EMPTY_TOLERANCE = 1e-4
 # A bridge's realised probe stays this far below the activity that would open the slot.
 _PROBE_MARGIN = 1e-5
@@ -1124,9 +1127,14 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             model.constrain(holding, -np.inf, current_const)
 
 
+def _follow_tolerance(big_m: float) -> float:
+    """Import or export the noise of a follow row of bound `big_m` kWh may leave."""
+    return max(_IMPORT_TOLERANCE, _ROW_TOLERANCE * (2 * big_m + 1))
+
+
 def _check_load_following(problem: Problem, slot, flow, mode) -> None:
     """Reject import beside a partial discharge in a SELF_CONSUME interval."""
-    if mode != "SELF_CONSUME" or flow.grid_import_kwh <= _IMPORT_TOLERANCE:
+    if mode != "SELF_CONSUME":
         return
     hours = (
         slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
@@ -1135,9 +1143,13 @@ def _check_load_following(problem: Problem, slot, flow, mode) -> None:
         problem.battery.discharge_kw * hours,
         problem.site.inverter_kw * hours - slot.pv_kwh,
     )
+    # Bound of every row's M (docs/model.md): the power limit, or the net load below the slot's load.
+    tolerance = _follow_tolerance(max(power_limit, slot.load_kwh))
+    if flow.grid_import_kwh <= tolerance:
+        return
     reserve = problem.battery.capacity_kwh * problem.battery.minimum_soc_fraction
     if (
-        flow.discharge_kwh < power_limit - _IMPORT_TOLERANCE
+        flow.discharge_kwh < power_limit - tolerance
         and flow.end_soc_kwh > reserve + _EMPTY_TOLERANCE
     ):
         raise SolveError(
@@ -1148,16 +1160,20 @@ def _check_load_following(problem: Problem, slot, flow, mode) -> None:
 
 def _check_surplus_following(problem: Problem, slot, flow, mode, index) -> None:
     """Reject export beside a partial charge in a CHARGE_PV interval."""
-    if mode != "CHARGE_PV" or flow.grid_export_kwh <= _IMPORT_TOLERANCE:
+    if mode != "CHARGE_PV":
         return
     hours = _hours(slot)
+    # Bound of every row's M (docs/model.md): the charge limit, or the surplus below the slot's PV.
+    tolerance = _follow_tolerance(max(problem.battery.charge_kw * hours, slot.pv_kwh))
+    if flow.grid_export_kwh <= tolerance:
+        return
     ceiling = problem.battery.capacity_kwh * (
         1
         if index in problem.balance_lift_slots
         else problem.battery.maximum_soc_fraction
     )
     if (
-        flow.charge_kwh < problem.battery.charge_kw * hours - _IMPORT_TOLERANCE
+        flow.charge_kwh < problem.battery.charge_kw * hours - tolerance
         and flow.end_soc_kwh < ceiling - _EMPTY_TOLERANCE
     ):
         raise SolveError(

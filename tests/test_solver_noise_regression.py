@@ -13,6 +13,13 @@ noise the way the solver leaves it:
 - seed 133 (48 slots): HOLD with 2.8e-6 kWh of discharge, the same binary noise on
   `bd <= M * (DISCHARGE_GRID + SELF_CONSUME)`, which the classifier reads as SELF_CONSUME.
 
+One more case needs a battery above 4.5 kWh per slot (T-049):
+
+- seed 108 (48 slots) on a 30 kWh battery that takes 25 kWh per slot: a CHARGE_PV slot with
+  98.8 kWh of PV and 16.0 kWh of load took 24.999975 kWh, 2.5e-5 short of the limit (the
+  binary of `bc >= M * (x_CHARGE_PV - full)` at 1 - 1e-6 with M = 25), and exported the rest,
+  which the fixed 1e-5 tolerance of the follow check rejected as a partial charge.
+
 The solver-independent cases below put that noise on every flow every mode leaves at zero.
 """
 
@@ -31,7 +38,7 @@ from custom_components.energy_compass.engine.dispatch_policy import (
 )
 from custom_components.energy_compass.engine.machine_state import machine_state
 from custom_components.energy_compass.engine.mode_noise import settle_mode_noise
-from custom_components.energy_compass.engine.models import Flow, SolveError
+from custom_components.energy_compass.engine.models import Flow, SiteLimits, SolveError
 from custom_components.energy_compass.engine.optimize import solve
 
 CASES = {
@@ -79,6 +86,40 @@ def test_noisy_solution_publishes_a_plan_whose_rows_match_their_modes(case):
     plan = solve(problem, time_limit_s=20.0, accept_incumbent=True)
 
     assert len(plan.flows) == count
+    for slot, flow in zip(problem.slots, plan.flows, strict=True):
+        assert flow.dispatch_mode == machine_state(slot, flow)
+
+
+def big_battery_problem(seed, pv_scale, count, limit_kwh=25.0, capacity_kwh=30.0):
+    """A corpus problem on a site whose battery takes `limit_kwh` per slot, load scaled to match.
+
+    The benchmark battery moves 3.3 kWh per slot, where the noise of a follow row stays
+    under the 1e-5 kWh tolerance; at `limit_kwh` it does not.
+    """
+    problem = corpus_problem(seed, pv_scale, count)
+    battery = problem.battery
+    return replace(
+        problem,
+        slots=tuple(
+            replace(s, load_kwh=s.load_kwh * limit_kwh / 3.3) for s in problem.slots
+        ),
+        battery=replace(
+            battery,
+            capacity_kwh=capacity_kwh,
+            charge_kw=limit_kwh,
+            discharge_kw=limit_kwh,
+            initial_kwh=battery.initial_kwh * capacity_kwh / 13.5,
+        ),
+        site=SiteLimits(3 * limit_kwh, 3 * limit_kwh, 3 * limit_kwh, True),
+    )
+
+
+def test_charge_from_pv_on_a_battery_above_4_5_kwh_per_slot_publishes_a_plan():
+    problem = big_battery_problem(108, 21.794695277085804, 48)
+
+    plan = solve(problem, time_limit_s=20.0, accept_incumbent=True)
+
+    assert len(plan.flows) == 48
     for slot, flow in zip(problem.slots, plan.flows, strict=True):
         assert flow.dispatch_mode == machine_state(slot, flow)
 

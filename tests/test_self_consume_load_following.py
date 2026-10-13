@@ -164,6 +164,49 @@ def test_validator_rejects_partial_discharge_with_import():
     )
 
 
+@pytest.mark.parametrize("limit", [10, 25, 40])
+def test_validator_accepts_the_discharge_a_follow_row_leaves_short_by_its_noise(limit):
+    """T-049: `bd >= M * (x_SELF_CONSUME - empty)` is met within 1e-6 * (2M + 1), M the limit.
+
+    The shortfall is the most that row allows, above the fixed 1e-5 kWh the check used before.
+    """
+    problem = dispatch(((1, 0, 0, 99),), minutes=60, minimum_mode_minutes=60)
+    problem = replace(
+        problem,
+        site=replace(problem.site, inverter_kw=4 * limit, grid_import_kw=4 * limit),
+        battery=replace(
+            problem.battery,
+            capacity_kwh=10 * limit,
+            initial_kwh=10 * limit,
+            charge_kw=limit,
+            discharge_kw=limit,
+        ),
+    )
+    short = 0.99e-6 * (2 * limit + 1)
+    assert short > 1e-5
+    discharge = limit - short
+    flow = Flow(
+        99 - discharge,
+        0,
+        0,
+        discharge,
+        0,
+        10 * limit - discharge,
+        "discharge",
+        "SELF_CONSUME",
+    )
+
+    validate_modes(problem, (flow,))
+
+    # Twice the noise a row of this M leaves is a real partial discharge.
+    short = 1e-6 * (2 * 99 + 1) * 2
+    flow = replace(
+        flow, grid_import_kwh=99 - (limit - short), discharge_kwh=limit - short
+    )
+    with pytest.raises(SolveError, match="self-consume imports"):
+        validate_modes(problem, (flow,))
+
+
 def test_flexible_load_probe_stays_feasible_in_self_consume():
     problem = flat_night(slots=12)
     plan = solve_flexible_load(problem, FlexibleLoadRequest(1.0, 2.0))

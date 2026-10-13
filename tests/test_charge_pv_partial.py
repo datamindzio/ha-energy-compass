@@ -131,6 +131,51 @@ def test_validator_rejects_partial_charge_with_export():
     )
 
 
+def big_battery(pv, load, limit, **battery):
+    """One hourly slot, a battery taking `limit` kWh in it, a site that passes all of it."""
+    problem = dispatch(((1, 0, pv, load),), minutes=60, minimum_mode_minutes=60)
+    return replace(
+        problem,
+        site=replace(problem.site, inverter_kw=4 * limit, grid_export_kw=4 * limit),
+        battery=replace(
+            problem.battery,
+            capacity_kwh=10 * limit,
+            charge_kw=limit,
+            discharge_kw=limit,
+            **battery,
+        ),
+    )
+
+
+@pytest.mark.parametrize("limit", [10, 25, 40])
+def test_validator_accepts_the_charge_a_follow_row_leaves_short_by_its_noise(limit):
+    """T-049: `bc >= M * (x_CHARGE_PV - full)` is met within 1e-6 * (2M + 1), M the limit.
+
+    HiGHS took the CHARGE_PV binary at 1 - 1e-6 and charged 2.5e-5 kWh under the 25 kWh
+    limit of a real 48-slot problem (T-036 corpus, seed 108, pinned in
+    test_solver_noise_regression.py); the surplus beyond it is exported by the site
+    balance, which is no partial charge. The shortfall here is the most that row allows,
+    above the fixed 1e-5 kWh the check used before.
+    """
+    problem = big_battery(99, 16, limit)
+    short = 0.99e-6 * (2 * limit + 1)
+    assert short > 1e-5
+    charge = limit - short
+    flow = Flow(0, 83 - charge, charge, 0, 0, charge, "charge", "CHARGE_PV")
+
+    validate_modes(problem, (flow,))
+
+
+def test_validator_still_rejects_a_charge_short_by_more_than_the_noise_of_its_row():
+    problem = big_battery(99, 16, 25)
+    # 2 * 1e-6 * (2 * 99 + 1) is above the bound 1e-6 * (2M + 1) for M = 99.
+    charge = 25 - 1e-6 * (2 * 99 + 1) * 2
+    flow = Flow(0, 83 - charge, charge, 0, 0, charge, "charge", "CHARGE_PV")
+
+    with pytest.raises(SolveError, match="charge-from-PV exports"):
+        validate_modes(problem, (flow,))
+
+
 @pytest.mark.parametrize("left", [3, 2])
 @pytest.mark.parametrize("room", [0.3, 0.4])
 @pytest.mark.parametrize(
