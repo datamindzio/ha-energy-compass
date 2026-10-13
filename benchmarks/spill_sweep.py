@@ -45,7 +45,9 @@ def draws(kind, seed, count):
             out.append(sweep.run(make_off(problem, rng), request))
         return out
     if kind in ("roll", "negroll"):
-        return [sweep.roll(make(rng, kind == "negroll", moded=True)) for _ in range(count)]
+        return [
+            sweep.roll(make(rng, kind == "negroll", moded=True)) for _ in range(count)
+        ]
     return [sweep.run(make(rng, kind == "negrun")) for _ in range(count)]
 
 
