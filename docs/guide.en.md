@@ -683,7 +683,8 @@ Rules (defaults: 60 min, 0.1 kW):
   use, so the plan never pairs a partial charge with grid export: in a `CHARGE_PV` interval the
   battery takes the whole PV surplus, and export appears only once the charge is at its interval
   power limit or the battery has been filled to its upper bound. Otherwise the row is not
-  `CHARGE_PV`. Applies while `minimum_mode_minutes` is above 0. A carried
+  `CHARGE_PV`. The rule also holds with `minimum_mode_minutes = 0`: there are no modes then, and the
+  charge in any interval the flows label `CHARGE_PV` is bound the same way. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is held to the same rule. If the battery is full before it
   ends (the next interval could not take even the minimum activity above the upper bound), the
   rest of the commitment is `HOLD` with the surplus exported, or `CURTAIL` where the site cannot
@@ -699,6 +700,12 @@ Rules (defaults: 60 min, 0.1 kW):
   curtail in the same interval, so the pack counts as full for the next interval, which may be
   `HOLD` or `CURTAIL`, once it is within that interval's curtail need of the ceiling (the PV that
   must go to the pack or be curtailed, at least the minimum activity).
+  With `minimum_mode_minutes = 0` the rule costs solve time (see the table in
+  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget)), and one more
+  case has no plan: with grid export capped (or the inverter rated below the PV) and curtailment
+  (`allow_curtailment`) off, a pack that fills before the last surplus leaves that surplus nowhere
+  to go. The mode model has the same limit; curtailment on, or a higher export cap or inverter
+  rating, gives a plan.
 - **`CURTAIL` goes on through a PV gap.** A `CURTAIL` run lasts the minimum duration, and PV can
   drop inside it. A `HOLD` in an interval with PV below the minimum activity (`minimum_mode_power_kw × h`)
   inside that duration is the run going on, not a new `HOLD`: the inverter has nothing to curtail
@@ -738,7 +745,7 @@ Rules (defaults: 60 min, 0.1 kW):
 - **Strategy change (reset):** writing a new strategy drops the carried commitment for the next
   plan, which starts unlocked (see [strategy-switch release](#strategy-switch-release)).
 - Setting `minimum_mode_minutes = 0` disables duration and minimum-power rules; the
-  `SELF_CONSUME` load-following rule stays on.
+  `SELF_CONSUME` and `CHARGE_PV` load-following rules stay on.
 
 ### Policies that gate modes
 
@@ -936,8 +943,8 @@ So with `self_sufficiency` or `backup_ready` the consumption levels are unknown 
 interval already on the default 24 h horizon, and on a 48 h horizon no strategy completes its probes
 (with a 15-minute display interval 18–67 of 96 are known). At 48 h the base plan of these two
 strategies also runs into `solve_time_limit_s` and is published as `time_limited`.
-`minimum_mode_minutes = 0` does not lift the limit: at 24 h 13 of 24 (`self_sufficiency`) and 20 of 24
-(`backup_ready`) probes are known, which is still `short_coverage`. A slower host, such as a
+`minimum_mode_minutes = 0` does not lift the limit: at 24 h 1 of 24 (`self_sufficiency`) and 8 to 17
+of 24 (`backup_ready`) probes are known, which is still `short_coverage`. A slower host, such as a
 Raspberry Pi, reaches each limit at a shorter horizon.
 
 The [flexible energy depth](#flexible-energy-depth) is bound by the same two settings: each of its

@@ -320,12 +320,15 @@ def run_one(
     battery_export: bool,
     probes: int,
     balance: bool,
+    minimum_mode_minutes: float | None = None,
     accept_incumbent: bool = False,
     proof_limit_s: float | None = None,
 ) -> dict:
     problem = make_problem(
         slots, strategy=strategy, allow_battery_export=battery_export
     )
+    if minimum_mode_minutes is not None:
+        problem = replace(problem, minimum_mode_minutes=minimum_mode_minutes)
     if balance and problem.battery:
         windows = candidate_windows(
             problem.slots,
@@ -405,6 +408,11 @@ def main() -> None:
     parser.add_argument("--probes", type=int, default=0)
     parser.add_argument("--balance", action="store_true")
     parser.add_argument(
+        "--minimum-mode-minutes",
+        type=float,
+        help="override the shipped minimum mode duration (0 measures the unmoded rules)",
+    )
+    parser.add_argument(
         "--accept-incumbent",
         action="store_true",
         help="return the incumbent at the time limit, as the runtime does for the base plan",
@@ -426,6 +434,7 @@ def main() -> None:
             battery_export=args.battery_export,
             probes=args.probes,
             balance=args.balance,
+            minimum_mode_minutes=args.minimum_mode_minutes,
             accept_incumbent=args.accept_incumbent,
             proof_limit_s=args.compare_proven,
         )

@@ -1181,10 +1181,12 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   nigdy nie łączy częściowego ładowania z eksportem do sieci: w przedziale <code>CHARGE_PV</code> bateria
   przejmuje całą nadwyżkę PV, a eksport pojawia się dopiero, gdy ładowanie jest na limicie mocy
   przedziału albo bateria została napełniona do górnej granicy. W innym wypadku wiersz nie jest
-  <code>CHARGE_PV</code>. Dotyczy przypadku, gdy <code>minimum_mode_minutes</code> jest większe od 0. Przeniesione
-  zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli bateria zapełni się przed
-  jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
-  granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki albo <code>CURTAIL</code> tam, gdzie
+  <code>CHARGE_PV</code>. Reguła obowiązuje też przy <code>minimum_mode_minutes = 0</code>: nie ma wtedy trybów, a
+  ładowanie w każdym przedziale, który przepływy oznaczają jako <code>CHARGE_PV</code>, jest związane tak
+  samo. Przeniesione zobowiązanie <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> podlega tej samej regule. Jeśli
+  bateria zapełni się przed jego końcem (następny przedział nie przyjąłby nawet minimalnej
+  aktywności powyżej górnej granicy), reszta zobowiązania to <code>HOLD</code> z eksportem nadwyżki albo
+  <code>CURTAIL</code> tam, gdzie
   instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
   falownik przy pełnej baterii. Zwolniony <code>HOLD</code> nie ma własnego zegara — jedynym zegarem jest
   termin zobowiązania — więc może przejść w <code>CURTAIL</code> (który startuje własny zegar) przed tym
@@ -1197,7 +1199,14 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   nie napełni baterii i nie przytnie nadwyżki w tym samym przedziale, więc bateria liczy się jako
   pełna dla następnego przedziału (może to być <code>HOLD</code> lub <code>CURTAIL</code>), gdy jest od górnej granicy
   nie dalej niż potrzeba przycięcia tego przedziału (PV, które musi trafić do baterii albo zostać
-  przycięte, co najmniej minimalna aktywność).</li>
+  przycięte, co najmniej minimalna aktywność).
+  Przy <code>minimum_mode_minutes = 0</code> reguła kosztuje czas obliczeń (tabela w
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN) i jeden
+  przypadek więcej nie ma planu: gdy eksport do sieci jest ograniczony (albo falownik ma moc
+  poniżej PV), a ograniczanie produkcji PV (<code>allow_curtailment</code>) jest wyłączone, bateria
+  zapełniona przed ostatnią nadwyżką zostawia tę nadwyżkę bez miejsca. Model z trybami ma to samo
+  ograniczenie; plan powstaje po włączeniu ograniczania produkcji PV albo przy wyższym limicie
+  eksportu lub mocy falownika.</li>
 <li><strong><code>CURTAIL</code> trwa mimo przerwy w PV.</strong> Przebieg <code>CURTAIL</code> trwa minimalny czas, a PV może w tym
   czasie spaść. <code>HOLD</code> w przedziale z PV poniżej minimalnej aktywności (<code>minimum_mode_power_kw × h</code>)
   w trakcie tego czasu to ten sam przebieg, a nie nowy <code>HOLD</code>: falownik nie ma czego przycinać,
@@ -1239,8 +1248,8 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <li><strong>Zmiana strategii (reset):</strong> zapis nowej strategii zrywa przeniesione zobowiązanie dla
   następnego planu, który startuje bez blokady (patrz <a href="#zwolnienie-przy-zmianie-strategii">zwolnienie przy zmianie
   strategii</a>).</li>
-<li><code>minimum_mode_minutes = 0</code> wyłącza reguły czasu i minimalnej mocy; reguła podążania
-  <code>SELF_CONSUME</code> za obciążeniem pozostaje włączona.</li>
+<li><code>minimum_mode_minutes = 0</code> wyłącza reguły czasu i minimalnej mocy; reguły podążania
+  <code>SELF_CONSUME</code> za obciążeniem i <code>CHARGE_PV</code> za nadwyżką pozostają włączone.</li>
 </ul>
 <h3 id="polityki-ograniczające-tryby">Polityki ograniczające tryby</h3>
 <section class="table-scroll"><table>
@@ -1582,8 +1591,8 @@ M4 Max):</p>
 przedziału już na domyślnym horyzoncie 24 h, a na horyzoncie 48 h żadna strategia nie kończy swoich
 prób (przy przedziale wyświetlania 15 minut znanych jest 18–67 z 96). Przy 48 h plan bazowy tych
 dwóch strategii dochodzi też do <code>solve_time_limit_s</code> i jest publikowany jako <code>time_limited</code>.
-<code>minimum_mode_minutes = 0</code> nie znosi ograniczenia: przy 24 h znanych jest 13 z 24 (<code>self_sufficiency</code>)
-i 20 z 24 (<code>backup_ready</code>) prób, czyli nadal <code>short_coverage</code>. Wolniejszy komputer, na przykład
+<code>minimum_mode_minutes = 0</code> nie znosi ograniczenia: przy 24 h znana jest 1 z 24 (<code>self_sufficiency</code>)
+i od 8 do 17 z 24 (<code>backup_ready</code>) prób, czyli nadal <code>short_coverage</code>. Wolniejszy komputer, na przykład
 Raspberry Pi, dochodzi do każdego z tych ograniczeń przy krótszym horyzoncie.</p>
 <p><a href="#głębokość-elastycznego-zużycia">Głębokość elastycznego zużycia</a> podlega tym samym dwóm ustawieniom:
 każde z jej pięciu obliczeń dostaje <code>probe_time_limit_s</code>, w ramach tego, co próby zostawiły z

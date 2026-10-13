@@ -694,10 +694,12 @@ Zasady (domyślnie 60 min, 0,1 kW):
   nigdy nie łączy częściowego ładowania z eksportem do sieci: w przedziale `CHARGE_PV` bateria
   przejmuje całą nadwyżkę PV, a eksport pojawia się dopiero, gdy ładowanie jest na limicie mocy
   przedziału albo bateria została napełniona do górnej granicy. W innym wypadku wiersz nie jest
-  `CHARGE_PV`. Dotyczy przypadku, gdy `minimum_mode_minutes` jest większe od 0. Przeniesione
-  zobowiązanie `CHARGE_PV`/`SELF_CONSUME` podlega tej samej regule. Jeśli bateria zapełni się przed
-  jego końcem (następny przedział nie przyjąłby nawet minimalnej aktywności powyżej górnej
-  granicy), reszta zobowiązania to `HOLD` z eksportem nadwyżki albo `CURTAIL` tam, gdzie
+  `CHARGE_PV`. Reguła obowiązuje też przy `minimum_mode_minutes = 0`: nie ma wtedy trybów, a
+  ładowanie w każdym przedziale, który przepływy oznaczają jako `CHARGE_PV`, jest związane tak
+  samo. Przeniesione zobowiązanie `CHARGE_PV`/`SELF_CONSUME` podlega tej samej regule. Jeśli
+  bateria zapełni się przed jego końcem (następny przedział nie przyjąłby nawet minimalnej
+  aktywności powyżej górnej granicy), reszta zobowiązania to `HOLD` z eksportem nadwyżki albo
+  `CURTAIL` tam, gdzie
   instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
   falownik przy pełnej baterii. Zwolniony `HOLD` nie ma własnego zegara — jedynym zegarem jest
   termin zobowiązania — więc może przejść w `CURTAIL` (który startuje własny zegar) przed tym
@@ -711,6 +713,13 @@ Zasady (domyślnie 60 min, 0,1 kW):
   pełna dla następnego przedziału (może to być `HOLD` lub `CURTAIL`), gdy jest od górnej granicy
   nie dalej niż potrzeba przycięcia tego przedziału (PV, które musi trafić do baterii albo zostać
   przycięte, co najmniej minimalna aktywność).
+  Przy `minimum_mode_minutes = 0` reguła kosztuje czas obliczeń (tabela w
+  [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget), EN) i jeden
+  przypadek więcej nie ma planu: gdy eksport do sieci jest ograniczony (albo falownik ma moc
+  poniżej PV), a ograniczanie produkcji PV (`allow_curtailment`) jest wyłączone, bateria
+  zapełniona przed ostatnią nadwyżką zostawia tę nadwyżkę bez miejsca. Model z trybami ma to samo
+  ograniczenie; plan powstaje po włączeniu ograniczania produkcji PV albo przy wyższym limicie
+  eksportu lub mocy falownika.
 - **`CURTAIL` trwa mimo przerwy w PV.** Przebieg `CURTAIL` trwa minimalny czas, a PV może w tym
   czasie spaść. `HOLD` w przedziale z PV poniżej minimalnej aktywności (`minimum_mode_power_kw × h`)
   w trakcie tego czasu to ten sam przebieg, a nie nowy `HOLD`: falownik nie ma czego przycinać,
@@ -752,8 +761,8 @@ Zasady (domyślnie 60 min, 0,1 kW):
 - **Zmiana strategii (reset):** zapis nowej strategii zrywa przeniesione zobowiązanie dla
   następnego planu, który startuje bez blokady (patrz [zwolnienie przy zmianie
   strategii](#zwolnienie-przy-zmianie-strategii)).
-- `minimum_mode_minutes = 0` wyłącza reguły czasu i minimalnej mocy; reguła podążania
-  `SELF_CONSUME` za obciążeniem pozostaje włączona.
+- `minimum_mode_minutes = 0` wyłącza reguły czasu i minimalnej mocy; reguły podążania
+  `SELF_CONSUME` za obciążeniem i `CHARGE_PV` za nadwyżką pozostają włączone.
 
 ### Polityki ograniczające tryby
 
@@ -957,8 +966,8 @@ Przy `self_sufficiency` albo `backup_ready` poziomy zużycia są więc nieznane 
 przedziału już na domyślnym horyzoncie 24 h, a na horyzoncie 48 h żadna strategia nie kończy swoich
 prób (przy przedziale wyświetlania 15 minut znanych jest 18–67 z 96). Przy 48 h plan bazowy tych
 dwóch strategii dochodzi też do `solve_time_limit_s` i jest publikowany jako `time_limited`.
-`minimum_mode_minutes = 0` nie znosi ograniczenia: przy 24 h znanych jest 13 z 24 (`self_sufficiency`)
-i 20 z 24 (`backup_ready`) prób, czyli nadal `short_coverage`. Wolniejszy komputer, na przykład
+`minimum_mode_minutes = 0` nie znosi ograniczenia: przy 24 h znana jest 1 z 24 (`self_sufficiency`)
+i od 8 do 17 z 24 (`backup_ready`) prób, czyli nadal `short_coverage`. Wolniejszy komputer, na przykład
 Raspberry Pi, dochodzi do każdego z tych ograniczeń przy krótszym horyzoncie.
 
 [Głębokość elastycznego zużycia](#głębokość-elastycznego-zużycia) podlega tym samym dwóm ustawieniom:
