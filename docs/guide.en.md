@@ -183,12 +183,45 @@ Net-metering's `sell_multiplier` is a one-time copy of the ratio, not a link to 
 an approximation (the yearly kWh bank and G12 band mismatch are not modelled), and a later edit to
 the buy price does not update it.
 
+**A net-metering installation runs the battery in the inverter's own self-use mode.** Set the inverter
+to self-use (load first, no grid charging, no battery export), keep `allow_grid_charge` off and
+`allow_battery_export` off (both are off by default and stay off with these profiles), and do not enable the
+[Deye controller](#enabling-the-controller). Net-metering is not settled per hour: under the Renewable
+Energy Sources Act (consolidated text Dz.U. 2026 poz. 68, art. 4) fed-in energy is settled against energy
+drawn at the ratio 1 : 0.8 (1 : 0.7 above 10 kW) and the balance is carried forward for 12 months, so an
+exported kWh is worth `ratio` kWh of a later import — nothing once the year's credit covers the year's
+import — and the fixed part of the bill steps with the annual draw (capacity-fee bands at 500, 1 200 and
+2 800 kWh). None of that is a price per hour or lies inside a 24-48 h horizon, so the plan cannot lower the
+yearly bill. The planner stands down there: no engine, strategy or profile change, and the costs shown
+(`expected_net_cost`, `consumption_cost`, the cost card, `tools/replay.py`) stay hourly prices — the kWh are
+exact, the money is an approximation.
+
+Measured on 40 simulated homes (G11 and G12, ratio 0.8, 10 kWh battery, one year re-planned every hour
+against the same battery in plain self-consumption, valued with the annual bill, [ADR-0008](adr/0008-net-metering-plain-self-consumption.md)):
+the default plan (`cost_min`, as the profile ships) has a yearly gain against self-use, bill plus battery
+wear, of −93…+70 PLN (mean −1; + = cheaper, − = dearer), never lowers the bill by more than 10 PLN, and
+raises the annual import by +33…+704 kWh. Priced hour by hour, as Home Assistant reports it, the same G12
+plan shows a gain of +343 PLN per year that the settlement does not pay. With **Allow grid charge** on
+(13 homes) the yearly gain against self-use, bill plus battery wear, is −209…+139 PLN (same sign
+convention), and the import rises by +897 kWh (median). Limits: simulated homes, one battery size
+(10 kWh), one year of prices, hourly intervals, G12 zones netted as one mean rate.
+
 Preview shows setup-profile provenance for a profiled new entry: which keys each axis pre-filled, the
 buy source pre-selected by a `buy_tariff` profile, any value edited after pre-fill (including a
 helper-bound key, with the helper's effective value), and settlement notes — Sell only PV off, a sell
 source that already applies its own settlement multiplier, raw RCE prices not floored at 0 (with the
 RCE market price shortcut as the fix) or floored while the 1.23 multiplier is missing, or a
 net-metering sell that no longer tracks buy — shown only for installations that used a setup profile.
+For a net-metering profile Preview always adds one more note, and a second when Allow grid charge or
+Allow battery export is on (English only):
+
+- "Note: net-metering is settled on yearly kWh (an exported kWh takes back 0.8 kWh within 12 months),
+  not on hourly prices: price-driven dispatch does not lower the yearly bill and the costs shown are an
+  hourly approximation. Run the battery in the inverter's own self-use mode and do not let a controller
+  follow this plan." (0.7 on the 70 % profile.)
+- when **Allow grid charge** or **Allow battery export** is on, "Note: Allow grid charge is on: under
+  net-metering energy sent through the grid comes back at 0.8 and raises the yearly import; turn it
+  off." (naming the one that is on, or "Allow grid charge and Allow battery export are on").
 
 The selection, together with the setup-profiles revision that resolved it, is stored on the config
 entry (`setup_profiles`) and included in diagnostics.
@@ -683,7 +716,8 @@ Rules (defaults: 60 min, 0.1 kW):
   use, so the plan never pairs a partial charge with grid export: in a `CHARGE_PV` interval the
   battery takes the whole PV surplus, and export appears only once the charge is at its interval
   power limit or the battery has been filled to its upper bound. Otherwise the row is not
-  `CHARGE_PV`. Applies while `minimum_mode_minutes` is above 0. A carried
+  `CHARGE_PV`. The rule also holds with `minimum_mode_minutes = 0`: there are no modes then, and the
+  charge in any interval the flows label `CHARGE_PV` is bound the same way. A carried
   `CHARGE_PV`/`SELF_CONSUME` commitment is held to the same rule. If the battery is full before it
   ends (the next interval could not take even the minimum activity above the upper bound), the
   rest of the commitment is `HOLD` with the surplus exported, or `CURTAIL` where the site cannot
@@ -699,6 +733,12 @@ Rules (defaults: 60 min, 0.1 kW):
   curtail in the same interval, so the pack counts as full for the next interval, which may be
   `HOLD` or `CURTAIL`, once it is within that interval's curtail need of the ceiling (the PV that
   must go to the pack or be curtailed, at least the minimum activity).
+  With `minimum_mode_minutes = 0` the rule costs solve time (see the table in
+  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget)), and one more
+  case has no plan: with grid export capped (or the inverter rated below the PV) and curtailment
+  (`allow_curtailment`) off, a pack that fills before the last surplus leaves that surplus nowhere
+  to go. The mode model has the same limit; curtailment on, or a higher export cap or inverter
+  rating, gives a plan.
 - **`CURTAIL` goes on through a PV gap.** A `CURTAIL` run lasts the minimum duration, and PV can
   drop inside it. A `HOLD` in an interval with PV below the minimum activity (`minimum_mode_power_kw × h`)
   inside that duration is the run going on, not a new `HOLD`: the inverter has nothing to curtail
@@ -738,7 +778,7 @@ Rules (defaults: 60 min, 0.1 kW):
 - **Strategy change (reset):** writing a new strategy drops the carried commitment for the next
   plan, which starts unlocked (see [strategy-switch release](#strategy-switch-release)).
 - Setting `minimum_mode_minutes = 0` disables duration and minimum-power rules; the
-  `SELF_CONSUME` load-following rule stays on.
+  `SELF_CONSUME` and `CHARGE_PV` load-following rules stay on.
 
 ### Policies that gate modes
 
@@ -936,8 +976,8 @@ So with `self_sufficiency` or `backup_ready` the consumption levels are unknown 
 interval already on the default 24 h horizon, and on a 48 h horizon no strategy completes its probes
 (with a 15-minute display interval 18–67 of 96 are known). At 48 h the base plan of these two
 strategies also runs into `solve_time_limit_s` and is published as `time_limited`.
-`minimum_mode_minutes = 0` does not lift the limit: at 24 h 13 of 24 (`self_sufficiency`) and 20 of 24
-(`backup_ready`) probes are known, which is still `short_coverage`. A slower host, such as a
+`minimum_mode_minutes = 0` does not lift the limit: at 24 h 1 of 24 (`self_sufficiency`) and 8 to 17
+of 24 (`backup_ready`) probes are known, which is still `short_coverage`. A slower host, such as a
 Raspberry Pi, reaches each limit at a shorter horizon.
 
 The [flexible energy depth](#flexible-energy-depth) is bound by the same two settings: each of its
@@ -1401,6 +1441,9 @@ refuses the device when a program is missing or disabled, when the entity IDs do
 prefix, or when another Energy Compass entry already controls it. Enabling reloads the entry once;
 moving the controller to another device applies live. Both are refused while the mode is not `Off` or a restore is pending: select `Off` and wait until `restore_pending` is off first, otherwise nothing could restore the base profile. The step is visible without the expert toggle.
 
+Do not enable the controller on a net-metering installation: the right plan there is the inverter's own
+self-use mode (see [Setup profiles](#setup-profiles-new-installations)).
+
 An installation that ran the 0.1.36 package, has one Energy Compass entry and exactly one Solarman device
 with all six programs gets the controller enabled automatically at the first start of 0.1.37. The mode
 starts at `Off`, so nothing is written until you choose one; see
@@ -1859,6 +1902,9 @@ into days by the local date of `start`; settings come only from `--set`.
   discharges the planned energy, `HOLD` parks the battery. Grid export beyond `grid_export_kw` is
   curtailed, and stored energy is not exported beyond the PV produced so far when **Sell only PV**
   (`limit_export_to_pv`) is on.
+- **On a net-metering file the costs are hourly prices, not the settlement.** Net-metering is settled on
+  yearly kWh ([Setup profiles](#setup-profiles-new-installations)), so `plan − self_use` is not a saving
+  there; do not compare strategies by it.
 - The [peak-period reserve](#peak-period-reserve) (`peak_reserve_margin_kwh`) is replayed as in the integration: it needs
   `limit_grid_charge_price` (its ceiling is the cheap price), else a warning says it has no effect.
 - Not replayed: LFP balance windows, the autonomy tail beyond the data, and carried export or
