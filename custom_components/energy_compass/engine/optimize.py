@@ -265,6 +265,8 @@ def _validate_balance(
 def _validate_settled(problem: Problem, settled: list[dict[str, float]]) -> None:
     """The published rows keep one direction per slot, whatever noise the solver left."""
     for flow in settled:
+        # Cannot fire after `settle_mode_noise` (it nets a grid import beside an export
+        # last); it holds that netting to account.
         _check(min(flow["gin"], flow["gout"]) <= _TOL, "simultaneous grid directions")
         if problem.battery:
             _check(
