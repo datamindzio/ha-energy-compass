@@ -134,8 +134,9 @@ flexible-load probe was held to the tightening without the bridge reading.
    leaves no way to meet (pinned problem #44, which has no plan without a probe and none with 0.1 kWh at 0.5 kW; a
    probe that puts load into every committed interval, 0.3 kWh at 2 kW, or one that takes a chargeable surplus
    below the activity, #917, does give a plan, so the probe is not a constant of the problem), a
-   daily throughput budget smaller than the minimum activity the commitment asks for, and the standby loss case
-   above. `docs/model.md` lists them; the optimizer reports `infeasible` and the last plan is retained.
+   daily throughput budget smaller than the minimum activity the commitment asks for, the standby loss case
+   above, and the terminal requirement of `preserve_initial` (T-065: `_owed` is a best case there too, 126 of 1600 aimed
+   first-boundary problems remain, 213 before). `docs/model.md` lists them; the optimizer reports `infeasible` and the last plan is retained.
 4. `validate_modes(problem, flows, bridges=None)` tries the readings above, and a test covers `_publish_current`
    deriving `carried_idle` and `mode_start` from `carried_idle_starts`.
 5. **An idle committed interval may be `CURTAIL`, on the terms of
@@ -230,8 +231,9 @@ on `back` (`_resume`, `physical`), relaxed by `emptied_hold`, which is tracked w
 site cannot pass. Where the two floors are equal nothing is added. Pinned in `tests/test_carried_terminal_release.py`
 (draw 241 rolled; the validator refuses the return of the full-pack HOLD, a test that fails without the row).
 
-A problem that has a plan keeps its objective (the states that open the release already violate the terminal bound on
-every path that follows).
+The change only relaxes the model, so the objective of a problem that has a plan is never worse. It improves where
+`main` had only the all-HOLD plan released from a full pack (the reviewer's aimed sweep: seed 101 draw 80, 0.1485 ->
+0.0577; 101/364; 404/298).
 
 ### `TIE_761`: bridge or released HOLD run
 

@@ -706,7 +706,7 @@ Rules (defaults: 60 min, 0.1 kW):
   refill what the house drew) the interval is a `HOLD` with full import, as for a spent battery,
   and the battery ends where it began. The plan is `infeasible` until the commitment ends when
   the daily throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
-  cases are listed in
+  cases (a standby loss or the `preserve_initial` terminal requirement that only PV surplus the plan cannot bank could cover) are listed in
   [model and limitations](model.md#operating-mode-duration-and-pv-export-budget). A direction the
   legacy direction guard blocks (`initial_battery_mode`) is not open: a pack that may not charge
   has no `CHARGE_PV` to follow and one that may not discharge has no `SELF_CONSUME`, so an interval
