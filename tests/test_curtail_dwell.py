@@ -8,6 +8,7 @@ the run's own duration is up. A carried PV-follow commitment whose pack cannot t
 what the cap forces ends in the same release as a full pack.
 """
 
+import random
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -15,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 from test_dispatch_policy import dispatch
 
-from benchmarks.curtail_sweep import follow
+from benchmarks.curtail_sweep import follow, make_depleted
 from benchmarks.curtail_sweep import roll as sweep
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
 from custom_components.energy_compass.engine.dispatch_policy import (
@@ -955,22 +956,34 @@ def test_a_discharge_grid_commitment_at_the_reserve_is_still_a_safety_exception(
 
 
 def _unreleasable():
-    """A depleted release the pack's charge power cannot take: only the old HOLD fits."""
+    """A depleted release the pack's charge power cannot take: it charges and curtails (T-064)."""
     problem = depleted((0, *(0.9,) * 7), mode="SELF_CONSUME", export_cap=0)
     battery = replace(problem.battery, initial_kwh=0.0, charge_kw=1.0)
     return replace(problem, battery=battery)
 
 
-def test_a_release_without_a_plan_falls_back_to_the_commitments_own_hold():
-    # The charge power of the pack cannot take the PV above the export cap, and the
-    # model does not charge and curtail in one interval: the released HOLD has no plan.
-    # The house is never left without one (T-060): the commitment's HOLD with its clock,
-    # which curtails, is planned and reported as the safety exception it was.
+def test_a_release_the_charge_power_cannot_take_is_planned_by_charging_and_curtailing():
+    # The charge power of the pack cannot take the PV above the export cap (T-058 left the
+    # house the commitment's HOLD, T-064 plans the release): the HOLD is the safety
+    # release, then every interval curtails what the cap cannot pass.
     problem = _unreleasable()
-    with pytest.raises(SolveError) as error:
-        solve(problem)
-    assert error.value.reason == "infeasible"
+    plan = solve(problem)
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    assert modes[0] == "HOLD"
+    assert set(modes[1:]) == {"CURTAIL"}
     assert safety_exception(problem) is None
+    validate_modes(problem, plan.flows, plan.carried_bridges)
+    # Without curtailment there is no plan: the surplus has nowhere to go.
+    stuck = replace(problem, site=replace(problem.site, allow_curtailment=False))
+    with pytest.raises(SolveError) as error:
+        solve(stuck)
+    assert error.value.reason == "infeasible"
+
+
+def test_the_commitments_own_hold_is_a_plan_for_the_release():
+    # The rung `solve_released` takes when the release has none: the commitment's HOLD
+    # with its clock, which curtails, reported as the safety exception it was.
+    problem = _unreleasable()
     fallback = reserve_fallback(problem)
     assert fallback.initial_dispatch_reserve_hold
     assert safety_exception(fallback)["reason"] == "observed_soc_minimum"
@@ -1036,27 +1049,15 @@ def test_the_runtime_plans_the_commitments_hold_when_the_release_has_no_plan(
 def _stranded():
     """A carried CHARGE_PV, the pack just above the reserve, that no plan can keep (T-058).
 
-    The pack was charged one interval after a release at the reserve; the next boundary
-    asks the commitment to stay inside its minimum duration while `preserve_initial`
-    wants the pack back where it is, and the PV does not cover the load. The same state
-    has no plan on `main` (T-065 class); only the last rung of `solve_released` plans it.
+    Draw 12 of seed 11 of `benchmarks/curtail_sweep.py deprun`: the commitment's minimum
+    duration (120 minutes) meets a pack of 0.05 kWh and a charge power of 1 kW. The same
+    state has no plan on `main`, and neither has the release nor the commitment's own HOLD;
+    only the last rung of `solve_released` plans it.
     """
-    rows = (
-        (1.24, 0.62, 0.05, 0.02),
-        (0.32, 0.4, 0, 0.2),
-        (1.34, 0.1, 0.01, 0.1),
-        (1.17, 0.45, 0.39, 0.4),
-        (0.39, 0.26, 0.37, 0.05),
-    )
-    problem = dispatch(rows, minimum_mode_minutes=60, terminal_mode="preserve_initial")
-    return carried(
-        replace(
-            problem,
-            site=SiteLimits(3, 8, 2, True),
-            battery=Battery(5, 0, 1, 0.1425, 3, 3, 0.95, 0.95, 0, True, True, 0),
-        ),
-        since=timedelta(minutes=16),
-    )
+    rng = random.Random(11)
+    for _ in range(13):
+        problem = make_depleted(rng)
+    return problem
 
 
 def test_a_stranded_commitment_has_no_plan_but_without_it():
@@ -1113,11 +1114,21 @@ def test_solve_released_solves_a_problem_with_a_plan_once_and_returns_it():
 
 def test_solve_released_plans_the_commitments_hold_before_leaving_it():
     problem = _unreleasable()
-    plan, solved = solve_released(problem)
+    solver = _Solver(lambda p: not p.initial_dispatch_reserve_hold)
+    plan, solved = solve_released(problem, solver=solver)
     assert solved.initial_dispatch_reserve_hold
     assert solved.initial_dispatch_mode == "SELF_CONSUME"
     assert plan.flows[0].dispatch_mode == "HOLD"
     validate_modes(solved, plan.flows, plan.carried_bridges)
+
+
+def test_solve_released_plans_the_release_when_the_site_can_charge_and_curtail():
+    problem = _unreleasable()
+    solver = _Solver(lambda _: False)
+    plan, solved = solve_released(problem, solver=solver)
+    assert solved is problem
+    assert len(solver.calls) == 1
+    assert plan.flows[0].dispatch_mode == "HOLD"
 
 
 def test_solve_released_leaves_the_commitment_last():
@@ -1225,10 +1236,10 @@ def _real_compute_inputs():
     return config, states, now, commitment
 
 
-def test_the_runtime_publishes_the_commitments_hold_when_the_release_really_has_no_plan():
+def test_the_runtime_plans_the_release_that_charges_and_curtails():
     # No monkeypatched solver: an export cap of 0, a charge power of 1 kW beside 3.6 kW
-    # of PV and a pack at the reserve. The released plan is infeasible (no charging and
-    # curtailing in one interval, T-064), the house still gets one.
+    # of PV and a pack at the reserve. The release is a plan of its own (T-064): the
+    # HOLD, then CURTAIL; no safety exception is reported.
     from custom_components.energy_compass import runtime
 
     config, states, now, commitment = _real_compute_inputs()
@@ -1237,12 +1248,7 @@ def test_the_runtime_publishes_the_commitments_hold_when_the_release_really_has_
     assert result["status"] == "ready"
     assert modes[0] == "HOLD"
     assert "CURTAIL" in modes
-    assert result["dispatch_policy"]["safety_exception"]["reason"] == (
-        "observed_soc_minimum"
-    )
-    assert result["dispatch_policy"]["safety_exception"]["interrupted_mode"] == (
-        "SELF_CONSUME"
-    )
+    assert result["dispatch_policy"]["safety_exception"] is None
 
 
 # Draw 278 of seed 22 of `benchmarks/curtail_sweep.py deproll` (T-057): a carried
@@ -1418,3 +1424,75 @@ def test_validator_rejects_a_hold_released_from_a_full_pack_that_goes_back_there
     )
     with pytest.raises(SolveError, match="minimum mode duration"):
         validate_modes(problem, return_flows(9.99))
+
+
+def _surplus_beyond_the_pack(**changes):
+    """PV the pack cannot take by its charge power, on a site that exports nothing (T-064).
+
+    Four sunny intervals (0.9 kWh of PV, 0.1 kWh of load) on a pack that charges 0.25 kWh
+    an interval, then four evenings that the stored energy is worth most in.
+    """
+    rows = ((0.3, 0.0, 0.9, 0.1),) * 4 + ((3.0, 0.0, 0.0, 0.2),) * 4
+    problem = dispatch(rows, minimum_mode_minutes=60)
+    return replace(
+        problem,
+        site=replace(problem.site, grid_export_kw=0, allow_curtailment=True),
+        battery=replace(problem.battery, initial_kwh=0.0, charge_kw=1.0),
+        **changes,
+    )
+
+
+def test_a_curtail_interval_charges_the_pack_with_what_it_can_take():
+    # The model charges and curtails in one interval (T-064): the pack takes its charge
+    # power, the inverter curtails the rest, the evening is served from the pack.
+    problem = _surplus_beyond_the_pack()
+    plan = solve(problem)
+    validate_modes(problem, plan.flows, ())
+    sun = plan.flows[:4]
+    assert [flow.dispatch_mode for flow in sun] == ["CURTAIL"] * 4
+    assert max(flow.charge_kwh for flow in sun) == pytest.approx(0.25)
+    for flow in sun:
+        assert flow.curtail_kwh > 0
+        assert flow.discharge_kwh == 0
+        assert flow.grid_export_kwh == 0
+        assert flow.charge_kwh + flow.curtail_kwh == pytest.approx(0.8)
+    assert [flow.dispatch_mode for flow in plan.flows[4:]] == ["SELF_CONSUME"] * 4
+    assert sum(flow.discharge_kwh for flow in plan.flows[4:]) > 0.5
+
+
+def test_a_curtail_row_validates_only_what_the_surplus_can_charge():
+    problem = _surplus_beyond_the_pack()
+    plan = solve(problem)
+    flows = list(plan.flows)
+    row = flows[1]
+    # A charge from the grid, or a discharge, is not a CURTAIL.
+    for bad in (
+        replace(row, charge_kwh=0.9),
+        replace(row, discharge_kwh=0.2, charge_kwh=0.0),
+    ):
+        with pytest.raises(SolveError, match="mode"):
+            validate_modes(problem, (*flows[:1], bad, *flows[2:]), ())
+
+
+def test_a_probe_is_planned_with_a_curtail_that_charges():
+    problem = _surplus_beyond_the_pack()
+    plan = probed(problem, 0.5, 2).plan
+    sun = plan.flows[:4]
+    assert [flow.dispatch_mode for flow in sun] == ["CURTAIL"] * 4
+    assert max(flow.charge_kwh for flow in sun) > 0
+
+
+def test_a_plan_that_charges_and_curtails_can_be_followed_to_every_boundary():
+    problem = _surplus_beyond_the_pack()
+    modes = roll(problem, 6)
+    assert modes[:4] == ["CURTAIL"] * 4
+    row = sweep(problem)
+    assert row[:2] == ["ok", len(problem.slots) - 1]
+
+
+def test_without_curtailment_the_surplus_beyond_the_pack_has_no_plan():
+    problem = _surplus_beyond_the_pack()
+    stuck = replace(problem, site=replace(problem.site, allow_curtailment=False))
+    with pytest.raises(SolveError) as error:
+        solve(stuck)
+    assert error.value.reason == "infeasible"

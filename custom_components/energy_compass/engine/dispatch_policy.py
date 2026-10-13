@@ -32,7 +32,7 @@ IDLE_FLOWS = {
     "DISCHARGE_GRID": ("bc", "curt"),
     "SELF_CONSUME": ("bc", "gout", "curt"),
     "HOLD": ("bc", "bd", "curt"),
-    "CURTAIL": ("bc", "bd"),
+    "CURTAIL": ("bd",),
 }
 # Import this small is solver noise, not a plan.
 _IMPORT_TOLERANCE = 1e-5
@@ -497,6 +497,34 @@ def _curtail_need(problem, slot, extra_load=0.0) -> float:
     )
 
 
+def _beyond_the_pack(problem, slot, extra_load=0.0) -> float:
+    """Tell how much of `_curtail_need` the pack cannot take by its charge power (T-064).
+
+    The model charges and curtails in one interval (a CURTAIL row may charge), and
+    CHARGE_PV, which curtails nothing, has no flow where this is positive. The need from
+    the inverter rating takes no load's help (`_takeover_room`), so a probe `extra_load`
+    only shrinks what the export cap needs.
+    """
+    battery = problem.battery
+    return _curtail_need(problem, slot, extra_load) - battery.charge_kw * _hours(slot)
+
+
+def _beyond_room(problem, slot) -> float:
+    """Tell below which probe load a slot's PV stays beyond what the pack takes.
+
+    The PV above the inverter rating that the pack cannot take is beyond it whatever a
+    probe adds (inf); otherwise `_beyond_the_pack` falls by the probe load and is positive
+    for the loads below what is returned (negative: none).
+    """
+    hours = _hours(slot)
+    charge = problem.battery.charge_kw * hours
+    if slot.pv_kwh - problem.site.inverter_kw * hours - charge > _ROW_TOLERANCE:
+        return math.inf
+    return (
+        slot.pv_kwh - slot.load_kwh - problem.site.grid_export_kw * hours - charge
+    )
+
+
 def _takeover_room(problem, slot) -> float:
     """Tell how much flexible load a slot takes while `_curtail_need` stays positive.
 
@@ -678,20 +706,49 @@ def _emptied_hold(model, v, hold, origin, held, emptied) -> dict:
     return {row: 1}
 
 
-def _offer_curtail(model, v, seen_full, full, curtailing, released) -> None:
+def _open_beyond(model, v, room, top):
+    """Tell whether a committed interval's PV is beyond what the pack takes (T-064).
+
+    `room` is `_beyond_the_pack` for a load of nothing and `top` the largest probe load:
+    the PV is beyond the pack for the loads below `room`. Returns None where it never is,
+    True where it is whatever a probe adds, and otherwise the term of a binary that is 1
+    only for a probe load below `room` (the term `_offer_curtail` takes).
+    """
+    limit = room - _ROW_TOLERANCE - (_PROBE_MARGIN if top else 0.0)
+    if limit <= 0:
+        return None
+    if limit >= top:
+        return True
+    opened = v["beyond_open"] = model.variable(binary=True)
+    model.constrain({v["flex_load"]: 1, opened: top - limit}, -np.inf, top)
+    return {opened: -1}
+
+
+def _offer_curtail(
+    model, v, seen_full, full, curtailing, released, *, beyond_the_pack=None
+) -> None:
     """Let a committed interval curtail: the pack has been full, and is full now or was let go.
 
     `seen_full` is the `lock_full` of every earlier interval; `full`, `curtailing`
     and `released` are the previous interval's: a pack at its ceiling, a CURTAIL
     under way, the HOLD released from the commitment.
+
+    `beyond_the_pack` (`_open_beyond`) is an interval whose PV above what the site passes
+    the pack cannot take by its charge power: CHARGE_PV has no flow there and the
+    inverter curtails beside the charging pack whatever the pack held before (T-064), so
+    there is nothing to wait for.
     """
-    model.constrain({v["mode_CURTAIL"]: 1, **seen_full}, -np.inf, 0)
+    if beyond_the_pack is True:
+        return
+    beyond_the_pack = beyond_the_pack or {}
+    model.constrain({v["mode_CURTAIL"]: 1, **seen_full, **beyond_the_pack}, -np.inf, 0)
     model.constrain(
         {
             v["mode_CURTAIL"]: 1,
             **full,
             **curtailing,
             **{key: -1 for key in released},
+            **beyond_the_pack,
         },
         -np.inf,
         0,
@@ -771,11 +828,36 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         model.constrain({index: 1 for index in x.values()}, 1, 1)
         # Named modes already determine flow direction. Tie the auxiliary flags
         # to them so fractional relaxations cannot invent grid arbitrage.
-        model.constrain(
-            {v["battery_mode"]: 1, x["CHARGE_GRID"]: -1, x["CHARGE_PV"]: -1},
-            0,
-            0,
+        # A CURTAIL interval may charge from the PV it cannot pass (T-064): the direction
+        # flag is then free, the solver sets it where it charges. Where CURTAIL cannot be
+        # chosen, or the pack takes all the PV the site cannot pass by its charge power,
+        # the rows are the ones every other interval has.
+        can_curtail = (
+            model.upper[x["CURTAIL"]] > 0
+            and _beyond_room(problem, slot) > _ROW_TOLERANCE
         )
+        if can_curtail:
+            model.constrain(
+                {v["battery_mode"]: 1, x["CHARGE_GRID"]: -1, x["CHARGE_PV"]: -1},
+                0,
+                1,
+            )
+            model.constrain(
+                {
+                    v["battery_mode"]: 1,
+                    x["CHARGE_GRID"]: -1,
+                    x["CHARGE_PV"]: -1,
+                    x["CURTAIL"]: -1,
+                },
+                -np.inf,
+                0,
+            )
+        else:
+            model.constrain(
+                {v["battery_mode"]: 1, x["CHARGE_GRID"]: -1, x["CHARGE_PV"]: -1},
+                0,
+                0,
+            )
         grid_direction = {
             v["grid_mode"]: 1,
             x["CHARGE_GRID"]: -1,
@@ -787,11 +869,20 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         if not flexible_load:
             model.constrain(grid_direction, 0, np.inf)
             model.constrain({**grid_direction, x["CURTAIL"]: -1}, -np.inf, 0)
-        model.constrain(
-            {v["bc"]: 1, x["CHARGE_GRID"]: -charge_max, x["CHARGE_PV"]: -pv_max},
-            -np.inf,
-            0,
-        )
+        # A CURTAIL interval charges from the PV it leaves, after the house and a probe's
+        # load: with a probe, only where it fits (`curtail_charge`, a CURTAIL that charges).
+        curtail_charge = x["CURTAIL"]
+        if flexible_load and can_curtail:
+            curtail_charge = v["curtail_charge"] = model.variable(binary=True)
+            model.constrain({curtail_charge: 1, x["CURTAIL"]: -1}, -np.inf, 0)
+        charge_rows = {
+            v["bc"]: 1,
+            x["CHARGE_GRID"]: -charge_max,
+            x["CHARGE_PV"]: -pv_max,
+        }
+        if can_curtail:
+            charge_rows[curtail_charge] = -pv_max
+        model.constrain(charge_rows, -np.inf, 0)
         if flexible_load:
             model.constrain(
                 {
@@ -822,6 +913,16 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     -np.inf,
                     surplus + charge_source_max,
                 )
+                if can_curtail:
+                    model.constrain(
+                        {
+                            v["bc"]: 1,
+                            v["flex_load"]: 1,
+                            curtail_charge: charge_source_max,
+                        },
+                        -np.inf,
+                        surplus + charge_source_max,
+                    )
         else:
             model.constrain(
                 {
@@ -943,6 +1044,8 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         > 0
         for slot, v in zip(problem.slots, vectors, strict=True)
     ]
+    # PV above what the site passes that the pack's charge power cannot take (T-064).
+    beyond_rooms = [_beyond_room(problem, slot) for slot in problem.slots]
     if any(
         model.upper[v["mode_CURTAIL"]] > 0 and room > 0
         for room, v in zip(rooms, vectors, strict=True)
@@ -1101,7 +1204,19 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     origin = {release: -1}
             # An idle interval is CURTAIL on the terms of any committed interval: nothing
             # to follow does not make room in a full pack. A CURTAIL row is not a bridge.
-            curtails = bool(seen_full) and model.upper[v["mode_CURTAIL"]] > 0
+            beyond = (
+                _open_beyond(
+                    model,
+                    v,
+                    beyond_rooms[i],
+                    model.upper[v["flex_load"]] if flexible_load else 0.0,
+                )
+                if model.upper[v["mode_CURTAIL"]] > 0 and "CHARGE_PV" in members
+                else None
+            )
+            curtails = (bool(seen_full) or beyond is not None) and model.upper[
+                v["mode_CURTAIL"]
+            ] > 0
             if i in idle and (flexible_load or curtails):
                 # Idle without a probe. A bridge needs it idle as realised too: the probe
                 # may not put the slot's net load at the activity, or SELF_CONSUME would
@@ -1134,7 +1249,15 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     for mode in (*(members if flexible_load else ()), "HOLD")
                 }
                 if curtails:
-                    _offer_curtail(model, v, seen_full, full, curtailing, released)
+                    _offer_curtail(
+                        model,
+                        v,
+                        seen_full,
+                        full,
+                        curtailing,
+                        released,
+                        beyond_the_pack=beyond,
+                    )
                     kept[v["mode_CURTAIL"]] = 1
                 model.constrain(kept, 1, 1)
                 if not known:
@@ -1214,8 +1337,16 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                         )
                     held = {v["mode_HOLD"]: -1, **going_on}
                     kept[v["mode_HOLD"]] = 1
-                if seen_full:
-                    _offer_curtail(model, v, seen_full, full, curtailing, released)
+                if seen_full or beyond is not None:
+                    _offer_curtail(
+                        model,
+                        v,
+                        seen_full,
+                        full,
+                        curtailing,
+                        released,
+                        beyond_the_pack=beyond,
+                    )
                     kept[v["mode_CURTAIL"]] = 1
                     curtailing = {v["mode_CURTAIL"]: -1, **{k: -1 for k in going_on}}
                 model.constrain(kept, 1, 1)
@@ -1568,7 +1699,8 @@ def _certify_modes(
             and max(abs(charge), abs(export), abs(curt)) <= noise,
             "HOLD": max(abs(charge), abs(discharge), abs(curt)) <= noise,
             "CURTAIL": curt >= activity - tolerance
-            and max(abs(charge), abs(discharge)) <= noise,
+            and abs(discharge) <= noise
+            and -noise <= charge <= surplus + noise,
         }
         if flow.dispatch_mode != mode or not valid[mode]:
             raise SolveError(
@@ -1632,7 +1764,11 @@ def _certify_modes(
                 )
                 ends = spent or (carried and mode == "HOLD" and full)
                 curtails = mode == "CURTAIL" and (
-                    carried and full or released and full_seen
+                    carried
+                    and full
+                    or released
+                    and full_seen
+                    or _beyond_the_pack(problem, slot) > _ROW_TOLERANCE
                 )
                 # A CURTAIL where the site cannot pass the PV takes a HOLD with a clock of
                 # its own over (not one released from a commitment, which has none): the
