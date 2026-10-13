@@ -2,6 +2,8 @@
 
 Status: proposed — becomes accepted when the owner approves it at the gate
 Date: 2026-10-12 (revision 3, after the annual-bill measurement of T-448)
+Amended: 2026-10-13, T-474 — the offline tools read `buy_energy` with its sign; the engine contract
+is unchanged ([Amendment T-474](#amendment-t-474-2026-10-13-the-oracle-reads-the-energy-part-with-its-sign))
 
 This ADR fixes the model, the settings and the contract between runtime and engine. Revision 2 was
 implemented on `main` by T-005 (`engine/settlement.py`, `settlement.py`) and is in no release yet
@@ -550,6 +552,106 @@ Not measured, from the settlement rules:
   exact two-year rule of the calculator's ADR-0031 (a warm-up year from a full account), not the
   three passes from an empty account behind the `KL` numbers of T-448, and takes the fixed part of
   the bill as an input, so a charge band that depends on the annual import is not modelled.
+- The tool's `buy_energy` input was the planner's clamped `energy_t` until
+  [Amendment T-474](#amendment-t-474-2026-10-13-the-oracle-reads-the-energy-part-with-its-sign); the
+  80 homes of T-448 have no hour with a negative energy part (lowest +0.42 PLN/kWh), so no number of
+  this revision depends on it.
+
+## Amendment T-474 (2026-10-13): the oracle reads the energy part with its sign
+
+Scope: the input of `tools/replay.py` and `tools/replay_year.py`. The engine, the runtime, the
+settings and every plan stay as they are.
+
+### Context
+
+- The oracle's bills pay the liability `E⁺ = Σ max(E_t, 0)` over the months (T-473, the calculator's
+  ADR-0031 Amendment T-471): art. 4c sec. 3 of the RES Act sums import × price over the hours of
+  **one settlement period**, so hours at a negative price lower the month's liability, and a month
+  that ends below zero owes nothing.
+- The tool's hourly input cannot say so. `tools/replay.py::_interval` rejects a negative
+  `buy_energy`, copying `engine/normalize.py` (`buy_energy_per_kwh` in `[0, max(buy, 0)]`). That
+  bound belongs to the planner: decision 1 clamps `energy_t` at 0 so that a slot with a negative
+  energy price keeps its real price in `buy_plan` (decision 3, missing inputs). T-460 used the same
+  field as the base of the bill.
+- With the clamp the month's energy part is `Σ import × max(e_h, 0)`: too high by the money of the
+  negative hours, in **every** month with a draw at a negative energy price, not only in a month
+  that ends below zero. `gross = fixed + Σ import × buy` is right (the `buy` column is signed), so
+  the error is in `applied` and the refund that follows from it: the bill comes out too low where
+  the deposit exceeds the liability and the refund cap binds.
+- Size, an **estimate** (`artifacts/T-474/clamp_error.py`, `.txt`; the 40 PV homes of the
+  calculator's T-471 on its one offer without an index floor, EMS plan of the calculator's port, one
+  price year; hourly flows are not stored, so the money of the negative hours is the kWh drawn below
+  zero per month × the unweighted mean price of those hours). The estimate is low: it falls below
+  `N = Σ max(−E_t, 0)` in 16 of 40 homes at 10 kWh, which the true value cannot. Bill with the
+  clamped input minus bill with the signed one, PLN a year, never above zero; "homes" are those
+  with a difference over 0.005:
+
+  | Capacity (realistic forecast) | Homes drawing below zero | Homes with a month below zero | Homes with `D > E⁺` | Annual bill too low: homes, median of those, max | Ledger bill too low: homes, median of those, max |
+  | --- | --- | --- | --- | --- | --- |
+  | 5 kWh | 38 of 40 | 4 | 10 | 8, 0.0, 0.1 | 8, 0.0, 0.1 |
+  | 10 kWh | 40 | 26 | 15 | 5, 5.4, 5.8 | 7, 5.4, 5.8 |
+  | 15 kWh | 40 | 38 | 20 | 10, 8.4, 20.0 | 14, 8.3, 19.8 |
+  | 20 kWh | 40 | 39 | 24 | 13, 9.0, 24.3 | 18, 9.1, 37.0 |
+
+  With a perfect forecast the maxima are 0.2, 7.8, 21.7 and 29.4 PLN on the annual bill and 0.2,
+  7.8, 19.7 and 29.4 on the ledger. Decision 1 of revision 3 admits a deposit setting only if no
+  home is dearer by more than 10 PLN a year: the estimated error is about half of that threshold at
+  10 kWh and two to four times it at 15 and 20 kWh.
+
+### Decision
+
+1. **`buy_energy` in the tool input is the energy part as invoiced, with its sign** (energy price,
+   excise and VAT; currency/kWh). Rules of `_interval`, for JSON and CSV, in both tools:
+   - finite; missing or empty = 0 (unchanged);
+   - `buy_energy ≤ max(buy, 0)` (unchanged, tolerance 1e-9);
+   - below zero it must also satisfy `buy_energy ≤ buy`: the distribution part `buy − buy_energy` is
+     never negative. `buy = −0.5, buy_energy = 0` stays valid (a file written with the clamp).
+2. **The planner gets the engine's value.** Every `Slot` the tools build carries
+   `min(max(buy_energy, 0), max(buy, 0))`, the `energy_t` of decision 1, from one helper in
+   `tools/replay.py` used by `replay._slots` and `replay_year.run_year`. `validate_problem` is not
+   changed and never sees a negative value; a file without a negative `buy_energy` gives the same
+   plans and the same bills as before.
+3. **The bill gets the signed value.** `replay_year.measure` passes `Interval.buy_energy` to `bill()`
+   as today. `E_t` is then the signed sum of the month, `E⁺` and the ledger follow T-473.
+4. **The engine contract stays**: `Slot.buy_energy_per_kwh` in `[0, max(buy_per_kwh, 0)]`,
+   `runtime._buy_composition` and `planning_buy` untouched. The integration has no bill, and with
+   `deposit_model: off` nothing reads the field.
+
+### Alternatives rejected
+
+1. **Leave the tool, document the limit** (option A of T-474): rejected. The limit is wider than
+   "a negative month reaches `bill()` only through the Python API": every month with a draw below
+   zero is overstated, the bill moves by an amount of the order of the 10 PLN threshold (estimate
+   above), and on the one kind of offer where the calculator found the case (26 of 40 homes with a
+   month below zero at 10 kWh) the rule of T-473 would stay unreachable from the command line. The
+   change is one validation rule and one helper in the tools.
+2. **Signed `buy_energy_per_kwh` in the engine**, `buy_plan = buy − (1 − φe) × energy` with a
+   negative `energy`: rejected. It changes plans only with π > 0, which revision 3 does not
+   recommend. It is right only in a month that ends above zero with a deposit in excess (the
+   negative hour then lowers a liability the deposit would have paid); in a month that ends below
+   zero, or with a deposit that is short, the hour is worth its full price, and a 24 h horizon does
+   not know which month it is in. The clamp plans such an hour as `off` does. A change to planning
+   prices also needs the year replay of decision 1 of revision 3, and this repository has no corpus
+   with a negative energy part.
+3. **A second input column** for the bill next to a clamped `buy_energy`: rejected. One invoice
+   number would be written twice, and the clamp is a formula the tool applies itself.
+4. **Clamp the hour in the bill and correct the month afterwards**: rejected, it is the signed sum
+   computed in two steps. The calculator rejected the hourly floor in the bill for the same reason
+   (ADR-0031 Amendment T-471, alternative 4).
+
+### Consequences
+
+- T-476 (dev, after T-473): `_interval`, the helper, tests, tool docstrings, both guides ("Offline
+  replay tool" and "Annual settlement oracle": the `buy_energy` paragraphs and Limits) and the
+  rebuilt guides. `custom_components/` has no diff.
+- Limits that stay, to be written in the guides: the settlement period is the calendar month (a
+  seller billing over a longer period nets across its months; the calculator measured 0 to +67.6 PLN
+  a year, ADR-0031 Amendment T-471 point 8), and energy is valued per hour, so a negative quarter
+  inside a positive hour is not seen.
+- No stored number changes: T-448's homes have no negative energy hour and T-460's tests use a
+  synthetic series without one.
+- Risk: the size above is an estimate on standard profiles, one offer and one price year. The rule
+  does not depend on it.
 
 ## Alternatives rejected
 

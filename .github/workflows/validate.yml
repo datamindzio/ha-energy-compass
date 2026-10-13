@@ -40,6 +40,16 @@ jobs:
         working-directory: tools/dashboards
         run: node --test test-*.mjs
 
+  guides:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Check the generated guides (needs only markdown; Mermaid is not rendered)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/guides"
+          "$RUNNER_TEMP/guides/bin/pip" install --quiet markdown==3.8
+          "$RUNNER_TEMP/guides/bin/python" tools/build_guides.py --check
+
   hassfest:
     runs-on: ubuntu-24.04
     steps:

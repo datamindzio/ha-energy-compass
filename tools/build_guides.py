@@ -8,9 +8,18 @@ the site keeps one look and needs no JavaScript.
 Requirements: the `docs` extra (`pip install -e '.[docs]'` or
 `pip install markdown==3.8`) and Node.js with npx for @mermaid-js/mermaid-cli.
 
-Usage: python tools/build_guides.py
+`--check` writes nothing and exits 1, naming every file, when a committed file is
+stale: a guide HTML that differs from a fresh render of its Markdown, a diagram
+SVG the guides reference but docs/assets/diagrams/ lacks, or an SVG no guide
+references. It needs only `markdown`: it does not run Mermaid (no Node, no
+network), because a diagram file is named by the hash of its Mermaid source, so
+an edited block shows up as a missing SVG and the pre-rendered SVG bytes are not
+compared.
+
+Usage: python tools/build_guides.py [--check]
 """
 
+import argparse
 import hashlib
 import html
 import re
@@ -73,15 +82,18 @@ def stylesheet() -> str:
     return match.group(1).rstrip() + EXTRA_CSS
 
 
-def render_diagram(source: str, work: Path) -> str:
-    """Render one Mermaid block to light and dark SVGs; return the file stem."""
+def render_diagram(source: str, work: Path | None) -> str:
+    """Render one Mermaid block to light and dark SVGs; return the file stem.
+
+    With no `work` directory nothing is rendered: only the stem is returned.
+    """
     digest = hashlib.sha256(source.encode()).hexdigest()[:12]
     stem = f"diagram-{digest}"
     targets = {
         "default": DIAGRAMS / f"{stem}.svg",
         "dark": DIAGRAMS / f"{stem}-dark.svg",
     }
-    if all(path.exists() for path in targets.values()):
+    if work is None or all(path.exists() for path in targets.values()):
         return stem
     mmd = work / f"{stem}.mmd"
     mmd.write_text(source, encoding="utf-8")
@@ -120,7 +132,8 @@ def rewrite_href(href: str) -> str:
     return f"{REPO}{target.as_posix()}{suffix}"
 
 
-def build(lang: str, css: str, work: Path, used: set[str]) -> None:
+def build(lang: str, css: str, work: Path | None, used: set[str]) -> str:
+    """Return the page for one guide; render its diagrams when `work` is given."""
     text = (DOCS / f"guide.{lang}.md").read_text(encoding="utf-8")
     labels = LANGUAGES[lang]
     figures = []
@@ -199,10 +212,41 @@ def build(lang: str, css: str, work: Path, used: set[str]) -> None:
 </body>
 </html>
 """
-    (DOCS / f"guide.{lang}.html").write_text(page, encoding="utf-8")
+    return page
 
 
-def main() -> None:
+def check() -> int:
+    """Name every stale generated guide file on stderr; write nothing."""
+    css = stylesheet()
+    used: set[str] = set()
+    stale = []
+    for lang in LANGUAGES:
+        path = DOCS / f"guide.{lang}.html"
+        page = build(lang, css, None, used)
+        if not path.exists() or path.read_text(encoding="utf-8") != page:
+            stale.append((path, f"differs from docs/guide.{lang}.md"))
+    for name in sorted(used):
+        if not (DIAGRAMS / name).exists():
+            stale.append((DIAGRAMS / name, "missing, referenced by a guide"))
+    for orphan in sorted(DIAGRAMS.glob("*.svg")):
+        if orphan.name not in used:
+            stale.append((orphan, "not referenced by any guide"))
+    for path, reason in stale:
+        print(
+            f"stale: {path.relative_to(ROOT)} {reason} - run python tools/build_guides.py",
+            file=sys.stderr,
+        )
+    return 1 if stale else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--check", action="store_true", help="fail if the committed files are stale"
+    )
+    args = parser.parse_args(argv)
+    if args.check:
+        return check()
     if shutil.which("npx") is None:
         sys.exit("npx not found: install Node.js to render Mermaid diagrams")
     DIAGRAMS.mkdir(parents=True, exist_ok=True)
@@ -210,12 +254,14 @@ def main() -> None:
     used: set[str] = set()
     with tempfile.TemporaryDirectory() as tmp:
         for lang in LANGUAGES:
-            build(lang, css, Path(tmp), used)
+            page = build(lang, css, Path(tmp), used)
+            (DOCS / f"guide.{lang}.html").write_text(page, encoding="utf-8")
     for stale in DIAGRAMS.glob("*.svg"):
         if stale.name not in used:
             stale.unlink()
     print(f"built {len(LANGUAGES)} guides, {len(used) // 2} diagrams")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

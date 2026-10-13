@@ -725,11 +725,15 @@ Rules (defaults: 60 min, 0.1 kW):
   rest of the commitment is `HOLD` with the surplus exported, or `CURTAIL` where the site cannot
   pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
   pack. The released `HOLD` starts no clock of its own — the commitment's deadline stays the only
-  one — so it may turn to `CURTAIL` (which starts its own clock) before then. A `HOLD` released
-  from a full pack does not go back to `CHARGE_PV`/`SELF_CONSUME`; one released from a depleted
-  pack does, in any later interval of the commitment while the pack is still depleted: the pack
-  takes the surplus, and a `HOLD` could not pass the PV above the export cap (on a site with
-  `grid_export_kw = 0` that is every sunrise). The return is the commitment going on, not a new
+  one — so it may turn to `CURTAIL` (which starts its own clock) before then. A released
+  `HOLD` goes back to `CHARGE_PV`/`SELF_CONSUME` in any later interval of the commitment while the
+  pack is still depleted: the pack takes the surplus, and a `HOLD` could not pass the PV above the
+  export cap (on a site with `grid_export_kw = 0` that is every sunrise). A `HOLD` released from a
+  depleted pack also goes back in an interval whose PV the site cannot pass, where a `HOLD` has no
+  legal flow: a plan followed one interval would otherwise reach the next boundary with a carried
+  commitment and no plan. A `HOLD` released from a full pack does not go back there: it keeps its
+  own clock across the boundary, and where the site cannot pass the PV it is `CURTAIL` (above).
+  The return is the commitment going on, not a new
   run: the commitment's deadline stays the only clock. A pack that empties again inside the same
   commitment is released again and goes back again, as often as the commitment lasts. The release
   survives the interval boundary: the plan marks the rows of such a `HOLD`
@@ -2133,8 +2137,8 @@ are valued by two bills:
 
 | Bill | Rule |
 | --- | --- |
-| `annual` | the deposit D = 1.23 × V (V = value of the exported energy at `max(sell, 0)`) pays the energy part E of the imports; the refund is `min(D − min(D, E), ρ × V)` |
-| `ledger` | the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry `min(unused, ρ × V of the month)` comes back and the rest is void. It is the steady state of a repeated year: `D ≤ E` gives the annual result, `D > E` a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year |
+| `annual` | the deposit D = 1.23 × V (V = value of the exported energy at `max(sell, 0)`) pays the liability E⁺ = Σ max(E<sub>t</sub>, 0) of the monthly energy parts E<sub>t</sub> of the imports; the refund is `min(D − min(D, E⁺), ρ × V)`. A month with a negative energy part (dynamic price without an index floor, charging in negative-price hours) owes nothing and never feeds the deposit: it stays on the bill at full value, never refunded, capped or voided (ADR-0031 Amendment T-471). So bill = fixed + Σ import × buy − applied − refund, and the signed energy part (a negative month included) is inside Σ import × buy |
+| `ledger` | the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry `min(unused, ρ × V of the month)` comes back and the rest is void. It is the steady state of a repeated year: `D ≤ E⁺` gives the annual result, `D > E⁺` a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year |
 
 ```
 python tools/replay_year.py site.json --set deposit_model=manual --set export_value_factor=0.3
@@ -2142,7 +2146,7 @@ python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 
 ```
 
 It prints (or, with `--json`, returns) both bills, `wear`, the SOC drift (initial minus final SOC at
-the mean buy price), `K` = annual bill + wear + SOC drift (`KL` with the ledger), `D`, `V`, `E`, and
+the mean buy price), `K` = annual bill + wear + SOC drift (`KL` with the ledger), `D`, `V`, `E` (signed), `E_owed` (E⁺; the text output labels it `E+ liability`), and
 the refund and the void of each bill. Compare two runs by the difference of `K` (or `KL`); `--self-use`
 gives the no-planner reference. The input is one JSON object (`timezone`, `start`, `rho`, `fixed`,
 `initial_soc_percent`, `settings` and `hours[]`) or a CSV, one row per **hour** with `start`, `buy`,
@@ -2162,7 +2166,9 @@ repeated autumn hour it is the first occurrence, unless the row before it is tha
 Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
 charge band that depends on the annual import is not modelled (take `fixed` from the no-battery bill
 and expect a small constant error where the band differs); a stretch shorter than a year is read as
-a year with empty months; the result is only as good as the forecast series you give it.
+a year with empty months; `buy_energy` stays non-negative as in the engine, so a month with a
+negative energy part reaches the bills only as a signed energy list through the Python API (`bill()`),
+not through the hourly input; the result is only as good as the forecast series you give it.
 
 ## Reason code reference
 
