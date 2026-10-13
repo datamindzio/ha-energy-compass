@@ -85,7 +85,12 @@ def test_low_soc_interrupts_carried_discharge_commitment(mode):
     )
     plan = solve(source)
     assert all(f.dispatch_mode == "HOLD" for f in plan.flows)
-    assert safety_exception(source)["reason"] == "observed_soc_minimum"
+    exception = safety_exception(source)
+    if mode == "SELF_CONSUME":
+        # A PV-follow commitment at the reserve is released, not interrupted (T-058).
+        assert exception is None
+    else:
+        assert exception["reason"] == "observed_soc_minimum"
 
 
 @pytest.mark.parametrize("initial", [-0.01, float("nan"), float("inf"), 8.1])

@@ -90,6 +90,13 @@ def safety_exception(problem: Problem) -> dict | None:
     )
     if problem.slots[0].start.astimezone(UTC) >= deadline:
         return None
+    if mode == "SELF_CONSUME":
+        # A PV-follow commitment whose pack is at the reserve is not interrupted: the
+        # inverter stops at the minimum SOC, that is its usual empty state, and the
+        # commitment is released into a HOLD with no clock of its own that may go back
+        # to the surplus (ADR-0005 point 13). A HOLD with the commitment's clock would
+        # curtail beside the empty pack or leave the plan infeasible (T-058).
+        return None
     charging = mode in ("CHARGE_GRID", "CHARGE_PV")
     bound = battery.capacity_kwh * (
         battery.maximum_soc_fraction if charging else battery.minimum_soc_fraction

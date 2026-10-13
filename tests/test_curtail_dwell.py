@@ -17,7 +17,10 @@ from test_dispatch_policy import dispatch
 
 from benchmarks.curtail_sweep import follow
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
-from custom_components.energy_compass.engine.dispatch_policy import validate_modes
+from custom_components.energy_compass.engine.dispatch_policy import (
+    safety_exception,
+    validate_modes,
+)
 from custom_components.energy_compass.engine.models import (
     FlexibleLoadRequest,
     Flow,
@@ -885,3 +888,52 @@ def test_a_depleted_release_is_planned_through_a_flexible_load_probe():
     ]
     assert plan.released_holds == (0, 1, 2)
     validate_modes(problem, plan.flows, plan.carried_bridges)
+
+
+@pytest.mark.parametrize("allow_curtailment", [True, False])
+@pytest.mark.parametrize("mode", ["SELF_CONSUME", "CHARGE_PV"])
+@pytest.mark.parametrize(("pv", "export_cap"), SUNRISES)
+def test_a_pack_exactly_at_the_reserve_is_the_depleted_release_not_a_hold_with_a_clock(
+    pv, export_cap, mode, allow_curtailment
+):
+    # The usual empty state: the inverter stops at the minimum SOC, so the observed
+    # pack is the reserve to the last bit (T-058). A carried PV-follow commitment is
+    # released like it is 0.01 kWh above (T-050), not a safety exception whose HOLD
+    # has the commitment's clock and curtails beside the empty pack or has no plan.
+    problem = depleted(
+        pv, mode=mode, export_cap=export_cap, allow_curtailment=allow_curtailment
+    )
+    problem = replace(problem, battery=replace(problem.battery, initial_kwh=0.0))
+    first = solve(problem)
+    modes = [flow.dispatch_mode for flow in first.flows]
+    assert modes[:3] == ["HOLD", "CHARGE_PV", "CHARGE_PV"]
+    assert "CURTAIL" not in modes[:3]
+    assert first.released_holds[:1] == (0,)
+    validate_modes(problem, first.flows, first.carried_bridges)
+    # Rolled: the HOLD is carried out, the pack is at the reserve again (standby loss,
+    # a SOC step) and the release is carried with the commitment's clock.
+    after = follow(problem, first)
+    assert after.initial_dispatch_released
+    assert after.initial_dispatch_mode == mode
+    after = replace(after, battery=replace(after.battery, initial_kwh=0.0))
+    second = solve(after)
+    assert [flow.dispatch_mode for flow in second.flows[:2]] == ["CHARGE_PV"] * 2
+    assert roll(problem, 5)[:3] == ["HOLD", "CHARGE_PV", "CHARGE_PV"]
+
+
+@pytest.mark.parametrize("mode", ["SELF_CONSUME", "CHARGE_PV"])
+def test_a_carried_release_whose_pack_drops_to_the_reserve_is_not_locked_again(mode):
+    # T-050 carries the release across the boundary; the pack that drops to the reserve
+    # during the HOLD (repro 4) must not turn it back into a safety-exception HOLD.
+    problem = depleted((0, *(0.9,) * 7), mode=mode, export_cap=2)
+    first = solve(problem)
+    after = follow(problem, first)
+    after = replace(after, battery=replace(after.battery, initial_kwh=0.0))
+    assert after.initial_dispatch_released
+    second = solve(after)
+    assert second.flows[0].dispatch_mode == "CHARGE_PV"
+
+
+def test_a_discharge_grid_commitment_at_the_reserve_is_still_a_safety_exception():
+    problem = carried(capped((0.9,) * 4, initial=0.0), mode="DISCHARGE_GRID")
+    assert safety_exception(problem)["reason"] == "observed_soc_minimum"
