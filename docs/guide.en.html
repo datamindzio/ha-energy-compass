@@ -209,7 +209,7 @@ the same steps apply to any other currency and tariff.</p>
 nothing is saved until its last step.</p>
 <ol>
 <li><strong>First form.</strong> Fill in <strong>Name</strong>, <strong>Currency</strong> (no automatic conversion) and <strong>Timezone</strong>, choose
-   the optional <strong>Preset</strong> (provider profile) and switch <strong>PV</strong> and <strong>Battery</strong> on or off. The same form
+   the optional <strong>Preset</strong> (provider profile) and set <strong>Pv enabled</strong> and <strong>Battery enabled</strong>. The same form
    offers three optional starting profiles: <strong>Prosumer settlement</strong>, <strong>Polish distribution tariff</strong> and
    <strong>Inverter</strong>. They pre-fill editable tuning values once, for this new installation only, and never
    set a price; Polish profiles require currency PLN. See
@@ -227,8 +227,11 @@ nothing is saved until its last step.</p>
      clock and holidays are in <a href="#built-in-polish-tariffs">Built-in Polish tariffs</a>.
    - <strong>Tariffs → Sell source</strong> for the sell price. For Poland choose <strong>RCE market price (PSE)</strong>, which
      takes the sensor of the <code>rce_pse</code> integration.
-   - <strong>Load forecasting</strong> chooses how household consumption is predicted: from Home Assistant's
-     recorder history or from a daily estimate you type.
+   - <strong>Load forecasting</strong> holds the numbers behind the household consumption forecast. A new
+     installation starts from the daily estimate you type there (<strong>Daily load kwh</strong>, 10 kWh/day by
+     default). Recorder history is used once a household load source is bound: keep the <strong>Household load
+     history</strong> row in <strong>Detected sources</strong>, or use <strong>Sources → Add source → Load</strong>. <strong>Load forecasting</strong>
+     then tunes the history window (<strong>Lookback days</strong>, <strong>Minimum samples</strong>) and the fallback.
    - <strong>Sources</strong> reviews and edits every bound source, including PV; <strong>Battery</strong> and <strong>Hardware
      capabilities</strong> hold the battery limits and the grid import limit. The planning, outlook,
      performance and presentation groups appear after <strong>Show expert settings</strong> (see
@@ -250,12 +253,13 @@ reads <code>calculating</code> and turns <code>ready</code> when the first valid
 restart it). The frontend caches the integration's labels; without a reload, new options such as
 <strong>Energy Atlas</strong> can show as blank items.</p>
 <h3 id="optional-next-steps">Optional next steps</h3>
-<p>Each step is independent; the linked section has the details.</p>
+<p>Each step is independent; the linked section has the details. <strong>Options</strong> and <strong>Configure</strong> are the same
+button on the integration's page in <strong>Settings → Devices &amp; services</strong>.</p>
 <ul>
 <li><strong>Deye inverter controller.</strong> To let Energy Compass write the plan to a Deye inverter through
   Solarman, open <strong>Options → Deye controller</strong>. Off by default; see
   <a href="#enabling-the-controller">Enabling the controller</a>.</li>
-<li><strong>Notifications.</strong> Turn on <strong>Notify enabled</strong> in <strong>Notifications</strong>, then copy the notification
+<li><strong>Notifications.</strong> Turn on <strong>Notify enabled</strong> in <strong>Notification preferences</strong>, then copy the notification
   blueprint, which lives outside the HACS-installed folder. See
   <a href="#window-notifications">Window notifications</a> and
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">Opt-in notifications</a>.</li>

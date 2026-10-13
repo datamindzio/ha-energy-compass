@@ -207,8 +207,8 @@ net-billing); te same kroki dotyczą każdej innej waluty i taryfy.</p>
 kreator; nic nie jest zapisywane przed jego ostatnim krokiem.</p>
 <ol>
 <li><strong>Pierwszy formularz.</strong> Wpisz <strong>Nazwa</strong>, <strong>Waluta</strong> (bez automatycznej konwersji) i <strong>Strefa
-   czasowa</strong>, wybierz <strong>Opcjonalny profil dostawcy</strong> (preset) oraz włącz lub wyłącz
-   <strong>fotowoltaikę</strong> i <strong>baterię</strong>. Ten sam formularz oferuje trzy opcjonalne profile startowe:
+   czasowa</strong>, wybierz <strong>Opcjonalny profil dostawcy</strong> (preset) oraz ustaw
+   <strong>Włącz fotowoltaikę</strong> i <strong>Włącz baterię</strong>. Ten sam formularz oferuje trzy opcjonalne profile startowe:
    <strong>Rozliczenie prosumenckie</strong>, <strong>Polska taryfa dystrybucyjna</strong> i <strong>Falownik</strong>. Jednorazowo wypełniają
    edytowalne wartości nowej instalacji i nigdy nie ustawiają ceny; profile polskie wymagają waluty
    PLN. Co wypełnia każdy profil, opisują <a href="#profile-startowe-nowe-instalacje">Profile startowe</a>.</li>
@@ -225,8 +225,12 @@ kreator; nic nie jest zapisywane przed jego ostatnim krokiem.</p>
      zegar i święta opisują <a href="#wbudowane-taryfy-osd">Wbudowane taryfy OSD</a>.
    - <strong>Taryfy → Źródło ceny sprzedaży</strong> — cena sprzedaży. W Polsce wybierz <strong>Cena rynkowa RCE (PSE)</strong>,
      która używa sensora integracji <code>rce_pse</code>.
-   - <strong>Prognoza zużycia</strong> — jak przewidywane jest zużycie domu: z historii rekordera Home Assistanta
-     albo z wpisanego dobowego szacunku.
+   - <strong>Prognoza zużycia</strong> — liczby stojące za prognozą zużycia domu. Nowa instalacja startuje od
+     dobowego szacunku, który tu wpisujesz (<strong>Dobowe zużycie domu</strong>, domyślnie 10 kWh/dobę). Historia
+     rekordera jest używana, gdy powiązane jest źródło zużycia domu: zostaw wiersz <strong>Historia zużycia
+     domu</strong> w <strong>Wykrytych źródłach</strong> albo użyj <strong>Źródła danych → Dodaj źródło → Zużycie</strong>. <strong>Prognoza
+     zużycia</strong> dostraja wtedy okno historii (<strong>Długość historii</strong>, <strong>Minimalna liczba próbek</strong>) i
+     rozwiązanie zapasowe.
    - <strong>Źródła danych</strong> — przegląd i edycja wszystkich powiązanych źródeł, także PV; <strong>Bateria</strong> i
      <strong>Możliwości sprzętu</strong> zawierają limity baterii i limit importu z sieci. Grupy planowania,
      prognozy kosztu zużycia, wydajności i prezentacji pojawiają się po <strong>Pokaż ustawienia eksperckie</strong>
@@ -250,7 +254,8 @@ zgłasza <code>invalid_input</code>, <code>timeout</code> lub <code>infeasible</
 mobilnej uruchom ją ponownie). Interfejs przechowuje etykiety integracji w pamięci podręcznej, więc bez
 odświeżenia nowe ustawienia, np. <strong>Energy Atlas</strong>, mogą pojawić się jako puste pozycje.</p>
 <h3 id="opcjonalne-kolejne-kroki">Opcjonalne kolejne kroki</h3>
-<p>Każdy krok jest niezależny; szczegóły są w podlinkowanej sekcji.</p>
+<p>Każdy krok jest niezależny; szczegóły są w podlinkowanej sekcji. <strong>Opcje</strong> i <strong>Konfiguruj</strong> to ten sam
+przycisk na stronie integracji w <strong>Ustawienia → Urządzenia i usługi</strong>.</p>
 <ul>
 <li><strong>Sterownik Deye.</strong> Aby Energy Compass zapisywał plan na falowniku Deye przez Solarman, otwórz
   <strong>Opcje → Sterownik Deye</strong>. Domyślnie wyłączony; zob. <a href="#włączenie-sterownika">Włączenie sterownika</a>.</li>

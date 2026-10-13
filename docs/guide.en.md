@@ -75,7 +75,7 @@ Open **Settings → Devices & services → Add integration → Energy Compass**.
 nothing is saved until its last step.
 
 1. **First form.** Fill in **Name**, **Currency** (no automatic conversion) and **Timezone**, choose
-   the optional **Preset** (provider profile) and switch **PV** and **Battery** on or off. The same form
+   the optional **Preset** (provider profile) and set **Pv enabled** and **Battery enabled**. The same form
    offers three optional starting profiles: **Prosumer settlement**, **Polish distribution tariff** and
    **Inverter**. They pre-fill editable tuning values once, for this new installation only, and never
    set a price; Polish profiles require currency PLN. See
@@ -93,8 +93,11 @@ nothing is saved until its last step.
      clock and holidays are in [Built-in Polish tariffs](#built-in-polish-tariffs).
    - **Tariffs → Sell source** for the sell price. For Poland choose **RCE market price (PSE)**, which
      takes the sensor of the `rce_pse` integration.
-   - **Load forecasting** chooses how household consumption is predicted: from Home Assistant's
-     recorder history or from a daily estimate you type.
+   - **Load forecasting** holds the numbers behind the household consumption forecast. A new
+     installation starts from the daily estimate you type there (**Daily load kwh**, 10 kWh/day by
+     default). Recorder history is used once a household load source is bound: keep the **Household load
+     history** row in **Detected sources**, or use **Sources → Add source → Load**. **Load forecasting**
+     then tunes the history window (**Lookback days**, **Minimum samples**) and the fallback.
    - **Sources** reviews and edits every bound source, including PV; **Battery** and **Hardware
      capabilities** hold the battery limits and the grid import limit. The planning, outlook,
      performance and presentation groups appear after **Show expert settings** (see
@@ -121,12 +124,13 @@ restart it). The frontend caches the integration's labels; without a reload, new
 
 ### Optional next steps
 
-Each step is independent; the linked section has the details.
+Each step is independent; the linked section has the details. **Options** and **Configure** are the same
+button on the integration's page in **Settings → Devices & services**.
 
 - **Deye inverter controller.** To let Energy Compass write the plan to a Deye inverter through
   Solarman, open **Options → Deye controller**. Off by default; see
   [Enabling the controller](#enabling-the-controller).
-- **Notifications.** Turn on **Notify enabled** in **Notifications**, then copy the notification
+- **Notifications.** Turn on **Notify enabled** in **Notification preferences**, then copy the notification
   blueprint, which lives outside the HACS-installed folder. See
   [Window notifications](#window-notifications) and
   [Opt-in notifications](installation.md#opt-in-notifications).
