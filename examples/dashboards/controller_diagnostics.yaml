@@ -24,6 +24,10 @@ cards:
     {% set fresh = as_timestamp(rt.get(''original_deadline''),0) > as_timestamp(now()) and as_timestamp(rt.get(''last_confirmation''),0)
     > 0 %}
 
+    {% set hw = state_attr(''sensor.energy_compass_deye_controller'',''hardware'') or {} %}
+
+    {% set lr = state_attr(''sensor.energy_compass_deye_controller_runtime'',''last_run'') or {} %}
+
     | Parameter | State |
 
     |:--|:--|
@@ -33,6 +37,14 @@ cards:
     | Controller | {{ rt.get(''code'',''No data'') }} |
 
     | Reason | {{ rt.get(''reason'',''—'') }} |
+
+    | Reason code | {{ rt.get(''reason_code'',''—'') }} |
+
+    | Inverter | {{ (hw.device_type ~ '', protocol '' ~ hw.protocol ~ '' · '' ~ (''verified'' if hw.verified else ''not verified''))
+    if hw.device_type else ''—'' }} |
+
+    | Last run | {{ ((as_local(as_datetime(lr.at)).strftime(''%d.%m %H:%M:%S'') if as_timestamp(lr.at,0) else '''') ~ '' ·
+    '' ~ lr.trigger ~ '' · '' ~ lr.outcome ~ '' · '' ~ lr.seconds ~ '' s'') if lr else ''—'' }} |
 
     | Confirmed mode | {{ labels.get(rt.get(''confirmed_mode''),rt.get(''confirmed_mode'',''—'')) }} |
 

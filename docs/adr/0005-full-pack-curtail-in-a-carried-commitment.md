@@ -1,7 +1,7 @@
 # ADR-0005: A full pack ends a carried PV-follow commitment in HOLD or CURTAIL, a released HOLD has no clock, and a CURTAIL run goes on through a PV gap
 
 Status: accepted
-Date: 2026-10-12 (amended 2026-10-13, T-037, T-047)
+Date: 2026-10-12 (amended 2026-10-13, T-037, T-047, T-050)
 Amends: [ADR-0004](0004-carried-lock-release-for-standby-loss.md) (the released `HOLD` clock)
 
 ## Context
@@ -27,7 +27,8 @@ the inverter).
    deadline stays the only one. It may turn to `CURTAIL` (a normal mode with its own clock) inside the
    commitment if the pack was at the ceiling in an earlier committed interval (cumulative, so not after an
    empty-battery release alone), and is free after the deadline. It does not go back to `CHARGE_PV`/`SELF_CONSUME` (an explicit
-   row; before, the `HOLD` clock forbade it). This applies to the empty-battery release as well.
+   row; before, the `HOLD` clock forbade it). This applies to the empty-battery release as well
+   (amended by T-050: not for a `HOLD` released from a depleted pack, point 13).
 3. `validate_modes` mirrors it: a released `HOLD` keeps the commitment's clock, `CURTAIL` is accepted from
    the commitment in an interval that starts at the ceiling, or from the released `HOLD` once the pack was
    seen at the ceiling, nothing else is.
@@ -197,4 +198,116 @@ PV above the cap, `preserve_initial` whose terminal state of charge is out of re
 `CHARGE_PV`/`SELF_CONSUME` with a pack that cannot take the PV above the cap by its charge power (charging and
 curtailing in one interval would be needed), and the `HOLD` released from a carried PV-follow commitment whose
 pack is depleted (no clock of its own, so nothing for a `CURTAIL` to take over): PV above the cap inside the
-commitment's duration is infeasible for it, which is every sunrise on a zero-export site (T-050).
+commitment's duration is infeasible for it, which is every sunrise on a zero-export site (planned since T-050,
+below).
+
+## Amendment (T-050): a HOLD released from a depleted pack goes back to the commitment
+
+Status: decided in this amendment, implemented and swept on T-050 (the ticket asked for the decision in this
+ADR's terms). The alternative it rejects is in point 13; a different rule is a new amendment.
+
+A carried `CHARGE_PV`/`SELF_CONSUME` whose pack is too empty to go on (above the reserve, so no safety
+exception) is released into `HOLD`, which has no clock of its own (point 2) and, until now, could not go
+back (point 2: "it does not go back to `CHARGE_PV`/`SELF_CONSUME`"). Once PV above the house exceeded
+`grid_export_kw` (or the inverter rating) inside the commitment, no mode was legal: `HOLD` passes no surplus
+beyond the cap, `CURTAIL` is offered only after a full pack (point 1), and the T-047 takeover needs a `HOLD`
+with a clock of its own (point 11). On a site with `grid_export_kw = 0` that is every sunrise with an empty
+pack. Repros (15 min slots, 10 kWh, buy 1, sell 0.9, load 0.1, `minimum_mode_minutes = 60`, carried since
+15 min before the first slot): cap 2 kW, `initial_kwh = 0.01`, `pv = (0, 0.9, 0.9, 0.9, 0.9, 0.9, ...)`; cap 0,
+`pv = (0.05, 0.3, 0.5, 0.7, 0.9, 0.9, ...)`. Both are in `tests/test_curtail_dwell.py`.
+
+What the published plan is not: the coordinator carries out the first interval of a plan and plans again at
+the next boundary, from the `(mode, since)` it stored. A first version of this amendment changed the single
+plan (`HOLD, CHARGE_PV, CHARGE_PV`) and nothing else. Followed, that plan was not carried out: after the `HOLD`
+the coordinator stored a `HOLD` run with a clock of its own, which is what it does for every `HOLD` that
+leaves a PV-follow commitment and is not a bridge. The next plan then had a `HOLD` that had to last
+`minimum_mode_minutes` through the PV above the cap, and was `infeasible` (both repros, with
+`allow_curtailment` true and false). A rolled sweep (`deproll`, below) found it; the single-plan sweeps did
+not. The rule below is therefore carried across the boundary as well, in the stored commitment.
+
+Decision:
+
+13. **A `HOLD` released from a depleted pack goes back to the commitment**, in any later committed interval
+    in which the pack is still depleted (at or below the lock floor at the start of the interval; the
+    `lock_depleted` permission of the interval before): the pack takes the surplus, which is what the inverter
+    does there, and a `HOLD` could not pass PV above the cap. Not a `CURTAIL` takeover of the released `HOLD`
+    (the other option of the ticket): that curtails PV beside an empty pack for an hour, the worse plan.
+14. **The return is the commitment going on, not a new PV-follow run.** The commitment's deadline stays the
+    only clock (point 2): the return starts no minimum duration and needs no forecast coverage beyond the
+    horizon's end. In the model it is the `back` binary of the interval (`_resume`): at most the member mode,
+    the `HOLD` released before and the `lock_depleted` permission, and the start flag and the coverage row of
+    the PV-follow group are relaxed by it. A first version that left them in made a return near the end of the
+    horizon infeasible (a new run of 60 min does not fit) and held the pack in the commitment for another
+    hour. `validate_modes` accepts the return (`resumes`) where the state of charge at the start of the
+    interval is at or below the lock floor, and no other mode change from a released `HOLD`.
+15. **A `HOLD` released from a full pack still does not go back** (point 2 stands for it): a full pack that
+    has room again is not a reason to leave the minimum duration, and a member mode after its `HOLD` would be
+    the second change point 2 refuses. A full-pack release keeps its own clock and the `CURTAIL` takeover of
+    points 1 and 11 across the boundary exactly as before.
+16. **The release is carried across the coordinator boundary.** `Plan.released_holds` lists the rows of a `HOLD`
+    released from a depleted pack, for as long as that `HOLD` runs (`validate_modes` returns them); `runtime`
+    publishes their start times as `dispatch_policy.released_hold_starts`. When the first interval of the plan
+    is such a row, `_commit_battery_direction` stores the commitment unchanged, `{mode, since}`, with
+    `released: true`: no `HOLD` run, no clock of its own, as for a bridge. `restore_commitment` keeps the flag
+    only for a PV-follow commitment, `build_problem` hands it on as `Problem.initial_dispatch_released`, and
+    `validate_problem` refuses it without a PV-follow commitment. In the next problem the previous interval
+    is a released `HOLD`:
+    - the `HOLD` may go on as a `HOLD` run with no clock, also **past the commitment's deadline** (the flag is
+      not tested against the deadline or the state of charge: a version whose flag was valid only inside the
+      commitment, while the pack was still depleted, left two problems of the rolled sweep infeasible while
+      followed, in seeds 22 and 44);
+    - the first interval may go back unconditionally (the plan that released it saw the state; the next one
+      may go back or stay in `HOLD`), the later ones by point 13 and 14;
+    - any other mode change from it is the one point 2 refuses (`CURTAIL` raises `minimum mode duration` in
+      the validator).
+    The flag lives only while the released `HOLD` rows continue: the first plan that does not start in such a
+    row clears it.
+17. **A depleted pack may leave the commitment and re-enter it more than once.** Nothing counts the
+    releases: every one needs the pack at the lock floor (or a released `HOLD` already running), every return
+    needs a member mode and the `back` permission, and neither starts a clock. Within one commitment the pack
+    can be released, go back, charge, discharge to empty through `SELF_CONSUME` and be released again;
+    `test_a_depleted_pack_leaves_and_re_enters_the_commitment_more_than_once` pins `HOLD, CHARGE_PV,
+    SELF_CONSUME, SELF_CONSUME, HOLD, CHARGE_PV, SELF_CONSUME, SELF_CONSUME` (rows 0 and 4 released) for a
+    120-minute commitment. This is intended: the commitment's deadline is the one limit on the commitment's
+    length (point 2), and an inverter with an empty pack idles when PV is below the house and charges when it
+    is above; the optimizer is not asked to avoid either.
+18. **A return past the deadline is a run of its own.** A released `HOLD` that outlasts the commitment and
+    then goes to `CHARGE_PV`/`SELF_CONSUME` is not the commitment going on (it has ended): in the model it is
+    a new PV-follow run, and the coordinator stores it with a fresh `since` (the plan's `generated_at`) so
+    that the next plan sees the run's own minimum duration, not the long-expired one.
+
+Measured with `benchmarks/curtail_sweep.py` (the script is the same on both sides; it gained a generator for
+the sunrise on a depleted pack: `deprun`, `deproll`, `deprobe`, a carried `CHARGE_PV`/`SELF_CONSUME` with the
+pack at the reserve to 0.2 kWh above it, PV rising from nothing, export cap 0, 0.5 or 2 kW, and the rolled kinds
+`roll`, `negroll` and `deproll` that feed every plan through `_commit_battery_direction`, the coordinator's own
+code, one interval at a time up to 8 boundaries). Seeds 11, 22, 33, 44 × 300 each (1200 per kind); head is
+this branch's code at `670cb8c`, main is origin/main `fbcffe0`:
+
+| Kind | What it measures | Head | Main | Newly infeasible |
+| --- | --- | --- | --- | --- |
+| `run`, `negrun` (sell below zero), `probe` (`solve_flexible_load`) | plans on base draws | 1076, 1057, 1066 planned | identical | 0, nothing changed, 0 `NEW SOLVER FAILURE` |
+| `roll`, `negroll` | the same, plans followed | 1073, 1049 followed to the end | identical | 0 while followed, 0 fixed |
+| `deprun` | plan at the first boundary | 707 planned | 580 | 0 (127 newly planned, 16 cheaper, 0 worse) |
+| `deprobe` | the same through a flexible-load probe | 813 planned | 686 | 0 (127 newly planned, 76 cheaper, 1 dearer by 1e-6, solver tolerance, same modes) |
+| `deproll` | the plan followed one interval at a time | 697 followed to the end | 574 | 0 while followed, 123 fixed; infeasible at the first boundary 493 vs 620 |
+
+The rule changes nothing where the pack is not depleted (the base kinds are identical to main). The 493
+`deproll` draws that are still infeasible at the first boundary are out of scope (below).
+
+Five of the draws that main cannot plan at all are planned on head and then fail at a later boundary (seed/draw
+22/45, 22/278, 33/229, 44/91, 44/182, at boundary 1, 1, 3, 1, 1). None is newly infeasible and none has the
+release flag in the failing state, so the failing problem is the same state on main and is infeasible there
+too (checked on `fbcffe0` with the pickled problem). Two of them (22/45, 44/182) are infeasible with no commitment
+at all, the `preserve_initial` and `allow_curtailment = false` class below. The other three are feasible
+without the commitment and infeasible with it: the suffix of a feasible plan, carried out one interval, has no
+plan. That is not this change and is T-057. The first version of this amendment had 1 of 1200 newly infeasible while followed in `deproll`
+(`allow_curtailment = false`, PV above the inverter rating, an idle first interval: the plan was a real `HOLD`
+run rather than a bridge, and the coordinator then stored it with a clock of its own); it is closed by point
+16, as are the 2 of the intermediate version.
+
+T-055, which proposed carrying the release across the boundary on its own, is folded into this amendment and
+cancelled as merged.
+
+Still `infeasible` and out of scope: the cases listed in the T-037 and T-047 amendments, in particular
+`allow_curtailment = false` with PV above the cap, a pack that cannot take the PV above the cap by its charge
+power (charging and curtailing in one interval would be needed), and a terminal state of charge out of reach.

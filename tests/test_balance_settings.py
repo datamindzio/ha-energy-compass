@@ -66,7 +66,7 @@ def test_balance_labels_in_every_translation_section():
     root = Path("custom_components/energy_compass")
     anchors = {
         "strings.json": '"idle_drain_kw"',
-        "translations/en.json": '"soc_ceiling"',
+        "translations/en.json": '"idle_drain_kw"',
         "translations/pl.json": '"idle_drain_kw"',
     }
     for name, anchor in anchors.items():

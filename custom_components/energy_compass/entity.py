@@ -45,7 +45,7 @@ def entry_device_info(entry):
         identifiers={(DOMAIN, entry.entry_id)},
         name=entry.title,
         manufacturer="Energy Compass",
-        model="Advisory",
+        model="Advisory; with the Deye controller enabled it writes inverter settings through Solarman",
     )
 
 

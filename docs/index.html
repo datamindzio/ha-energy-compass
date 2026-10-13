@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Energy Compass v0.1.37: every Home Assistant entity, state, calculation, planning assumption and forecast-quality signal explained.">
+  <meta name="description" content="Energy Compass v0.1.38: every Home Assistant entity, state, calculation, planning assumption and forecast-quality signal explained.">
   <title>Energy Compass — Entity and calculation guide</title>
   <style>
     :root {
@@ -118,7 +118,7 @@
       </picture>
       <span>Energy<br>Compass</span>
     </a>
-    <p class="version">User guide · v0.1.37</p>
+    <p class="version">User guide · v0.1.38</p>
     <nav aria-label="Sections">
       <ul>
         <li><a href="#overview">Reading the compass</a></li>
@@ -142,13 +142,13 @@
     <header>
       <h1>Understand every recommendation.</h1>
       <p class="lead">What Energy Compass entities mean, how their values are calculated, and which assumptions sit behind the plan.</p>
-      <p>This guide describes the Home Assistant integration in <strong>v0.1.37</strong>. Examples use PLN; your installation uses its configured currency. Names are shown in English and Polish.</p>
+      <p>This guide describes the Home Assistant integration in <strong>v0.1.38</strong>. Examples use PLN; your installation uses its configured currency. Names are shown in English and Polish.</p>
     </header>
 
     <section id="overview" aria-labelledby="overview-title">
       <h2 id="overview-title">Reading the compass</h2>
       <p>Energy Compass answers two different questions. <strong>Consumption compass</strong> estimates whether additional household use is attractive during the current display interval. <strong>Energy compass</strong> summarizes what the optimized battery, solar and grid plan proposes for the first native interval.</p>
-      <div class="note"><p><strong>Advisory only.</strong> The integration does not charge the battery, change an inverter limit, curtail panels or execute notification actions. Results assume that the proposed plan can be followed. Existing inverter behavior may produce different costs.</p></div>
+      <div class="note"><p><strong>Advisory by default.</strong> The integration does not charge the battery, change an inverter limit, curtail panels or execute notification actions, unless you enable the optional Deye controller, which then writes inverter settings through Solarman. Results assume that the proposed plan can be followed. Existing inverter behavior may produce different costs.</p></div>
       <ol class="flow">
         <li><strong>Check validity</strong><span>Forecast valid must be on. Check current guidance validity before using a consumption recommendation.</span></li>
         <li><strong>Read the cost and level</strong><span>The cost describes an extra energy probe over a time interval, not the electricity tariff at this instant.</span></li>
@@ -265,6 +265,7 @@
             <tr><th scope="row"><a href="#deye_controller">Deye controller</a></th><td>Timestamp</td><td>When must the Deye controller blueprint run next?</td></tr>
             <tr><th scope="row"><a href="#deye_mode">Deye mode</a></th><td>Off / Simulation / Auto</td><td>Is the Deye controller allowed to write?</td></tr>
             <tr><th scope="row"><a href="#deye_runtime">Deye controller runtime</a></th><td>Runtime code</td><td>What did the Deye controller last decide and confirm?</td></tr>
+            <tr><th scope="row"><a href="#deye_pause">Pause inverter writes</a></th><td>On / off</td><td>Is every inverter write held?</td></tr>
           </tbody>
         </table>
       </section>
@@ -430,7 +431,7 @@
               <tr><th scope="row"><code>timeout</code></th><td>The base solve or overall calculation exceeded its budget. Check timing, model size and hardware. A single failed probe can instead leave a ready baseline with incomplete guidance.</td></tr>
               <tr><th scope="row"><code>infeasible</code></th><td>No baseline plan satisfies all constraints. Check demand/generation, SOC, reserve, power/export limits, terminal requirements and allowed capabilities.</td></tr>
               <tr><th scope="row"><code>error</code></th><td>Another solver failure or unexpected exception occurred. Inspect reason and integration diagnostics/logs.</td></tr>
-              <tr><th scope="row"><code>insufficient_data</code></th><td>Reserved in translations, but not emitted by the 0.1.37 coordinator. Missing-data validation currently reports <code>invalid_input</code>.</td></tr>
+              <tr><th scope="row"><code>insufficient_data</code></th><td>Reserved in translations, but not emitted by the 0.1.38 coordinator. Missing-data validation currently reports <code>invalid_input</code>.</td></tr>
             </tbody>
           </table>
         </section>
@@ -507,7 +508,7 @@
       <article id="deye_controller">
         <h3>Deye controller</h3>
         <p class="entity-meta"><code>deye_controller</code> · <span lang="pl">Sterownik Deye</span> · Timestamp sensor, only with <strong>Options → Deye controller</strong> enabled</p>
-        <p>The state is the next instant the Deye controller blueprint must run: the earliest row end, the accepted plan's <code>valid_until</code> or <code>coverage_end</code>, or the next local TOU program boundary. Its attributes are the contract between Energy Compass and the blueprint: <code>controller_schema</code>, <code>mode</code>, <code>mode_entity</code>, <code>restore_pending</code>, <code>session</code>, <code>plan_reason</code> (<code>ok</code>, <code>session</code>, <code>revoked</code>, <code>sources</code>), <code>status</code>, <code>retained</code>, <code>generation</code>, <code>valid_until</code>, <code>coverage_end</code>, <code>accepted_at</code>, <code>revoked_generation</code>, <code>revoked_at</code>, <code>revoked_reason</code>, the battery parameters <code>capacity_kwh</code>, <code>eta_charge</code>, <code>eta_discharge</code>, <code>charge_kw</code> and <code>discharge_kw</code>, <code>device_id</code>, <code>program_prefix</code>, <code>tou_problem</code>, <code>next_tou</code>, and the unrecorded <code>accepted</code> plan and <code>tou</code> values.</p>
+        <p>The state is the next instant the Deye controller must run: the earliest row end, the accepted plan's <code>valid_until</code> or <code>coverage_end</code>, or the next local TOU program boundary. Its attributes are the contract between Energy Compass and the executor (the native engine or the deprecated blueprint): <code>controller_schema</code>, <code>mode</code>, <code>mode_entity</code>, <code>restore_pending</code>, <code>session</code>, <code>plan_reason</code> (<code>ok</code>, <code>session</code>, <code>revoked</code>, <code>sources</code>), <code>status</code>, <code>retained</code>, <code>generation</code>, <code>valid_until</code>, <code>coverage_end</code>, <code>accepted_at</code>, <code>revoked_generation</code>, <code>revoked_at</code>, <code>revoked_reason</code>, the battery parameters <code>capacity_kwh</code>, <code>eta_charge</code>, <code>eta_discharge</code>, <code>charge_kw</code> and <code>discharge_kw</code>, <code>device_id</code>, <code>program_prefix</code>, <code>tou_problem</code>, <code>next_tou</code>, and the unrecorded <code>accepted</code> plan and <code>tou</code> values.</p>
         <p><strong>Unavailable:</strong> only while the entry is unloaded. The accepted plan is kept across an entry reload and dropped at a Home Assistant restart.</p>
       </article>
 
@@ -520,7 +521,13 @@
       <article id="deye_runtime">
         <h3>Deye controller runtime</h3>
         <p class="entity-meta"><code>deye_runtime</code> · <span lang="pl">Stan pracy sterownika Deye</span> · Sensor, only with the controller enabled</p>
-        <p>The state is the runtime code (<code>waiting</code>, <code>ok</code>, <code>blocked</code>, <code>restored</code>, <code>verification_required</code>, <code>write_failed</code> or <code>simulation_blocked</code>). The recorded attributes are <code>restore_pending</code>, <code>reason</code>, <code>state</code>, <code>requested_mode</code>, <code>confirmed_mode</code>, <code>since</code>, <code>warning</code>, <code>takeover_blocked</code> and <code>accepted_generation</code>; the full <code>runtime</code> and <code>updated_at</code> are not recorded. Detail-only changes are published at most once a minute.</p>
+        <p>The state is the runtime code (<code>waiting</code>, <code>ok</code>, <code>blocked</code>, <code>restored</code>, <code>verification_required</code>, <code>write_failed</code>, <code>simulation_blocked</code>, <code>paused</code> or <code>error</code>). The recorded attributes are <code>restore_pending</code>, <code>reason</code>, <code>state</code>, <code>requested_mode</code>, <code>confirmed_mode</code>, <code>since</code>, <code>warning</code>, <code>takeover_blocked</code> and <code>accepted_generation</code>; the full <code>runtime</code> and <code>updated_at</code> are not recorded. Detail-only changes are published at most once a minute.</p>
+      </article>
+
+      <article id="deye_pause">
+        <h3>Pause inverter writes</h3>
+        <p class="entity-meta"><code>deye_pause</code> · <span lang="pl">Wstrzymaj zapisy do falownika</span> · Switch, only with the native Deye engine</p>
+        <p>While on, the controller computes and publishes the decision but sends no write. <code>restore_pending</code> and the uncertain registers stay as they are and the runtime code is <code>paused</code>. A run in flight stops before its next write; turning the switch off requests a run, and the usual rules decide between continuing and restoring the base profile. Mode <code>Off</code> with nothing to restore reports released even when paused; with a restore pending the pause wins. The flag is saved at once and is cleared when the engine is switched to <code>blueprint</code>.</p>
       </article>
     </section>
 
@@ -639,7 +646,7 @@
       </ul>
     </section>
     <footer>
-      <p>Energy Compass v0.1.37 · This guide works online and offline from a repository checkout. Theme follows your system preference. Supporting documentation and source-code links open GitHub.</p>
+      <p>Energy Compass v0.1.38 · This guide works online and offline from a repository checkout. Theme follows your system preference. Supporting documentation and source-code links open GitHub.</p>
       <p><a href="#overview">Back to the guide</a> · <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/LICENSE">Apache License 2.0</a></p>
     </footer>
   </main>

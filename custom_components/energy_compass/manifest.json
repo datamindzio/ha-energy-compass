@@ -1,7 +1,7 @@
 {
   "domain": "energy_compass",
   "name": "Energy Compass",
-  "after_dependencies": ["energy"],
+  "after_dependencies": ["energy", "logbook", "solarman"],
   "codeowners": ["@marino39"],
   "config_flow": true,
   "dependencies": ["recorder"],
@@ -10,5 +10,5 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/datamindzio/ha-energy-compass/issues",
   "requirements": ["scipy==1.18.1"],
-  "version": "0.1.37"
+  "version": "0.1.38"
 }

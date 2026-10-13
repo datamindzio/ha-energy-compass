@@ -1004,10 +1004,29 @@
       },
       "deye_controller": {
         "title": "Deye controller",
-        "description": "Energy Compass keeps the controller's mode, accepted plan, session and runtime; the Deye (Solarman) controller blueprint executes the plan and writes the inverter. Choose the Solarman inverter device; its six TOU programs are found automatically.\n\n{status}",
+        "description": "Energy Compass keeps the controller's mode, accepted plan, session and runtime. The native engine executes the plan itself and writes the inverter through Solarman; the blueprint engine (deprecated) leaves that to the Deye controller blueprint. Choose the Solarman inverter device; its TOU programs and battery entities are found automatically. High-voltage packs (400–610 V) only. Under Expert settings the “Limits and takeover” fields hold the current limits, previous automations and entity overrides; an empty field keeps its default.\n\n{status}",
         "data": {
           "enabled": "Enable the Deye controller",
-          "device_id": "Solarman inverter device"
+          "device_id": "Solarman inverter device",
+          "engine": "Controller engine",
+          "max_power_w": "Maximum battery power (W)",
+          "max_current": "Maximum battery current (A)",
+          "relinquish_current": "Relinquish current (A)",
+          "max_grid_current": "Maximum grid charging current (A)",
+          "hold_grid_current": "Grid charging current in HOLD (A)",
+          "reached_discharge_current": "Discharge current after a target is reached (A)",
+          "balance_grid_current": "Balance grid current (A)",
+          "voltage_grid_charge_ceiling": "Grid-charge voltage ceiling (V)",
+          "commissioned_battery_modes": "Commissioned battery modes",
+          "old_writers": "Previous battery automations",
+          "telemetry_entities": "Telemetry entities",
+          "discharge_energy_entity": "Discharge energy counter",
+          "charge_entity": "Charge current entity",
+          "discharge_entity": "Discharge current entity",
+          "grid_entity": "Grid charging current entity",
+          "operation_entity": "Battery operation mode entity",
+          "soc_entity": "Battery SOC entity",
+          "voltage_entity": "Battery voltage entity"
         }
       }
     },
@@ -1032,7 +1051,11 @@
       "controller_tou_incomplete": "The device does not have all six TOU programs (time, power, voltage, SOC, charging).",
       "controller_tou_prefix": "The TOU program entity IDs do not share one prefix; restore their default IDs.",
       "controller_device_in_use": "Another Energy Compass entry already controls this device.",
-      "controller_not_released": "Select the Deye mode Off and wait until the base profile is restored (restore pending off) before disabling the controller or changing its device."
+      "controller_not_released": "Select the Deye mode Off and wait until the base profile is restored (restore pending off) before disabling the controller or changing its device.",
+      "controller_entity_missing": "The device lacks what the native controller needs: {missing}.",
+      "controller_low_voltage_pack": "This controller supports high-voltage packs (400–610 V). Measured: {voltage} V. 48 V Deye models are not supported yet.",
+      "controller_voltage_unavailable": "The battery voltage sensor ({entity}) has no numeric reading, so the pack cannot be told from a 48 V one. Wait until the inverter reports a voltage and save again.",
+      "controller_limits_required": "The maximum power and currents cannot be derived (the charge or discharge power in the battery settings, or the inverter's current limit, is zero). Enter them in the Limits and takeover group."
     },
     "abort": {
       "site_not_registered": "This site was forgotten in another window; re-enable Energy Atlas to register a new one."
@@ -1371,6 +1394,11 @@
         "name": "Deye mode"
       }
     },
+    "switch": {
+      "deye_pause": {
+        "name": "Pause inverter writes"
+      }
+    },
     "binary_sensor": {
       "forecast_valid": {
         "name": "Forecast valid",
@@ -1410,6 +1438,18 @@
     }
   },
   "issues": {
+    "deye_hardware_unverified": {
+      "title": "Deye inverter not verified",
+      "description": "The inverter reports \"{device_type}\" with protocol {protocol}, which Energy Compass has not been verified on. The controller still works: it checks the register layout against the entity states before its first write, and Simulation shows the result. Try Simulation first."
+    },
+    "deye_blueprint_active": {
+      "title": "Deye blueprint automation is still on",
+      "description": "The automation {automation} uses the Deye controller blueprint while the native engine is selected. Energy Compass writes nothing to the inverter, not even the restore to BASE, while the automation is on, because two writers would fight over the inverter. The inverter keeps the last profile it was given until the automation is switched off and its runs have stopped; then the controller continues, or restores BASE, on its next run."
+    },
+    "deye_run_failed": {
+      "title": "Deye controller runs are failing",
+      "description": "The last runs of the Deye controller failed or could not read the controller state, so the inverter settings are not being managed. The runtime sensor shows the reason and the Home Assistant log has the details. This issue clears after the next successful run."
+    },
     "source_removed": {
       "title": "Source removed",
       "description": "Reconfigure the selected sources for {name}."
@@ -1486,6 +1526,20 @@
     },
     "package_import_refused": {
       "message": "The package state was already imported; set force to import again."
+    },
+    "controller_blueprint_active": {
+      "message": "The Deye controller blueprint automation {automation} is on. Turn it off and let its run finish before using the native engine, or two writers would fight over the inverter."
+    },
+    "controller_native": {
+      "message": "The native Deye engine does not use the controller runtime service. Turn off the blueprint automation that called it."
+    }
+  },
+  "selector": {
+    "deye_engine": {
+      "options": {
+        "native": "Native (Energy Compass writes through Solarman)",
+        "blueprint": "Blueprint (deprecated)"
+      }
     }
   }
 }

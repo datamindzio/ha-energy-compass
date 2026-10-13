@@ -7,7 +7,7 @@
   <img src="custom_components/energy_compass/brand/icon@2x.png" alt="Energy Compass logo" width="160" height="160">
 </picture>
 
-Energy Compass is an advisory Home Assistant integration. It estimates the incremental cost of one more kWh of household use against an optimized battery and grid plan, classifies near-term use as `BOOST`, `CHEAP`, `NORMAL`, or `LIMIT`, and exposes upcoming windows as native entities. It makes no inverter control writes and sends no messages by itself.
+Energy Compass is an advisory Home Assistant integration. It estimates the incremental cost of one more kWh of household use against an optimized battery and grid plan, classifies near-term use as `BOOST`, `CHEAP`, `NORMAL`, or `LIMIT`, and exposes upcoming windows as native entities. It sends no messages by itself and writes inverter settings only when you enable the optional Deye controller (off by default), through the Solarman integration.
 
 ## Install
 
@@ -23,7 +23,7 @@ To try a source-independent synthetic setup, choose `Synthetic`, `EUR`, `UTC`, t
 
 For a diagram-based walkthrough of every state, the conditions that produce it, and each dispatch strategy, read the **states and strategies guide** ([English](docs/guide.en.md) · [Polski](docs/guide.pl.md)).
 
-To measure what a setting change does to real cost, replay recorded days offline with `tools/replay.py` (no Home Assistant needed): it prints the cost of the executed plan, of plain self-consumption and of the perfect-hindsight plan. See [Offline replay tool](docs/guide.en.md#offline-replay-tool) for the input format and how to export the data.
+To measure what a setting change does to real cost, replay recorded days offline with `tools/replay.py` (no Home Assistant needed): it prints the cost of the executed plan, of plain self-consumption and of the perfect-hindsight plan. See [Offline replay tool](docs/guide.en.md#offline-replay-tool) for the input format and how to export the data. For a year of hourly data valued by the net-billing bill (annual formula and monthly deposit ledger, state of charge carried, re-planned every few hours), use `tools/replay_year.py`: [Annual settlement oracle](docs/guide.en.md#annual-settlement-oracle).
 
 Read the [published entity and calculation guide](https://datamindzio.github.io/ha-energy-compass/) for every entity, state, formula, quality flag and worked example. You can also open [docs/index.html](docs/index.html) from a checkout for offline viewing. The guide includes English and Polish entity names and follows your system's light or dark theme. See [publishing setup](docs/publishing.md) for GitHub Pages maintenance.
 

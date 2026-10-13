@@ -7,7 +7,7 @@
   <img src="custom_components/energy_compass/brand/icon@2x.png" alt="Logo Energy Compass" width="160" height="160">
 </picture>
 
-Energy Compass to doradcza integracja Home Assistant. Szacuje koszt krańcowy jednej kWh więcej zużycia domowego względem zoptymalizowanego planu pracy baterii i sieci, klasyfikuje najbliższe zużycie jako `BOOST`, `CHEAP`, `NORMAL` lub `LIMIT` i udostępnia nadchodzące okna jako natywne encje. Nie zapisuje niczego do falownika i sama nie wysyła powiadomień.
+Energy Compass to doradcza integracja Home Assistant. Szacuje koszt krańcowy jednej kWh więcej zużycia domowego względem zoptymalizowanego planu pracy baterii i sieci, klasyfikuje najbliższe zużycie jako `BOOST`, `CHEAP`, `NORMAL` lub `LIMIT` i udostępnia nadchodzące okna jako natywne encje. Sama nie wysyła powiadomień, a ustawienia falownika zapisuje tylko po włączeniu opcjonalnego sterownika Deye (domyślnie wyłączony), przez integrację Solarman.
 
 ## Instalacja
 
@@ -23,7 +23,7 @@ Aby wypróbować konfigurację syntetyczną, niezależną od źródeł, wybierz 
 
 Opis wszystkich stanów, warunków, w których występują, oraz każdej strategii dyspozycji — z diagramami — zawiera **przewodnik po stanach i strategiach** ([Polski](docs/guide.pl.md) · [English](docs/guide.en.md)).
 
-Aby zmierzyć, co zmiana ustawienia robi z rzeczywistym kosztem, odtwórz zapisane dni offline narzędziem `tools/replay.py` (bez Home Assistanta): wypisuje koszt wykonanego planu, zwykłej autokonsumpcji i planu z idealną wiedzą wstecz. Format wejścia i sposób eksportu danych opisuje [Narzędzie replay (offline)](docs/guide.pl.md#narzędzie-replay-offline).
+Aby zmierzyć, co zmiana ustawienia robi z rzeczywistym kosztem, odtwórz zapisane dni offline narzędziem `tools/replay.py` (bez Home Assistanta): wypisuje koszt wykonanego planu, zwykłej autokonsumpcji i planu z idealną wiedzą wstecz. Format wejścia i sposób eksportu danych opisuje [Narzędzie replay (offline)](docs/guide.pl.md#narzędzie-replay-offline). Dla roku danych godzinowych wycenionego rachunkiem net-billingu (wzór roczny i miesięczna księga depozytu, przenoszony stan naładowania, przeplanowanie co kilka godzin) użyj `tools/replay_year.py`: [Roczna wyrocznia rozliczenia](docs/guide.pl.md#roczna-wyrocznia-rozliczenia).
 
 [Opublikowany przewodnik po encjach i obliczeniach](https://datamindzio.github.io/ha-energy-compass/) opisuje każdą encję, stan, wzór, flagę jakości i przykład. Z lokalnej kopii repozytorium możesz otworzyć [docs/index.html](docs/index.html). Przewodnik zawiera angielskie i polskie nazwy encji oraz dopasowuje się do jasnego lub ciemnego motywu systemu.
 

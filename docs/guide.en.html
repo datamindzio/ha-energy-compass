@@ -154,12 +154,13 @@
 <p><strong>English</strong> · <a href="guide.pl.html">Polski</a></p>
 <p>This guide explains what Energy Compass does, every state its entities can report and the
 conditions that produce each state, and the six dispatch strategies. It describes release
-<strong>0.1.37</strong>. The mathematical contract behind each rule lives in <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md">model and limitations</a>;
+<strong>0.1.38</strong>. The mathematical contract behind each rule lives in <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md">model and limitations</a>;
 installation and dashboards are in the <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">installation guide</a>.</p>
 <p>Energy Compass is <strong>advisory</strong>. It computes a plan and publishes it as Home Assistant entities. It
-never writes inverter registers and sends no messages by itself; controllers and notification
-blueprints decide whether to act on the plan. The repository ships one such controller, for Deye
-inverters through Solarman: see <a href="#deye-inverter-controller-solarman">Deye inverter controller</a>.</p>
+sends no messages by itself, and it writes inverter settings only when you enable the optional Deye
+controller (off by default), which does so through the Solarman integration; notification blueprints
+and other controllers decide for themselves whether to act on the plan. See
+<a href="#deye-inverter-controller-solarman">Deye inverter controller</a>.</p>
 <h2 id="contents">Contents</h2>
 <ol>
 <li><a href="#how-it-works">How it works</a></li>
@@ -862,6 +863,12 @@ reloads.</p>
 <td>Stan pracy sterownika Deye</td>
 <td>runtime code; only with the controller enabled</td>
 </tr>
+<tr>
+<td><code>switch.&lt;name&gt;_deye_pause</code></td>
+<td>Pause inverter writes</td>
+<td>Wstrzymaj zapisy do falownika</td>
+<td><code>on</code> / <code>off</code>; only with the native engine</td>
+</tr>
 </tbody>
 </table></section>
 <p>Cost sensors can be disabled with <strong>Presentation → Expose costs</strong>, window timestamps with
@@ -1209,8 +1216,19 @@ directly by any other available mode.</p>
   rest of the commitment is <code>HOLD</code> with the surplus exported, or <code>CURTAIL</code> where the site cannot
   pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
   pack. The released <code>HOLD</code> starts no clock of its own — the commitment's deadline stays the only
-  one — so it may turn to <code>CURTAIL</code> (which starts its own clock) before then; it does not go back
-  to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>. The first committed interval is judged the same way against the
+  one — so it may turn to <code>CURTAIL</code> (which starts its own clock) before then. A <code>HOLD</code> released
+  from a full pack does not go back to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>; one released from a depleted
+  pack does, in any later interval of the commitment while the pack is still depleted: the pack
+  takes the surplus, and a <code>HOLD</code> could not pass the PV above the export cap (on a site with
+  <code>grid_export_kw = 0</code> that is every sunrise). The return is the commitment going on, not a new
+  run: the commitment's deadline stays the only clock. A pack that empties again inside the same
+  commitment is released again and goes back again, as often as the commitment lasts. The release
+  survives the interval boundary: the plan marks the rows of such a <code>HOLD</code>
+  (<code>dispatch_policy.released_hold_starts</code>) and the coordinator keeps the commitment and its start,
+  flagged as released, instead of recording a <code>HOLD</code> with a clock of its own, so the next plan
+  goes back to <code>CHARGE_PV</code> as the first one published. That <code>HOLD</code> may go on past the
+  commitment's deadline without a clock; a return to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> after the
+  deadline is a run of its own and gets a fresh start. The first committed interval is judged the same way against the
   observed state of charge: a pack already within the lowered ceiling of that interval (for
   example after the interval that filled it was carried out) may be <code>HOLD</code> or <code>CURTAIL</code> at once,
   in either member mode. An observed state of charge at the upper bound is the safety exception
@@ -2216,20 +2234,24 @@ month and year from statistics. Install and full description: <a href="https://g
 it adds every increase of the export meter (<code>export_energy</code>), valued at the price forecast
 (<code>export_prices</code>), to a Number helper (<code>counter</code>); jumps above <code>max_step_kwh</code> are ignored.</p>
 <h2 id="deye-inverter-controller-solarman">Deye inverter controller (Solarman)</h2>
-<p>Energy Compass itself never writes to an inverter. The optional blueprint
-<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml"><code>deye_solarman_controller.yaml</code></a>
-does: it executes the plan on a Deye hybrid inverter through the
-<a href="https://github.com/davidrapan/ha-solarman">Solarman integration</a>, writing three battery currents and
-the six time-of-use (TOU) programs, and reads every write back from the holding registers.
-The integration keeps the controller's state. With <strong>Options → Deye controller</strong> enabled, Energy Compass
-owns the mode, the accepted plan, the session and the revocation, the timing of the next run and the
-stored runtime; the blueprint keeps the profile maths, the diff, the safety gates and the register
-writes. No package, helper or <code>configuration.yaml</code> edit is needed, and the accepted plan survives an
-entry reload. It needs Energy Compass 0.1.37 or newer. Setup steps are in the
-<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">installation guide</a>. The blueprint is generated by
-<code>tools/deye_controller/build.py</code>; edit the generator, not the YAML. The <code>deye_hybrid</code> setup profile
+<p>Energy Compass is advisory by default and writes to an inverter only when you enable the optional Deye
+controller (<strong>Options → Deye controller</strong>, off by default). The controller executes the plan on a Deye
+hybrid inverter through the <a href="https://github.com/davidrapan/ha-solarman">Solarman integration</a>: it writes
+three battery currents and the six time-of-use (TOU) programs, and reads every write back from the
+holding registers. With the <strong>native engine</strong> it runs inside the integration: no blueprint, automation,
+package, helper or <code>configuration.yaml</code> edit is needed, the accepted plan survives an entry reload, and
+Energy Compass owns the mode, the accepted plan, the session and the revocation, the timing of the next
+run and the stored runtime. It needs Energy Compass 0.1.38 or newer. Setup steps are in the
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#deye-inverter-controller">installation guide</a>. The <code>deye_hybrid</code> setup profile
 pre-fills <code>idle_drain_kw</code> 0.13 and <code>refresh_minutes</code> 60 for a new installation; see
 <a href="#setup-profiles-new-installations">Setup profiles</a>.</p>
+<p>The earlier executor, the blueprint
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/deye_solarman_controller.yaml"><code>deye_solarman_controller.yaml</code></a>,
+is <strong>deprecated</strong>. It still works in this release as the <code>blueprint</code> engine (the value of every entry
+created before 0.1.38) and is removed in the release after next, together with its generator
+<code>tools/deye_controller/build.py</code>, the <code>energy_compass.controller_runtime</code> and
+<code>energy_compass.controller_import_package</code> services and the sections below that describe it. Move to the
+native engine as described in <a href="#migrating-from-the-blueprint-to-the-native-engine">Migrating from the blueprint</a>.</p>
 <h3 id="enabling-the-controller">Enabling the controller</h3>
 <p>Open <strong>Options → Deye controller</strong>, switch <strong>Enable the Deye controller</strong> on and choose the Solarman
 inverter device (it is preselected when there is only one). Energy Compass finds the six TOU programs
@@ -2238,15 +2260,77 @@ inverter device (it is preselected when there is only one). Energy Compass finds
 refuses the device when a program is missing or disabled, when the entity IDs do not share one
 prefix, or when another Energy Compass entry already controls it. Enabling reloads the entry once;
 moving the controller to another device applies live. Both are refused while the mode is not <code>Off</code> or a restore is pending: select <code>Off</code> and wait until <code>restore_pending</code> is off first, otherwise nothing could restore the base profile. The step is visible without the expert toggle.</p>
+<p><strong>Engine.</strong> The step has an <strong>Engine</strong> field. <code>native</code> (the default for a new enable) lets Energy Compass
+execute the plan itself and write the inverter through the Solarman entities and the
+<code>solarman.read_holding_registers</code> service; no blueprint or automation is needed. <code>blueprint</code> (deprecated;
+the value of every entry created before 0.1.38) keeps the Deye controller blueprint as the executor. Changing the
+engine reloads the entry and is refused while the mode is not <code>Off</code> or a restore is pending. The native engine finds
+the battery currents, operation mode, SOC, voltage and discharge counter on the same device by the Solarman keys
+<code>battery_max_charging_current</code>, <code>battery_max_discharging_current</code>, <code>battery_grid_charging_current</code>,
+<code>battery_operation_mode</code>, <code>battery</code>, <code>battery_voltage</code> and <code>total_battery_discharge</code>, and names what is missing.
+Only high-voltage packs (400–610 V) are supported: a pack measured below 400 V is refused.</p>
+<p><strong>Limits and takeover</strong> (expert settings). The maximum battery power defaults to the smaller of the
+charge and discharge power in the Energy Compass settings; the currents default to the entity's own maximum, capped at
+that power divided by 400 V. Hold, reached-discharge and balance currents, the grid-charge voltage ceiling, the commissioned
+battery modes, the previous automations to wait for, the telemetry entities, the discharge counter and an override for
+each entity can be set; an empty field keeps its default. Limits apply on the next run without a reload. When one
+blueprint automation exists, its inputs are loaded into these fields for you to review before saving.</p>
 <p>Do not enable the controller on a net-metering installation: the right plan there is the inverter's own
 self-use mode (see <a href="#setup-profiles-new-installations">Setup profiles</a>).</p>
 <p>An installation that ran the 0.1.36 package, has one Energy Compass entry and exactly one Solarman device
 with all six programs gets the controller enabled automatically at the first start of 0.1.37. The mode
 starts at <code>Off</code>, so nothing is written until you choose one; see
 <a href="#migrating-from-the-package-0136-and-older">Migrating from the package</a>.</p>
+<h3 id="supported-hardware">Supported hardware</h3>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>What</th>
+<th>Verified</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Inverter</td>
+<td>Deye <code>SG0*HP3</code> three-phase high-voltage hybrid inverters; the Solarman <code>device</code> sensor reports the type "HV 3-Phase Hybrid Inverter"</td>
+</tr>
+<tr>
+<td>Protocol version</td>
+<td>1.4 (attribute <code>Protocol Version</code> of that sensor)</td>
+</tr>
+<tr>
+<td>Battery pack</td>
+<td>high-voltage lithium (LFP) pack, 400–610 V</td>
+</tr>
+<tr>
+<td>Integration</td>
+<td><a href="https://github.com/davidrapan/ha-solarman">ha-solarman</a> 25.08.16; the entities are found by their translation keys and the registers are read with <code>solarman.read_holding_registers</code></td>
+</tr>
+<tr>
+<td>48 V (low-voltage) Deye models</td>
+<td><strong>not supported yet</strong>: the options step refuses to enable the native engine below 400 V, and a run outside 400–610 V writes nothing</td>
+</tr>
+</tbody>
+</table></section>
+<p>The tested unit is a <code>SG0*HP3</code> with control board firmware <code>3002-1095-11408</code>. Firmware versions are
+recorded in the <code>hardware</code> attribute but not compared: nothing is known about per-firmware differences.
+A device whose type and protocol are not on the list is not blocked. It raises the repair issue
+"Deye inverter not verified" (a dismissible warning) and sets <code>hardware.verified</code> to <code>false</code>; use
+Simulation first, as for every installation.</p>
+<p><strong>Layout probe.</strong> Before the first write that forces a profile in a session, the native engine reads
+registers 108–177 and compares them with the states of the 27 entities it writes (the three currents and
+the 24 TOU values). Numbers and selects must agree; a select whose register holds a value outside the known
+map (<code>Disabled</code>, <code>Grid</code>, <code>Sell</code>) says nothing about the layout and is skipped, because the controller
+rewrites it anyway. Any other difference, a missing register or an unavailable entity stops the run with the
+runtime code <code>blocked</code> and the reason <code>layout_mismatch</code>, which lists the entities; nothing is written and the
+check repeats on the next run, because entities can lag one Solarman poll behind a manual change. The probe
+also runs in Simulation, so a wrong layout shows before Auto. A passed probe holds for the session, the
+device and the set of entities read: a changed device or an entity override probes again. Restoring the
+base profile does not wait for the probe, because it writes through Solarman's own entities and only the
+read-back depends on the layout; forcing a profile does.</p>
 <h3 id="controller-entities">Controller entities</h3>
-<p>Three entities exist only while the controller is enabled; they sit on the Energy Compass device.
-<code>&lt;name&gt;</code> is the entry title.</p>
+<p>Three entities exist only while the controller is enabled, a fourth with the native engine; they sit on
+the Energy Compass device. <code>&lt;name&gt;</code> is the entry title.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2259,7 +2343,7 @@ starts at <code>Off</code>, so nothing is written until you choose one; see
 <tr>
 <td><code>deye_controller</code></td>
 <td><code>sensor.&lt;name&gt;_deye_controller</code> (timestamp)</td>
-<td>the state is the next instant the blueprint must run (the earliest row end, <code>valid_until</code>, <code>coverage_end</code> or TOU program boundary); the attributes are the contract below</td>
+<td>the state is the next instant the executor must run (the earliest row end, <code>valid_until</code>, <code>coverage_end</code> or TOU program boundary); the attributes are the contract below</td>
 </tr>
 <tr>
 <td><code>deye_mode</code></td>
@@ -2271,10 +2355,15 @@ starts at <code>Off</code>, so nothing is written until you choose one; see
 <td><code>sensor.&lt;name&gt;_deye_controller_runtime</code></td>
 <td>runtime code (below); attribute <code>runtime</code> holds state, reason, confirmed values and uncertain registers</td>
 </tr>
+<tr>
+<td><code>deye_pause</code></td>
+<td><code>switch.&lt;name&gt;_pause_inverter_writes</code></td>
+<td><strong>Pause inverter writes</strong>; only with the native engine. While on, the controller computes and publishes the decision but sends no write; <code>restore_pending</code> and the uncertain registers stay as they are and the runtime code is <code>paused</code>. A run in flight stops before its next write; turning the switch off requests a run. Mode <code>Off</code> keeps its meaning: with nothing to restore the run reports released even when paused, and with a restore pending the pause wins and the restore waits. The flag is saved at once, survives a reload and is cleared when the engine is switched to <code>blueprint</code></td>
+</tr>
 </tbody>
 </table></section>
 <p>The IDs depend on the entry name and the language the entities were created in (a Polish instance gets
-names such as <code>…_sterownik_deye</code>); read them from the device page. The blueprint needs only the controller
+names such as <code>…_sterownik_deye</code>); read them from the device page. The blueprint engine needs only the controller
 sensor; it finds the mode entity and the TOU prefix through its attributes.</p>
 <section class="table-scroll"><table>
 <thead>
@@ -2340,6 +2429,10 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.</p>
 <td><code>tou</code></td>
 <td>state of the 30 TOU entities; a change re-runs the blueprint; not recorded</td>
 </tr>
+<tr>
+<td><code>hardware</code></td>
+<td>the inverter as the Solarman <code>device</code> sensor reports it: device type, protocol, control and communication board firmware, rated power, registry model and <code>verified</code> (the type and protocol pair is on the <a href="#supported-hardware">tested list</a>); no serial number</td>
+</tr>
 </tbody>
 </table></section>
 <p>The runtime sensor carries the recorded attributes <code>restore_pending</code>, <code>reason</code>, <code>state</code>, <code>requested_mode</code>,
@@ -2348,6 +2441,10 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.</p>
 changes and at most once a minute for other changes. Acceptances, revocations, session drops, mode
 changes, imports and device changes go to a history of 50 entries in the store and in the integration's
 diagnostics (<code>deye_controller</code>); no events are fired.</p>
+<p>With the native engine the runtime sensor also has <code>last_run</code> (not recorded): what triggered the last run, the
+decision, the planned commands, each write with its outcome (sent, failed, confirmed or blocked) and how the run
+ended. The last 50 runs are kept in memory, not in the store, and appear in the diagnostics as <code>run_history</code>. A
+logbook entry names the old and new runtime code and confirmed mode whenever either changes.</p>
 <h3 id="services">Services</h3>
 <section class="table-scroll"><table>
 <thead>
@@ -2540,7 +2637,7 @@ then sets thresholds, then enables the direction.</p>
 </tr>
 <tr>
 <td><code>blocked</code></td>
-<td>no valid plan or a gate failed; <code>runtime.reason</code> says which</td>
+<td>no valid plan or a gate failed; <code>reason</code> and <code>reason_code</code> say which</td>
 </tr>
 <tr>
 <td><code>restored</code></td>
@@ -2558,19 +2655,199 @@ then sets thresholds, then enables the direction.</p>
 <td><code>simulation_blocked</code></td>
 <td>Simulation was refused while a restore was pending</td>
 </tr>
+<tr>
+<td><code>paused</code></td>
+<td>the pause switch is on (native engine): the decision is computed, nothing is written</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>the run itself failed (native engine): an exception, or Energy Compass or the Solarman entities could not be read; <code>reason_code</code> is <code>run_failed</code> or <code>controller_unavailable</code>. After three failed runs in a row the repair issue "Deye controller runs are failing" appears; the next good run clears both</td>
+</tr>
 </tbody>
 </table></section>
-<p><code>runtime.reason</code> texts are in Polish in this release. Every runtime update goes through <code>energy_compass.controller_runtime</code>; when that call fails, the run stops before the next register is written.</p>
+<p><code>runtime.reason_code</code> is a stable code and <code>runtime.reason</code> its text. The native engine writes the text in
+the Home Assistant language (Polish for <code>pl</code>, English otherwise); the blueprint engine's texts are Polish.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th><code>reason_code</code></th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ok</code></td>
+<td>nothing blocks the plan</td>
+</tr>
+<tr>
+<td><code>telemetry_stale</code></td>
+<td>telemetry entities not numeric or older than 30 s, voltage outside 400–610 V or SOC outside 0–100 %</td>
+</tr>
+<tr>
+<td><code>tou_times</code></td>
+<td>the six TOU start times are not different and rising</td>
+</tr>
+<tr>
+<td><code>session_wait</code></td>
+<td>no plan accepted yet in this session</td>
+</tr>
+<tr>
+<td><code>plan_revoked</code></td>
+<td>the accepted generation was revoked after an error</td>
+</tr>
+<tr>
+<td><code>plan_sources</code></td>
+<td>an Alert is on or the publication is not ready</td>
+</tr>
+<tr>
+<td><code>battery_params</code></td>
+<td>the accepted plan has no battery parameters</td>
+</tr>
+<tr>
+<td><code>plan_expired</code></td>
+<td>the original validity ended or no interval covers now</td>
+</tr>
+<tr>
+<td><code>plan_malformed</code></td>
+<td>an interval has missing or invalid values; a new plan is required</td>
+</tr>
+<tr>
+<td><code>operation_mode</code></td>
+<td>the inverter battery mode is neither Capacity nor Voltage</td>
+</tr>
+<tr>
+<td><code>mode_not_commissioned</code></td>
+<td>the battery mode is not in <code>commissioned_battery_modes</code></td>
+</tr>
+<tr>
+<td><code>voltage_range</code></td>
+<td>a Voltage-mode target outside 495–560 V</td>
+</tr>
+<tr>
+<td><code>settings_range</code></td>
+<td>an entity range or step is missing, or a target is outside it</td>
+</tr>
+<tr>
+<td><code>takeover_blocked</code></td>
+<td>an automation in <code>old_writers</code> is on or running</td>
+</tr>
+<tr>
+<td><code>blueprint_active</code></td>
+<td>an automation using the Deye blueprint is on (see below); no write at all (not even the restore), and a repair issue names it</td>
+</tr>
+<tr>
+<td><code>layout_mismatch</code></td>
+<td>the registers disagree with the entity states (see <a href="#supported-hardware">Supported hardware</a>)</td>
+</tr>
+<tr>
+<td><code>paused</code></td>
+<td>the pause switch is on</td>
+</tr>
+<tr>
+<td><code>verification_required</code></td>
+<td>writes finished but not every register confirmed</td>
+</tr>
+<tr>
+<td><code>write_failed</code></td>
+<td>a register did not confirm after retries</td>
+</tr>
+<tr>
+<td><code>simulation_blocked</code></td>
+<td>Simulation refused while a restore was pending</td>
+</tr>
+<tr>
+<td><code>run_failed</code></td>
+<td>the run raised an exception; details are in the Home Assistant log</td>
+</tr>
+<tr>
+<td><code>controller_unavailable</code></td>
+<td>Energy Compass or the Solarman entities could not be read; nothing was written</td>
+</tr>
+</tbody>
+</table></section>
+<p>Every runtime update of the blueprint engine goes through <code>energy_compass.controller_runtime</code>; when that call fails, the run stops before the next register is written. The native engine rejects that service, so a blueprint run that slips through stops before its first write.</p>
+<h3 id="following-a-run-native-engine">Following a run (native engine)</h3>
+<p>The blueprint left an automation trace per run; the native engine replaces it with:</p>
+<ul>
+<li>the runtime sensor's <code>reason</code> and <code>reason_code</code>, and its attribute <code>last_run</code> (not recorded): trigger,
+  decision, planned commands, each write with its outcome (sent, failed, confirmed, blocked) and how the run ended;</li>
+<li>the integration's diagnostics (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code> and <code>run_history</code>, the last 50 runs
+  (kept in memory, so a restart empties it);</li>
+<li>a logbook entry on the runtime sensor whenever the runtime code or the confirmed mode changes;</li>
+<li>the runtime code <code>error</code> and the repair issues "Deye controller runs are failing" and "Deye blueprint
+  automation is still on", so a stopped controller is visible without reading logs.</li>
+</ul>
 <h3 id="when-energy-compass-is-unavailable">When Energy Compass is unavailable</h3>
 <p>Without Energy Compass neither the mode nor the runtime can be read, so no write could be proven safe or
 recorded. The blueprint therefore stops at its first step, without any write or service call, when the
 controller sensor is missing or unavailable, reports another <code>controller_schema</code> or has no
-<code>mode_entity</code>: the trace says <code>Energy Compass niedostępny: sterowanie wstrzymane bez zapisów</code>. The
+<code>mode_entity</code>: the trace says <code>Energy Compass niedostępny: sterowanie wstrzymane bez zapisów</code>. The native
+engine does the same without a trace: the run ends without a write, the runtime code is <code>error</code> with the reason
+<code>controller_unavailable</code>, and a repair issue appears after three such runs. The
 inverter keeps its last profile; a forced TOU direction ends at the next TOU program boundary, while the
 battery currents stay as they are. If Energy Compass disappears in the middle of a run, the next runtime
 call fails and the run stops before another register is written. Home Assistant reports the failed
 entry; repair it or release the inverter by hand.</p>
+<h3 id="limits-and-defaults-native-engine">Limits and defaults (native engine)</h3>
+<p>The expert group <strong>Limits and takeover</strong> of the options step sets these; an empty field keeps its default,
+and a change applies on the next run without a reload. No household value is built into the code.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_power_w</code></td>
+<td>the smaller of the charge and discharge power in the Energy Compass settings, in W</td>
+</tr>
+<tr>
+<td><code>max_current</code>, <code>relinquish_current</code></td>
+<td>the <code>max</code> attribute of the charge-current entity, capped at <code>max_power_w</code> / 400 V</td>
+</tr>
+<tr>
+<td><code>max_grid_current</code></td>
+<td>the <code>max</code> attribute of the grid-current entity, capped the same way</td>
+</tr>
+<tr>
+<td><code>hold_grid_current</code>, <code>reached_discharge_current</code>, <code>balance_grid_current</code></td>
+<td>1 A, 1 A, 2 A</td>
+</tr>
+<tr>
+<td><code>voltage_grid_charge_ceiling</code></td>
+<td>55.2 V</td>
+</tr>
+<tr>
+<td><code>commissioned_battery_modes</code></td>
+<td>Capacity</td>
+</tr>
+<tr>
+<td><code>old_writers</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>telemetry_entities</code></td>
+<td>the SOC and voltage sensors of the device</td>
+</tr>
+<tr>
+<td><code>discharge_energy_entity</code></td>
+<td>the device's total battery discharge sensor when there is exactly one</td>
+</tr>
+<tr>
+<td>entity overrides</td>
+<td>none; the six entities are found on the device by Solarman translation keys</td>
+</tr>
+</tbody>
+</table></section>
+<p>When the power or a current limit would come out as zero (for example a charge power of 0 in the battery
+settings), the options step does not store it: it shows the group and asks you to enter the limits.
+Enabling the native engine also needs a numeric battery voltage reading, because the pack is told from a
+48 V one by it.</p>
 <h3 id="inputs">Inputs</h3>
+<p>These are the inputs of the deprecated blueprint, with the blueprint's own defaults; the native engine
+takes the values above.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2696,6 +2973,36 @@ controller options and store, so the controller needs 0.1.37 and the new bluepri
 plan. Rollback before the package is removed: turn the new automation off, restore the old blueprint and
 inputs and turn it on; the package helpers were never written by the import. A downgrade to 0.1.36 needs
 the old blueprint and the package back first.</p>
+<h3 id="migrating-from-the-blueprint-to-the-native-engine">Migrating from the blueprint to the native engine</h3>
+<p>The two engines never write together. Selecting <code>native</code> in <strong>Options → Deye controller → Engine</strong> is
+refused until the mode is <code>Off</code> and the restore is done. While the engine is <code>native</code>:</p>
+<ul>
+<li>the mode select refuses to leave <code>Off</code> (the error names the automation) while an automation that uses
+  the blueprint is on;</li>
+<li>a run that would write (mode <code>Auto</code>, or <code>Off</code> with a restore pending) stops when such an automation is on:
+  nothing is written, the runtime reason is <code>blueprint_active</code> (naming the automation) and a repair issue stays
+  until the automation is switched off. Not even the restore to BASE is written meanwhile, so the inverter keeps
+  the last profile it was given; once the automation is off, the controller continues (or restores BASE) on its
+  next run. Mode <code>Off</code> with nothing to restore and <code>Simulation</code> run as usual and are not blocked. This also covers
+  a reload with mode <code>Auto</code> and a blueprint that was never updated;</li>
+<li><code>energy_compass.controller_runtime</code> rejects every call, so a blueprint run that slips through stops
+  before its first write.</li>
+</ul>
+<p>When exactly one automation uses the blueprint on the same Solarman device (its charge, discharge, grid and
+operation entities belong to that device), its limits and entity overrides are loaded into the expert
+group for you to review; nothing is applied until you save. An automation on another inverter prefills
+nothing.</p>
+<ol>
+<li>Select the mode <code>Off</code> and wait until <code>restore_pending</code> is off and the runtime code is <code>restored</code> (or the
+   run reports released).</li>
+<li>Turn the blueprint automation off. Do not stop its actions mid-run; wait for them to finish.</li>
+<li><strong>Options → Deye controller:</strong> set the engine to <code>native</code>, review the prefilled limits and save. The entry reloads.</li>
+<li>Select <code>Simulation</code>, compare <code>runtime.desired</code> with what the blueprint wrote for a while, then select <code>Auto</code>
+   in a <code>CHARGE_PV</code> or <code>SELF_CONSUME</code> row.</li>
+<li>After a week delete the automation and the blueprint file.</li>
+</ol>
+<p>Rollback: select <code>Off</code>, wait for <code>restored</code>, set the engine to <code>blueprint</code>, turn the automation on, then
+choose the mode. A paused flag is cleared when the engine returns to <code>blueprint</code>.</p>
 <h3 id="dashboard-examples">Dashboard examples</h3>
 <p>Generated by <code>tools/dashboards/build.py</code> with placeholder entity IDs:</p>
 <section class="table-scroll"><table>
@@ -2712,7 +3019,7 @@ the old blueprint and the package back first.</p>
 </tr>
 <tr>
 <td><code>controller_diagnostics.yaml</code></td>
-<td>optimizer and controller state, reason, confirmed mode, last confirmation, plan and forecast validity, active TOU program, unconfirmed writes, session and restore flags, and the read-back of the three current limits</td>
+<td>optimizer and controller state, reason and reason code, the inverter and whether it is verified, the last run, confirmed mode, last confirmation, plan and forecast validity, active TOU program, unconfirmed writes, session and restore flags, and the read-back of the three current limits</td>
 </tr>
 <tr>
 <td><code>plan_chart.yaml</code></td>
@@ -2726,9 +3033,11 @@ the old blueprint and the package back first.</p>
 </table></section>
 <p>The panel uses native cards plus ApexCharts Card for its SOC forecast; the two charts need ApexCharts Card. The <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/builder.html">YAML builder</a> fills any of them with your entity IDs, capacity and language.
 See the <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#dashboard-examples">installation guide</a>.</p>
-<p>The controller examples take three roles: <code>deye_controller</code>, <code>deye_mode</code> and <code>deye_runtime</code> (defaults
-<code>sensor.energy_compass_deye_controller</code>, <code>select.energy_compass_deye_mode</code> and
-<code>sensor.energy_compass_deye_controller_runtime</code>). Pass <code>--entity deye_mode=select.my_mode</code> to the generator or fill
+<p>The controller examples take four roles: <code>deye_controller</code>, <code>deye_mode</code>, <code>deye_runtime</code> and <code>deye_pause</code> (defaults
+<code>sensor.energy_compass_deye_controller</code>, <code>select.energy_compass_deye_mode</code>,
+<code>sensor.energy_compass_deye_controller_runtime</code> and <code>switch.energy_compass_pause_inverter_writes</code>). The panel
+shows the pause switch only while the entity exists, that is with the native engine. Pass
+<code>--entity deye_mode=select.my_mode</code> to the generator or fill
 them in the YAML builder when your IDs differ; the session, the restore flag, the next TOU change and the TOU
 prefix are read from the controller's attributes.</p>
 <h2 id="energy-atlas-optional">Energy Atlas (optional)</h2>
@@ -2973,6 +3282,55 @@ the replay needs are returned by the <code>recorder/statistics_during_period</co
 Compass plan attribute <code>intervals</code> (or the Solcast/forecast history) recorded at plan time; using
 the realized value as the forecast gives an idealised plan with no forecast error.
 Use <code>interval_minutes: 60</code> for hourly statistics.</p>
+<h3 id="annual-settlement-oracle">Annual settlement oracle</h3>
+<p><code>tools/replay_year.py</code> is the yearly counterpart of the day replay, for the questions a day cannot
+answer: what a <a href="#net-billing-deposit-value">deposit setting</a> does to the <strong>bill of a year</strong>. It
+replays consecutive hours as the integration runs them: a receding <code>horizon_hours</code> (24 h) window,
+re-planned every <code>--refresh-hours</code> hours (default 6) on the forecast, the state of charge carried
+over midnight, the daily PV-export counters reset at <strong>local</strong> midnight, every plan executed on the
+realized series, a failed solve run as self-consumption. The hourly import and export it produces
+are valued by two bills:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Bill</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>annual</code></td>
+<td>the deposit D = 1.23 × V (V = value of the exported energy at <code>max(sell, 0)</code>) pays the energy part E of the imports; the refund is <code>min(D − min(D, E), ρ × V)</code></td>
+</tr>
+<tr>
+<td><code>ledger</code></td>
+<td>the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry <code>min(unused, ρ × V of the month)</code> comes back and the rest is void. It is the steady state of a repeated year: <code>D ≤ E</code> gives the annual result, <code>D &gt; E</code> a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year</td>
+</tr>
+</tbody>
+</table></section>
+<pre><code>python tools/replay_year.py site.json --set deposit_model=manual --set export_value_factor=0.3
+python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
+</code></pre>
+<p>It prints (or, with <code>--json</code>, returns) both bills, <code>wear</code>, the SOC drift (initial minus final SOC at
+the mean buy price), <code>K</code> = annual bill + wear + SOC drift (<code>KL</code> with the ledger), <code>D</code>, <code>V</code>, <code>E</code>, and
+the refund and the void of each bill. Compare two runs by the difference of <code>K</code> (or <code>KL</code>); <code>--self-use</code>
+gives the no-planner reference. The input is one JSON object (<code>timezone</code>, <code>start</code>, <code>rho</code>, <code>fixed</code>,
+<code>initial_soc_percent</code>, <code>settings</code> and <code>hours[]</code>) or a CSV, one row per <strong>hour</strong> with <code>start</code>, <code>buy</code>,
+<code>sell</code>, <code>buy_energy</code>, <code>pv_forecast</code>, <code>load_forecast</code>, <code>pv</code>, <code>load</code> — the same values as above; the
+format is in the tool's docstring, <code>--rho</code>, <code>--fixed</code> and <code>--initial-soc</code> override the file. Hours
+must be consecutive real hours, one row each; a JSON row may carry its own <code>start</code>, which must then
+match its position. <code>--refresh-hours</code> must not exceed <code>horizon_hours</code>. The number of failed plan
+solves is printed on stderr in both output formats.</p>
+<p>Timestamps are real instants, so a year across the two clock changes (a 25-hour and a 23-hour local
+day) is read correctly; the local date and month (counter reset, ledger month) come from <code>timezone</code>.
+A stamp with an offset (<code>+02:00</code>, <code>Z</code>) is exact. A naive stamp is local to <code>timezone</code>: in the
+repeated autumn hour it is the first occurrence, unless the row before it is that first occurrence
+(then it is the second), so a CSV of consecutive naive local stamps reads right — a naive JSON
+<code>start</code> in that hour is the first occurrence; give it an offset to mean the second.</p>
+<p>Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
+charge band that depends on the annual import is not modelled (take <code>fixed</code> from the no-battery bill
+and expect a small constant error where the band differs); a stretch shorter than a year is read as
+a year with empty months; the result is only as good as the forecast series you give it.</p>
 <h2 id="reason-code-reference">Reason code reference</h2>
 <h3 id="coverage--quality-reasons-reason-reasons-attributes">Coverage / quality reasons (<code>reason</code>, <code>reasons</code> attributes)</h3>
 <section class="table-scroll"><table>
@@ -2993,7 +3351,7 @@ Use <code>interval_minutes: 60</code> for hourly statistics.</p>
 </tr>
 <tr>
 <td><code>reference_horizon_uncovered</code></td>
-<td>Reserved in translations; not emitted by 0.1.37.</td>
+<td>Reserved in translations; not emitted by 0.1.38.</td>
 </tr>
 <tr>
 <td><code>reference_probe_failed</code></td>
