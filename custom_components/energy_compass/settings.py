@@ -61,8 +61,6 @@ NUMBERS = {
     "monthly_charge": ("tariffs", 0, 0, 10000, "currency"),
     "deposit_refund_percent": ("tariffs", 30, 0, 100, "%"),
     "export_value_factor": ("tariffs", 1.0, 0, 1, ""),
-    "deposit_yearly_value": ("tariffs", 0, 0, 1000000, "currency"),
-    "deposit_yearly_energy_cost": ("tariffs", 0, 0, 1000000, "currency"),
     "daily_load_kwh": ("forecast", 10, 0, 10000, "kWh"),
     "fallback_daily_kwh": ("forecast", 10, 0, 10000, "kWh"),
     "lookback_days": ("forecast", 14, 1, 60, "d"),
@@ -152,7 +150,7 @@ CHOICES = {
     "calibration": ("tariffs", ["unvalidated", "verified"]),
     "capacity_calibration": ("battery", ["unvalidated", "verified"]),
     "buy_distribution_mode": ("tariffs", ["included", "added"]),
-    "deposit_model": ("tariffs", ["off", "manual", "auto"]),
+    "deposit_model": ("tariffs", ["off", "manual"]),
     "terminal_mode": ("planning", ["preserve_initial", "value"]),
     "export_limit_scope": ("planning", ["local_day", "produced"]),
     "short_coverage": ("compass", ["absolute_fallback", "unavailable"]),
@@ -296,6 +294,9 @@ def validate_configuration(
     except (KeyError, ZoneInfoNotFoundError) as err:
         raise InputError("invalid timezone") from err
     values = dict(config["settings"])
+    if values.get("deposit_model") == "auto":
+        # Withdrawn model (ADR-0001 rev 3): a stored `auto` reads as `off`.
+        values["deposit_model"] = "off"
     for prefix in ("", "bms_"):
         if config.get("soc_options", {}).get(
             prefix + "timestamp_policy", "auto"

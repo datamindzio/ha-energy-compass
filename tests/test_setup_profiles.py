@@ -766,6 +766,23 @@ def test_note_raw_rce():
     )
 
 
+def _nm_note(ratio="0.8"):
+    return (
+        f"Note: net-metering is settled on yearly kWh (an exported kWh takes "
+        f"back {ratio} kWh within 12 months), not on hourly prices: "
+        "price-driven dispatch does not lower the yearly bill and the costs "
+        "shown are an hourly approximation. Run the battery in the inverter's "
+        "own self-use mode and do not let a controller follow this plan."
+    )
+
+
+def _nm_grid_note(what, ratio="0.8"):
+    return (
+        f"Note: {what}: under net-metering energy sent through the grid "
+        f"comes back at {ratio} and raises the yearly import; turn it off."
+    )
+
+
 def test_note_net_metering_mismatch_and_match():
     config = {
         "currency": "PLN",
@@ -789,7 +806,8 @@ def test_note_net_metering_mismatch_and_match():
         (
             "Note: net-metering sell = 0.8 × buy in every previewed interval; "
             "this is a copy, later buy edits do not update sell."
-        )
+        ),
+        _nm_note(),
     ]
 
     mismatch_problem = SimpleNamespace(
@@ -802,7 +820,8 @@ def test_note_net_metering_mismatch_and_match():
             "PLN/kWh. Bind sell to the buy source and set sell multiplier = "
             "0.8 × buy multiplier, sell addition = 0.8 × buy addition, same "
             "VAT setting."
-        )
+        ),
+        _nm_note(),
     ]
 
     tolerance_problem = SimpleNamespace(
@@ -812,7 +831,8 @@ def test_note_net_metering_mismatch_and_match():
         (
             "Note: net-metering sell = 0.8 × buy in every previewed interval; "
             "this is a copy, later buy edits do not update sell."
-        )
+        ),
+        _nm_note(),
     ]
 
 
@@ -845,7 +865,8 @@ def test_note_net_metering_tolerance_scales_with_price(monkeypatch):
         (
             "Note: net-metering sell = 0.8 × buy in every previewed interval; "
             "this is a copy, later buy edits do not update sell."
-        )
+        ),
+        _nm_note(),
     ]
 
 
@@ -893,8 +914,123 @@ def test_settlement_notes_resolves_record_revision_sell_ratio(monkeypatch):
         (
             "Note: net-metering sell = 0.8 × buy in every previewed interval; "
             "this is a copy, later buy edits do not update sell."
-        )
+        ),
+        _nm_note(),
     ]
+
+
+def _nm_config(settlement):
+    return {
+        "currency": "PLN",
+        "sources": {"sell": {"mode": "fixed", "forecast": []}},
+        "setup_profiles": {
+            "revision": 3,
+            "settlement": settlement,
+            "inverter": "generic",
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("flags", "what"),
+    [
+        ({"allow_grid_charge": True}, "Allow grid charge is on"),
+        ({"allow_battery_export": True}, "Allow battery export is on"),
+        (
+            {"allow_grid_charge": True, "allow_battery_export": True},
+            "Allow grid charge and Allow battery export are on",
+        ),
+    ],
+)
+def test_note_net_metering_grid_flow_variants(flags, what):
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "cost_min",
+        "sell_multiplier": 0.8,
+        "allow_grid_charge": False,
+        "allow_battery_export": False,
+        **flags,
+    }
+    problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.8),)
+    )
+    notes = sp.settlement_notes(_nm_config("pl_net_metering_80"), problem, values, {})
+    assert notes == [
+        (
+            "Note: net-metering sell = 0.8 × buy in every previewed interval; "
+            "this is a copy, later buy edits do not update sell."
+        ),
+        _nm_note(),
+        _nm_grid_note(what),
+    ]
+
+
+def test_note_net_metering_ratio_070():
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "cost_min",
+        "sell_multiplier": 0.7,
+        "allow_grid_charge": True,
+    }
+    problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.7),)
+    )
+    notes = sp.settlement_notes(_nm_config("pl_net_metering_70"), problem, values, {})
+    assert notes == [
+        (
+            "Note: net-metering sell = 0.7 × buy in every previewed interval; "
+            "this is a copy, later buy edits do not update sell."
+        ),
+        _nm_note("0.7"),
+        _nm_grid_note("Allow grid charge is on", "0.7"),
+    ]
+
+
+def test_note_net_metering_after_mismatch_variant_with_grid_flags():
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "cost_min",
+        "sell_multiplier": 1,
+        "allow_battery_export": True,
+    }
+    problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.5),)
+    )
+    notes = sp.settlement_notes(_nm_config("pl_net_metering_80"), problem, values, {})
+    assert len(notes) == 3
+    assert notes[0].startswith("Note: net-metering sell is a copy, not linked")
+    assert notes[1:] == [_nm_note(), _nm_grid_note("Allow battery export is on")]
+
+
+@pytest.mark.parametrize("settlement", ["generic", "pl_net_billing"])
+def test_no_net_metering_note_without_a_ratio(settlement):
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "cost_min",
+        "sell_multiplier": 1,
+        "allow_grid_charge": True,
+        "allow_battery_export": True,
+    }
+    problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.5),)
+    )
+    notes = sp.settlement_notes(_nm_config(settlement), problem, values, {})
+    assert not any("net-metering" in note for note in notes)
+    assert not any("under net-metering" in note for note in notes)
+
+
+def test_no_net_metering_note_outside_pln():
+    config = {**_nm_config("pl_net_metering_80"), "currency": "EUR"}
+    values = {
+        "limit_export_to_pv": True,
+        "strategy": "cost_min",
+        "sell_multiplier": 0.8,
+        "allow_grid_charge": True,
+    }
+    problem = SimpleNamespace(
+        slots=(_slot(datetime(2026, 1, 1, tzinfo=UTC), 1.0, 0.8),)
+    )
+    assert sp.settlement_notes(config, problem, values, {}) == []
 
 
 EN_STRINGS = {

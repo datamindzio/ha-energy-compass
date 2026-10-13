@@ -1,6 +1,5 @@
-"""The settlement Store: persisted hysteresis state, restart, and model off."""
+"""The settlement model in the coordinator: stateless, `auto` read as `off`."""
 
-from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.energy_compass.settings import default_configuration
@@ -12,9 +11,7 @@ def _config(model):
     config = default_configuration("EUR", "UTC")
     config["settings"].update(
         deposit_model=model,
-        deposit_yearly_value=3300,
-        deposit_yearly_energy_cost=2150,
-        # Without a distribution part the cap would report split_missing, not held.
+        export_value_factor=0.2,
         buy_distribution_rate=0.1,
         horizon_hours=2,
         display_horizon_hours=2,
@@ -37,25 +34,40 @@ async def _start(hass, entry):
     return entry.runtime_data
 
 
-async def test_state_is_persisted_and_survives_restart(
+async def test_manual_model_is_published_and_writes_no_store(
+    recorder_mock, hass, hass_storage, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    entry, key = _entry(hass, "manual")
+    coordinator = await _start(hass, entry)
+
+    settlement = coordinator.data["dispatch_policy"]["settlement"]
+    assert settlement["model"] == "manual"
+    assert settlement["cap_pressure"] == 1.0
+    assert settlement["reason"] == "ok"
+    assert not hasattr(coordinator, "_settlement")
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert key not in hass_storage
+
+
+async def test_a_stored_auto_model_plans_as_off_without_an_alert(
     recorder_mock, hass, hass_storage, enable_custom_integrations, freezer
 ):
     freezer.move_to(START)
     entry, key = _entry(hass, "auto")
     coordinator = await _start(hass, entry)
 
-    state = coordinator._settlement
-    assert state["cap_pressure"] == 1.0
-    assert state["evaluated_on"] == dt_util.utcnow().date().isoformat()
+    settlement = coordinator.data["dispatch_policy"]["settlement"]
+    assert settlement["model"] == "off"
+    assert settlement["reason"] == "off"
+    assert settlement["export_value_factor"] == 1.0
+    assert settlement["import_energy_factor"] == 1.0
+    assert coordinator.data["status"] != "invalid_input"
     assert await hass.config_entries.async_unload(entry.entry_id)
-    assert hass_storage[key]["data"] == state
-
-    coordinator = await _start(hass, entry)
-    assert coordinator._settlement == state
-    assert coordinator.data["dispatch_policy"]["settlement"]["reason"] == "held"
+    assert key not in hass_storage
 
 
-async def test_model_off_keeps_no_state_and_drops_a_stale_one(
+async def test_a_leftover_settlement_store_is_ignored(
     recorder_mock, hass, hass_storage, enable_custom_integrations, freezer
 ):
     freezer.move_to(START)
@@ -68,34 +80,7 @@ async def test_model_off_keeps_no_state_and_drops_a_stale_one(
     }
     coordinator = await _start(hass, entry)
 
-    assert coordinator._settlement is None
+    settlement = coordinator.data["dispatch_policy"]["settlement"]
+    assert settlement["reason"] == "off"
+    assert settlement["cap_pressure"] == 0
     assert await hass.config_entries.async_unload(entry.entry_id)
-    assert hass_storage[key]["data"] is None
-
-
-async def test_a_corrupt_store_is_ignored(
-    recorder_mock, hass, hass_storage, enable_custom_integrations, freezer
-):
-    freezer.move_to(START)
-    entry, key = _entry(hass, "auto")
-    hass_storage[key] = {
-        "version": 1,
-        "minor_version": 1,
-        "key": key,
-        "data": {"cap_pressure": "high", "evaluated_on": 5, "inputs": 3},
-    }
-    coordinator = await _start(hass, entry)
-
-    assert coordinator._settlement["cap_pressure"] == 1.0
-
-
-async def test_model_off_without_a_stored_state_writes_no_file(
-    recorder_mock, hass, hass_storage, enable_custom_integrations, freezer
-):
-    freezer.move_to(START)
-    entry, key = _entry(hass, "off")
-    coordinator = await _start(hass, entry)
-
-    assert coordinator._settlement is None
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    assert key not in hass_storage

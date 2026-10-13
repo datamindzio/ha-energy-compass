@@ -1007,8 +1007,6 @@ class Editor(SourceEditor):
             now = dt_util.utcnow()
             states = snapshot(self.hass, candidate)
             history, _ = await async_history(self.hass, candidate, states, now)
-            # No settlement_state: the Preview is not part of the daily hold, so in
-            # `auto` it shows the un-held candidate factors.
             problem, values, quality = await self.hass.async_add_executor_job(
                 lambda: build_problem(candidate, states, now, **history)
             )

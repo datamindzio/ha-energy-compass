@@ -419,11 +419,8 @@ def build_problem(
     )
     targets, windows, target_weight = _autonomy(values, slots, battery, zone_name)
     peak_kwh, peak_window, peak_weight = _peak_reserve(values, slots, battery)
-    settlement, _ = resolve_settlement(
+    settlement = resolve_settlement(
         values,
-        None,
-        slots[0].start,
-        zone_name,
         split_known=any(slot.buy_per_kwh > slot.buy_energy_per_kwh for slot in slots),
     )
     return Problem(
