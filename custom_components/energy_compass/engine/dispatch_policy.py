@@ -737,6 +737,40 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             -np.inf,
             len(window) - int(held_curtail and -1 in window),
         )
+    # A HOLD takes no curtailment: in an interval whose PV the site cannot pass
+    # (`_curtail_need`) a HOLD run inside its minimum duration has no legal mode left
+    # but CURTAIL, which the inverter does by itself. That CURTAIL takes the HOLD over
+    # (`takeover`): the HOLD's remaining duration is the CURTAIL run's from then on
+    # (it lasts longer), and a HOLD after the run starts its own clock. Only where the
+    # site cannot pass the PV, so it is no label to leave the duration with.
+    takes = {}
+    taken = {}
+    if any(
+        model.upper[v["mode_CURTAIL"]] > 0 and _curtail_need(problem, slot) > 0
+        for slot, v in zip(problem.slots, vectors, strict=True)
+    ):
+        for i, (slot, v) in enumerate(zip(problem.slots, vectors, strict=True)):
+            takeover = v["takeover"] = model.variable(upper=1.0)
+            taken[i] = takeover
+            # The CURTAIL under way (a bridge row is that run going on).
+            model.constrain(
+                {takeover: 1, **{k: -c for k, c in curtail_terms(i).items()}},
+                -np.inf,
+                0,
+            )
+            continues = {takeover: 1}
+            if i:
+                continues[taken[i - 1]] = -1
+            if (
+                model.upper[v["mode_CURTAIL"]] > 0
+                and _curtail_need(problem, slot) > 0
+                and (i or previous == "HOLD")
+            ):
+                # The run begins here, from the HOLD of the interval before.
+                begins = takes[i] = v["takeover_start"] = model.variable(upper=1.0)
+                model.constrain({begins: 1, v["mode_CURTAIL"]: -1}, -np.inf, 0)
+                continues[begins] = -1
+            model.constrain(continues, -np.inf, 0)
     # Per idle committed interval, the binary that tells a real HOLD run from a bridge.
     runs = {}
     # Intervals whose HOLD started from a carried PV-follow commitment: no clock of its own.
@@ -745,6 +779,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         held_until = since.astimezone(UTC) + dwell
         members = _members(dwell_group(previous))
         follows_pv = "SELF_CONSUME" in members
+        follows_hold = dwell_group(previous) == "HOLD"
         owed = _owed(problem, drains, held_until) if follows_pv else ()
         # A battery too empty or too full to go on ends a carried PV-follow commitment
         # the way an observed SOC bound does: the inverter imports for the house or
@@ -885,6 +920,15 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     free_hold.add(i)
                     released = {run: 1}
                 curtailing = {bridge[i]: -1} if i in bridge else {}
+            elif follows_hold:
+                # A HOLD that must last: nothing else is legal, but a CURTAIL that takes
+                # it over where the site cannot pass the PV (and goes on, with its own
+                # clock, as a CURTAIL run does).
+                kept = {v["mode_HOLD"]: 1}
+                if i in taken:
+                    model.constrain({v["mode_CURTAIL"]: 1, taken[i]: -1}, -np.inf, 0)
+                    kept[v["mode_CURTAIL"]] = 1
+                model.constrain(kept, 1, 1)
             else:
                 # HOLD starts only on a release, and not on a PV surplus the pack
                 # could take, but a run that began earlier goes on through it.
@@ -995,6 +1039,15 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     if group == "CURTAIL"
                     else ({}, 0)
                 )
+    for i, begins in takes.items():
+        # The HOLD run that a CURTAIL takes over is under way in the interval before.
+        if i:
+            current, current_const = indicators["HOLD"][i - 1]
+            model.constrain(
+                {begins: 1, **{k: -v for k, v in current.items()}},
+                -np.inf,
+                current_const,
+            )
     for group in GROUPS:
         members = _members(group)
         # A group's start is a continuous flag: it is at least the rise of the
@@ -1031,6 +1084,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 starts_here[j]: 1 for j in range(i + 1) if starts[i] < starts[j] + dwell
             }
             holding.update({key: -value for key, value in current.items()})
+            if group == "HOLD" and i in taken:
+                # A CURTAIL that took the HOLD over is the HOLD going on.
+                holding[taken[i]] = -1
             model.constrain(holding, -np.inf, current_const)
 
 
@@ -1231,7 +1287,14 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
                 curtails = mode == "CURTAIL" and (
                     carried and full or released and full_seen
                 )
-                if not (ends or curtails):
+                # A CURTAIL where the site cannot pass the PV takes a HOLD over: the
+                # HOLD has no legal flow there, and the run's own clock goes on.
+                takes_over = (
+                    previous == "HOLD"
+                    and mode == "CURTAIL"
+                    and _curtail_need(problem, slot) > 0
+                )
+                if not (ends or curtails or takes_over):
                     raise SolveError(
                         "solver_failure", "invalid solver result: minimum mode duration"
                     )

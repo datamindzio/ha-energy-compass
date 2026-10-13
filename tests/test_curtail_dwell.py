@@ -239,7 +239,10 @@ def test_curtail_bridge_follows_the_run_not_any_forced_interval_before_it():
         "CURTAIL",
         "HOLD",
     ]
-    assert plan.carried_bridges == (8,)
+    # Since T-047 the CURTAIL of the 0.62 kWh interval may take a HOLD over, so the plan
+    # no longer grid-charges to keep clear of it and the dry intervals after the early
+    # CURTAILs are bridges as well; the last one is, and it follows the run of 6-7.
+    assert 8 in plan.carried_bridges
 
 
 def test_hold_after_a_long_curtail_run_is_not_a_bridge():
@@ -419,3 +422,72 @@ def test_validator_rejects_hold_in_the_first_interval_when_the_pack_has_room():
     )
     with pytest.raises(SolveError, match="minimum mode duration"):
         validate_modes(problem, (idle, *flows[1:]))
+
+
+# A HOLD takes no curtailment (T-047): in an interval whose PV the site cannot pass,
+# a HOLD that has to last has no legal mode, and the CURTAIL the inverter does by itself
+# takes it over. The run is a CURTAIL run from there on, with its own clock.
+
+
+@pytest.mark.parametrize(
+    ("problem", "modes"),
+    [
+        # A carried HOLD, then PV above the cap inside its minimum duration.
+        (
+            carried(capped((0.1, *(0.9,) * 5)), mode="HOLD"),
+            ["HOLD", *("CURTAIL",) * 5],
+        ),
+        # The HOLD that the safety exception puts in place of a CHARGE_PV at the maximum.
+        (carried(capped((0.9,) * 8), mode="CHARGE_PV"), ["CURTAIL"] * 8),
+        # A CURTAIL run whose duration ended in a PV gap: the HOLD that starts there.
+        (
+            carried(
+                capped((0, 0, *(0.9,) * 5)), since=timedelta(minutes=60), mode="CURTAIL"
+            ),
+            ["HOLD", "HOLD", *("CURTAIL",) * 5],
+        ),
+        # The same inside a free plan: a run, its gap, and PV back inside the HOLD's hour.
+        (
+            capped((0.9, 0.9, 0, 0, 0, 0.9, 0.9, 0.9, 0.9, 0.9)),
+            ["CURTAIL"] * 2 + ["HOLD"] * 3 + ["CURTAIL"] * 5,
+        ),
+    ],
+)
+def test_curtail_takes_over_a_hold_that_cannot_pass_the_pv(problem, modes):
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == modes
+    validate_modes(problem, plan.flows)
+    # And it goes on when each plan is followed one interval and planned again.
+    roll(problem, len(modes) - 2)
+
+
+def test_curtail_takes_a_hold_over_only_where_the_site_cannot_pass_the_pv():
+    # PV below the cap leaves HOLD a legal mode: CURTAIL there would be a label to leave
+    # the minimum duration with, so the validator refuses it and the model never plans it.
+    problem = carried(capped((0.1, 0.5, 0.5, 0.5, 0.1, 0.1)), mode="HOLD")
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows[:3]] == ["HOLD"] * 3
+    curtail = Flow(0, 0.1, 0, 0, 0.3, 10, None, "CURTAIL")
+    hold = Flow(0, 0, 0, 0, 0, 10, None, "HOLD")
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (hold, curtail, curtail, curtail, hold, hold))
+
+
+def test_validator_reads_curtail_in_a_forced_interval_as_the_hold_taken_over():
+    problem = carried(capped((0.1, 0.9, 0.9, 0.9, 0.9, 0.9)), mode="HOLD")
+    rest = (CURTAIL,) * 5
+    validate_modes(problem, (HOLD, *rest))
+    # The run lasts its own minimum duration: nothing else may follow inside it.
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (HOLD, CURTAIL, CURTAIL, SELF, *(HOLD,) * 2))
+
+
+def test_hold_after_the_run_that_took_a_hold_over_has_its_own_clock():
+    problem = carried(capped((0.1, 0.9, 0.9, 0.9, 0.9, 0.0, 0.0, 0.0)), mode="HOLD")
+    plan = solve(problem)
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    assert modes[:5] == ["HOLD", *("CURTAIL",) * 4]
+    # The HOLD that follows lasts its own hour: no other mode ends inside it.
+    assert modes[5:] == ["HOLD"] * 3
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (HOLD, *(CURTAIL,) * 4, HOLD, HOLD, SELF))

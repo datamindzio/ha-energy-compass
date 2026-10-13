@@ -721,6 +721,16 @@ Zasady (domyślnie 60 min, 0,1 kW):
   zachowuje tam swój tryb i początek. Działa to także w przeniesionym zobowiązaniu
   `CHARGE_PV`/`SELF_CONSUME` (zwolniony z niego `CURTAIL` trwa mimo przerwy w PV w obrębie czasu
   samego zobowiązania) oraz w przedziale z obciążeniem poniżej minimalnej aktywności.
+- **`CURTAIL` przejmuje `HOLD`, który nie przepuści PV.** `HOLD` nie przycina produkcji, więc
+  `HOLD`, który musi trwać (przeniesiony `HOLD`, `HOLD`, który wyjątek bezpieczeństwa poniżej
+  stawia w miejsce `CHARGE_PV` przy maksymalnym stanie naładowania, albo `HOLD` rozpoczęty wcześniej
+  w planie, na przykład po przebiegu `CURTAIL`, który skończył się przerwą w PV), nie ma dozwolonego
+  trybu w przedziale, w którym PV po odjęciu zużycia domu przekracza limit eksportu
+  (`grid_export_kw`) albo moc falownika. Falownik przycina wtedy sam i przedział to `CURTAIL`:
+  przejmuje `HOLD` i od tej chwili jest zwykłym przebiegiem `CURTAIL` z własnym minimalnym czasem
+  (dłuższym niż reszta czasu `HOLD`; przerwa w PV w jego trakcie jest pokryta jak wyżej). Tylko tam,
+  gdzie instalacja nie przepuści PV: gdziekolwiek indziej `CURTAIL` w czasie `HOLD` byłby etykietą
+  do wyjścia z niego i nie jest oferowany. `HOLD` po przebiegu ma własny zegar.
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.
@@ -733,7 +743,8 @@ Zasady (domyślnie 60 min, 0,1 kW):
   `observed_soc_maximum`) lub na/poniżej rezerwy (tryby rozładowania — `observed_soc_minimum`),
   albo gdy przeniesione `CHARGE_GRID` trafia przed terminem na cenę powyżej sufitu
   (`grid_charge_price_limit`). Przerwany tryb i termin pozostają zapisane; przed tym terminem nie
-  może wystartować żaden inny tryb. Widoczne w `dispatch_policy.safety_exception`.
+  może wystartować żaden inny tryb, poza `CURTAIL`, który przejmuje `HOLD` tam, gdzie instalacja
+  nie przepuści PV (wyżej). Widoczne w `dispatch_policy.safety_exception`.
 - **Zmiana strategii (reset):** zapis nowej strategii zrywa przeniesione zobowiązanie dla
   następnego planu, który startuje bez blokady (patrz [zwolnienie przy zmianie
   strategii](#zwolnienie-przy-zmianie-strategii)).

@@ -1196,6 +1196,16 @@ directly by any other available mode.</p>
   mode and start there. It holds inside a carried <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment as well (a
   <code>CURTAIL</code> released from it goes on through a PV gap within the commitment's own duration), and for
   an interval with a load below the minimum activity.</li>
+<li><strong><code>CURTAIL</code> takes over a <code>HOLD</code> that cannot pass the PV.</strong> <code>HOLD</code> takes no curtailment, so a
+  <code>HOLD</code> that has to last (a carried <code>HOLD</code>, the <code>HOLD</code> that the safety exception below puts in
+  place of a <code>CHARGE_PV</code> at the maximum state of charge, or a <code>HOLD</code> that began earlier in the plan,
+  for example after a <code>CURTAIL</code> run that ended in a PV gap) has no legal mode in an interval whose
+  PV, after the house, is above the export cap (<code>grid_export_kw</code>) or above the inverter rating.
+  There the inverter curtails by itself and the interval is <code>CURTAIL</code>: it takes the <code>HOLD</code> over and
+  from then on is an ordinary <code>CURTAIL</code> run with its own minimum duration (which outlasts the
+  <code>HOLD</code>'s remainder; a PV gap inside it is bridged as above). Only where the site cannot pass the
+  PV: anywhere else <code>CURTAIL</code> inside a <code>HOLD</code>'s duration would be a label to leave it with, and is
+  not offered. The <code>HOLD</code> after the run starts its own clock.</li>
 <li><strong>PV-follow group:</strong> <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.</li>
@@ -1208,7 +1218,7 @@ directly by any other available mode.</p>
   <code>observed_soc_maximum</code>) or at/below the reserve (discharge modes — <code>observed_soc_minimum</code>), or
   when a carried <code>CHARGE_GRID</code> meets a price above the ceiling before its deadline
   (<code>grid_charge_price_limit</code>). The interrupted mode and deadline stay stored; no other mode may
-  start before that deadline. Exposed in <code>dispatch_policy.safety_exception</code>.</li>
+  start before that deadline, except the <code>CURTAIL</code> that takes the <code>HOLD</code> over where the site cannot pass the PV (above). Exposed in <code>dispatch_policy.safety_exception</code>.</li>
 <li><strong>Strategy change (reset):</strong> writing a new strategy drops the carried commitment for the next
   plan, which starts unlocked (see <a href="#strategy-switch-release">strategy-switch release</a>).</li>
 <li>Setting <code>minimum_mode_minutes = 0</code> disables duration and minimum-power rules; the

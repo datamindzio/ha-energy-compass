@@ -1208,6 +1208,16 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   zachowuje tam swój tryb i początek. Działa to także w przeniesionym zobowiązaniu
   <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> (zwolniony z niego <code>CURTAIL</code> trwa mimo przerwy w PV w obrębie czasu
   samego zobowiązania) oraz w przedziale z obciążeniem poniżej minimalnej aktywności.</li>
+<li><strong><code>CURTAIL</code> przejmuje <code>HOLD</code>, który nie przepuści PV.</strong> <code>HOLD</code> nie przycina produkcji, więc
+  <code>HOLD</code>, który musi trwać (przeniesiony <code>HOLD</code>, <code>HOLD</code>, który wyjątek bezpieczeństwa poniżej
+  stawia w miejsce <code>CHARGE_PV</code> przy maksymalnym stanie naładowania, albo <code>HOLD</code> rozpoczęty wcześniej
+  w planie, na przykład po przebiegu <code>CURTAIL</code>, który skończył się przerwą w PV), nie ma dozwolonego
+  trybu w przedziale, w którym PV po odjęciu zużycia domu przekracza limit eksportu
+  (<code>grid_export_kw</code>) albo moc falownika. Falownik przycina wtedy sam i przedział to <code>CURTAIL</code>:
+  przejmuje <code>HOLD</code> i od tej chwili jest zwykłym przebiegiem <code>CURTAIL</code> z własnym minimalnym czasem
+  (dłuższym niż reszta czasu <code>HOLD</code>; przerwa w PV w jego trakcie jest pokryta jak wyżej). Tylko tam,
+  gdzie instalacja nie przepuści PV: gdziekolwiek indziej <code>CURTAIL</code> w czasie <code>HOLD</code> byłby etykietą
+  do wyjścia z niego i nie jest oferowany. <code>HOLD</code> po przebiegu ma własny zegar.</li>
 <li><strong>Grupa podążania za PV:</strong> <code>CHARGE_PV</code> i <code>SELF_CONSUME</code> dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.</li>
@@ -1220,7 +1230,8 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   <code>observed_soc_maximum</code>) lub na/poniżej rezerwy (tryby rozładowania — <code>observed_soc_minimum</code>),
   albo gdy przeniesione <code>CHARGE_GRID</code> trafia przed terminem na cenę powyżej sufitu
   (<code>grid_charge_price_limit</code>). Przerwany tryb i termin pozostają zapisane; przed tym terminem nie
-  może wystartować żaden inny tryb. Widoczne w <code>dispatch_policy.safety_exception</code>.</li>
+  może wystartować żaden inny tryb, poza <code>CURTAIL</code>, który przejmuje <code>HOLD</code> tam, gdzie instalacja
+  nie przepuści PV (wyżej). Widoczne w <code>dispatch_policy.safety_exception</code>.</li>
 <li><strong>Zmiana strategii (reset):</strong> zapis nowej strategii zrywa przeniesione zobowiązanie dla
   następnego planu, który startuje bez blokady (patrz <a href="#zwolnienie-przy-zmianie-strategii">zwolnienie przy zmianie
   strategii</a>).</li>
