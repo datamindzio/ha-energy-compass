@@ -837,10 +837,13 @@ charge from PV at the cap, not hold).
 
 ## Amendment (T-078): a CURTAIL run that PV beyond the pack opens goes on through its minimum duration
 
-Status: implemented and swept on T-078. Measured on main `ef55de2` (T-070, T-074, T-076, T-079 and T-081 merged over
-`06f935e`) against this branch with that main merged in; its engine is that of `ae75c25` and the sweeps ran on it.
-The first version of this amendment was measured on `06f935e` and reviewed there; the counts of the kinds it
-measured are the same on both mains. Decision 3 of the T-069 amendment (rung 2 is
+Status: implemented and swept on T-078. Measured on main `bb70c60` (T-080 and T-084 merged over `ef55de2`, which had
+T-070, T-074, T-076, T-079 and T-081 over `06f935e`) against the branch head `2cc08bb`, the merge of that main; its
+engine is that of `ae75c25` (`dispatch_policy.py` is the only engine file that differs from main) and the sweeps ran
+on it; the commits after `2cc08bb` change documents only. The first version of this amendment was measured on
+`06f935e` and reviewed there, the second on `ef55de2`. The counts of the kinds the first one measured are the same on
+all three mains, and every count below is the same on `ef55de2` and `bb70c60`: T-080 (the unmoded settle of
+`mode_noise.py`) and T-084 (the guides) moved none. Decision 3 of the T-069 amendment (rung 2 is
 decided afresh, nothing is stored) stands: the finding is a gap in the release problem, not a reason to carry the
 commitment's `HOLD`.
 
@@ -860,7 +863,7 @@ plan for them, and whether the model should have one.
     `CURTAIL <= sum(lock_full) + beyond`, is what forbids `CURTAIL`: every `lock_full` is 0 on a pack that was never
     full, `beyond` is empty, and the term of the `CURTAIL` before it was not there (the second rule, `full`,
     `curtailing`, `released`, `beyond`, had it). The interval had no mode and the problem no plan. Measured, not read:
-    the spy of `artifacts/T-078/offer.py` records two calls of `_offer_curtail` for the pinned problem on `ef55de2` (the
+    the spy of `artifacts/T-078/offer.py` records two calls of `_offer_curtail` for the pinned problem on `bb70c60` (the
     first with `beyond` True, the second with one `seen_full` term, one `curtailing` term and no `beyond`), and the
     release is rung 2 at a pack of 1.0 kWh and rung 3 at 2.0 kWh there, rung 1 on both with the edit of point 35. The
     case is the rung-2 draw whose commitment is the `SELF_CONSUME` of a pack at the reserve and whose first release row
@@ -871,12 +874,12 @@ plan for them, and whether the model should have one.
     `seen_full` and `beyond`: `CURTAIL <= seen_full + beyond + curtailing`. It is the only change to the engine. A
     second edit was made with it, `or curtailing` in the gate, and removed in review: it never changes the offer
     (`curtailing` is non-empty only after an interval that was `CURTAIL` or a bridge, and there `seen_full` is non-empty
-    already). Measured with a spy on `_offer_curtail` in a tree that has the term (`artifacts/T-078/gate.py`): of 18 337
+    already). Measured on `ef55de2` with the term, with a spy on `_offer_curtail` (`artifacts/T-078/gate.py`): of 18 337
     calls over 3600 rolled draws (seeds 22 and 33 × 300 × `roll`, `negroll`, `deproll`, `resroll`, `fullroll` and
     `aimroll`, 8 intervals) none has `seen_full` empty and `beyond` unset, so none was opened by `curtailing` alone;
-    and the tests of the file pass without it. The edit of rule 1 is the whole change: with it reverted both new tests
-    fail on the tree of `ef55de2`, and the pinned problem is rung 2 and rung 3 again. A first `CURTAIL` still
-    needs one of the other licences, and `CURTAIL` to `CURTAIL` needs no dwell rule (`validate_modes` checks the dwell
+    and the tests of the file pass without it. The edit of rule 1 is the whole change: without it the new tests fail (on
+    the tree of `bb70c60` five cases of the file's 164 fail, 159 pass), and the pinned problem is rung 2 and rung 3
+    again. A first `CURTAIL` still needs one of the other licences, and `CURTAIL` to `CURTAIL` needs no dwell rule (`validate_modes` checks the dwell
     groups only), so the validator did not change; the plans the new offer opens are legal under it
     (`test_the_resrun_draw_the_release_could_not_plan_is_the_first_rung` solves draw 144 of seed 33 `resrun` on rung 1
     and validates it).
@@ -888,7 +891,7 @@ plan for them, and whether the model should have one.
     on the first row (through the benchmark's `follow`) and plans the next boundary on rung 1 with the run as the
     commitment; the rungs of point 24 are as they were.
 
-Measured with `benchmarks/curtail_sweep.py`, seeds 11, 22, 33 and 44 × 300 = 1200 draws per kind, main `ef55de2`
+Measured with `benchmarks/curtail_sweep.py`, seeds 11, 22, 33 and 44 × 300 = 1200 draws per kind, main `bb70c60`
 against this branch, both solved through `solve_released`. `compare` counts, main → head (`aimrun` is a kind of T-070):
 
 | Kind | Newly infeasible | Newly planned | Solver failure | Objective worse | better |
@@ -915,14 +918,15 @@ main → head over 1200:
 | `aimrun` | 984 → 993 | 0 → 0 | 171 → 162 | 45 → 45 |
 
 The rolled kinds (`rollcompare`, 1200 draws each): no draw is newly infeasible while followed, none is fixed, the
-first failing boundary never moves and no boundary newly changes; the executed trace differs in `roll` 6 draws,
-`negroll` 7, `deproll` 96, `resroll` 124, `aimroll` 9 and `fullroll` 0.
+first failing boundary never moves and no draw newly has a boundary whose plan the next one contradicts; 83 draws of
+`resroll` and 11 of `deproll` no longer have one. The executed trace differs in `roll` 6 draws, `negroll` 7,
+`deproll` 96, `resroll` 124, `aimroll` 9 and `fullroll` 0.
 
 **What the longer `CURTAIL` costs.** T-069 declined a longer `CURTAIL` ("the remedy is not a longer `CURTAIL`") on the
 kWh a carried rung 2 left in the pack against the boundaries it fixed, so this change is measured the same way, on the
 flows the rolls execute: each roll follows the first row of every plan for 8 intervals, the draws followed to the end
 on both trees, `artifacts/T-078/review/scripts/energy.py` and `analyse.py` (kept with the task's artifacts, not in the
-repository), main `ef55de2` → head `ae75c25`:
+repository), main `bb70c60` → head `2cc08bb`:
 
 | Executed over the rolls | `resroll` (1148 draws) | `deproll` (1130 draws) |
 | --- | --- | --- |
@@ -964,7 +968,7 @@ reasons:
    duration.
 2. *A free interval after a `CURTAIL` that PV beyond the pack opened already plans `CURTAIL` on main.* The same two
    intervals with the commitment over before the second (the 45-minute case of the test) plan `CURTAIL`, `CURTAIL`
-   on `ef55de2`. What this change adds is that the setting the user chose, the minimum duration, binds the run and
+   on `bb70c60`. What this change adds is that the setting the user chose, the minimum duration, binds the run and
    does not make the problem unsolvable: the plan is the same, and its rows no longer need rung 2 or 3 to exist.
 3. *The minimum duration is the user's setting.* `CURTAIL` is a dwell group of its own (`dwell_group`; a bridge is
    the run going on, point 5): a run of it may not change mode inside its duration, and the first row of a `CURTAIL`
