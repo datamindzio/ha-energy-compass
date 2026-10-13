@@ -28,8 +28,20 @@ def idle_flows(v: dict[str, int], values: np.ndarray) -> tuple[str, ...]:
     return tuple(dict.fromkeys(idle))
 
 
-def _settle(idle: tuple[str, ...], flow: dict[str, float], upper: dict[str, float]):
-    """Zero the `idle` flows and close the balance through the grid; None if it cannot."""
+def _settle(
+    idle: tuple[str, ...],
+    flow: dict[str, float],
+    upper: dict[str, float],
+    moded: bool,
+):
+    """Zero the `idle` flows and close the balance; None if it cannot.
+
+    With mode variables the balance closes through the grid and `validate_modes` holds
+    the row to the chosen mode. Without them nothing names the chosen state, so a grid
+    flow opened beside the working battery direction would publish another one (an
+    import beside a charge reads CHARGE_GRID, an export beside a discharge
+    DISCHARGE_GRID): the working direction gives the energy back instead.
+    """
     settled = dict(flow)
     left = 0.0
     for name in idle:
@@ -42,22 +54,30 @@ def _settle(idle: tuple[str, ...], flow: dict[str, float], upper: dict[str, floa
             left += _SUPPLY_LEFT[name] * flow[name]
     if left > 0:
         # Too much supply: import less, then export the rest. SELF_CONSUME may not
-        # export, so there the battery delivers less.
+        # export, so there the battery delivers less, as a discharge without mode
+        # variables does.
         # A flow HiGHS returned a hair below zero has nothing to give.
         imported = max(min(settled["gin"], left), 0.0)
         settled["gin"] -= imported
         left -= imported
-        if "gout" in idle:
+        if "gout" in idle or (not moded and settled["bd"] > _TOL):
             if left > settled["bd"]:
                 return None
             settled["bd"] -= left
         else:
             settled["gout"] += left
     elif left < 0:
-        # Too little supply: export less, then import the rest.
+        # Too little supply: export less, then import the rest; a charge without mode
+        # variables takes that much less.
         exported = max(min(settled["gout"], -left), 0.0)
         settled["gout"] -= exported
-        settled["gin"] += -left - exported
+        left += exported
+        if not moded and settled["bc"] > _TOL:
+            if -left > settled["bc"]:
+                return None
+            settled["bc"] += left
+        else:
+            settled["gin"] -= left
     return settled
 
 
@@ -74,7 +94,8 @@ def settle_mode_noise(
     choose, which exceeds the 1e-6 kWh the display classifier calls zero once M > 1,
     so the slot would read as another state than the one the solver chose. That energy
     is not dispatched: the flow is zeroed, the site balance closes through the grid
-    (through the battery when the idle flows include the export), and the end energy
+    (through the battery when the idle flows include the export, and without mode
+    variables whenever the other battery direction is working), and the end energy
     follows the battery flows that changed, so the plan stays one consistent set of
     rows. A grid import beside an export, the same noise on `grid_mode`, nets.
     """
@@ -89,7 +110,10 @@ def settle_mode_noise(
         flow.setdefault("energy", 0.0)
         idle = idle_flows(v, values) if battery else ()
         if idle:
-            settled = _settle(idle, flow, {name: upper[v[name]] for name in idle})
+            moded = any(f"mode_{m}" in v for m in MODES)
+            settled = _settle(
+                idle, flow, {name: upper[v[name]] for name in idle}, moded
+            )
             if settled:
                 shift += (
                     battery.eta_charge * (settled["bc"] - flow["bc"])

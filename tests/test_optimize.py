@@ -295,7 +295,8 @@ def test_near_binary_solver_result_is_published_with_one_direction(
     monkeypatch, with_battery
 ):
     # T-052: the rows leave the gated side up to 1e-6 * (M + 1) beside a binary at 1e-6
-    # (here 4e-6 against 4 or 8 kWh): the plan keeps one direction per slot.
+    # (here 4e-6 against 4 or 8 kWh): the plan keeps one direction per slot. The battery
+    # pair is a cycle through the battery: it nets to nothing and opens no export.
     source, candidate = _near_binary(4e-6, with_battery)
     _solver_returns(monkeypatch, candidate)
 
@@ -303,8 +304,8 @@ def test_near_binary_solver_result_is_published_with_one_direction(
 
     flow = plan.flows[0]
     assert min(flow.grid_import_kwh, flow.grid_export_kwh) == 0.0
-    assert min(flow.charge_kwh, flow.discharge_kwh) == 0.0
-    assert flow.discharge_kwh == pytest.approx(4e-6 if with_battery else 0.0)
+    assert flow.grid_export_kwh == 0.0
+    assert (flow.charge_kwh, flow.discharge_kwh) == pytest.approx((0.0, 0.0), abs=1e-12)
 
 
 @pytest.mark.parametrize(

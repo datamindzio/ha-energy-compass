@@ -626,6 +626,60 @@ def test_unmoded_battery_direction_noise_does_not_publish_a_charge(monkeypatch):
     )
 
 
+def battery_cycle(battery_mode):
+    """1e-5 kWh more of PV into the battery while the battery feeds the load as much."""
+
+    def noise(v, values):
+        values[v["battery_mode"]] = battery_mode
+        if "discharging" in v:
+            values[v["discharging"]] = 1 - battery_mode
+        move(values, v, 1e-5, ("bd", "battery_load", "pv_battery", "bc"), ("pv_load",))
+
+    return noise
+
+
+# pv, load, terminal value, `battery_mode`: the grid is idle in both slots.
+GRID_IDLE = {
+    "charging the whole PV surplus": (10.0, 2.0, 1.0, 1 - 9e-7),
+    "covering the whole net load": (2.0, 10.0, 0.5, 9e-7),
+}
+
+
+@pytest.mark.parametrize("hurdle", [False, True])
+@pytest.mark.parametrize("case", GRID_IDLE)
+def test_unmoded_battery_direction_noise_does_not_open_the_grid(
+    monkeypatch, case, hurdle
+):
+    # No mode variables, grid idle, 1e-5 kWh on the idle battery direction (`bd <= 20 *
+    # (1 - battery_mode) + 1e-6` allows 1.9e-5). Zeroing it used to close the balance
+    # through the grid: 1e-5 kWh of import beside the charge read CHARGE_GRID, of export
+    # beside the discharge DISCHARGE_GRID. The other direction gives it back instead.
+    pv, load, terminal, battery_mode = GRID_IDLE[case]
+    problem = unmoded_problem(
+        1.0, 0.1, pv, load, BIG_BATTERY_20, hurdle=hurdle, terminal=terminal
+    )
+    slot = problem.slots[0]
+    clean = solve(problem).flows[0]
+    assert (clean.grid_import_kwh, clean.grid_export_kwh) == pytest.approx((0.0, 0.0))
+    assert machine_state(slot, clean) in ("CHARGE_PV", "SELF_CONSUME")
+
+    plan = solve_with_noise(monkeypatch, problem, battery_cycle(battery_mode))
+
+    (flow,) = plan.flows
+    assert machine_state(slot, flow) == machine_state(slot, clean)
+    assert (flow.grid_import_kwh, flow.grid_export_kwh) == pytest.approx(
+        (0.0, 0.0), abs=1e-12
+    )
+    assert min(flow.charge_kwh, flow.discharge_kwh) == 0.0
+    assert slot.pv_kwh + flow.grid_import_kwh + flow.discharge_kwh == pytest.approx(
+        slot.load_kwh + flow.grid_export_kwh + flow.charge_kwh, abs=1e-12
+    )
+    assert flow.end_soc_kwh == pytest.approx(
+        BIG_BATTERY_20.initial_kwh + flow.charge_kwh - flow.discharge_kwh, abs=1e-12
+    )
+    assert flow.end_soc_kwh == pytest.approx(clean.end_soc_kwh, abs=1e-12)
+
+
 def export_hurdle_problem(load):
     # Full battery, 5 kWh of PV: the surplus is exported, the battery holds.
     return unmoded_problem(
