@@ -161,8 +161,8 @@ async def test_a_new_session_restores_the_base_before_anything_is_forced(
     last_run = describe_runs(controller.host)
     assert controller.state.restore_pending is False, last_run
     assert controller.state.runtime["code"] == "restored", last_run
-    assert dict(inverter.writes)[PROGRAM_4] == "Disabled"
-    assert dict(inverter.writes)[CHARGE] > 5
+    assert dict(inverter.writes).get(PROGRAM_4) == "Disabled", last_run
+    assert dict(inverter.writes).get(CHARGE, 0) > 5, last_run
     base_writes = len(inverter.writes)
     freezer.move_to("2026-10-08T17:01:00+00:00")
     publish(entry, publication())
