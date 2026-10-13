@@ -869,11 +869,20 @@ def _offer_curtail(
     the pack cannot take by its charge power: CHARGE_PV has no flow there and the
     inverter curtails beside the charging pack whatever the pack held before (T-064), so
     there is nothing to wait for.
+
+    A CURTAIL under way goes on whatever the pack has seen (T-078): the first rule takes
+    `curtailing` as the second does, or the run that `beyond_the_pack` opens could not
+    be continued inside its minimum duration where the next interval is not beyond the
+    pack and the pack was never full.
     """
     if beyond_the_pack is True:
         return
     beyond_the_pack = beyond_the_pack or {}
-    model.constrain({v["mode_CURTAIL"]: 1, **seen_full, **beyond_the_pack}, -np.inf, 0)
+    model.constrain(
+        {v["mode_CURTAIL"]: 1, **seen_full, **beyond_the_pack, **curtailing},
+        -np.inf,
+        0,
+    )
     model.constrain(
         {
             v["mode_CURTAIL"]: 1,

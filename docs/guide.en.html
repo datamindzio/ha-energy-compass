@@ -1411,7 +1411,12 @@ directly by any other available mode.</p>
   Where the pack is at the reserve under a carried <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment (a sunrise
   on a zero-export site with a 1 kW pack and 3.6 kW of PV) this is the plan itself, not a fallback.
   In a carried commitment <code>CURTAIL</code> is offered in such an interval whatever the pack held before;
-  with a flexible-load probe, only for the probe loads that leave PV beyond the pack. With
+  with a flexible-load probe, only for the probe loads that leave PV beyond the pack. The <code>CURTAIL</code>
+  that opens such a run goes on through the run's minimum duration: the later intervals of the
+  commitment offer <code>CURTAIL</code> while it is under way, also where the PV is no longer beyond the pack
+  (it does not charge there, so a pack at the reserve waits for the end of the run: up to 105
+  minutes after the first interval at a minimum duration of 120), because the run may not change
+  mode inside its duration and the commitment's <code>CHARGE_PV</code> is not a way out of it. With
   <code>allow_curtailment</code> off such an interval is planned only as a forced spill, where the pack has
   less room than the PV the site cannot pass: the <code>CURTAIL</code> interval then charges what the pack
   takes and spills the rest. The same holds for a pack with room: it charges at its power and
