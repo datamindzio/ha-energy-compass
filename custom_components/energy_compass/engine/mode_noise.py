@@ -3,16 +3,33 @@
 import numpy as np
 
 from .dispatch_policy import IDLE_FLOWS, MODES
-from .machine_state import _TOL
+from .machine_state import _TOL, noise_bound
 from .models import Problem
 
 # Zeroing a flow leaves the site balance short (+) or long (-) by its energy.
 _SUPPLY_LEFT = {"curt": 1.0, "bc": 1.0, "gout": 1.0, "bd": -1.0}
 
 
-def _settle(mode: str, flow: dict[str, float], upper: dict[str, float]):
-    """Zero what `mode` forbids and close the balance through the grid; None if it cannot."""
-    idle = IDLE_FLOWS[mode]
+def idle_flows(v: dict[str, int], values: np.ndarray) -> tuple[str, ...]:
+    """The flows the solver's chosen state leaves at zero in one slot.
+
+    With mode variables the chosen mode names them. Without (minimum duration 0) the
+    rows that gate them are the battery direction `battery_mode` and, with the export
+    benefit hurdle, the export indicator `export_active` (and `export_side`, which
+    picks the gated flow when it is off): `bc` or `bd`, `bd` or `gout`.
+    """
+    present = [m for m in MODES if f"mode_{m}" in v]
+    if present:
+        mode = next((m for m in present if values[v[f"mode_{m}"]] > 0.5), None)
+        return IDLE_FLOWS[mode] if mode else ()
+    idle = ["bd" if values[v["battery_mode"]] > 0.5 else "bc"]
+    if "export_side" in v and values[v["export_active"]] < 0.5:
+        idle.append("gout" if values[v["export_side"]] > 0.5 else "bd")
+    return tuple(dict.fromkeys(idle))
+
+
+def _settle(idle: tuple[str, ...], flow: dict[str, float], upper: dict[str, float]):
+    """Zero the `idle` flows and close the balance through the grid; None if it cannot."""
     settled = dict(flow)
     left = 0.0
     for name in idle:
@@ -20,7 +37,7 @@ def _settle(mode: str, flow: dict[str, float], upper: dict[str, float]):
         # row within 1e-6, so a flow gated by two unselected modes can carry
         # 1e-6 * (M1 + M2 + 1), and no M exceeds the variable's own bound. Up to 1e-6
         # the classifier already reads the flow as zero.
-        if _TOL < flow[name] <= _TOL * (2 * upper[name] + 1):
+        if _TOL < flow[name] <= noise_bound(upper[name]):
             settled[name] = 0.0
             left += _SUPPLY_LEFT[name] * flow[name]
     if left > 0:
@@ -52,12 +69,14 @@ def settle_mode_noise(
 ) -> list[dict[str, float]]:
     """Per slot grid, battery flows and end energy without mode noise on the idle flows.
 
-    The `mode_X` rows leave a flow up to `1e-6 * (M + 1)` kWh on a mode the solver did
-    not choose, which exceeds the 1e-6 kWh the display classifier calls zero once M > 1,
-    so the slot would read as another mode than the one the solver chose. That energy
+    The `mode_X` rows (the battery direction and export indicator rows without mode
+    variables) leave a flow up to `1e-6 * (M + 1)` kWh on a state the solver did not
+    choose, which exceeds the 1e-6 kWh the display classifier calls zero once M > 1,
+    so the slot would read as another state than the one the solver chose. That energy
     is not dispatched: the flow is zeroed, the site balance closes through the grid
-    (through the battery when SELF_CONSUME may not export), and the end energy follows
-    the battery flows that changed, so the plan stays one consistent set of rows.
+    (through the battery when the idle flows include the export), and the end energy
+    follows the battery flows that changed, so the plan stays one consistent set of
+    rows. A grid import beside an export, the same noise on `grid_mode`, nets.
     """
     battery = problem.battery
     names = ("gin", "gout", "curt", *(("bc", "bd", "energy") if battery else ()))
@@ -68,14 +87,9 @@ def settle_mode_noise(
         flow.setdefault("bc", 0.0)
         flow.setdefault("bd", 0.0)
         flow.setdefault("energy", 0.0)
-        mode = next(
-            (m for m in MODES if f"mode_{m}" in v and values[v[f"mode_{m}"]] > 0.5),
-            None,
-        )
-        if battery and mode:
-            settled = _settle(
-                mode, flow, {name: upper[v[name]] for name in IDLE_FLOWS[mode]}
-            )
+        idle = idle_flows(v, values) if battery else ()
+        if idle:
+            settled = _settle(idle, flow, {name: upper[v[name]] for name in idle})
             if settled:
                 shift += (
                     battery.eta_charge * (settled["bc"] - flow["bc"])
@@ -83,5 +97,11 @@ def settle_mode_noise(
                 )
                 flow = settled
         flow["energy"] += shift
+        if min(flow["gin"], flow["gout"]) > _TOL:
+            # `gin <= M * grid_mode` and `gout <= M * (1 - grid_mode)` let both carry
+            # noise when the indicator is a hair off 0 or 1: the plan keeps the net.
+            net = flow["gin"] - flow["gout"]
+            flow["gin"] = net if net > 0 else 0.0
+            flow["gout"] = -net if net < 0 else 0.0
         slots.append(flow)
     return slots

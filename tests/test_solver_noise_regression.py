@@ -25,7 +25,7 @@ The solver-independent cases below put that noise on every flow every mode leave
 
 import random
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
@@ -36,9 +36,19 @@ from custom_components.energy_compass.engine.dispatch_policy import (
     MODES,
     validate_modes,
 )
+from custom_components.energy_compass.engine.export_benefit import (
+    validate_export_benefit,
+)
 from custom_components.energy_compass.engine.machine_state import machine_state
 from custom_components.energy_compass.engine.mode_noise import settle_mode_noise
-from custom_components.energy_compass.engine.models import Flow, SiteLimits, SolveError
+from custom_components.energy_compass.engine.models import (
+    Battery,
+    Flow,
+    Problem,
+    SiteLimits,
+    Slot,
+    SolveError,
+)
 from custom_components.energy_compass.engine.optimize import solve
 
 CASES = {
@@ -408,3 +418,335 @@ def test_a_clean_solution_is_published_as_the_solver_left_it():
     assert flow["bd"] == pytest.approx(0.5)
     assert flow["gin"] == flow["gout"] == flow["curt"] == flow["bc"] == 0.0
     assert flow["energy"] == values[vectors[0]["energy"]]
+
+
+def with_export_indicator(vectors, values, active, start=0.0):
+    """The export indicator rows `constrain_export_benefit` adds, at the given values."""
+    (v,) = vectors
+    v.update(export_active=len(values), export_start=len(values) + 1)
+    return np.append(values, [active, start])
+
+
+def test_export_pair_noise_beside_an_indicator_a_hair_off_zero_is_not_an_export():
+    # T-052: HiGHS leaves `export_active` (the DISCHARGE_GRID binary) at 4.9e-7 and
+    # `bd <= M * (e + z)`, `gout <= M * (1 + e - z)` carry 1e-6 * M beside it: 3.5e-6
+    # kWh of both, above the fixed 1e-6 the old validator read as an export.
+    problem = hourly_problem(0.5, 1.0)
+    vectors, values, upper = solver_rows(
+        problem, [("HOLD", {"bd": 4.9e-6, "gout": 3.5e-6}, "grid")]
+    )
+    values = with_export_indicator(vectors, values, 4.9e-7)
+
+    assert validate_export_benefit(problem, vectors, values) == (0, 0.0)
+
+    settled = settle_mode_noise(problem, vectors, values, upper)
+    (flow,) = settled
+    assert validate_export_benefit(problem, vectors, values, settled) == (0, 0.0)
+    plan = settled_flows([flow], ["HOLD"])
+    validate_modes(problem, plan)
+    assert flow["bd"] == flow["gout"] == 0.0
+    assert machine_state(problem.slots[0], plan[0]) == "HOLD"
+
+
+def test_export_pair_beyond_the_noise_bound_beside_an_inactive_indicator_is_refused():
+    problem = hourly_problem(0.5, 1.0)
+    vectors, values, _ = solver_rows(
+        problem, [("HOLD", {"bd": 1e-3, "gout": 1e-3}, "grid")]
+    )
+    values = with_export_indicator(vectors, values, 0.0)
+
+    with pytest.raises(SolveError, match="physical export indicator"):
+        validate_export_benefit(problem, vectors, values)
+
+
+def unequal_limits_case(row, *, discharge_kw, export_kw, pv, load):
+    """A moded slot on a site whose battery and export limits differ.
+
+    The export indicator is the DISCHARGE_GRID binary, as `constrain_export_benefit`
+    binds it when the mode model exists.
+    """
+    base = hourly_problem(pv, load)
+    problem = replace(
+        base,
+        site=SiteLimits(100.0, 100.0, export_kw, True),
+        battery=replace(base.battery, discharge_kw=discharge_kw),
+    )
+    vectors, values, upper = solver_rows(problem, [row])
+    (v,) = vectors
+    v.update(export_active=v["mode_DISCHARGE_GRID"], export_start=len(values))
+    return problem, vectors, np.append(values, [0.0]), upper
+
+
+# Each row gates its own flow by that flow's bound (SELF_CONSUME's `gout <= G * (1 - mode)`
+# by the export limit, CHARGE_PV's `bd <= D * (1 - mode)` by the discharge limit) and the
+# other side of the pair is free. T-052 review: the bound was the smaller of the limits,
+# which refused 1e-5 kWh where the row allows 1e-6 * (2 * 45 + 1) = 9.1e-5.
+UNEQUAL_LIMITS = {
+    "export limit above the discharge limit": (
+        ("SELF_CONSUME", {"gout": 1e-5}, "bd"),
+        {"discharge_kw": 3.3, "export_kw": 45.0, "pv": 0.5, "load": 1.0},
+        "gout",
+    ),
+    "discharge limit above the export limit": (
+        ("CHARGE_PV", {"bd": 1e-5, "bc": 3.3}, "grid"),
+        {"discharge_kw": 45.0, "export_kw": 3.3, "pv": 4.0, "load": 0.5},
+        "bd",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", UNEQUAL_LIMITS)
+def test_pair_noise_up_to_the_gated_flows_own_bound_is_not_an_export(case):
+    row, limits, noisy = UNEQUAL_LIMITS[case]
+    problem, vectors, values, upper = unequal_limits_case(row, **limits)
+
+    assert validate_export_benefit(problem, vectors, values) == (0, 0.0)
+
+    settled = settle_mode_noise(problem, vectors, values, upper)
+    assert validate_export_benefit(problem, vectors, values, settled) == (0, 0.0)
+    assert settled[0][noisy] == 0.0
+    plan = settled_flows(settled, [row[0]])
+    validate_modes(problem, plan)
+    assert machine_state(problem.slots[0], plan[0]) == row[0]
+
+
+@pytest.mark.parametrize("case", UNEQUAL_LIMITS)
+def test_pair_noise_beyond_the_gated_flows_own_bound_is_refused(case):
+    (mode, noise, derive), limits, noisy = UNEQUAL_LIMITS[case]
+    # Beyond 9.1e-5, with the other side of the pair a real flow.
+    row = (mode, {**noise, noisy: 2e-4}, derive)
+    problem, vectors, values, _ = unequal_limits_case(row, **limits)
+
+    with pytest.raises(SolveError, match="physical export indicator"):
+        validate_export_benefit(problem, vectors, values)
+
+
+def test_import_noise_beside_an_export_when_the_grid_indicator_is_off_one_is_netted():
+    # T-052: `gin <= M * grid_mode` with grid_mode 7.8e-8 and M 45 left 1.8e-6 kWh of
+    # import beside 13.6 kWh of export.
+    problem = replace(hourly_problem(0.5, 1.0), site=SiteLimits(45.0, 45.0, 45.0, True))
+    vectors, values, upper = solver_rows(
+        problem,
+        [("DISCHARGE_GRID", {"bd": 3.3, "gin": 1.8e-6, "gout": 2.0}, "bd")],
+    )
+    (v,) = vectors
+    raw = values[v["gin"]] - values[v["gout"]]
+
+    (flow,) = settle_mode_noise(problem, vectors, values, upper)
+
+    assert flow["gin"] == 0.0
+    assert flow["gout"] == pytest.approx(-raw, abs=1e-15)
+    plan = settled_flows([flow], ["DISCHARGE_GRID"])
+    validate_modes(problem, plan)
+    slot = problem.slots[0]
+    assert slot.pv_kwh + flow["bd"] == pytest.approx(
+        slot.load_kwh + flow["gout"] + flow["bc"], abs=1e-12
+    )
+
+
+# Without minimum duration (0) there are no mode variables: `battery_mode` gates `bc` and
+# `bd`, and with the export hurdle `export_active` and `export_side` gate `bd` and `gout`.
+# The clean solution is solved on real HiGHS and the noise those rows allow is added to
+# it before validation, as a solver stopping inside its tolerances leaves it.
+HOUR = datetime(2026, 9, 17, tzinfo=UTC)
+
+
+def unmoded_problem(buy, sell, pv, load, battery, *, hurdle, terminal=0.0):
+    slot = Slot(HOUR, HOUR + timedelta(hours=1), buy, sell, pv, load)
+    return Problem(
+        (slot,),
+        SiteLimits(60, 60, 60, True),
+        battery,
+        "value",
+        terminal,
+        (),
+        "UTC",
+        minimum_mode_minutes=0,
+        limit_export_to_pv=False,
+        minimum_export_episode_benefit=1.0 if hurdle else 0.0,
+    )
+
+
+def solve_with_noise(monkeypatch, problem, noise):
+    """Solve, adding `noise(vector, values)` to the solver result before it is validated."""
+    from custom_components.energy_compass.engine import optimize
+
+    real = optimize._validate_solution
+
+    def noisy(problem_, vectors, values, *rest):
+        noise(vectors[0], values)
+        real(problem_, vectors, values, *rest)
+
+    monkeypatch.setattr(optimize, "_validate_solution", noisy)
+    return solve(problem)
+
+
+def move(values, v, d, flows, closing):
+    """Add `d` kWh to `flows`, the site balance closed by `closing` (-d)."""
+    for name in flows:
+        values[v[name]] += d
+    for name in closing:
+        values[v[name]] -= d
+
+
+BIG_BATTERY_20 = Battery(40, 0.1, 0.9, 20, 20, 20, 1, 1, 0.01, True, True)
+
+
+def test_unmoded_battery_direction_noise_does_not_publish_a_charge(monkeypatch):
+    # No mode variables: 1.5e-5 kWh of charge beside a 16 kWh discharge, `battery_mode`
+    # at 1e-6 (`bc <= 20 * battery_mode + 1e-6` allows 2.1e-5). The plan used to read
+    # CHARGE_GRID, charge winning the machine state's precedence over discharge.
+    problem = unmoded_problem(1.0, 0.1, 0.0, 30.0, BIG_BATTERY_20, hurdle=False)
+    clean = solve(problem).flows[0]
+
+    def noise(v, values):
+        values[v["battery_mode"]] = 1e-6
+        move(
+            values,
+            v,
+            1.5e-5,
+            ("bc", "grid_battery", "bd", "battery_load"),
+            ("grid_load",),
+        )
+
+    plan = solve_with_noise(monkeypatch, problem, noise)
+
+    (flow,) = plan.flows
+    assert flow.charge_kwh == 0.0
+    assert machine_state(problem.slots[0], flow) == machine_state(
+        problem.slots[0], clean
+    )
+    assert machine_state(problem.slots[0], flow) != "CHARGE_GRID"
+    slot = problem.slots[0]
+    assert slot.pv_kwh + flow.grid_import_kwh + flow.discharge_kwh == pytest.approx(
+        slot.load_kwh + flow.grid_export_kwh + flow.charge_kwh, abs=1e-12
+    )
+    assert flow.end_soc_kwh == pytest.approx(
+        BIG_BATTERY_20.initial_kwh - flow.discharge_kwh, abs=1e-12
+    )
+
+
+def export_hurdle_problem(load):
+    # Full battery, 5 kWh of PV: the surplus is exported, the battery holds.
+    return unmoded_problem(
+        0.5,
+        0.3,
+        5.0,
+        load,
+        replace(BIG_BATTERY_20, initial_kwh=36.0),
+        hurdle=True,
+        terminal=1.0,
+    )
+
+
+def test_unmoded_export_pair_noise_beside_an_inactive_indicator_is_no_export(
+    monkeypatch,
+):
+    # The own indicators `export_active` (e) and `export_side` (z) at 9e-7: `bd <= 20 * (e
+    # + z)` leaves 1.5e-5 kWh of discharge beside a 4 kWh PV export, which the plan read as
+    # DISCHARGE_GRID with no new export episode.
+    problem = export_hurdle_problem(1.0)
+    clean = solve(problem).flows[0]
+    assert clean.discharge_kwh == 0.0
+
+    def noise(v, values):
+        values[v["export_active"]] = values[v["export_side"]] = 9e-7
+        move(values, v, 1.5e-5, ("bd", "battery_grid", "gout"), ())
+        values[v["energy"]] -= 1.5e-5
+
+    plan = solve_with_noise(monkeypatch, problem, noise)
+
+    (flow,) = plan.flows
+    assert flow.discharge_kwh == 0.0
+    assert flow.grid_export_kwh == pytest.approx(clean.grid_export_kwh, abs=1e-12)
+    assert machine_state(problem.slots[0], flow) == machine_state(
+        problem.slots[0], clean
+    )
+    assert plan.new_export_episodes == 0
+    assert flow.end_soc_kwh == pytest.approx(clean.end_soc_kwh, abs=1e-12)
+
+
+def test_unmoded_export_noise_on_the_other_side_of_the_indicator_is_settled(
+    monkeypatch,
+):
+    # z at 1 - 9e-7 gates `gout <= 60 * (1 + e - z)`: 1.5e-5 kWh of export, fed by the
+    # battery, beside a 12 kWh discharge to the load. The plan used to read
+    # DISCHARGE_GRID; the battery now delivers 1.5e-5 less.
+    problem = unmoded_problem(1.0, 0.1, 0.0, 12.0, BIG_BATTERY_20, hurdle=True)
+    clean = solve(problem).flows[0]
+    assert (clean.discharge_kwh, clean.grid_export_kwh) == pytest.approx((12.0, 0.0))
+
+    def noise(v, values):
+        values[v["export_active"]] = 9e-7
+        values[v["export_side"]] = 1 - 9e-7
+        move(values, v, 1.5e-5, ("bd", "battery_grid", "gout"), ())
+        values[v["energy"]] -= 1.5e-5
+
+    plan = solve_with_noise(monkeypatch, problem, noise)
+
+    (flow,) = plan.flows
+    assert flow.grid_export_kwh == 0.0
+    assert flow.discharge_kwh == pytest.approx(clean.discharge_kwh, abs=1e-12)
+    assert flow.end_soc_kwh == pytest.approx(clean.end_soc_kwh, abs=1e-12)
+    assert machine_state(problem.slots[0], flow) == machine_state(
+        problem.slots[0], clean
+    )
+    assert plan.new_export_episodes == 0
+
+
+def test_unmoded_export_pair_the_settle_cannot_clear_is_refused(monkeypatch):
+    # The discharge noise passes the validator ahead of the settle (it is within the
+    # bound of `bd`), but z at 1 says `gout` is the gated flow, and a real 4 kWh export
+    # is not noise: the settle clears neither side and the pair is no plan.
+    problem = export_hurdle_problem(1.0)
+
+    def noise(v, values):
+        values[v["battery_mode"]] = 0.0
+        values[v["export_active"]] = 9e-7
+        values[v["export_side"]] = 1 - 9e-7
+        move(values, v, 1.5e-5, ("bd", "battery_grid", "gout"), ())
+        values[v["energy"]] -= 1.5e-5
+
+    with pytest.raises(SolveError, match="physical export indicator"):
+        solve_with_noise(monkeypatch, problem, noise)
+
+
+# T-052: battery limit L kWh per hourly slot, site limits 3L, capacity 30 kWh, load and PV
+# scaled by L / 3.3 (the T-049 sweep): limit, seed, slots and PV scale (which already
+# carries L / 3.3) of the failing problems.
+BIG_BATTERY = {
+    "L10 seed 170 export indicator": (10, 170, 48, 11.108974005045065),
+    "L15 seed 116 export indicator": (15, 116, 48, 16.663461007567598),
+    "L15 seed 125 simultaneous directions": (15, 125, 48, 6.319934510705097),
+    "L15 seed 133 export indicator": (15, 133, 48, 2.396955362482144),
+    "L15 seed 198 export indicator": (15, 198, 24, 1.1584318051846672),
+    "L20 seed 111 export indicator": (20, 111, 48, 1.9682142293196627),
+    "L20 seed 135 export indicator": (20, 135, 48, 3.195940483309525),
+}
+
+
+@pytest.mark.parametrize("case", BIG_BATTERY)
+def test_a_battery_of_10_to_20_kwh_per_slot_publishes_a_plan_on_real_highs(case):
+    limit, seed, count, pv_scale = BIG_BATTERY[case]
+    base = corpus_problem(seed, pv_scale, count)
+    capacity = 30.0
+    problem = replace(
+        base,
+        battery=replace(
+            base.battery,
+            capacity_kwh=capacity,
+            charge_kw=limit,
+            discharge_kw=limit,
+            initial_kwh=base.battery.initial_kwh * capacity / 13.5,
+        ),
+        site=SiteLimits(3 * limit, 3 * limit, 3 * limit, True),
+        slots=tuple(
+            replace(slot, load_kwh=slot.load_kwh * limit / 3.3) for slot in base.slots
+        ),
+    )
+
+    plan = solve(problem, time_limit_s=20.0, accept_incumbent=True)
+
+    for slot, flow in zip(problem.slots, plan.flows, strict=True):
+        assert flow.dispatch_mode == machine_state(slot, flow)
+        assert min(flow.grid_import_kwh, flow.grid_export_kwh) <= 1e-6
