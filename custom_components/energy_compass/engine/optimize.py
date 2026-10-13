@@ -46,6 +46,8 @@ class _Model:
         self.exact_mip_gap = False
         self.accept_incumbent = False
         self.time_limited = False
+        # Set by the rows HiGHS's presolve is known to misjudge (`solve`).
+        self.presolve_unsound = False
         self.mip_gap: float | None = 0.0
         self.cost: list[float] = []
         self.lower: list[float] = []
@@ -104,11 +106,15 @@ class _Model:
         ).tocsc()
         started = monotonic()
         result = self._run(matrix, time_limit_s)
-        if result.x is not None and self._fractional(result.x):
-            # HiGHS can hand back, as optimal, a point whose binaries are fractional when
-            # its presolve fails to map the solution back (T-041: CURTAIL at 0.16 where the
-            # PV the site cannot pass is below the minimum activity). The same model
-            # without presolve solves; it gets what is left of the time limit.
+        if self.presolve_unsound and (
+            result.status == 2 or result.x is not None and self._fractional(result.x)
+        ):
+            # HiGHS's presolve is not sound on the forced-spill rows (T-041): it handed
+            # back, as optimal, a point with CURTAIL at 0.16 (a need below the minimum
+            # activity), and called a model infeasible whose plan the same solver finds
+            # without presolve. A model with those rows that comes back infeasible, or
+            # with a fractional binary, is solved again without it, in what is left of
+            # the time limit.
             result = self._run(
                 matrix,
                 max(time_limit_s - (monotonic() - started), 1e-3),
@@ -617,6 +623,7 @@ def _gate_forced_spill(
         previous_energy_index is not None and gate > model.lower[previous_energy_index]
     )
     if gated or flexible_load:
+        model.presolve_unsound = True
         spill.binary = spill_open = v["spill_open"] = model.variable(binary=True)
         model.constrain({v["curt"]: 1, spill_open: -upper}, -np.inf, 0)
     if gated:

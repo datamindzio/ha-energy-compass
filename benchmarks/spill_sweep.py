@@ -14,8 +14,8 @@ seeds on two checkouts and compare, as `curtail_sweep.py` does:
 `rollcompare` prints the problems that were followed to the end before and are
 infeasible at some boundary now (a plan that is gone at the next boundary is no plan).
 `summary` prints, per minimum mode duration, how many of a run's problems are planned
-(of a `bellroll` run: followed to the end of the day): "0 newly infeasible" says nothing
-about what stays infeasible.
+(of a roll: followed, `bellroll` to the end of the day, with the stops by reason, see
+`followed`): "0 newly infeasible" says nothing about what stays infeasible.
 
 The draw is `curtail_sweep.make` with curtailment forced off and the minimum mode
 duration 0, 15, 30 or 60 minutes (PV 0.6-1 times a peak in every interval: it never draws a
@@ -91,29 +91,66 @@ def draws(kind, seed, count):
         return out
     if kind in ("roll", "negroll"):
         return [
-            sweep.roll(make(rng, kind == "negroll", moded=True)) for _ in range(count)
+            followed(make(rng, kind == "negroll", moded=True), 8) for _ in range(count)
         ]
     if kind == "bellroll":
-        # Followed to the end of the day: the taper after a long CURTAIL run is where a
-        # plan that cannot be followed stops.
-        out = []
-        for _ in range(count):
-            problem = make_bell(rng, moded=True)
-            row = sweep.roll(problem, steps=len(problem.slots))
-            out.append([*row, problem.minimum_mode_minutes])
-        return out
+        # To the end of the day: the taper after a long CURTAIL run is where a plan that
+        # cannot be followed stops.
+        return [followed(make_bell(rng, moded=True)) for _ in range(count)]
     if kind == "bell":
         return [tagged(make_bell(rng)) for _ in range(count)]
     return [tagged(make(rng, kind == "negrun")) for _ in range(count)]
 
 
+def followed(problem, steps=None):
+    """`curtail_sweep.roll`, with the reason of a stop and the minimum mode duration drawn.
+
+    A day followed to its end runs into the end of its own forecast, where a carried
+    commitment may have no plan on any site: a stop is `off only` when the problem it
+    stops at is planned with curtailment on (the forced spill's own gap), `any site`
+    when it is not, and `start` when the first plan is already missing.
+    """
+    trace = []
+    for step in range(steps or len(problem.slots)):
+        if len(problem.slots) < 2:
+            break
+        try:
+            plan = sweep.solve(problem)
+        except sweep.SolveError as error:
+            able = replace(problem, site=replace(problem.site, allow_curtailment=True))
+            why = "start" if not step else "off only"
+            if sweep.run(able)[0] != "ok":
+                why = "any site" if step else "start, any site"
+            return [
+                "err",
+                step,
+                str(error)[:40],
+                trace,
+                why,
+                problem.minimum_mode_minutes,
+            ]
+        trace.append(
+            plan.flows[0].dispatch_mode + ("*" if 0 in plan.carried_bridges else "")
+        )
+        problem = sweep.follow(problem, plan)
+    return ["ok", len(trace), "", trace, "", problem.minimum_mode_minutes]
+
+
 def summary(path):
-    """Print the planned share of a run per minimum mode duration."""
+    """Print the planned (a roll: followed) share of a run per minimum mode duration."""
     rows = json.loads(Path(path).read_text())
     planned = Counter(row[-1] for row in rows if row[0] == "ok")
     total = Counter(row[-1] for row in rows)
     for minutes in sorted(total):
-        print(f"minimum_mode_minutes {minutes}: {planned[minutes]}/{total[minutes]}")
+        stops = Counter(
+            row[4]
+            for row in rows
+            if len(row) == 6 and row[0] == "err" and row[-1] == minutes
+        )
+        detail = f" stops {dict(sorted(stops.items()))}" if stops else ""
+        print(
+            f"minimum_mode_minutes {minutes}: {planned[minutes]}/{total[minutes]}{detail}"
+        )
 
 
 def make_off(problem, rng, moded=False):

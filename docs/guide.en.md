@@ -749,8 +749,8 @@ Rules (defaults: 60 min, 0.1 kW):
   With `minimum_mode_minutes = 0` the rule costs solve time (see the table in
   [model and limitations](model.md#operating-mode-duration-and-pv-export-budget)). A site that
   cannot curtail (`allow_curtailment` off) with grid export capped, or the inverter rated below
-  the PV, would be left with PV that has nowhere to go once the pack is full. It is planned
-  rather than reported as infeasible: the PV above what the cap and the inverter can pass (the
+  the PV, would be left with PV that has nowhere to go once the pack is full. In most cases it
+  is planned rather than reported as infeasible (measured below): the PV above what the cap and the inverter can pass (the
   curtail need; with a minimum duration at least the minimum activity) is spilled in an interval
   whose pack cannot take it, labelled `CURTAIL` (the inverter throttles by itself; the Deye
   controller runs its `HOLD` profile). The gate is the room of the pack: the interval starts at or
@@ -758,13 +758,19 @@ Rules (defaults: 60 min, 0.1 kW):
   cannot take the surplus spills too, and a pack that can take it never does, whatever the sell
   price. With a minimum duration a `CURTAIL` run keeps the next interval's gate open (it charges
   nothing, so the pack only drifts down by its standby loss), a `CHARGE_PV` or `SELF_CONSUME` run
-  may end in `CURTAIL` when the pack fills inside it, and room left below the gate stays empty
-  during a `CURTAIL` interval until the next replanning reads the real state of charge. A site
-  that can pass its PV is unchanged.
-  Measured on seeded sweeps (3000 problems drawn at the three minimum durations): 2633 are planned
-  with the spill against 793 without it. The rest stay without a plan, as before, for two reasons
-  the plan does not yet cover: a pack with room whose charge power is below the surplus, and a
-  carried `CURTAIL` (or some 60-minute `SELF_CONSUME`/`CHARGE_PV`) commitment the model cannot end
+  may end in `CURTAIL` when the pack fills inside it (or in `HOLD` when the PV it had to take is
+  over as well), and room left below the gate stays empty during a `CURTAIL` interval until the
+  next replanning reads the real state of charge. A `CURTAIL` run carried into the next plan
+  keeps spilling while the need lasts, also when the pack has dropped below full meanwhile. A
+  site that can pass its PV is unchanged.
+  Measured on seeded sweeps (2400 problems solved once): with the spill 538 of 589 are planned at
+  minimum duration 0, 568 of 606 at 15 minutes, 580 of 620 at 30 minutes and 498 of 585 at 60
+  minutes (without it 190, 180, 161 and 103). A bell-shaped day followed interval by interval to
+  its end keeps a plan all the way in 207 of 214 days at 15 minutes, 169 of 189 at 30 minutes and
+  151 of 197 at 60 minutes (without the spill 27, 23 and 19); most of the others have no plan
+  from the first interval. The rest stay without a plan, as before, mainly for two reasons the
+  plan does not yet cover: a pack with room whose charge power is below the surplus, and a
+  carried commitment the model cannot end, more often at 60 minutes
   ([model and limitations](model.md#operating-mode-duration-and-pv-export-budget), follow-up T-066).
 - **`CURTAIL` goes on through a PV gap.** A `CURTAIL` run lasts the minimum duration, and PV can
   drop inside it. A `HOLD` in an interval with PV below the minimum activity (`minimum_mode_power_kw × h`)

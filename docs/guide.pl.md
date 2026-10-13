@@ -765,7 +765,8 @@ Zasady (domyślnie 60 min, 0,1 kW):
   [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget), EN). Instalacja,
   która nie może ograniczać produkcji PV (`allow_curtailment` wyłączone), z limitem eksportu do
   sieci albo falownikiem o mocy poniżej PV zostałaby z PV bez miejsca, gdy bateria jest pełna.
-  Plan powstaje zamiast wyniku „brak planu” (`infeasible`): PV ponad to, co przepuści limit i
+  W większości przypadków plan powstaje zamiast wyniku „brak planu” (`infeasible`; pomiar
+  niżej): PV ponad to, co przepuści limit i
   falownik (potrzeba przycięcia; przy minimalnym czasie trwania co najmniej minimalna aktywność),
   jest tracone w przedziale, w którym bateria nie może go przyjąć, i ma etykietę `CURTAIL`
   (falownik przycina sam; sterownik Deye wykonuje wtedy profil `HOLD`). Bramką jest wolne miejsce
@@ -774,14 +775,21 @@ Zasady (domyślnie 60 min, 0,1 kW):
   ją traci, a bateria, która ją przyjmie, nigdy, bez względu na cenę sprzedaży. Przy minimalnym
   czasie trwania przebieg `CURTAIL` utrzymuje bramkę następnego przedziału otwartą (nic nie ładuje,
   więc bateria opada tylko o straty postojowe), przebieg `CHARGE_PV` lub `SELF_CONSUME` może
-  zakończyć się w `CURTAIL`, gdy bateria napełni się w jego trakcie, a wolne miejsce poniżej
-  bramki zostaje puste w przedziale `CURTAIL` do następnego przeliczenia, które odczyta
-  rzeczywisty stan naładowania. Instalacja, która przepuści swoje PV, działa jak dotąd.
-  Pomiar na powtarzalnie losowanych problemach (3000 problemów w trzech minimalnych czasach trwania): z
-  przycięciem plan powstaje w 2633, bez niego w 793. Reszta nadal nie ma planu, jak dotąd, z dwóch
-  powodów, których plan jeszcze nie obejmuje: bateria z wolnym miejscem, której moc ładowania jest
-  poniżej nadwyżki, oraz przeniesione zobowiązanie `CURTAIL` (lub niektóre 60-minutowe
-  `SELF_CONSUME`/`CHARGE_PV`), którego model nie umie zakończyć
+  zakończyć się w `CURTAIL`, gdy bateria napełni się w jego trakcie (albo w `HOLD`, gdy skończy
+  się też PV, które musiał przyjąć), a wolne miejsce poniżej bramki zostaje puste w przedziale
+  `CURTAIL` do następnego przeliczenia, które odczyta rzeczywisty stan naładowania. Przebieg
+  `CURTAIL` przeniesiony do następnego planu traci PV dalej, dopóki trwa potrzeba, także gdy
+  bateria opadła w tym czasie poniżej pełnej. Instalacja, która przepuści swoje PV, działa jak
+  dotąd.
+  Pomiar na powtarzalnie losowanych problemach (2400 problemów rozwiązanych raz): z przycięciem
+  plan powstaje w 538 z 589 przy minimalnym czasie trwania 0, 568 z 606 przy 15 minutach, 580 z
+  620 przy 30 minutach i 498 z 585 przy 60 minutach (bez niego 190, 180, 161 i 103). Dzień o
+  dzwonowym przebiegu PV, śledzony przedział po przedziale do końca, zachowuje plan przez cały
+  czas w 207 z 214 dni przy 15 minutach, 169 z 189 przy 30 minutach i 151 z 197 przy 60 minutach
+  (bez przycięcia 27, 23 i 19); większość pozostałych nie ma planu od pierwszego
+  przedziału. Reszta nadal nie ma planu, jak dotąd, głównie z dwóch powodów, których plan jeszcze
+  nie obejmuje: bateria z wolnym miejscem, której moc ładowania jest poniżej nadwyżki, oraz
+  przeniesione zobowiązanie, którego model nie umie zakończyć, częściej przy 60 minutach
   ([model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget), EN; zadanie T-066).
 - **`CURTAIL` trwa mimo przerwy w PV.** Przebieg `CURTAIL` trwa minimalny czas, a PV może w tym
   czasie spaść. `HOLD` w przedziale z PV poniżej minimalnej aktywności (`minimum_mode_power_kw × h`)

@@ -299,7 +299,9 @@ def taper(lasting, minutes, **kw):
         + ((1.0, 0.1, 0.5, 0.1),) * (10 - lasting)
     )
     base = problem(rows, cap_kw=2.0, minutes=minutes, **kw)
-    return replace(base, battery=replace(base.battery, capacity_kwh=10, initial_kwh=9.875))
+    return replace(
+        base, battery=replace(base.battery, capacity_kwh=10, initial_kwh=9.875)
+    )
 
 
 @pytest.mark.parametrize("minutes", [30, 60])
@@ -340,7 +342,9 @@ def bell_day(minutes, initial, drain_kw):
         for i in range(48)
     )
     base = problem(rows, cap_kw=2.0, minutes=minutes, drain_kw=drain_kw)
-    return replace(base, battery=replace(base.battery, capacity_kwh=10, initial_kwh=initial))
+    return replace(
+        base, battery=replace(base.battery, capacity_kwh=10, initial_kwh=initial)
+    )
 
 
 @pytest.mark.parametrize("minutes", [30, 60])
@@ -373,3 +377,129 @@ def test_binary_left_fractional_by_the_solver_is_solved_again(monkeypatch):
     assert plan.flows[36].curtail_kwh == pytest.approx(0.025, abs=1e-6)
     # Solved once where the solver is sound; twice, the second without presolve, where not.
     assert runs in ([{}], [{}, {"presolve": False}])
+
+
+def carried_hold(rows, battery, minutes, value=0.0):
+    """Quarter hours on an inverter of 3 kW behind a 1 kW cap, a HOLD carried for one."""
+    return Problem(
+        tuple(
+            Slot(START + i * QUARTER, START + (i + 1) * QUARTER, *row)
+            for i, row in enumerate(rows)
+        ),
+        SiteLimits(3, 8, 1, False),
+        battery,
+        "preserve_initial",
+        value,
+        (),
+        "UTC",
+        minimum_mode_minutes=minutes,
+        initial_dispatch_mode="HOLD",
+        initial_dispatch_mode_since=START - QUARTER,
+    )
+
+
+def test_problem_the_presolve_calls_infeasible_is_solved_again(monkeypatch):
+    # Rolled sweep (negroll, seed 11, problem 17, second plan): HiGHS presolve reported
+    # this problem as infeasible; without presolve it has the plan main has.
+    rows = (
+        (0.78, 0.29, 0.36, 0.2),
+        (0.62, -0.47, 0.32, 0.4),
+        (1.07, -0.0, 0.33, 0.4),
+        (0.51, -0.05, 0.34, 0.05),
+        (0.87, -0.52, 0.27, 0.05),
+        (0.61, -0.06, 0.26, 0.4),
+        (1.1, -0.14, 0.25, 0.4),
+        (0.54, 0.1, 0.36, 0.2),
+        (0.39, -0.21, 0.36, 0.1),
+        (0.9, -0.38, 0.26, 0.05),
+        (0.7, -0.04, 0.28, 0.05),
+        (0.33, 0.07, 0.37, 0.4),
+    )
+    battery = Battery(5, 0, 1, 4.995, 4, 4, 0.95, 0.95, 0.01, False, False, 0.02)
+    runs = []
+    run = optimize._Model._run
+
+    def counted(self, matrix, time_limit_s, **options):
+        runs.append(options)
+        return run(self, matrix, time_limit_s, **options)
+
+    monkeypatch.setattr(optimize._Model, "_run", counted)
+    plan = solve(carried_hold(rows, battery, 15))
+    assert plan.objective == pytest.approx(0.1156, abs=1e-4)
+    assert all(flow.curtail_kwh == pytest.approx(0, abs=1e-6) for flow in plan.flows)
+    assert runs in ([{}], [{}, {"presolve": False}])
+
+
+def test_infeasible_site_is_not_solved_twice_without_a_forced_spill(monkeypatch):
+    # The second run is for the forced-spill rows only: a site with nothing to spill (here
+    # a load above what the grid and the pack deliver) reports its problem after one run.
+    runs = []
+    run = optimize._Model._run
+
+    def counted(self, matrix, time_limit_s, **options):
+        runs.append(options)
+        return run(self, matrix, time_limit_s, **options)
+
+    monkeypatch.setattr(optimize._Model, "_run", counted)
+    with pytest.raises(SolveError) as error:
+        solve(problem(((1.0, 0.1, 0, 5.0),) * 2))
+    assert error.value.reason == "infeasible"
+    assert runs == [{}]
+
+
+def test_pinned_limit_hold_that_lost_the_full_level_has_no_plan_for_a_need():
+    # Pinned limit (docs/model.md, forced spill), bell roll seed 12, problem 72: a HOLD
+    # with a clock of its own (60 minutes) loses 0.0125 kWh a quarter hour to standby and
+    # is below the full level when 0.021 kWh the site cannot pass arrives. The pack has
+    # room, so that is no spill, and the HOLD cannot charge. A site that can curtail
+    # takes the HOLD over with a CURTAIL; so does this one while the pack stays full.
+    rows = ((0.9, 0.0, 0.054, 0.1), (1.14, 0.49, 0.192, 0.4), (0.78, 0.41, 0.371, 0.1))
+    battery = Battery(5, 0, 1, 4.9875, 4, 1, 0.95, 0.95, 0.01, True, False, 0.05)
+    day = carried_hold(rows, battery, 60, 0.3)
+    with pytest.raises(SolveError) as error:
+        solve(day)
+    assert error.value.reason == "infeasible"
+    able = solve(replace(day, site=replace(day.site, allow_curtailment=True)))
+    assert able.flows[2].dispatch_mode == "CURTAIL"
+    lossless = solve(replace(day, battery=replace(battery, idle_drain_kw=0.0)))
+    assert lossless.flows[2].dispatch_mode == "CURTAIL"
+
+
+def test_pack_refilled_after_a_carried_curtail_run_ends_the_pv_follow_run_in_hold():
+    # Rolled sweep (negroll, seed 12, problem 79, fourth plan): the spill that began the
+    # CURTAIL run is behind the horizon. The pack lost 0.0375 kWh to standby in the run,
+    # so it has to charge that back (one CHARGE_PV interval) before the 0.03 kWh the 8 kW
+    # inverter cannot pass in the fourth interval can be a spill; the plan before counted
+    # on that CHARGE_PV ending in a HOLD, and so does this one.
+    rows = (
+        (0.71, 0.2, 1.73, 0.4),
+        (1.18, -0.4, 1.75, 0.05),
+        (1.45, -0.23, 1.36, 0.4),
+        (0.49, 0.16, 2.03, 0.4),
+        (1.31, 0.6, 1.63, 0.05),
+        (1.34, -0.14, 1.37, 0.1),
+    )
+    day = Problem(
+        tuple(
+            Slot(START + i * QUARTER, START + (i + 1) * QUARTER, *row)
+            for i, row in enumerate(rows)
+        ),
+        SiteLimits(8, 8, 8, False),
+        Battery(5, 0, 1, 4.9625, 1, 1, 0.95, 0.95, 0.01, True, False, 0.05),
+        "value",
+        0,
+        (),
+        "UTC",
+        minimum_mode_minutes=60,
+        initial_dispatch_mode="CURTAIL",
+        initial_dispatch_mode_since=START - 3 * QUARTER,
+    )
+    plan = solve(day)
+    assert [flow.dispatch_mode for flow in plan.flows[:4]] == [
+        "HOLD",
+        "CHARGE_PV",
+        "HOLD",
+        "CURTAIL",
+    ]
+    assert 0 in plan.carried_bridges
+    assert plan.flows[3].curtail_kwh == pytest.approx(0.03, abs=1e-6)

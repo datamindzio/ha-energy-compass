@@ -615,22 +615,31 @@ def _fill_releases(model, problem, vectors, drains, starts, dwell, flexible_load
     has nothing to charge: where the need is over as well (no forced spill to hand over
     to), it ends in a HOLD that starts its own clock. Offered within a minimum duration
     of an interval with such PV, per interval the flag of the release; the pack is full
-    by the reading of a carried commitment (`_lock_ceiling`).
+    by the reading of a carried commitment (`_lock_ceiling`). A carried CURTAIL is such
+    an interval just before the horizon: the plan it comes from counted on the release.
     """
     filled = {}
     if problem.site.allow_curtailment:
         return filled
     needs = [curtail_need(problem, slot) > 0 for slot in problem.slots]
+    spilled = starts[0] - (problem.slots[0].end - problem.slots[0].start)
     for i, v in enumerate(vectors):
         if not i or needs[i]:
             continue
-        if not any(needs[j] and starts[i] < starts[j] + dwell for j in range(i)):
+        if not (
+            any(needs[j] and starts[i] < starts[j] + dwell for j in range(i))
+            or carried_curtail(problem)
+            and starts[i] < spilled + dwell
+        ):
             continue
         before = vectors[i - 1]
         ended = filled[i] = v["fill_release"] = model.variable(upper=1.0)
         model.constrain({ended: 1, v["mode_HOLD"]: -1}, -np.inf, 0)
         model.constrain(
-            {ended: 1, **{before[f"mode_{mode}"]: -1 for mode in _members("PV_FOLLOW")}},
+            {
+                ended: 1,
+                **{before[f"mode_{mode}"]: -1 for mode in _members("PV_FOLLOW")},
+            },
             -np.inf,
             0,
         )
@@ -1249,7 +1258,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 -np.inf,
                 current_const,
             )
-    filled = _fill_releases(model, problem, vectors, drains, starts, dwell, flexible_load)
+    filled = _fill_releases(
+        model, problem, vectors, drains, starts, dwell, flexible_load
+    )
     for group in GROUPS:
         members = _members(group)
         # A group's start is a continuous flag: it is at least the rise of the

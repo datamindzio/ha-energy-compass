@@ -183,24 +183,41 @@ profile) instead of ending `infeasible`.
   began at the gate drifts below it by its standby loss: the next interval's gate stays open when the interval
   before it was `CURTAIL` (`_relay_forced_spill`), and the validator accepts a spill only from an interval
   that starts at the gate or from a `CURTAIL` chain rooted at one. The unmoded model charges the loss back and
-  needs no relay. The first version closed the gate after two intervals of standby loss.
+  needs no relay. The first version closed the gate after two intervals of standby loss. The chain is also
+  rooted at a carried `CURTAIL` commitment (`dispatch_policy.carried_curtail`, model and validator): the second
+  version closed the first interval on the pack's level alone, so a run followed for one interval had no plan
+  once the need dropped below the room the standby loss had made. The price is that a `CURTAIL` commitment
+  read with a pack below full (a hand-set state) is planned as a spill while the need lasts.
 - A PV-follow dwell may end in a forced `CURTAIL` (a fresh `CHARGE_PV` run that fills the pack inside its
   minimum duration): ADR-0005's release for a carried PV-follow commitment with a full pack, applied to a run
-  begun inside the plan. The dwell is not shortened or restarted; only the way it may end is wider.
-- Measured with `benchmarks/spill_sweep.py` (same seeds on main f6eb8f2 and here, 300 per seed, the
-  export-episode hurdle at zero so that a "worse" plan is not a hurdle artefact): of 3000 problems drawn once
-  (random PV, negative prices, flexible-load probes, a bell-shaped day with cloud dips) 915 of 998 are
-  planned at minimum mode duration 0 (main 314), 923 of 1018 at 15 minutes (266), 795 of 984 at 60 minutes
-  (213); of 1500 problems followed one interval at a time, 1233 are followed to the end (main 301). No problem
-  planned on main became infeasible, none ended in a solver failure, no plan is dearer beyond 1e-6 and no
-  rolling problem stops at a boundary now. `tests/test_unmoded_charge_pv_sweep.py`: 247 of 300 against 227 on
-  main. The table of `docs/model.md` has every draw.
+  begun inside the plan. The dwell is not shortened or restarted; only the way it may end is wider. The
+  hand-over holds through the whole `CURTAIL` run, its bridges included, and where the need ends with the
+  pack full the run ends in a `HOLD` that starts its own clock (`dispatch_policy._fill_releases`, certified
+  from a full pack only, offered within a minimum duration of an interval with a need or of a carried
+  `CURTAIL`): the second version left a need that ended inside the PV-follow dwell without a legal mode.
+- HiGHS presolve is not sound on the gate and relay rows: it returned a binary at 0.16 as optimal ("invalid
+  solver result: fractional mode_CURTAIL") and reported a problem with a plan as infeasible.
+  `optimize._Model.solve` solves a problem that has forced-spill binaries again without presolve when it comes
+  back infeasible or with a fractional binary, within the remaining time budget. A site that can pass its PV
+  has no such binary and is solved once.
+- Measured with `benchmarks/spill_sweep.py` (seeds 11 and 12 on main b2d6ffb and here, 300 per seed and draw,
+  the export-episode hurdle at zero so that a "worse" plan is not a hurdle artefact): of 2400 problems drawn
+  once (random PV, negative prices, flexible-load probes, a bell-shaped day with cloud dips) 538 of 589 are
+  planned at minimum mode duration 0 (main 190), 568 of 606 at 15 minutes (180), 580 of 620 at 30 minutes
+  (161), 498 of 585 at 60 minutes (103); of 1800 problems followed one interval at a time (600 of them a
+  bell-shaped day to its end), 1605 are followed to the end (main 373): bell day 207 of 214 at 15 minutes,
+  169 of 189 at 30, 151 of 197 at 60. No problem planned on main became infeasible, none ended in a solver
+  failure, no rolling problem that main followed stops at a boundary now, and one plan is dearer beyond 1e-6
+  (by 1.31e-4, inside the solver's default relative gap). `tests/test_unmoded_charge_pv_sweep.py`: 247 of 300
+  against 227 on main. The tables of `docs/model.md` have every draw and duration.
 - Still unplanned, measured and pinned by `tests/test_forced_spill.py` (`test_pinned_limit_*`), follow-up
-  T-066: a pack with room whose charge power is below the surplus (the gate reads room, not charge power; the
-  plan may not call throttling a spill while the pack can still charge), and a carried dwell the model cannot
-  end (a `CURTAIL` commitment on a pack with room; some 60-minute `SELF_CONSUME` and `CHARGE_PV` dwells even
-  from a full pack, not characterized). 367 of the 3000 problems have no plan (main: 2207); they have none on
-  main either. In the mode model a `CURTAIL` interval charges nothing, so the room of a pack below the gate
-  stays empty while the surplus lasts, until replanning reads the real state of charge.
-- Solve time: the benchmark site can pass its PV, so the rows and variables are identical to main f6eb8f2 and
+  T-066: of the 216 of 2400 without a plan (none has one on main), 112 are a pack with room whose charge
+  power is below the surplus (the gate reads room, not charge power; the plan may not call throttling a spill
+  while the pack can still charge), 30 a carried dwell the model cannot end, 32 are infeasible with
+  curtailment on as well and 42 are not characterized. Of the 195 rolling problems not followed to the end,
+  179 have no first plan, 15 stop at a problem without a plan on any site (T-057) and 1 at a `HOLD` with a
+  clock of its own that lost the full level to standby loss before a need arrived (pinned). In the mode model
+  a `CURTAIL` interval charges nothing, so the room of a pack below the gate stays empty while the surplus
+  lasts, until replanning reads the real state of charge.
+- Solve time: the benchmark site can pass its PV, so the rows and variables are identical to main (measured on f6eb8f2) and
   the per-strategy table of `docs/model.md` shows only measurement noise.
