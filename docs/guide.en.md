@@ -2152,8 +2152,8 @@ repeated autumn hour it is the first occurrence, unless the row before it is tha
 Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
 charge band that depends on the annual import is not modelled (take `fixed` from the no-battery bill
 and expect a small constant error where the band differs); a stretch shorter than a year is read as
-a year with empty months; the settlement period is the calendar month, so a seller that bills a longer
-period nets across its months; energy is valued per hour; the result is only as good as the forecast
+a year with empty months; the settlement period is the calendar month; a seller that bills a longer
+period nets across its months, which the tool does not model; energy is valued per hour; the result is only as good as the forecast
 series you give it.
 
 ## Reason code reference

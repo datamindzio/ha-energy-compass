@@ -2184,8 +2184,8 @@ godzinie to pierwsze wystąpienie; podaj przesunięcie, by oznaczyć drugie.
 Ograniczenia: część stała rachunku to jedna liczba z wejścia i nie podąża za przepływem, więc pasmo
 opłaty zależne od rocznego poboru nie jest modelowane (`fixed` weź z rachunku bez magazynu i licz się z
 niewielkim stałym błędem tam, gdzie pasmo jest inne); odcinek krótszy niż rok jest czytany jak rok z
-pustymi miesiącami; okresem rozliczeniowym jest miesiąc kalendarzowy, więc sprzedawca rozliczający
-dłuższy okres netuje między jego miesiącami; energia jest wyceniana godzinowo; wynik jest tak dobry,
+pustymi miesiącami; okresem rozliczeniowym jest miesiąc kalendarzowy; sprzedawca rozliczający
+dłuższy okres netuje między jego miesiącami, czego narzędzie nie modeluje; energia jest wyceniana godzinowo; wynik jest tak dobry,
 jak podany szereg prognoz.
 
 ## Słownik kodów powodów
