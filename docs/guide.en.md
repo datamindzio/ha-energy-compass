@@ -198,11 +198,12 @@ exact, the money is an approximation.
 
 Measured on 40 simulated homes (G11 and G12, ratio 0.8, 10 kWh battery, one year re-planned every hour
 against the same battery in plain self-consumption, valued with the annual bill, [ADR-0008](adr/0008-net-metering-plain-self-consumption.md)):
-the default plan (`cost_min`, as the profile ships) has a yearly gain against self-use of −93…+70 PLN
-(mean −1; + = cheaper, − = dearer), never lowers the bill by more than 10 PLN, and raises the annual import by +33…+704 kWh. Priced hour by
-hour, as Home Assistant reports it, the same G12 plan shows a gain of +343 PLN per year that the settlement
-does not pay. With **Allow grid charge** on (13 homes) the yearly gain against self-use is −209…+139 PLN
-(same sign), and the import rises by +897 kWh (median). Limits: simulated homes, one battery size
+the default plan (`cost_min`, as the profile ships) has a yearly gain against self-use, bill plus battery
+wear, of −93…+70 PLN (mean −1; + = cheaper, − = dearer), never lowers the bill by more than 10 PLN, and
+raises the annual import by +33…+704 kWh. Priced hour by hour, as Home Assistant reports it, the same G12
+plan shows a gain of +343 PLN per year that the settlement does not pay. With **Allow grid charge** on
+(13 homes) the yearly gain against self-use, bill plus battery wear, is −209…+139 PLN (same sign
+convention), and the import rises by +897 kWh (median). Limits: simulated homes, one battery size
 (10 kWh), one year of prices, hourly intervals, G12 zones netted as one mean rate.
 
 Preview shows setup-profile provenance for a profiled new entry: which keys each axis pre-filled, the
@@ -211,7 +212,8 @@ helper-bound key, with the helper's effective value), and settlement notes — S
 source that already applies its own settlement multiplier, raw RCE prices not floored at 0 (with the
 RCE market price shortcut as the fix) or floored while the 1.23 multiplier is missing, or a
 net-metering sell that no longer tracks buy — shown only for installations that used a setup profile.
-For a net-metering profile Preview always adds one more note, and a second when a flag is on (English only):
+For a net-metering profile Preview always adds one more note, and a second when Allow grid charge or
+Allow battery export is on (English only):
 
 - "Note: net-metering is settled on yearly kWh (an exported kWh takes back 0.8 kWh within 12 months),
   not on hourly prices: price-driven dispatch does not lower the yearly bill and the costs shown are an
