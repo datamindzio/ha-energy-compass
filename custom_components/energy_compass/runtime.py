@@ -1162,6 +1162,8 @@ def compute(
     plan, problem = solve_released(
         problem,
         time_limit_s=min(values["solve_time_limit_s"], values["total_time_limit_s"]),
+        # Counted from here, not from `started`: a rung can be given the time building
+        # the problem took, and the check below then rejects the result as over budget.
         budget_s=values["total_time_limit_s"],
         accept_incumbent=True,
         solver=solve,

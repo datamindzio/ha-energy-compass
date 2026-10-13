@@ -524,7 +524,7 @@ def solve_released(
     """Solve a carried PV-follow commitment's plan; the house is never left without one.
 
     The problem as it is first. Where it has no plan (`infeasible`) the ladder of
-    ADR-0005 point 20 follows, each rung only where it applies: a commitment with the pack
+    ADR-0005 point 24 follows, each rung only where it applies: a commitment with the pack
     at the reserve is released first (point 13), and where that release has no plan either
     the commitment's own HOLD is planned (`reserve_fallback`); last, the plan is made
     without the commitment (`uncommitted_fallback`). Returns the plan and the problem it

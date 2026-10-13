@@ -27,6 +27,19 @@ reads a slot's load.
 T-050 adds a sunrise on a depleted pack (`deprun`, `deproll`, `deprobe` through a flexible-load probe): a carried CHARGE_PV or
 SELF_CONSUME whose pack is at or just above the reserve, PV rising from nothing, and an
 export cap of 0, 0.5 or 2 kW. The base draws start from a full or nearly full pack.
+
+T-057 adds a HOLD released from a full pack (`fullrun`, `fullroll`): a carried CHARGE_PV
+or SELF_CONSUME on a pack just below its ceiling, a standby loss, a few intervals the
+export cap can pass and then PV above it, with and without curtailment. Where a rule
+lets that HOLD go back to the commitment in an interval the site cannot pass, the
+coordinator has to carry the return across the boundary too, or the plan promised in
+one interval is another in the next. `roll` records, per row, the boundaries where the
+first interval of the new plan is not the second of the one before (`changed`), and
+`rollcompare` reports them beside the infeasible ones: a plan that exists now and is
+gone at the next boundary, or whose next boundary changes its mode, is invisible to a
+count of newly infeasible rows alone. A changed boundary is common on main too (about one
+roll in five), so only the rows that change on one side and not the other count.
+
 T-058 adds `resrun`/`resroll`: an ordinary draw with SELF_CONSUME carried and the pack exactly at
 the reserve (`make_reserve`; almost every draw reaches the safety exception, where `deprun` reaches
 it in about one draw in ten), the generator aimed at the reserve rule. `planned` goes through
@@ -213,6 +226,61 @@ def make_depleted_probe(rng):
     return problem, FlexibleLoadRequest(energy, power)
 
 
+def make_full(rng):
+    """A HOLD released from a full pack, then PV the export cap cannot pass (T-057)."""
+    n = rng.randint(6, 12)
+    export_kw = rng.choice((0.5, 1))
+    passable = export_kw * 0.25
+    load = rng.choice((0.05, 0.1))
+    slots = []
+    holds = rng.choice((1, 1, 2, 3))
+    for i in range(n):
+        if i < holds:
+            surplus = rng.uniform(0.5, 0.95) * passable
+        elif i < holds + rng.randint(1, 3):
+            surplus = passable * rng.uniform(1.05, 3)
+        else:
+            surplus = rng.choice((0, 0, rng.uniform(0, 0.9) * passable))
+        slots.append(
+            Slot(
+                START + i * Q,
+                START + (i + 1) * Q,
+                round(rng.uniform(0.2, 1.5), 2),
+                round(rng.uniform(0, 0.8), 2),
+                round(load + surplus, 3),
+                load,
+            )
+        )
+    cap = rng.choice((5, 10))
+    battery = Battery(
+        cap,
+        rng.choice((0, 0.1)),
+        1,
+        round(cap - rng.choice((0, 0.005, 0.01, 0.015, 0.025)), 3),
+        rng.choice((1, 3, 4)),
+        rng.choice((1, 3, 4)),
+        0.95,
+        0.95,
+        rng.choice((0, 0.01)),
+        False,
+        False,
+        rng.choice((0.05, 0.2, 0.4)),
+    )
+    return Problem(
+        tuple(slots),
+        SiteLimits(rng.choice((3, 8)), 8, export_kw, rng.random() < 0.5),
+        battery,
+        rng.choice(("value", "preserve_initial")),
+        rng.choice((0, 0.3)),
+        (),
+        "UTC",
+        minimum_mode_minutes=rng.choice((60, 120)),
+        minimum_mode_power_kw=rng.choice((0.05, 0.1)),
+        initial_dispatch_mode=rng.choice(("CHARGE_PV", "CHARGE_PV", "SELF_CONSUME")),
+        initial_dispatch_mode_since=START - timedelta(minutes=rng.choice((0, 15))),
+    )
+
+
 def planned(problem, request=None):
     """Solve as the runtime does: `solve_released`, a depleted release without a plan falls back.
 
@@ -243,21 +311,24 @@ def run(problem, request=None):
     ]
 
 
-def commit(problem, plan):
+def commit(problem, plan, built=None):
     """The commitment the coordinator stores once the first interval is followed.
 
     `_commit_battery_direction` itself, fed the way `_publish_current` feeds it for a
     plan whose current interval is the first, so a roll follows what ships. A tree
     without the release (`released_holds`) stores the older two-key commitment.
+    `built` is the problem as built, before `solve_released` took a rung: the
+    coordinator still holds its commitment when the plan was solved without it.
     """
     first = problem.slots[0].start.isoformat()
     stored = None
-    if problem.initial_dispatch_mode:
+    built = built or problem
+    if built.initial_dispatch_mode:
         stored = {
-            "mode": problem.initial_dispatch_mode,
-            "since": problem.initial_dispatch_mode_since.isoformat(),
+            "mode": built.initial_dispatch_mode,
+            "since": built.initial_dispatch_mode_since.isoformat(),
         }
-        if getattr(problem, "initial_dispatch_released", False):
+        if getattr(built, "initial_dispatch_released", False):
             stored["released"] = True
     coordinator = SimpleNamespace(
         _battery_commitment=stored,
@@ -284,9 +355,9 @@ def commit(problem, plan):
     return coordinator._battery_commitment
 
 
-def follow(problem, plan):
+def follow(problem, plan, built=None):
     """The next problem when the first interval is carried out as planned."""
-    commitment = commit(problem, plan)
+    commitment = commit(problem, plan, built)
     battery = problem.battery
     low = battery.capacity_kwh * battery.minimum_soc_fraction
     high = battery.capacity_kwh * battery.maximum_soc_fraction
@@ -316,36 +387,76 @@ def roll(problem, steps=8):
 
     The trace names the executed mode of each interval: `*` a carried idle bridge, `!` the
     plan of `reserve_fallback` (the commitment's own HOLD), `?` the plan without the commitment.
+    The last item lists the boundaries whose first interval is not what the plan before
+    promised for it (its second interval): a plan the next boundary contradicts.
     """
     trace = []
+    changed = []
+    promised = None
     for step in range(steps):
         if len(problem.slots) < 2:
             break
-        carried = problem.initial_dispatch_mode
+        built = problem
         try:
             plan, problem = planned(problem)
         except SolveError as error:
-            return ["err", step, str(error)[:40], trace]
+            return ["err", step, str(error)[:40], trace, changed]
+        modes = [flow.dispatch_mode for flow in plan.flows]
+        if promised is not None and promised != modes[0]:
+            changed.append(step)
+        promised = modes[1]
         trace.append(
-            plan.flows[0].dispatch_mode
+            modes[0]
             + ("*" if 0 in plan.carried_bridges else "")
             + ("!" if getattr(problem, "initial_dispatch_reserve_hold", False) else "")
-            + ("?" if carried and not problem.initial_dispatch_mode else "")
+            + (
+                "?"
+                if built.initial_dispatch_mode and not problem.initial_dispatch_mode
+                else ""
+            )
         )
-        problem = follow(problem, plan)
-    return ["ok", len(trace), "", trace]
+        problem = follow(problem, plan, built)
+    return ["ok", len(trace), "", trace, changed]
 
 
 def roll_compare(before_path, after_path):
+    """Compare two rolls row by row: what is infeasible, how far each roll got, what changed."""
     before = json.loads(Path(before_path).read_text())
     after = json.loads(Path(after_path).read_text())
-    counts = {"newly_infeasible_while_followed": 0, "fixed_while_followed": 0}
+    counts = {
+        "newly_infeasible_while_followed": 0,
+        "fixed_while_followed": 0,
+        "first_failure_later": 0,
+        "first_failure_earlier": 0,
+        "newly_changed_next_boundary": 0,
+        "no_longer_changed_next_boundary": 0,
+        "different_trace": 0,
+    }
     for index, (a, b) in enumerate(zip(before, after, strict=True)):
         if a[0] == "ok" and b[0] != "ok":
             counts["newly_infeasible_while_followed"] += 1
             print("NEWLY INFEASIBLE WHILE FOLLOWED", index, b)
         elif a[0] != "ok" and b[0] == "ok":
             counts["fixed_while_followed"] += 1
+        elif a[0] != "ok":
+            # Both fail: where the roll gets stuck moved.
+            if b[1] > a[1]:
+                counts["first_failure_later"] += 1
+                print("first failure later", index, a[1], "->", b[1])
+            elif b[1] < a[1]:
+                counts["first_failure_earlier"] += 1
+                print("FIRST FAILURE EARLIER", index, a[1], "->", b[1])
+        # The boundaries both rolls planned: does the plan promised there hold up?
+        reached = min(len(a[3]), len(b[3]))
+        was = {step for step in a[4] if step < reached}
+        now = {step for step in b[4] if step < reached}
+        if now - was:
+            counts["newly_changed_next_boundary"] += 1
+            print("PLAN CONTRADICTED AT THE NEXT BOUNDARY", index, sorted(now - was))
+        if was - now:
+            counts["no_longer_changed_next_boundary"] += 1
+        if a[3][:reached] != b[3][:reached]:
+            counts["different_trace"] += 1
     print(counts)
 
 
@@ -397,6 +508,7 @@ def draws(kind, seed, count):
         "negrun": make_negative,
         "deprun": make_depleted,
         "resrun": make_reserve,
+        "fullrun": make_full,
     }
     if kind in makers:
         return [run(makers[kind](rng)) for _ in range(count)]
@@ -405,6 +517,7 @@ def draws(kind, seed, count):
         "negroll": make_negative,
         "deproll": make_depleted,
         "resroll": make_reserve,
+        "fullroll": make_full,
     }
     return [roll(makers[kind](rng)) for _ in range(count)]
 
@@ -417,7 +530,7 @@ if __name__ == "__main__":
     else:
         out = draws(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
         Path(sys.argv[4]).write_text(json.dumps(out))
-        if sys.argv[1] in ("roll", "negroll", "deproll", "resroll"):
+        if sys.argv[1] in ("roll", "negroll", "deproll", "resroll", "fullroll"):
             print(
                 sum(row[0] == "ok" for row in out),
                 "followed to the end, of",
