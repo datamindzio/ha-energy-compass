@@ -91,6 +91,11 @@ def corpus_problem(rng: random.Random) -> Problem:
     )
 
 
+# Each sweep takes several seconds alone; a busy host takes it past the suite's 45 s
+# thread timeout, which kills the xdist worker without a traceback (T-051).
+pytestmark = pytest.mark.timeout(180)
+
+
 def corpus(seed: int, count: int):
     rng = random.Random(seed)
     return [corpus_problem(rng) for _ in range(count)]
@@ -135,7 +140,7 @@ def test_every_unmoded_problem_is_planned_or_infeasible_never_rejected():
     # cannot meet, load above the grid limit): 228 of 300 had one before the rule,
     # and an export cap or an inverter below the PV with curtailment off costs the
     # few more that the pinned problems below stand for.
-    assert planned > 215
+    assert planned >= 227
 
 
 def test_unmoded_flexible_load_probes_are_planned_or_infeasible_never_rejected():
@@ -154,7 +159,8 @@ def test_unmoded_flexible_load_probes_are_planned_or_infeasible_never_rejected()
         assert partial_charges(problem, result.plan.flows, result.schedule_kwh) == [], (
             index
         )
-    assert planned > 80
+    # 89 of 120 on the merged engine (origin/main fbcffe0); a lost plan is a regression.
+    assert planned >= 89
 
 
 def quarter_problem(rows, *, site, battery) -> Problem:

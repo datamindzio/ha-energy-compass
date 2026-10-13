@@ -222,8 +222,8 @@ def test_attrs_disabled_battery_are_contract_valid():
 
 def test_attrs_with_location_are_contract_valid():
     config = default_configuration("EUR", "UTC")
-    attrs = build_attrs(config, {"pv_kwp": 4.0}, "861f8d947ffffff")
-    assert attrs["location"] == {"h3_res6": "861f8d947ffffff"}
+    attrs = build_attrs(config, {"pv_kwp": 4.0}, "2264011")
+    assert attrs["location"] == {"municipality": "2264011"}
     assert schema_errors("AttrsV1", attrs) == []
 
 

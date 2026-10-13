@@ -3,6 +3,15 @@
 Invoked by path (`python benchmarks/optimizer.py`) because the test container's
 entrypoint is bare `python`, which only puts this script's own directory on
 `sys.path`, not the repository root `custom_components` lives under.
+
+Each JSON line reports the plan in two units that must not be mixed: `objective`
+is the plan cost in currency (grid cost + wear - terminal credit), while
+`weighted_objective` is what the solver minimises (cost vector times solution, with
+the strategy weights and soft-floor slacks) and the only quantity `mip_gap` bounds.
+`--accept-incumbent` solves as the runtime does for the base plan: a time limit with
+an incumbent returns it (`result == "time_limited"`); `--compare-proven` then re-solves
+a time-limited case to its proof. docs/runtime-validation.md § Advisory optimizer
+benchmark is built from these fields.
 """
 
 import argparse
@@ -13,7 +22,9 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from math import pi, sin
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, process_time
+
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -32,6 +43,7 @@ from custom_components.energy_compass.engine.models import (
     STRATEGIES,
     Battery,
     CompassSettings,
+    Plan,
     Problem,
     SiteLimits,
     Slot,
@@ -201,6 +213,105 @@ def _compass_settings_for_probes(probes: int) -> CompassSettings:
     )
 
 
+def _solve_once(
+    problem: Problem, *, time_limit_s: float, accept_incumbent: bool
+) -> tuple[Plan | None, dict]:
+    """Solve once; report wall and CPU time, model size and both objectives."""
+    original_model_solve = optimize._Model.solve
+    captured: dict[str, float] = {}
+
+    def _spy(self, time_limit):
+        captured["variable_count"] = len(self.cost)
+        captured["row_count"] = len(self.rows)
+        values = original_model_solve(self, time_limit)
+        captured["weighted_objective"] = float(np.dot(self.cost, values))
+        return values
+
+    optimize._Model.solve = _spy
+    started = perf_counter()
+    cpu_started = process_time()
+    try:
+        plan = solve(
+            problem, time_limit_s=time_limit_s, accept_incumbent=accept_incumbent
+        )
+    except SolveError as err:
+        outcome: dict = {"result": err.reason}
+        plan = None
+    else:
+        outcome = {
+            "result": "time_limited" if plan.time_limited else "optimal",
+            "objective": plan.objective,
+            "flow_count": len(plan.flows),
+            "time_limited": plan.time_limited,
+            "mip_gap": plan.mip_gap,
+        }
+    finally:
+        optimize._Model.solve = original_model_solve
+    outcome["elapsed_s"] = perf_counter() - started
+    outcome["cpu_s"] = process_time() - cpu_started
+    outcome["weighted_objective"] = captured.get("weighted_objective")
+    outcome["variable_count"] = int(captured.get("variable_count", 0))
+    outcome["row_count"] = int(captured.get("row_count", 0))
+    return plan, outcome
+
+
+def _plan_difference(limited: Plan, proven: Plan) -> dict:
+    """How far two plans of the same problem are apart, in kWh and in intervals."""
+    pairs = list(zip(limited.flows, proven.flows, strict=True))
+    return {
+        "intervals_changed": sum(
+            1
+            for a, b in pairs
+            if any(
+                abs(x - y) > 1e-6
+                for x, y in (
+                    (a.grid_import_kwh, b.grid_import_kwh),
+                    (a.grid_export_kwh, b.grid_export_kwh),
+                    (a.charge_kwh, b.charge_kwh),
+                    (a.discharge_kwh, b.discharge_kwh),
+                )
+            )
+        ),
+        "grid_difference_kwh": sum(
+            abs(a.grid_import_kwh - b.grid_import_kwh)
+            + abs(a.grid_export_kwh - b.grid_export_kwh)
+            for a, b in pairs
+        ),
+        "end_soc_difference_kwh": limited.flows[-1].end_soc_kwh
+        - proven.flows[-1].end_soc_kwh,
+    }
+
+
+def _compare_to_proof(
+    problem: Problem, limited: Plan, outcome: dict, proof_limit_s: float
+) -> dict:
+    """Re-solve a time-limited plan strictly and report what the limit cost."""
+    proven_plan, proven = _solve_once(
+        problem, time_limit_s=proof_limit_s, accept_incumbent=False
+    )
+    comparison = {
+        key: proven[key]
+        for key in ("result", "cpu_s", "objective", "weighted_objective", "mip_gap")
+        if key in proven
+    }
+    if proven_plan is not None:
+        weighted = proven["weighted_objective"]
+        comparison.update(
+            {
+                "weighted_excess": outcome["weighted_objective"] - weighted,
+                # Relative to the incumbent, as HiGHS defines `mip_gap`, so it can be
+                # compared with `mip_gap` directly (the excess never exceeds it).
+                "weighted_excess_relative": (outcome["weighted_objective"] - weighted)
+                / abs(outcome["weighted_objective"])
+                if outcome["weighted_objective"]
+                else None,
+                "objective_difference": limited.objective - proven_plan.objective,
+                **_plan_difference(limited, proven_plan),
+            }
+        )
+    return comparison
+
+
 def run_one(
     strategy: Strategy,
     *,
@@ -210,6 +321,8 @@ def run_one(
     probes: int,
     balance: bool,
     minimum_mode_minutes: float | None = None,
+    accept_incumbent: bool = False,
+    proof_limit_s: float | None = None,
 ) -> dict:
     problem = make_problem(
         slots, strategy=strategy, allow_battery_export=battery_export
@@ -232,30 +345,12 @@ def run_one(
             balance_miss_cost=0.5,
             balance_lift_slots=lift_slots(windows, problem.battery, len(problem.slots)),
         )
-    original_model_solve = optimize._Model.solve
-    captured: dict[str, int] = {}
-
-    def _spy(self, time_limit):
-        captured["variable_count"] = len(self.cost)
-        captured["row_count"] = len(self.rows)
-        return original_model_solve(self, time_limit)
-
-    optimize._Model.solve = _spy
-    started = perf_counter()
-    try:
-        plan = solve(problem, time_limit_s=time_limit_s)
-    except SolveError as err:
-        outcome = {"result": err.reason}
-        plan = None
-    else:
-        outcome = {
-            "result": "optimal",
-            "objective": plan.objective,
-            "flow_count": len(plan.flows),
-        }
-    finally:
-        optimize._Model.solve = original_model_solve
-    elapsed_s = perf_counter() - started
+    plan, outcome = _solve_once(
+        problem, time_limit_s=time_limit_s, accept_incumbent=accept_incumbent
+    )
+    elapsed_s = outcome["elapsed_s"]
+    if plan is not None and plan.time_limited and proof_limit_s is not None:
+        outcome["proven"] = _compare_to_proof(problem, plan, outcome, proof_limit_s)
     probe_elapsed_s = 0.0
     probe_requested = 0
     probe_completed = 0
@@ -284,10 +379,8 @@ def run_one(
             "balance": balance,
             "slots": slots,
             "time_limit_s": time_limit_s,
-            "elapsed_s": elapsed_s,
+            "accept_incumbent": accept_incumbent,
             "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
-            "variable_count": captured.get("variable_count", 0),
-            "row_count": captured.get("row_count", 0),
             "probe_requested": probe_requested,
             "probe_completed": probe_completed,
             "probe_elapsed_s": probe_elapsed_s,
@@ -300,7 +393,7 @@ def run_one(
 
 def _accepted(outcome: dict) -> bool:
     return (
-        outcome["result"] == "optimal"
+        outcome["result"] in ("optimal", "time_limited")
         and outcome["probe_completed"] == outcome["probe_requested"]
         and outcome["elapsed_s"] + outcome["probe_elapsed_s"] <= _TOTAL_TIME_LIMIT_S
     )
@@ -319,6 +412,17 @@ def main() -> None:
         type=float,
         help="override the shipped minimum mode duration (0 measures the unmoded rules)",
     )
+    parser.add_argument(
+        "--accept-incumbent",
+        action="store_true",
+        help="return the incumbent at the time limit, as the runtime does for the base plan",
+    )
+    parser.add_argument(
+        "--compare-proven",
+        type=float,
+        metavar="SECONDS",
+        help="re-solve every time-limited plan strictly with this limit and report the difference",
+    )
     args = parser.parse_args()
 
     strategies = STRATEGIES if args.strategy == "all" else (args.strategy,)
@@ -331,6 +435,8 @@ def main() -> None:
             probes=args.probes,
             balance=args.balance,
             minimum_mode_minutes=args.minimum_mode_minutes,
+            accept_incumbent=args.accept_incumbent,
+            proof_limit_s=args.compare_proven,
         )
         for strategy in strategies
     ]
@@ -339,7 +445,7 @@ def main() -> None:
     if not all(_accepted(outcome) for outcome in outcomes):
         raise SystemExit(
             "acceptance rule failed for at least one strategy "
-            f"(result == 'optimal', probe_completed == probe_requested, "
+            f"(result == 'optimal' or 'time_limited', probe_completed == probe_requested, "
             f"elapsed_s + probe_elapsed_s <= {_TOTAL_TIME_LIMIT_S})"
         )
 

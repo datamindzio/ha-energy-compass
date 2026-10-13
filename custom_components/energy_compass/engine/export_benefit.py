@@ -4,6 +4,7 @@ from datetime import UTC
 
 import numpy as np
 
+from .machine_state import activity_tolerance
 from .models import Problem, SolveError
 
 _TOL = 1e-6
@@ -81,7 +82,7 @@ def validate_export_benefit(problem: Problem, vectors, values) -> tuple[int, flo
             slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
         ).total_seconds() / 3600
         activity = problem.minimum_mode_power_kw * hours
-        tolerance = min(1e-7, activity * 1e-4)
+        tolerance = activity_tolerance(activity)
         physical = min(discharge, export) > tolerance
         if active != physical or (
             active

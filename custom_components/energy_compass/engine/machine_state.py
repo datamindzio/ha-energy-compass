@@ -2,7 +2,14 @@
 
 from .models import Flow, MachineState, Slot
 
+# HiGHS accepts a binary within 1e-6 of 0/1 (mip_feasibility_tolerance) and scipy
+# cannot tighten it, so a flow a mode indicator gates can carry that much noise.
 _TOL = 1e-6
+
+
+def activity_tolerance(activity: float) -> float:
+    """How far below its minimum activity a solved flow may sit and still count."""
+    return min(_TOL, activity * 1e-4)
 
 
 def machine_state(slot: Slot, flow: Flow) -> MachineState:

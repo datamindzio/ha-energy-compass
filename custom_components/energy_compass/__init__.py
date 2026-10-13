@@ -56,19 +56,12 @@ async def async_setup_entry(hass, entry) -> bool:
             # ADR-0019 §3: only imported/started when Atlas is enabled. Started before
             # the coordinator so the first solve (dispatched by async_start) carries
             # the payload builder.
-            from .atlas import AtlasBridge, build_attrs
-            from .atlas.location import home_h3_res6
+            from .atlas import AtlasBridge
 
             coordinator.atlas = AtlasBridge(
                 hass, entry, coordinator.configuration, atlas_settings
             )
-            await coordinator.atlas.async_start(
-                build_attrs(
-                    coordinator.configuration,
-                    atlas_settings,
-                    home_h3_res6(hass),
-                )
-            )
+            await coordinator.atlas.async_start()
         await coordinator.async_start()
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:
