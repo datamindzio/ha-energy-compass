@@ -716,7 +716,12 @@ def _gate_forced_spill(
     if gated or flexible_load:
         model.second_attempt = True
         spill.binary = spill_open = v["spill_open"] = model.variable(binary=True)
-        model.constrain({v["curt"]: 1, spill_open: -(upper - forced)}, -np.inf, forced)
+        if forced > 0:
+            extra = model.variable(upper=upper - forced)
+            model.constrain({v["curt"]: 1, extra: -1}, -np.inf, forced)
+            model.constrain({extra: 1, spill_open: -(upper - forced)}, -np.inf, 0)
+        else:
+            model.constrain({v["curt"]: 1, spill_open: -upper}, -np.inf, 0)
     if gated:
         spill.row = {previous_energy_index: 1, spill.binary: -gate}
         model.constrain(spill.row, 0, np.inf)
