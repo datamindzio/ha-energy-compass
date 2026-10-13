@@ -1164,7 +1164,7 @@ by precedence: CURTAIL → CHARGE_GRID → CHARGE_PV → DISCHARGE_GRID → SELF
 <p>A planned <a href="#lfp-balance-charge">LFP balance hold</a> does not add a mode: its rows reuse <code>CHARGE_PV</code> or
 <code>CHARGE_GRID</code> and carry <code>balance_hold: true</code> in the plan's <code>intervals</code> attribute.</p>
 <h3 id="transitions-and-minimum-duration">Transitions and minimum duration</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-71fbeeb8b3b1-dark.svg"><img src="assets/diagrams/diagram-71fbeeb8b3b1.svg" alt="Diagram 7" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-1eb21ee7ff64-dark.svg"><img src="assets/diagrams/diagram-1eb21ee7ff64.svg" alt="Diagram 7" loading="lazy"></picture></figure>
 <p>The diagram is simplified with HOLD as a hub: after its minimum duration any mode may be followed
 directly by any other available mode.</p>
 <p>Rules (defaults: 60 min, 0.1 kW):</p>
@@ -1197,7 +1197,7 @@ directly by any other available mode.</p>
   refill what the house drew) the interval is a <code>HOLD</code> with full import, as for a spent battery,
   and the battery ends where it began. The plan is <code>infeasible</code> until the commitment ends when
   the daily throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
-  cases are listed in
+  cases (a standby loss or the <code>preserve_initial</code> terminal requirement that only PV surplus the plan cannot bank could cover) are listed in
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>. A direction the
   legacy direction guard blocks (<code>initial_battery_mode</code>) is not open: a pack that may not charge
   has no <code>CHARGE_PV</code> to follow and one that may not discharge has no <code>SELF_CONSUME</code>, so an interval
@@ -1226,6 +1226,18 @@ directly by any other available mode.</p>
   Nor does it go back because the terminal rule has spent the pack: that counts for the release
   and for the return of a <code>HOLD</code> that began on a depleted pack (the coordinator carries it as
   released), not for this one, which returns only when the pack is depleted in itself.
+  A pack exactly at the reserve (the inverter's usual
+  empty state) is depleted in this sense, not a safety exception: a carried <code>SELF_CONSUME</code> there is
+  released and charges like one 0.01 kWh above the reserve. Where that released <code>HOLD</code> has no plan
+  (the charge power cannot take the PV above the export cap, and charging and curtailing in one
+  interval is not modelled) the house is still never left without one. The plan is the first of
+  these that has a solution, each tried only when the one before has none and all within the
+  recalculation's one time budget: the release; the commitment's own <code>HOLD</code> with its clock, as the
+  safety exception below, which curtails where curtailment is allowed; the plan without the
+  commitment (only for a carried <code>CHARGE_PV</code> or <code>SELF_CONSUME</code>, which a plan followed one interval
+  can leave in a state its own minimum duration then makes infeasible). After that last plan a
+  first mode that is still <code>CHARGE_PV</code> or <code>SELF_CONSUME</code> keeps the commitment and its clock; any
+  other first mode starts a clock of its own.
   The return is the commitment going on, not a new
   run: the commitment's deadline stays the only clock. A pack that empties again inside the same
   commitment is released again and goes back again, as often as the commitment lasts. The release
@@ -1301,7 +1313,8 @@ directly by any other available mode.</p>
 <li><strong>Coverage:</strong> a new active mode needs a full duration of forecast coverage remaining.</li>
 <li><strong>Safety exception (pause, not reset):</strong> during an unexpired active commitment the current row
   shows HOLD when the observed SOC is already at the upper bound (charging modes —
-  <code>observed_soc_maximum</code>) or at/below the reserve (discharge modes — <code>observed_soc_minimum</code>), or
+  <code>observed_soc_maximum</code>) or at/below the reserve (discharge modes — <code>observed_soc_minimum</code>; not a carried <code>SELF_CONSUME</code>, which is
+  released as a depleted pack above, unless that release has no plan), or
   when a carried <code>CHARGE_GRID</code> meets a price above the ceiling before its deadline
   (<code>grid_charge_price_limit</code>). The interrupted mode and deadline stay stored; no other mode may
   start before that deadline, except the <code>CURTAIL</code> that takes the <code>HOLD</code> over where the site cannot pass the PV (above). Exposed in <code>dispatch_policy.safety_exception</code>.</li>
@@ -3453,7 +3466,7 @@ series you give it.</p>
 </tr>
 <tr>
 <td><code>observed_soc_minimum</code></td>
-<td>Discharge commitment active but SOC at or below the reserve.</td>
+<td>Discharge commitment active but SOC at or below the reserve (a carried SELF_CONSUME only when its release from the empty pack has no plan).</td>
 </tr>
 <tr>
 <td><code>grid_charge_price_limit</code></td>

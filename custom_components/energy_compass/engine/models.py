@@ -107,6 +107,10 @@ class Problem:
     # above because its pack was depleted: the commitment and its clock stay, and the
     # HOLD may go back to it (ADR-0005).
     initial_dispatch_released: bool = False
+    # Last resort (ADR-0005 point 13): a PV-follow commitment with the pack at the
+    # reserve is the safety exception again (a HOLD with the commitment's clock).
+    # Set only by `reserve_fallback` when the released plan has no solution.
+    initial_dispatch_reserve_hold: bool = False
     minimum_export_episode_benefit: float = 1.0
     initial_export_active: bool = False
     minimum_grid_charge_episode_benefit: float = 0.0

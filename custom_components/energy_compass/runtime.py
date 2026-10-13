@@ -51,7 +51,7 @@ from .engine.models import (
     SolveError,
 )
 from .engine.normalize import finite, validate_problem
-from .engine.optimize import solve
+from .engine.optimize import solve, solve_released
 from .engine.peak_reserve import peak_reserve_targets, peak_reserve_weight
 from .engine.strategy import resolve_flags, strategy_weights
 from .settings import validate_configuration
@@ -1159,10 +1159,14 @@ def compute(
     started = perf_counter()
     problem, values, quality = build_problem(config, states, now, **history)
     settlement = quality.pop("settlement")
-    plan = solve(
+    plan, problem = solve_released(
         problem,
         time_limit_s=min(values["solve_time_limit_s"], values["total_time_limit_s"]),
+        # Counted from here, not from `started`: a rung can be given the time building
+        # the problem took, and the check below then rejects the result as over budget.
+        budget_s=values["total_time_limit_s"],
         accept_incumbent=True,
+        solver=solve,
     )
     remaining = values["total_time_limit_s"] - (perf_counter() - started)
     if remaining <= 0:

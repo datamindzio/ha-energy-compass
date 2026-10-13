@@ -107,7 +107,9 @@ def followed(problem, steps=None):
 
     The first five items are the row of `curtail_sweep.roll` (`roll_compare` reads them
     by position: item 4 is the list of boundaries that contradict the plan before);
-    the reason and the minutes come after them.
+    the reason and the minutes come after them. Each boundary is planned by
+    `curtail_sweep.planned` (`solve_released`, T-058) and followed from the problem as
+    built, as the runtime does; the trace carries the same `*`, `!` and `?` marks.
 
     A day followed to its end runs into the end of its own forecast, where a carried
     commitment may have no plan on any site: a stop is `off only` when the problem it
@@ -120,8 +122,9 @@ def followed(problem, steps=None):
     for step in range(steps or len(problem.slots)):
         if len(problem.slots) < 2:
             break
+        built = problem
         try:
-            plan = sweep.solve(problem)
+            plan, problem = sweep.planned(problem)
         except sweep.SolveError as error:
             able = replace(problem, site=replace(problem.site, allow_curtailment=True))
             why = "start" if not step else "off only"
@@ -140,8 +143,17 @@ def followed(problem, steps=None):
         if promised is not None and promised != modes[0]:
             changed.append(step)
         promised = modes[1]
-        trace.append(modes[0] + ("*" if 0 in plan.carried_bridges else ""))
-        problem = sweep.follow(problem, plan)
+        trace.append(
+            modes[0]
+            + ("*" if 0 in plan.carried_bridges else "")
+            + ("!" if getattr(problem, "initial_dispatch_reserve_hold", False) else "")
+            + (
+                "?"
+                if built.initial_dispatch_mode and not problem.initial_dispatch_mode
+                else ""
+            )
+        )
+        problem = sweep.follow(problem, plan, built)
     return ["ok", len(trace), "", trace, changed, "", problem.minimum_mode_minutes]
 
 

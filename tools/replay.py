@@ -76,7 +76,7 @@ from custom_components.energy_compass.engine.models import (
     Slot,
     SolveError,
 )
-from custom_components.energy_compass.engine.optimize import solve
+from custom_components.energy_compass.engine.optimize import solve, solve_released
 from custom_components.energy_compass.engine.peak_reserve import (
     peak_reserve_targets,
     peak_reserve_weight,
@@ -672,10 +672,11 @@ def run_plan(day: Day, values: dict, zone_name: str) -> Outcome:
             mode_since=mode_since if values["minimum_mode_minutes"] else None,
         )
         try:
-            plan = solve(
+            plan, problem = solve_released(
                 problem,
                 time_limit_s=values["solve_time_limit_s"],
                 accept_incumbent=True,
+                solver=solve,
             )
             planned = plan.flows
         except SolveError:
