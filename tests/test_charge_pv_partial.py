@@ -176,6 +176,29 @@ def test_validator_still_rejects_a_charge_short_by_more_than_the_noise_of_its_ro
         validate_modes(problem, (flow,))
 
 
+def test_validator_widens_the_charge_noise_to_the_three_binaries_of_a_flexible_row():
+    """T-054: with a flexible load the surplus row carries a third binary (the power one).
+
+    Surplus 83 kWh (PV 99, load 16) makes the row's M 83: it leaves up to
+    1e-6 * (3 * 83 + 1) = 2.5e-4 kWh short, above the 2.0e-4 kWh (2M + 1 with M = PV 99)
+    the check allows without a flexible load.
+    """
+    problem = big_battery(99, 16, 25)
+    short = 0.99e-6 * (3 * 83 + 1)
+    assert short > 1e-6 * (2 * 99 + 1)
+    charge = 25 - short
+    flow = Flow(0, 83 - charge, charge, 0, 0, charge, "charge", "CHARGE_PV")
+
+    validate_modes(problem, (flow,), flex_max=(30.0,))
+    with pytest.raises(SolveError, match="charge-from-PV exports"):
+        validate_modes(problem, (flow,))
+    # Twice the noise of the three binaries is a real partial charge.
+    charge = 25 - 2 * 1e-6 * (3 * 99 + 1)
+    flow = Flow(0, 83 - charge, charge, 0, 0, charge, "charge", "CHARGE_PV")
+    with pytest.raises(SolveError, match="charge-from-PV exports"):
+        validate_modes(problem, (flow,), flex_max=(30.0,))
+
+
 @pytest.mark.parametrize("left", [3, 2])
 @pytest.mark.parametrize("room", [0.3, 0.4])
 @pytest.mark.parametrize(
