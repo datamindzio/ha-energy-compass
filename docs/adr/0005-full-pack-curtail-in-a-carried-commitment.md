@@ -816,8 +816,8 @@ plan now may say so.
 - **What is not changed:** the Deye controller (still the `HOLD` profile in a `CURTAIL` interval, see the T-064
   amendment), the owner decision of T-062 B (a pack that can take the need never spills), a site that can curtail,
   and every interval where nothing is beyond the pack (the model rows are those of before; `tests/test_strategy_golden.py`).
-- **Measured** (`benchmarks/spill_sweep.py` seeds 11 and 22 × 300 per draw, main `dd40906` against this branch with
-  that main merged in, `9200d27`; the tables are in `docs/model.md`): problems solved once without a plan `run` 64 → 13,
+- **Measured** (`benchmarks/spill_sweep.py` seeds 11 and 22 × 300 per draw, main `7c33fe8` against this branch with
+  that main merged in, `8c72cfd`; the tables are in `docs/model.md`): problems solved once without a plan `run` 64 → 13,
   `negrun` 40 → 14, `probe` 63 → 29, `bell` 59 → 20 of 600 each; followed one interval at a time not followed `roll`
   65 → 19, `negroll` 54 → 12, `bellroll` 71 → 26 of 600 each; 0 newly infeasible and 0 solver failures anywhere,
   133 more followed to the end. The rolls are 0 of 1800 newly infeasible on these seeds and 1 of 1800 on the seeds 5

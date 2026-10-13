@@ -337,9 +337,9 @@ and `test_both_solver_switches_find_the_certified_cost_of_the_probe_day`; both f
 *What this does and does not show.* `benchmarks/switch_audit.py` solves every matrix of a draw with the default run,
 `presolve=False`, `mip_rel_gap=0` and both, and counts those where the default run is dearer than another by more
 than 1e-6 plus 1e-4 of the cost. On the same 5700 draws (`probe` seeds 5, 11, 22, 33, 44, 77, 91 and `run`,
-`negrun`, `bell` seeds 5, 11, 22, 77, 300 each): main `dd40906` 2 of 7086 matrices (`probe` seed 5 index 7,
+`negrun`, `bell` seeds 5, 11, 22, 77, 300 each): main `7c33fe8` 2 of 7085 matrices (`probe` seed 5 index 7,
 −0.206387 against −0.263997, and seed 22 index 294, −1.174629 against −1.226629: the default run is wrong on
-main too), the first form of the row 1 of 7584, the split row 0 of 7584. The split removed the known draw; at main's
+main too), the first form of the row 1 of 7584 (`191c3d4`, before that main was merged in), the split row 0 of 7584 (`8c72cfd`). The split removed the known draw; at main's
 rate of 2.8e-4 per matrix, 7584 clean matrices happen 12 % of the time, so it is not a clearance and the sentence
 above, "none where the default run was the worse one", holds for the T-041 corpus only. The alternative the review
 named, solving a forced-spill model with both switches and keeping the cheaper certified plan, doubles the solve
