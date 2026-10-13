@@ -643,7 +643,7 @@ Consequences:
   back to `CURTAIL` one interval later. The model's gap (no plan that charges at the charge power and curtails the
   rest) was closed by T-064 and the contradicted boundaries stayed (80 of 306 after a rung-2 row, table after T-064):
   the rung-2 rows that remain are those of a commitment the release cannot keep with its minimum duration. The
-  remedy is not a longer `CURTAIL` either; it is open and not decided here.
+  remedy is not a longer `CURTAIL` either; it is open and not decided here (T-078).
 - `tests/test_curtail_dwell.py::test_the_commitments_hold_is_not_carried_to_the_next_boundary` pins it at the
   runtime and the coordinator: after a rung-2 plan the stored commitment is unchanged and the next recalculation
   plans the release, with no exception reported once it has a plan.
@@ -741,6 +741,9 @@ objective is lower than main's in 144, 135, 128, 175, 174, 120 and 34 draws (`ru
 `deprobe`, `resrun`, `fullrun`): the pack takes what main curtailed. It is higher in 2, 1, 0, 69, 56, 15 and 0 draws,
 and each one of those 143 draws is one that main planned on rung 2 or 3 and head plans on rung 1: a plan that keeps
 the commitment costs more than one that leaves it.
+
+The scripts behind these numbers (`rung_list.py`, `why2.py`, `probe.py`, `cmp.py`, `carry_rung2.py`,
+`carry_rung2_analyse.py`, `leave.py`) are kept with the task's artifacts, not in the repository.
 
 A reviewer's probe, rerun on this head (`probe.py`: 300 bell-shaped days, seeds 71 and 72 × 150, a small charge power,
 rolled to the end): 135 plans contain a charging `CURTAIL` row, none imports in such a row and none charges where the
