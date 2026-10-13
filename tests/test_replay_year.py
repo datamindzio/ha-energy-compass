@@ -379,6 +379,25 @@ def test_a_failed_solve_falls_back_to_self_consumption(monkeypatch):
     assert failed["soc"] == pytest.approx(own["soc"])
 
 
+def test_a_carried_commitment_without_a_plan_is_planned_without_it(monkeypatch):
+    # The same ladder as the runtime (T-058): not a failed solve that ran as self-use.
+    site = _site(days=2)
+    values = _values(site)
+    real = R.solve
+    committed = []
+
+    def solve(problem, **kwargs):
+        if problem.initial_dispatch_mode in ("CHARGE_PV", "SELF_CONSUME"):
+            committed.append(problem)
+            raise R.SolveError("infeasible")
+        return real(problem, **kwargs)
+
+    monkeypatch.setattr(R, "solve", solve)
+    run = year.run_year(site, values, refresh_hours=6)
+    assert committed
+    assert run["failures"] == 0
+
+
 def test_plan_beats_self_use_on_the_cheap_night_series():
     site = _site(days=3, rho=0.0)
     values = _values(site)

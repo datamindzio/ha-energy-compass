@@ -292,11 +292,13 @@ def run_year(
             )
             began = time.perf_counter()
             try:
-                planned = R.solve(
+                plan, problem = R.solve_released(
                     problem,
                     time_limit_s=values["solve_time_limit_s"],
                     accept_incumbent=True,
-                ).flows
+                    solver=R.solve,
+                )
+                planned = plan.flows
             except R.SolveError:
                 failures += 1
             solve_s += time.perf_counter() - began

@@ -39,6 +39,11 @@ first interval of the new plan is not the second of the one before (`changed`), 
 gone at the next boundary, or whose next boundary changes its mode, is invisible to a
 count of newly infeasible rows alone. A changed boundary is common on main too (about one
 roll in five), so only the rows that change on one side and not the other count.
+
+T-058 adds `resrun`/`resroll`: an ordinary draw with SELF_CONSUME carried and the pack exactly at
+the reserve (`make_reserve`; almost every draw reaches the safety exception, where `deprun` reaches
+it in about one draw in ten), the generator aimed at the reserve rule. `planned` goes through
+`solve_released`, so a tree with the fallback plans the commitment's HOLD when the release has none.
 Invoked by path, like the other benchmarks: the repository root must be on PYTHONPATH.
 """
 
@@ -51,6 +56,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
+from custom_components.energy_compass.engine import dispatch_policy, optimize
 from custom_components.energy_compass.engine.models import (
     Battery,
     FlexibleLoadRequest,
@@ -190,6 +196,27 @@ def make_depleted(rng):
     )
 
 
+def make_reserve(rng):
+    """An ordinary draw with a PV-follow commitment carried and the pack exactly at the reserve (T-058).
+
+    Any export cap, PV with gaps, a carried SELF_CONSUME since 0 to 45 minutes: the draws
+    where the safety exception of `dispatch_policy.safety_exception` applies (the pack at
+    the reserve, inside the commitment's minimum duration). `make_depleted` draws the pack at
+    the reserve in one of five draws and SELF_CONSUME in one of two, only on a sunrise.
+    """
+    problem = make(rng)
+    battery = problem.battery
+    return replace(
+        problem,
+        battery=replace(
+            battery, initial_kwh=battery.capacity_kwh * battery.minimum_soc_fraction
+        ),
+        initial_dispatch_mode="SELF_CONSUME",
+        initial_dispatch_mode_since=START
+        - timedelta(minutes=rng.choice((0, 1, 15, 16, 29, 45))),
+    )
+
+
 def make_depleted_probe(rng):
     """The sunrise on an empty pack with a flexible load on top (`deprobe`)."""
     problem = make_depleted(rng)
@@ -254,13 +281,26 @@ def make_full(rng):
     )
 
 
+def planned(problem, request=None):
+    """Solve as the runtime does: `solve_released`, a depleted release without a plan falls back.
+
+    Returns the plan and the problem it was solved for. A tree without `solve_released`
+    (a checkout of main to compare with) solves once and never falls back. A flexible-load
+    request is planned on the problem the base plan was solved for, like the runtime's probes.
+    """
+    released = getattr(optimize, "solve_released", None)
+    if released:
+        plan, problem = released(problem)
+    else:
+        plan = solve(problem)
+    if request is None:
+        return plan, problem
+    return solve_flexible_load(problem, request).plan, problem
+
+
 def run(problem, request=None):
     try:
-        plan = (
-            solve(problem)
-            if request is None
-            else solve_flexible_load(problem, request).plan
-        )
+        plan, _ = planned(problem, request)
     except SolveError as error:
         return ["err", str(error)[:40]]
     return [
@@ -271,21 +311,24 @@ def run(problem, request=None):
     ]
 
 
-def commit(problem, plan):
+def commit(problem, plan, built=None):
     """The commitment the coordinator stores once the first interval is followed.
 
     `_commit_battery_direction` itself, fed the way `_publish_current` feeds it for a
     plan whose current interval is the first, so a roll follows what ships. A tree
     without the release (`released_holds`) stores the older two-key commitment.
+    `built` is the problem as built, before `solve_released` took a rung: the
+    coordinator still holds its commitment when the plan was solved without it.
     """
     first = problem.slots[0].start.isoformat()
     stored = None
-    if problem.initial_dispatch_mode:
+    built = built or problem
+    if built.initial_dispatch_mode:
         stored = {
-            "mode": problem.initial_dispatch_mode,
-            "since": problem.initial_dispatch_mode_since.isoformat(),
+            "mode": built.initial_dispatch_mode,
+            "since": built.initial_dispatch_mode_since.isoformat(),
         }
-        if getattr(problem, "initial_dispatch_released", False):
+        if getattr(built, "initial_dispatch_released", False):
             stored["released"] = True
     coordinator = SimpleNamespace(
         _battery_commitment=stored,
@@ -304,6 +347,7 @@ def commit(problem, plan):
                 "released_hold_starts": [first]
                 if 0 in getattr(plan, "released_holds", ())
                 else [],
+                "safety_exception": dispatch_policy.safety_exception(problem),
             },
         },
         carried_idle=0 in plan.carried_bridges,
@@ -311,9 +355,9 @@ def commit(problem, plan):
     return coordinator._battery_commitment
 
 
-def follow(problem, plan):
+def follow(problem, plan, built=None):
     """The next problem when the first interval is carried out as planned."""
-    commitment = commit(problem, plan)
+    commitment = commit(problem, plan, built)
     battery = problem.battery
     low = battery.capacity_kwh * battery.minimum_soc_fraction
     high = battery.capacity_kwh * battery.maximum_soc_fraction
@@ -322,6 +366,9 @@ def follow(problem, plan):
         if "initial_dispatch_released" in Problem.__dataclass_fields__
         else {}
     )
+    if "initial_dispatch_reserve_hold" in Problem.__dataclass_fields__:
+        # The fallback is decided afresh at every boundary.
+        released["initial_dispatch_reserve_hold"] = False
     return replace(
         problem,
         slots=problem.slots[1:],
@@ -338,6 +385,8 @@ def follow(problem, plan):
 def roll(problem, steps=8):
     """Plan, follow the first interval, carry the commitment and the pack, plan again.
 
+    The trace names the executed mode of each interval: `*` a carried idle bridge, `!` the
+    plan of `reserve_fallback` (the commitment's own HOLD), `?` the plan without the commitment.
     The last item lists the boundaries whose first interval is not what the plan before
     promised for it (its second interval): a plan the next boundary contradicts.
     """
@@ -347,16 +396,26 @@ def roll(problem, steps=8):
     for step in range(steps):
         if len(problem.slots) < 2:
             break
+        built = problem
         try:
-            plan = solve(problem)
+            plan, problem = planned(problem)
         except SolveError as error:
             return ["err", step, str(error)[:40], trace, changed]
         modes = [flow.dispatch_mode for flow in plan.flows]
         if promised is not None and promised != modes[0]:
             changed.append(step)
         promised = modes[1]
-        trace.append(modes[0] + ("*" if 0 in plan.carried_bridges else ""))
-        problem = follow(problem, plan)
+        trace.append(
+            modes[0]
+            + ("*" if 0 in plan.carried_bridges else "")
+            + ("!" if getattr(problem, "initial_dispatch_reserve_hold", False) else "")
+            + (
+                "?"
+                if built.initial_dispatch_mode and not problem.initial_dispatch_mode
+                else ""
+            )
+        )
+        problem = follow(problem, plan, built)
     return ["ok", len(trace), "", trace, changed]
 
 
@@ -448,6 +507,7 @@ def draws(kind, seed, count):
         "run": make,
         "negrun": make_negative,
         "deprun": make_depleted,
+        "resrun": make_reserve,
         "fullrun": make_full,
     }
     if kind in makers:
@@ -456,6 +516,7 @@ def draws(kind, seed, count):
         "roll": make,
         "negroll": make_negative,
         "deproll": make_depleted,
+        "resroll": make_reserve,
         "fullroll": make_full,
     }
     return [roll(makers[kind](rng)) for _ in range(count)]
@@ -469,7 +530,7 @@ if __name__ == "__main__":
     else:
         out = draws(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
         Path(sys.argv[4]).write_text(json.dumps(out))
-        if sys.argv[1] in ("roll", "negroll", "deproll", "fullroll"):
+        if sys.argv[1] in ("roll", "negroll", "deproll", "resroll", "fullroll"):
             print(
                 sum(row[0] == "ok" for row in out),
                 "followed to the end, of",
