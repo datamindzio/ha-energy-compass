@@ -1377,11 +1377,13 @@ directly by any other available mode.</p>
   solved once without a plan from 226 to 76, and the rolling draws not followed from 190 to 57 of
   1800, with no problem solved once that main planned newly infeasible; of 3600 days followed
   interval by interval on four seeds one that main follows to its end stops at a boundary with no
-  plan on any site. A carried <code>HOLD</code> or <code>CURTAIL</code> commitment no longer ends the plan (T-082): where
-  the site cannot pass the PV, a <code>CURTAIL</code> takes the carried <code>HOLD</code> over with room in the pack, and
-  a <code>CURTAIL</code> run goes on through an interval with no need into a need that comes back smaller than
-  the room; that cut the 2400 draws without a plan from 76 to 34 and the rolling draws not followed
-  from 57 to 16 of 1800, with none newly infeasible (counts and commits in the model document)
+  plan on any site. A carried <code>HOLD</code> or <code>CURTAIL</code> commitment more often leaves a plan (T-082):
+  where the site cannot pass the PV, a <code>CURTAIL</code> takes the carried <code>HOLD</code> over with room in the
+  pack, in the intervals of that run where nothing is forced, and a <code>CURTAIL</code> run goes on through an
+  interval with no need, while it is inside its minimum duration, into a need that comes back
+  smaller than the room; that cut the 2400 draws without a plan from 76 to 38 and the rolling draws
+  not followed from 57 to 16 of 1800, with none newly infeasible (counts, better and worse draws and
+  commits in the model document)
   (<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>).</li>
 <li><strong><code>CURTAIL</code> goes on through a PV gap.</strong> A <code>CURTAIL</code> run lasts the minimum duration, and PV can
   drop inside it. A <code>HOLD</code> in an interval with PV below the minimum activity (<code>minimum_mode_power_kw × h</code>)

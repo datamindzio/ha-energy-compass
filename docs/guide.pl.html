@@ -1401,12 +1401,14 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   przedziale i niedoprowadzonych do końca z 190 do 57 z 1800, bez nowego problemu „brak planu”
   (<code>infeasible</code>) wśród rozwiązanych raz, które main planował; z 3600 dni śledzonych przedział po
   przedziale na czterech ziarnach jeden, który main prowadzi do końca, zatrzymuje się na granicy,
-  w której nie ma planu na żadnej instalacji. Przeniesione zobowiązanie <code>HOLD</code> lub <code>CURTAIL</code> nie
-  kończy już planu (T-082): tam, gdzie instalacja nie przepuści PV, <code>CURTAIL</code> przejmuje
-  przeniesiony <code>HOLD</code> przy wolnym miejscu w baterii, a przebieg <code>CURTAIL</code> trwa przez przedział bez
-  nadwyżki do nadwyżki, która wraca mniejsza niż wolne miejsce; to zmniejszyło liczbę z 2400
-  losowań bez planu z 76 do 34, a liczbę losowań śledzonych i niedoprowadzonych do końca z 57 do
-  16 z 1800, bez żadnego nowego „brak planu” (<code>infeasible</code>) (liczby i commity w dokumencie modelu)
+  w której nie ma planu na żadnej instalacji. Przeniesione zobowiązanie <code>HOLD</code> lub <code>CURTAIL</code>
+  częściej zostawia plan (T-082): tam, gdzie instalacja nie przepuści PV, <code>CURTAIL</code> przejmuje
+  przeniesiony <code>HOLD</code> przy wolnym miejscu w baterii, w przedziałach tego przebiegu, w których nic
+  nie jest wymuszone, a przebieg <code>CURTAIL</code> trwa przez przedział bez nadwyżki, dopóki mieści się w
+  swoim minimalnym czasie, do nadwyżki, która wraca mniejsza niż wolne miejsce; to zmniejszyło
+  liczbę z 2400 losowań bez planu z 76 do 38, a liczbę losowań śledzonych i niedoprowadzonych do
+  końca z 57 do 16 z 1800, bez żadnego nowego „brak planu” (<code>infeasible</code>) (liczby, losowania
+  lepsze i gorsze oraz commity w dokumencie modelu)
   (<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN).</li>
 <li><strong><code>CURTAIL</code> trwa mimo przerwy w PV.</strong> Przebieg <code>CURTAIL</code> trwa minimalny czas, a PV może w tym
   czasie spaść. <code>HOLD</code> w przedziale z PV poniżej minimalnej aktywności (<code>minimum_mode_power_kw × h</code>)
