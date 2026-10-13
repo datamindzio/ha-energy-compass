@@ -392,7 +392,7 @@ PAGE_TEMPLATE = """<!doctype html>
 
 
 def page():
-    # Same look as docs/index.html; build_guides.py needs `markdown`, CI does not have it.
+    # Same look as docs/index.html; build_guides.py needs `markdown` (pinned in pyproject `docs` extra and Dockerfile.test).
     index = (DOCS / "index.html").read_text(encoding="utf-8")
     style = re.search(r"<style>(.*?)</style>", index, re.DOTALL).group(1).rstrip()
     return PAGE_TEMPLATE.replace("__STYLE__", style)

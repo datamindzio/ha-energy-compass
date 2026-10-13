@@ -22,6 +22,7 @@ jobs:
           docker run --rm -v "$PWD:/workspace:ro" ha-energy-compass-test:2026.9.1 tools/deye_controller/build.py --check
           docker run --rm -v "$PWD:/workspace:ro" ha-energy-compass-test:2026.9.1 tools/dashboards/build.py --check
           docker run --rm -v "$PWD:/workspace:ro" ha-energy-compass-test:2026.9.1 tools/build_builder.py --check
+          docker run --rm -v "$PWD:/workspace:ro" ha-energy-compass-test:2026.9.1 tools/build_guides.py --check
       - name: Lint
         run: docker run --rm -v "$PWD:/workspace:ro" ha-energy-compass-test:2026.9.1 -m ruff check --no-cache .
       - name: Check formatting
@@ -39,16 +40,6 @@ jobs:
       - name: Test the dashboard state bands (Node built-in test runner)
         working-directory: tools/dashboards
         run: node --test test-*.mjs
-
-  guides:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-      - name: Check the generated guides (needs only markdown; Mermaid is not rendered)
-        run: |
-          python3 -m venv "$RUNNER_TEMP/guides"
-          "$RUNNER_TEMP/guides/bin/pip" install --quiet markdown==3.8
-          "$RUNNER_TEMP/guides/bin/python" tools/build_guides.py --check
 
   hassfest:
     runs-on: ubuntu-24.04
