@@ -440,7 +440,9 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
     before. Charging at the charge power and curtailing the rest in one interval is the proper plan for rung 2's
     class: planned since T-064 (amendment below), which makes rung 2 rarer, not the safety exception only (the
     T-069 amendment measures what is left); forced spill with room is T-066, the unmoded CHARGE_PV rule T-041.
-26. **A flexible-load level takes the ladder too (T-067).** The base plan of the draw above is `CHARGE_PV` five
+
+    **25a. A flexible-load level takes the ladder too (T-067).** (Numbered 26 until T-079; the T-069 amendment
+    below has its own point 26, so "point 26" written before T-079 with T-067 beside it means this one.) The base plan of the draw above is `CHARGE_PV` five
     times and then `CURTAIL`, the pack just full where the `CURTAIL` interval starts. `lock_full` (the pack at the next
     interval's ceiling) is set in the probe's model with the largest draw the probe may make in that interval
     (`extra`), which keeps the plan valid for any load up to it; the realised load the certificate reads is
@@ -501,7 +503,7 @@ main `0778580`, before T-065 landed). All 17 fail on a carried `CHARGE_PV` insid
 commitment and every one has a plan with the terminal value instead of the requirement: the part of rung 3's
 class T-065 left open (rung 3 is its answer; T-070 measured how much of it the rung plans, ADR-0004). The one newly infeasible `deprobe` draw (seed 44, draw 10) is the base plan solving on
 rung 1 while the 0.25 kWh probe on that same problem has no solution (it has one on rungs 2 and 3): one consumption
-level reports `infeasible`, the plan is untouched; closed by point 26 (T-067). Every draw with no plan on any rung (79 of 1200
+level reports `infeasible`, the plan is untouched; closed by point 25a (T-067). Every draw with no plan on any rung (79 of 1200
 `deprun`, 55 `resrun`, 83 `run`) has `allow_curtailment` false: T-041, T-064 and T-066, which main has as well;
 the 575 `fullrun` draws without a plan have none on main either.
 
