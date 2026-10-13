@@ -880,7 +880,7 @@ Rules (defaults: 60 min, 0.1 kW):
   is planned rather than reported as infeasible (measured below): the PV above what the cap and the inverter can pass (the
   curtail need; with a minimum duration at least the minimum activity) is spilled in an interval
   whose pack cannot take it, labelled `CURTAIL` (the inverter throttles by itself; the Deye
-  controller runs its `HOLD` profile). The gate is the room of the pack: the interval starts at or
+  controller runs the PV charge profile at the planned current on a row that charges and its `HOLD` profile on one that charges nothing). The gate is the room of the pack: the interval starts at or
   above the ceiling less what the pack would have to absorb, so a pack with a little room that
   cannot take the surplus spills too, and a pack that can take it never does, whatever the sell
   price. The part the pack cannot take by its charge power (the curtail need less
