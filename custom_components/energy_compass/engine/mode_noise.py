@@ -88,8 +88,16 @@ def _settle(
         left += exported
         if not moded and settled["bc"] > _TOL:
             if -left > settled["bc"]:
-                return None
-            settled["bc"] += left
+                # The zeroed `bd` (battery cycling noise) exceeds the working `bc` by
+                # the balance tolerance: `bc` goes to 0, which satisfies the battery
+                # direction, and at most 1e-6 kWh is imported.
+                residual = -left - settled["bc"]
+                if residual > _TOL:
+                    return None
+                settled["gin"] += residual
+                settled["bc"] = 0.0
+            else:
+                settled["bc"] += left
         else:
             settled["gin"] -= left
     return settled

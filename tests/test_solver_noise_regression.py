@@ -1129,3 +1129,109 @@ def test_a_battery_of_10_to_20_kwh_per_slot_publishes_a_plan_on_real_highs(case)
     for slot, flow in zip(problem.slots, plan.flows, strict=True):
         assert flow.dispatch_mode == machine_state(slot, flow)
         assert min(flow.grid_import_kwh, flow.grid_export_kwh) <= 1e-6
+
+
+# T-080: the charge direction of the battery cycling noise (the mirror of T-075).
+BD_GAP_WITHIN_TOLERANCE = {
+    "bd equal to bc": 0.0,
+    "bd 1e-9 above bc": 1e-9,
+    "bd 1e-9 below bc": -1e-9,
+    "bd 5e-7 above bc": 5e-7,
+    "bd 1e-6 above bc": 1e-6,
+}
+# The end-to-end slot keeps the site balance closed inside the validator's own tolerance.
+BD_GAP_IN_THE_BALANCE = {k: g for k, g in BD_GAP_WITHIN_TOLERANCE.items() if g < 1e-6}
+
+
+@pytest.mark.parametrize("gap", BD_GAP_WITHIN_TOLERANCE.values(), ids=list(BD_GAP_WITHIN_TOLERANCE))
+def test_unmoded_settle_gives_the_charge_back_and_imports_the_residual_a_zeroed_bd_leaves(
+    gap,
+):
+    # The zeroed `bd` (battery cycling noise) exceeds the working `bc` by the balance
+    # tolerance: `bc` to 0, the residual on `gin`.
+    flow = unmoded_slot_flow(bc=5e-6, bd=5e-6 + gap)
+
+    settled = _settle(("bd",), flow, {"bd": 20.0}, moded=False)
+
+    # A `bd` short of `bc` gives only that much back: `bc` keeps the difference.
+    assert settled["bd"] == 0.0
+    assert settled["bc"] == pytest.approx(max(-gap, 0.0), abs=1e-15)
+    assert settled["gin"] == pytest.approx(max(gap, 0.0), abs=1e-15)
+    assert settled["gout"] == 0.0
+
+
+def test_unmoded_settle_adds_the_charge_residual_to_the_gin_already_present():
+    flow = unmoded_slot_flow(bc=2.5e-6, bd=3e-6, gin=9e-7)
+
+    settled = _settle(("bd",), flow, {"bd": 20.0}, moded=False)
+
+    assert settled["bc"] == 0.0
+    # The import already present is not cut first: only `gout` is netted off a shortfall.
+    assert settled["gin"] == pytest.approx(9e-7 + 5e-7, abs=1e-15)
+
+
+def test_unmoded_settle_refuses_a_charge_shortfall_beyond_the_balance_tolerance():
+    flow = unmoded_slot_flow(bc=5e-6, bd=5e-6 + 2e-6)
+
+    assert _settle(("bd",), flow, {"bd": 20.0}, moded=False) is None
+
+
+@pytest.mark.parametrize("hurdle", (False, True), ids=("no hurdle", "hurdle, z=1"))
+@pytest.mark.parametrize(
+    "gap", BD_GAP_IN_THE_BALANCE.values(), ids=list(BD_GAP_IN_THE_BALANCE)
+)
+def test_unmoded_hold_with_charge_direction_cycling_noise_is_published_as_hold(
+    monkeypatch, gap, hurdle
+):
+    # PV 2, load 2: the solver holds. Charge direction (`battery_mode` at 1 - 9e-7): the
+    # PV charges the battery 5e-6 kWh while the battery feeds the load 5e-6 plus the gap
+    # on `bd`, the idle flow. The gap's sign used to decide whether the slot published
+    # (`simultaneous battery directions`).
+    problem = unmoded_problem(
+        1.0, 0.1, 2.0, 2.0, BIG_BATTERY_20, hurdle=hurdle, terminal=0.5
+    )
+    clean = solve(problem).flows[0]
+    assert machine_state(problem.slots[0], clean) == "HOLD"
+
+    def noise(v, values):
+        values[v["battery_mode"]] = 1 - 9e-7
+        if hurdle:
+            values[v["export_active"]] = 9e-7
+            values[v["export_side"]] = 1 - 9e-7
+        move(values, v, 5e-6, ("bc", "bd", "pv_battery", "battery_load"), ("pv_load",))
+        move(values, v, gap, ("bd", "battery_load"), ())
+        values[v["energy"]] -= gap
+
+    plan = solve_with_noise(monkeypatch, problem, noise)
+
+    (flow,) = plan.flows
+    assert machine_state(problem.slots[0], flow) == "HOLD"
+    assert flow.charge_kwh <= 1e-8
+    assert flow.discharge_kwh == 0.0
+    assert flow.grid_export_kwh == pytest.approx(clean.grid_export_kwh, abs=1e-8)
+    assert flow.grid_import_kwh == pytest.approx(clean.grid_import_kwh, abs=1e-6)
+    assert flow.end_soc_kwh == pytest.approx(clean.end_soc_kwh, abs=1e-6)
+    assert plan.new_export_episodes == 0
+
+
+@pytest.mark.parametrize("hurdle", (False, True), ids=("no hurdle", "hurdle, z=1"))
+def test_unmoded_charge_direction_cycling_noise_beyond_the_tolerance_is_refused(
+    monkeypatch, hurdle
+):
+    # `bd` 5e-6 above the working `bc`, the surplus load balanced by curtailed PV so the
+    # site balance holds: a real simultaneous direction, not settled.
+    problem = unmoded_problem(
+        1.0, 0.1, 2.0, 2.0, BIG_BATTERY_20, hurdle=hurdle, terminal=0.5
+    )
+
+    def noise(v, values):
+        values[v["battery_mode"]] = 1 - 9e-7
+        if hurdle:
+            values[v["export_active"]] = 9e-7
+            values[v["export_side"]] = 1 - 9e-7
+        move(values, v, 5e-6, ("bc", "bd", "pv_battery", "battery_load"), ("pv_load",))
+        move(values, v, 5e-6, ("bd", "battery_load", "curt"), ("pv_load",))
+        values[v["energy"]] -= 5e-6
+
+    with pytest.raises(SolveError, match="simultaneous battery directions"):
+        solve_with_noise(monkeypatch, problem, noise)
