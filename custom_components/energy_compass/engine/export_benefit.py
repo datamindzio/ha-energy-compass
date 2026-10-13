@@ -4,7 +4,7 @@ from datetime import UTC
 
 import numpy as np
 
-from .machine_state import activity_tolerance
+from .machine_state import activity_tolerance, noise_bound
 from .models import Problem, SolveError
 
 _TOL = 1e-6
@@ -61,13 +61,19 @@ def constrain_export_benefit(model, problem: Problem, vectors) -> None:
         model.constrain(upper, -np.inf, 1 - initial)
 
 
-def validate_export_benefit(problem: Problem, vectors, values) -> tuple[int, float]:
-    """Certify physical activity, exact starts and reserve independently of rows."""
+def validate_export_benefit(
+    problem: Problem, vectors, values, settled=None
+) -> tuple[int, float]:
+    """Certify physical activity, exact starts and reserve independently of rows.
+
+    Before settling (`settled` None) an inactive indicator may sit beside solver noise on
+    the one flow its rows gate; after it, the published `bd` and `gout` are the pair.
+    """
     if not enabled(problem):
         return 0, 0.0
     previous = problem.initial_export_active
     starts = 0
-    for slot, v in zip(problem.slots, vectors, strict=True):
+    for i, (slot, v) in enumerate(zip(problem.slots, vectors, strict=True)):
         for key in ("export_active", "export_start", "export_side"):
             if key in v:
                 value = values[v[key]]
@@ -83,14 +89,23 @@ def validate_export_benefit(problem: Problem, vectors, values) -> tuple[int, flo
         ).total_seconds() / 3600
         activity = problem.minimum_mode_power_kw * hours
         tolerance = activity_tolerance(activity)
-        physical = min(discharge, export) > tolerance
-        if active != physical or (
-            active
-            and (
-                activity <= _CLASSIFIER_RESOLUTION
+        if active:
+            wrong = (
+                min(discharge, export) <= tolerance
+                or activity <= _CLASSIFIER_RESOLUTION
                 or min(discharge, export) < activity - tolerance
             )
-        ):
+        elif settled is None:
+            # An indicator a hair off 0 leaves the flow its row gates, `bd <= M * (e + z)`
+            # or `gout <= M * (1 + e - z)`, up to 1e-6 * (2M + 1) with M that flow's own
+            # bound, while the other is free: the pair is noise when either side is.
+            wrong = discharge > noise_bound(
+                problem.battery.discharge_kw * hours
+            ) and export > noise_bound(problem.site.grid_export_kw * hours)
+        else:
+            # `settle_mode_noise` zeroes the gated flow; what it left is a real pair.
+            wrong = min(settled[i]["bd"], settled[i]["gout"]) > tolerance
+        if wrong:
             raise SolveError(
                 "solver_failure", "invalid solver result: physical export indicator"
             )

@@ -35,6 +35,8 @@ ROW_NUMBERS = (
 )
 SIGNED_ROW_NUMBERS = frozenset({"buy_per_kwh", "sell_per_kwh"})
 MODES = ("Off", "Simulation", "Auto")
+ENGINES = ("blueprint", "native")
+DEFAULT_ENGINE = "blueprint"
 PLAN_REASONS = ("ok", "session", "revoked", "sources")
 BATTERY_KEYS = (
     "capacity_kwh",
@@ -54,6 +56,7 @@ RUNTIME_KEYS = frozenset(
         "retained",
         "code",
         "reason",
+        "reason_code",
         "warning",
         "takeover_blocked",
         "since",
@@ -106,6 +109,7 @@ CONTROLLER_ATTRIBUTES = (
     "next_tou",
     "accepted",
     "tou",
+    "hardware",
 )
 RUNTIME_SUMMARY_KEYS = (
     "reason",
@@ -163,6 +167,7 @@ class ControllerState:
     runtime_written_at: str | None = None
     imported_at: str | None = None
     history: tuple[Event, ...] = field(default=())
+    paused: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -179,6 +184,7 @@ class ControllerState:
             "runtime": dict(self.runtime),
             "runtime_written_at": self.runtime_written_at,
             "imported_at": self.imported_at,
+            "paused": self.paused,
             "history": [
                 {
                     "at": event.at,
@@ -525,6 +531,7 @@ def load_state(
         runtime_written_at=raw.get("runtime_written_at"),
         imported_at=raw.get("imported_at"),
         history=tuple(history[-HISTORY_LIMIT:]),
+        paused=raw.get("paused") is True,
     )
     if state.accepted is not None and state.accepted["session"] != session:
         state = replace(
@@ -700,11 +707,19 @@ def import_package(
     return PackageImport(state, session, dropped, kept)
 
 
+def controller_engine(options: Mapping | None) -> str:
+    """`blueprint` unless the stored controller options say `native`."""
+    engine = (options or {}).get("engine", DEFAULT_ENGINE)
+    return engine if engine in ENGINES else DEFAULT_ENGINE
+
+
 def controller_options_change(
     old: Mapping | None, new: Mapping | None
 ) -> Literal["none", "live", "reload"]:
     old, new = old or {}, new or {}
     if bool(old.get("enabled")) != bool(new.get("enabled")):
+        return "reload"
+    if new.get("enabled") and controller_engine(old) != controller_engine(new):
         return "reload"
     if new.get("enabled") and old.get("device_id") != new.get("device_id"):
         return "live"
@@ -724,6 +739,7 @@ def controller_attributes(
     program_prefix: str | None,
     tou_problem: str | None,
     next_tou_at: datetime | None,
+    hardware: Mapping[str, Any] | None = None,
 ) -> dict:
     """The controller sensor attributes, in `CONTROLLER_ATTRIBUTES` order."""
     accepted = state.accepted or {}
@@ -757,5 +773,6 @@ def controller_attributes(
         "next_tou": None if next_tou_at is None else next_tou_at.isoformat(),
         "accepted": dict(accepted),
         "tou": dict(tou),
+        "hardware": None if hardware is None else dict(hardware),
     }
     return {key: values[key] for key in CONTROLLER_ATTRIBUTES}

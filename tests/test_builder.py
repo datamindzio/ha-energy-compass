@@ -49,6 +49,7 @@ VALUES = {
     "deye_controller": "sensor.home_sterownik_deye",
     "deye_mode": "select.home_tryb_sterownika_deye",
     "deye_runtime": "sensor.home_stan_pracy_sterownika_deye",
+    "deye_pause": "switch.home_wstrzymaj_zapisy_do_falownika",
 }
 
 

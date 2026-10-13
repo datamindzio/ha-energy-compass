@@ -112,9 +112,6 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         # so the next start retries the recorder.
         self._balance_persist = True
         self._balance_store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.balance")
-        self._settlement = None
-        self._settlement_stored = False
-        self._settlement_store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.settlement")
         self._calibration = calibration.empty_state()
         self._calibration_store = Store(
             hass, 1, f"{DOMAIN}.{entry.entry_id}.calibration"
@@ -149,11 +146,6 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             self._balance = None
         if self._balance is None:
             self._balance = await self._seed_balance()
-        stored_settlement = await self._settlement_store.async_load()
-        self._settlement = (
-            stored_settlement if isinstance(stored_settlement, dict) else None
-        )
-        self._settlement_stored = stored_settlement is not None
         stored = await self._calibration_store.async_load()
         if stored is not None and not calibration.valid_state(stored):
             _LOGGER.warning("Invalid stored calibration state; starting empty")
@@ -1031,7 +1023,6 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                                 self._grid_charge_commitment
                             ),
                             balance_state=deepcopy(self._balance),
-                            settlement_state=deepcopy(self._settlement),
                             **history,
                         )
                     )
@@ -1059,7 +1050,6 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                         if atlas_payload_present
                         else None
                     )
-                    settlement_state = result.pop("settlement_state", None)
                     # A result superseded only by newer inputs is still fresher
                     # than the retained plan. Publishing it before recalculating
                     # guarantees progress: at 8 kW the SOC crosses the trigger
@@ -1074,12 +1064,6 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                         # never published, so Atlas must not receive it either.
                         if self.atlas is not None and atlas_payload_present:
                             self.atlas.add_solve(atlas_payload)
-                        if settlement_state != self._settlement:
-                            self._settlement = settlement_state
-                            self._settlement_stored = True
-                            self._settlement_store.async_delay_save(
-                                lambda: self._settlement, 1
-                            )
                         self._previous_soc = result["quality"].pop(
                             "soc_observation", None
                         )
@@ -1143,11 +1127,36 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             self._battery_commitment = None
         elif policy.get("safety_exception") or carried_idle:
             return
+        elif (
+            mode == "HOLD"
+            and self._battery_commitment
+            and dwell_group(self._battery_commitment["mode"]) == "PV_FOLLOW"
+            and rows[0].get("start") in policy.get("released_hold_starts", ())
+        ):
+            # A HOLD released from the commitment's depleted pack is not a mode of its
+            # own: the commitment and its clock stay, and the next plan starts from the
+            # release (its HOLD goes on, or goes back to the commitment).
+            self._battery_commitment = {**self._battery_commitment, "released": True}
         elif self._battery_commitment and dwell_group(
             self._battery_commitment["mode"]
         ) == dwell_group(mode):
             # CHARGE_PV <-> SELF_CONSUME keeps the inverter state and its clock.
-            self._battery_commitment = {**self._battery_commitment, "mode": mode}
+            kept = {
+                key: value
+                for key, value in self._battery_commitment.items()
+                if key != "released"
+            } | {"mode": mode}
+            minutes = policy.get("minimum_mode_minutes")
+            if (
+                self._battery_commitment.get("released")
+                and minutes
+                and parse_timestamp(result["generated_at"])
+                >= parse_timestamp(kept["since"]) + timedelta(minutes=minutes)
+            ):
+                # The released HOLD went on past the commitment's deadline: what it goes
+                # back to is a PV-follow run of its own, from here.
+                kept["since"] = result["generated_at"]
+            self._battery_commitment = kept
         elif not self._battery_commitment or self._battery_commitment["mode"] != mode:
             previous = self._battery_commitment
             self._battery_commitment = {"mode": mode, "since": result["generated_at"]}
@@ -1217,6 +1226,4 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         await self._grid_charge_store.async_save(self._grid_charge_commitment)
         if self._balance is not None and self._balance_persist:
             await self._balance_store.async_save(self._balance)
-        if self._settlement is not None or self._settlement_stored:
-            await self._settlement_store.async_save(self._settlement)
         await self._calibration_store.async_save(self._calibration)

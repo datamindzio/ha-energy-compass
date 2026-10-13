@@ -53,6 +53,7 @@ ENTITIES = {
     "deye_controller": "sensor.energy_compass_deye_controller",
     "deye_mode": "select.energy_compass_deye_mode",
     "deye_runtime": "sensor.energy_compass_deye_controller_runtime",
+    "deye_pause": "switch.energy_compass_pause_inverter_writes",
 }
 CAPACITY_KWH = (
     25  # Must match the Energy Compass battery capacity, not the BMS capacity.
@@ -535,6 +536,13 @@ PANEL_TEXT = {
         "state": "State",
         "optimizer": "Optimizer",
         "reason": "Reason",
+        "reason_code": "Reason code",
+        "inverter": "Inverter",
+        "protocol": "protocol",
+        "verified": "verified",
+        "not_verified": "not verified",
+        "last_run": "Last run",
+        "pause": "Pause inverter writes",
         "confirmed_mode": "Confirmed mode",
         "last_confirmation": "Last confirmation",
         "plan_created": "Plan created",
@@ -618,6 +626,13 @@ PANEL_TEXT = {
         "state": "Stan",
         "optimizer": "Optymalizator",
         "reason": "Powód",
+        "reason_code": "Kod powodu",
+        "inverter": "Falownik",
+        "protocol": "protokół",
+        "verified": "zweryfikowany",
+        "not_verified": "niezweryfikowany",
+        "last_run": "Ostatni przebieg",
+        "pause": "Wstrzymaj zapisy do falownika",
         "confirmed_mode": "Tryb potwierdzony",
         "last_confirmation": "Ostatnie potwierdzenie",
         "plan_created": "Plan utworzony",
@@ -767,6 +782,24 @@ def panel_section(entities=ENTITIES, lang="en", capacity=CAPACITY_KWH):
                 "name": t["mode"],
                 "icon": "mdi:compass",
                 "features": [{"type": "select-options"}],
+            },
+            {
+                # The switch exists only for the native engine.
+                "type": "conditional",
+                "conditions": [
+                    {
+                        "condition": "state",
+                        "entity": e["deye_pause"],
+                        "state": ["on", "off"],
+                    }
+                ],
+                "card": {
+                    "type": "tile",
+                    "entity": e["deye_pause"],
+                    "name": t["pause"],
+                    "icon": "mdi:pause-circle-outline",
+                    "features": [{"type": "toggle"}],
+                },
             },
         ],
     }
@@ -964,6 +997,17 @@ def diagnostics_section(entities=ENTITIES, lang="en"):
         ("optimizer", "states('@optimizer@')"),
         ("controller", "rt.get('code','@t:no_data@')"),
         ("reason", "rt.get('reason','—')"),
+        ("reason_code", "rt.get('reason_code','—')"),
+        (
+            "inverter",
+            "(hw.device_type ~ ', @t:protocol@ ' ~ hw.protocol ~ ' · ' ~ ('@t:verified@' if hw.verified else '@t:not_verified@')) if hw.device_type else '—'",
+        ),
+        (
+            "last_run",
+            "(("
+            + date.format(v="lr.at").replace("'@t:none@'", "''")
+            + ") ~ ' · ' ~ lr.trigger ~ ' · ' ~ lr.outcome ~ ' · ' ~ lr.seconds ~ ' s') if lr else '—'",
+        ),
         (
             "confirmed_mode",
             "labels.get(rt.get('confirmed_mode'),rt.get('confirmed_mode','—'))",
@@ -982,9 +1026,11 @@ def diagnostics_section(entities=ENTITIES, lang="en"):
         ("session", "state_attr('@deye_controller@','session')"),
         ("restore", "state_attr('@deye_runtime@','restore_pending')"),
     ]
-    table = "| @t:param@ | @t:state@ |\n|:--|:--|\n" + "\n".join(
-        f"| @t:{k}@ | {{{{ {v} }}}} |" for k, v in rows
-    )
+    table = (
+        "{% set hw = state_attr('@deye_controller@','hardware') or {} %}\n"
+        "{% set lr = state_attr('@deye_runtime@','last_run') or {} %}\n"
+        "| @t:param@ | @t:state@ |\n|:--|:--|\n"
+    ) + "\n".join(f"| @t:{k}@ | {{{{ {v} }}}} |" for k, v in rows)
     diagnostics = _md(
         "@t:diagnostics@",
         table

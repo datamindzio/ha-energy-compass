@@ -261,6 +261,11 @@ def validate_problem(problem: Problem) -> None:
         problem.initial_dispatch_mode_since is None
     ):
         raise InputError("initial dispatch mode requires its start time")
+    if problem.initial_dispatch_released and problem.initial_dispatch_mode not in (
+        "CHARGE_PV",
+        "SELF_CONSUME",
+    ):
+        raise InputError("a released HOLD needs a PV-follow commitment")
     if problem.initial_dispatch_mode_since is not None:
         aware(problem.initial_dispatch_mode_since, "initial dispatch mode start")
         if problem.initial_dispatch_mode_since.astimezone(UTC) > problem.slots[

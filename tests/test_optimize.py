@@ -264,24 +264,61 @@ def test_noncanonical_daily_budget_key_is_rejected(day):
         solve(source)
 
 
-@pytest.mark.parametrize("with_battery", [False, True])
-def test_near_binary_solver_result_cannot_return_simultaneous_flows(
-    monkeypatch, with_battery
-):
-    tiny = 4e-6
-    if with_battery:
-        source = problem(((0, 0, tiny, tiny),), battery=battery())
-        candidate = [0, 0, 0, 0, 0, 0, 0, tiny, tiny, 5, tiny, 0, tiny, 0, 1e-6]
-    else:
-        source = problem(((0, 0, tiny, tiny),))
-        candidate = [tiny, tiny, 0, 0, tiny, tiny, 1e-6]
+def _solver_returns(monkeypatch, candidate, **result):
     monkeypatch.setattr(
         "custom_components.energy_compass.engine.optimize.milp",
         lambda **kwargs: SimpleNamespace(
-            status=0, x=np.array(candidate), message="optimal"
+            status=0, x=np.array(candidate), message="optimal", **result
         ),
     )
-    with pytest.raises(SolveError, match="invalid solver result"):
+
+
+def _near_binary(tiny, with_battery):
+    """A solver result with `tiny` kWh both ways, the direction binary at 1e-6."""
+    if with_battery:
+        # No mode variables (minimum duration 0): the battery direction row alone.
+        source = replace(
+            problem(((0, 0, tiny, tiny),), battery=battery()),
+            minimum_mode_minutes=0,
+            minimum_export_episode_benefit=0.0,
+        )
+        return source, [
+            *(0, 0, 0, 0, 0, 0, 0),  # grid, curtailment, PV, grid indicator
+            *(tiny, tiny, 5, tiny, 0, tiny, 0, 1e-6),  # battery, `battery_mode`
+            *(1, 0),  # discharging, self_consume_empty
+        ]
+    return problem(((0, 0, tiny, tiny),)), [tiny, tiny, 0, 0, tiny, tiny, 1e-6]
+
+
+@pytest.mark.parametrize("with_battery", [False, True])
+def test_near_binary_solver_result_is_published_with_one_direction(
+    monkeypatch, with_battery
+):
+    # T-052: the rows leave the gated side up to 1e-6 * (M + 1) beside a binary at 1e-6
+    # (here 4e-6 against 4 or 8 kWh): the plan keeps one direction per slot. The battery
+    # pair is a cycle through the battery: it nets to nothing and opens no export.
+    source, candidate = _near_binary(4e-6, with_battery)
+    _solver_returns(monkeypatch, candidate)
+
+    plan = solve(source)
+
+    flow = plan.flows[0]
+    assert min(flow.grid_import_kwh, flow.grid_export_kwh) == 0.0
+    assert flow.grid_export_kwh == 0.0
+    assert (flow.charge_kwh, flow.discharge_kwh) == pytest.approx((0.0, 0.0), abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("with_battery", "detail"),
+    [(False, "grid import direction"), (True, "charge direction")],
+)
+def test_solver_result_beyond_the_direction_rows_is_refused(
+    monkeypatch, with_battery, detail
+):
+    source, candidate = _near_binary(2e-5, with_battery)
+    _solver_returns(monkeypatch, candidate)
+
+    with pytest.raises(SolveError, match=f"invalid solver result: {detail}"):
         solve(source)
 
 
@@ -451,7 +488,7 @@ def test_time_limit_without_incumbent_still_raises_timeout(monkeypatch):
 
 
 def test_accepted_incumbent_is_still_validated(monkeypatch):
-    tiny = 4e-6
+    tiny = 2e-5
     source = problem(((0, 0, tiny, tiny),))
     monkeypatch.setattr(
         "custom_components.energy_compass.engine.optimize.milp",
@@ -462,5 +499,7 @@ def test_accepted_incumbent_is_still_validated(monkeypatch):
             mip_gap=0.01,
         ),
     )
-    with pytest.raises(SolveError, match="invalid solver result"):
+    with pytest.raises(
+        SolveError, match="invalid solver result: grid import direction"
+    ):
         solve(source, accept_incumbent=True)

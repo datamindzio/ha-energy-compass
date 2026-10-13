@@ -341,8 +341,6 @@
           "buy_addition": "Dodatek do ceny zakupu",
           "sell_addition": "Dodatek do ceny sprzedaży",
           "monthly_charge": "Stała opłata miesięczna",
-          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
-          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
           "terminal_value_per_kwh": "Wartość energii na końcu planu",
           "boost_ceiling": "Próg zwiększania zużycia",
           "limit_floor": "Próg ograniczenia",
@@ -452,11 +450,9 @@
           "sell_addition": "Dodatek do ceny sprzedaży",
           "vat_percent": "Stawka VAT",
           "monthly_charge": "Stała opłata miesięczna",
-          "deposit_model": "Model depozytu prosumenckiego",
+          "deposit_model": "Model depozytu prosumenckiego (off; manual jest eksperymentalny)",
           "deposit_refund_percent": "Limit zwrotu z depozytu (% wartości eksportu z miesiąca)",
-          "export_value_factor": "Współczynnik wartości eksportu (model ręczny depozytu)",
-          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
-          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
+          "export_value_factor": "Współczynnik wartości eksportu (model ręczny, eksperymentalny)",
           "buy_apply_vat": "Dolicz VAT przy zakupie",
           "sell_apply_vat": "Dolicz VAT przy sprzedaży",
           "calibration": "Kalibracja taryfy"
@@ -466,11 +462,9 @@
           "buy_distribution_mode": "Domyślnie included. included: cena ze źródła zakupu już zawiera dystrybucję (cena all-in). added: stawki dystrybucji są doliczane do ceny ze źródła zakupu - dla ceny dynamicznej energii albo cennika wpisanego jak na fakturze. Zmienia cenę zakupu dla planera i dla raportowanych kosztów.",
           "buy_distribution_rate": "Domyślnie 0; zakres 0-1000 za kWh. Wszystko, co operator rozlicza za kWh (stawka sieciowa, opłata jakościowa, OZE, kogeneracyjna), wpisane jak cena zakupu; VAT dolicza się, gdy włączone jest naliczanie VAT od zakupu, mnożnik i dopłata nie dotyczą. Opłata miesięczna należy do opłaty miesięcznej.",
           "buy_distribution_off_peak_rate": "Domyślnie 0; zakres 0-1000 za kWh. To samo dla strefy poza szczytem dwustrefowej taryfy (źródło albo taryfa dystrybucyjna). Przy dwóch strefach ustaw obie stawki albo żadnej; przy jednej strefie jest pomijana.",
-          "deposit_model": "Domyślnie off. manual: sam podajesz współczynnik wartości eksportu. auto: planer wylicza go z oczekiwanego rocznego depozytu i opłat, raz dziennie. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
-          "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada.",
-          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu całkowicie deprecjonuje część energetyczną importu).",
-          "deposit_yearly_value": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wartość eksportu zaksięgowana na depozycie w 12 miesięcy, razem ze współczynnikiem 1,23.",
-          "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: to, co depozyt może zapłacić w roku - opłata za energię czynną (za kWh) z 12 miesięcy poboru, brutto. Bez opłaty handlowej, innych opłat stałych i dystrybucji."
+          "deposit_model": "Domyślnie off, i off jest ustawieniem dla każdej instalacji, także gdy depozyt przepada. manual (eksperymentalny): sam podajesz współczynnik wartości eksportu; w rocznym odtworzeniu nie obniżył rachunku, zwykle go podnosił. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
+          "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada. Na cenie sprzedaży ze współczynnikiem 1,23 współczynnik wartości eksportu przy limicie to ten udział podzielony przez 1,23 (0,244 dla 30 %, 0,163 dla 20 %); przy 100 % jest to 1/1,23, a nie 1 - ustawieniem, które niczego nie anuluje, jest model depozytu off.",
+          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu, czyli udziału zwrotu podzielonego przez 1,23, całkowicie deprecjonuje część energetyczną importu)."
         }
       },
       "pv_solar_forecast": {
@@ -854,8 +848,6 @@
           "buy_addition": "Dodatek do ceny zakupu",
           "sell_addition": "Dodatek do ceny sprzedaży",
           "monthly_charge": "Stała opłata miesięczna",
-          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
-          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
           "terminal_value_per_kwh": "Wartość energii na końcu planu",
           "boost_ceiling": "Próg zwiększania zużycia",
           "limit_floor": "Próg ograniczenia",
@@ -965,11 +957,9 @@
           "sell_addition": "Dodatek do ceny sprzedaży",
           "vat_percent": "Stawka VAT",
           "monthly_charge": "Stała opłata miesięczna",
-          "deposit_model": "Model depozytu prosumenckiego",
+          "deposit_model": "Model depozytu prosumenckiego (off; manual jest eksperymentalny)",
           "deposit_refund_percent": "Limit zwrotu z depozytu (% wartości eksportu z miesiąca)",
-          "export_value_factor": "Współczynnik wartości eksportu (model ręczny depozytu)",
-          "deposit_yearly_value": "Oczekiwany depozyt zaksięgowany w 12 miesięcy (model auto)",
-          "deposit_yearly_energy_cost": "Opłaty pokrywane z depozytu w 12 miesięcy (model auto)",
+          "export_value_factor": "Współczynnik wartości eksportu (model ręczny, eksperymentalny)",
           "buy_apply_vat": "Dolicz VAT przy zakupie",
           "sell_apply_vat": "Dolicz VAT przy sprzedaży",
           "calibration": "Kalibracja taryfy"
@@ -979,11 +969,9 @@
           "buy_distribution_mode": "Domyślnie included. included: cena ze źródła zakupu już zawiera dystrybucję (cena all-in). added: stawki dystrybucji są doliczane do ceny ze źródła zakupu - dla ceny dynamicznej energii albo cennika wpisanego jak na fakturze. Zmienia cenę zakupu dla planera i dla raportowanych kosztów.",
           "buy_distribution_rate": "Domyślnie 0; zakres 0-1000 za kWh. Wszystko, co operator rozlicza za kWh (stawka sieciowa, opłata jakościowa, OZE, kogeneracyjna), wpisane jak cena zakupu; VAT dolicza się, gdy włączone jest naliczanie VAT od zakupu, mnożnik i dopłata nie dotyczą. Opłata miesięczna należy do opłaty miesięcznej.",
           "buy_distribution_off_peak_rate": "Domyślnie 0; zakres 0-1000 za kWh. To samo dla strefy poza szczytem dwustrefowej taryfy (źródło albo taryfa dystrybucyjna). Przy dwóch strefach ustaw obie stawki albo żadnej; przy jednej strefie jest pomijana.",
-          "deposit_model": "Domyślnie off. manual: sam podajesz współczynnik wartości eksportu. auto: planer wylicza go z oczekiwanego rocznego depozytu i opłat, raz dziennie. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
-          "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada.",
-          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu całkowicie deprecjonuje część energetyczną importu).",
-          "deposit_yearly_value": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: wartość eksportu zaksięgowana na depozycie w 12 miesięcy, razem ze współczynnikiem 1,23.",
-          "deposit_yearly_energy_cost": "Domyślnie 0 (nieznane); zakres 0-1 000 000. Model auto: to, co depozyt może zapłacić w roku - opłata za energię czynną (za kWh) z 12 miesięcy poboru, brutto. Bez opłaty handlowej, innych opłat stałych i dystrybucji."
+          "deposit_model": "Domyślnie off, i off jest ustawieniem dla każdej instalacji, także gdy depozyt przepada. manual (eksperymentalny): sam podajesz współczynnik wartości eksportu; w rocznym odtworzeniu nie obniżył rachunku, zwykle go podnosił. Tylko planowanie; raportowane koszty pozostają w cenach z faktury.",
+          "deposit_refund_percent": "Domyślnie 30 (rozliczenie godzinowe RCE; 20 dla miesięcznego RCEm); zakres 0-100 %. Po 12 miesiącach niewykorzystany depozyt jest zwracany do tego udziału wartości energii wyeksportowanej w danym miesiącu; reszta przepada. Na cenie sprzedaży ze współczynnikiem 1,23 współczynnik wartości eksportu przy limicie to ten udział podzielony przez 1,23 (0,244 dla 30 %, 0,163 dla 20 %); przy 100 % jest to 1/1,23, a nie 1 - ustawieniem, które niczego nie anuluje, jest model depozytu off.",
+          "export_value_factor": "Domyślnie 1 (cena z faktury); zakres 0-1. Tylko model ręczny: ile w planowaniu jest warta kolejna jednostka eksportu, używana tak, jak wpisano. Współczynnik części energetycznej importu wynika z niej i z limitu zwrotu (wartość poniżej limitu, czyli udziału zwrotu podzielonego przez 1,23, całkowicie deprecjonuje część energetyczną importu)."
         }
       },
       "energy_atlas": {
@@ -1016,10 +1004,29 @@
       },
       "deye_controller": {
         "title": "Sterownik Deye",
-        "description": "Energy Compass przechowuje tryb sterownika, zaakceptowany plan, sesję i stan pracy; plan wykonuje blueprint sterownika Deye (Solarman), który zapisuje falownik. Wybierz urządzenie falownika Solarman; jego sześć programów TOU zostanie znalezionych automatycznie.\n\n{status}",
+        "description": "Energy Compass przechowuje tryb sterownika, zaakceptowany plan, sesję i stan pracy. Silnik natywny sam wykonuje plan i zapisuje falownik przez Solarman; silnik blueprintowy (przestarzały) zostawia to blueprintowi sterownika Deye. Wybierz urządzenie falownika Solarman; jego programy TOU i encje baterii zostaną znalezione automatycznie. Tylko pakiety wysokonapięciowe (400–610 V). W ustawieniach eksperckich pola „Limity i przejęcie” zawierają bieżące limity, dawne automatyzacje i własne encje; puste pole zachowuje wartość domyślną.\n\n{status}",
         "data": {
           "enabled": "Włącz sterownik Deye",
-          "device_id": "Urządzenie falownika Solarman"
+          "device_id": "Urządzenie falownika Solarman",
+          "engine": "Silnik sterownika",
+          "max_power_w": "Maksymalna moc baterii (W)",
+          "max_current": "Maksymalny prąd baterii (A)",
+          "relinquish_current": "Prąd przy zwolnieniu (A)",
+          "max_grid_current": "Maksymalny prąd ładowania z sieci (A)",
+          "hold_grid_current": "Prąd ładowania z sieci w HOLD (A)",
+          "reached_discharge_current": "Prąd rozładowania po osiągnięciu celu (A)",
+          "balance_grid_current": "Prąd sieci przy balansowaniu (A)",
+          "voltage_grid_charge_ceiling": "Sufit napięcia ładowania z sieci (V)",
+          "commissioned_battery_modes": "Zatwierdzone tryby baterii",
+          "old_writers": "Dawne automatyzacje baterii",
+          "telemetry_entities": "Encje telemetrii",
+          "discharge_energy_entity": "Licznik energii rozładowania",
+          "charge_entity": "Encja prądu ładowania",
+          "discharge_entity": "Encja prądu rozładowania",
+          "grid_entity": "Encja prądu ładowania z sieci",
+          "operation_entity": "Encja trybu pracy baterii",
+          "soc_entity": "Encja SOC baterii",
+          "voltage_entity": "Encja napięcia baterii"
         }
       }
     },
@@ -1044,7 +1051,11 @@
       "controller_tou_incomplete": "Urządzenie nie ma wszystkich sześciu programów TOU (czas, moc, napięcie, SOC, ładowanie).",
       "controller_tou_prefix": "Identyfikatory encji programów TOU nie mają wspólnego prefiksu; przywróć domyślne identyfikatory.",
       "controller_device_in_use": "Inny wpis Energy Compass już steruje tym urządzeniem.",
-      "controller_not_released": "Wybierz tryb Deye Off i poczekaj na przywrócenie profilu bazowego (przywrócenie nie oczekuje), zanim wyłączysz sterownik lub zmienisz jego urządzenie."
+      "controller_not_released": "Wybierz tryb Deye Off i poczekaj na przywrócenie profilu bazowego (przywrócenie nie oczekuje), zanim wyłączysz sterownik lub zmienisz jego urządzenie.",
+      "controller_entity_missing": "Urządzeniu brakuje tego, czego potrzebuje sterownik natywny: {missing}.",
+      "controller_low_voltage_pack": "Ten sterownik obsługuje pakiety wysokonapięciowe (400–610 V). Zmierzono: {voltage} V. Modele Deye 48 V nie są jeszcze obsługiwane.",
+      "controller_voltage_unavailable": "Czujnik napięcia baterii ({entity}) nie ma odczytu liczbowego, więc nie da się odróżnić pakietu od 48 V. Poczekaj, aż falownik poda napięcie, i zapisz ponownie.",
+      "controller_limits_required": "Nie da się wyliczyć maksymalnej mocy i prądów (moc ładowania lub rozładowania w ustawieniach baterii albo limit prądu falownika wynosi zero). Wpisz je w grupie Limity i przejęcie."
     },
     "abort": {
       "site_not_registered": "Ta witryna została zapomniana w innym oknie; włącz ponownie Energy Atlas, aby zarejestrować nową."
@@ -1383,6 +1394,11 @@
         "name": "Tryb sterownika Deye"
       }
     },
+    "switch": {
+      "deye_pause": {
+        "name": "Wstrzymaj zapisy do falownika"
+      }
+    },
     "binary_sensor": {
       "forecast_valid": {
         "name": "Poprawna prognoza",
@@ -1422,6 +1438,18 @@
     }
   },
   "issues": {
+    "deye_hardware_unverified": {
+      "title": "Falownik Deye niezweryfikowany",
+      "description": "Falownik zgłasza \"{device_type}\" z protokołem {protocol}, na którym Energy Compass nie był sprawdzany. Sterownik nadal działa: przed pierwszym zapisem porównuje układ rejestrów ze stanami encji, a Simulation pokazuje wynik. Najpierw wypróbuj Simulation."
+    },
+    "deye_blueprint_active": {
+      "title": "Automatyzacja blueprintu Deye nadal działa",
+      "description": "Automatyzacja {automation} używa blueprintu sterownika Deye, a wybrany jest silnik wbudowany. Energy Compass nie zapisuje niczego do falownika, nawet przywrócenia BASE, dopóki automatyzacja jest włączona: dwa zapisujące sterowniki walczyłyby o falownik. Falownik zachowuje ostatni nadany profil do czasu wyłączenia automatyzacji i zatrzymania jej wykonań; wtedy sterownik kontynuuje albo przywraca BASE przy następnym przebiegu."
+    },
+    "deye_run_failed": {
+      "title": "Przebiegi sterownika Deye kończą się błędem",
+      "description": "Ostatnie przebiegi sterownika Deye zakończyły się błędem albo nie mogły odczytać stanu sterownika, więc nastawy falownika nie są prowadzone. Powód widać na czujniku runtime, szczegóły są w dzienniku Home Assistanta. Zgłoszenie zniknie po następnym udanym przebiegu."
+    },
     "source_removed": {
       "title": "Źródło zostało usunięte",
       "description": "Zmień źródła instalacji {name}."
@@ -1498,6 +1526,20 @@
     },
     "package_import_refused": {
       "message": "Stan pakietu został już zaimportowany; ustaw force, aby zaimportować ponownie."
+    },
+    "controller_blueprint_active": {
+      "message": "Automatyzacja blueprintu sterownika Deye {automation} jest włączona. Wyłącz ją i poczekaj na koniec jej przebiegu, zanim użyjesz silnika natywnego, inaczej dwa zapisujące będą walczyć o falownik."
+    },
+    "controller_native": {
+      "message": "Natywny silnik Deye nie używa usługi stanu pracy sterownika. Wyłącz automatyzację blueprintu, która ją wywołała."
+    }
+  },
+  "selector": {
+    "deye_engine": {
+      "options": {
+        "native": "Natywny (Energy Compass zapisuje przez Solarman)",
+        "blueprint": "Blueprint (przestarzały)"
+      }
     }
   }
 }

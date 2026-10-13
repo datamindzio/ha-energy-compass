@@ -1,6 +1,7 @@
 """Physical operating modes and elapsed-time advice commitments."""
 
 import math
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, timedelta
 
@@ -35,7 +36,8 @@ IDLE_FLOWS = {
 # Import this small is solver noise, not a plan.
 _IMPORT_TOLERANCE = 1e-5
 # HiGHS accepts each binary within 1e-6 and each row within 1e-6: a follow row written
-# with big-M `m` (`bc >= m * (x - full)`) leaves up to 1e-6 * (2m + 1) kWh short.
+# with big-M `m` (`bc >= m * (x - full)`) leaves up to 1e-6 * (2m + 1) kWh short, and
+# 1e-6 * (3m + 1) with a flexible load, whose rows add a power binary.
 _ROW_TOLERANCE = 1e-6
 _EMPTY_TOLERANCE = 1e-4
 # A bridge's realised probe stays this far below the activity that would open the slot.
@@ -484,40 +486,94 @@ def _curtail_dry(problem, slot) -> bool:
 
 
 def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
-    """Apply the load-following rule without the mode model.
+    """Apply the load- and surplus-following rules without the mode model.
 
     With no minimum duration there are no mode binaries, but the flows are still
-    labelled SELF_CONSUME and a controller still holds the full discharge cap,
-    so a partial discharge next to import stays unexecutable. One binary per
-    interval stands for "the battery discharges"; it plays the role of the
-    SELF_CONSUME indicator, and the rule on the discharge is the same.
+    labelled SELF_CONSUME or CHARGE_PV and a controller still holds the full
+    discharge or charge cap, so a partial discharge next to import or a partial
+    charge next to export stays unexecutable. A binary per interval stands for
+    "the battery discharges" (`discharging`, added here) or "the battery charges"
+    (`battery_mode`, which `optimize` already holds per interval and ties to `bc`
+    and `bd`); it plays the role of the mode indicator, and the rule is the same.
+    A charge above the PV surplus is CHARGE_GRID and already takes the whole
+    surplus, so the rule does not touch it.
     """
     battery = problem.battery
     reserve = battery.capacity_kwh * battery.minimum_soc_fraction
     lowest = battery.initial_kwh
+    highest = battery.initial_kwh
     for slot, v, drain in zip(
         problem.slots, vectors, drain_schedule(problem), strict=True
     ):
-        hours = (
-            slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
-        ).total_seconds() / 3600
+        hours = _hours(slot)
+        flex_max = model.upper[v["flex_load"]] if flexible_load else 0
         discharge_max = model.upper[v["bd"]]
         lowest -= discharge_max / battery.eta_discharge + drain
-        if discharge_max <= 0:
+        if discharge_max > 0:
+            discharging = v["discharging"] = model.variable(binary=True)
+            model.constrain({v["bd"]: 1, discharging: -discharge_max}, -np.inf, 0)
+            model.constrain({discharging: 1, v["battery_mode"]: 1}, -np.inf, 1)
+            _follow_load(
+                model,
+                problem,
+                v,
+                {"SELF_CONSUME": discharging},
+                slot,
+                hours,
+                flex_max,
+                lowest <= reserve,
+            )
+        charge_max = model.upper[v["bc"]]
+        ceiling = model.upper[v["energy"]]
+        highest = min(ceiling, highest + battery.eta_charge * charge_max - drain)
+        surplus = max(slot.pv_kwh - slot.load_kwh, 0)
+        if charge_max <= 0 or surplus <= 0:
             continue
-        discharging = v["discharging"] = model.variable(binary=True)
-        model.constrain({v["bd"]: 1, discharging: -discharge_max}, -np.inf, 0)
-        flex_max = model.upper[v["flex_load"]] if flexible_load else 0
-        _follow_load(
+        _follow_surplus(
             model,
-            problem,
             v,
-            {"SELF_CONSUME": discharging},
-            slot,
-            hours,
+            {"CHARGE_PV": v["battery_mode"]},
+            surplus,
             flex_max,
-            lowest <= reserve,
+            highest >= ceiling - 1e-9,
         )
+
+
+def _released_start(problem: Problem) -> bool:
+    """Tell whether the interval before the first one was a HOLD released from a depleted pack.
+
+    A HOLD released from a PV-follow commitment because its pack is depleted starts no
+    clock, may go back to the commitment and, past the commitment's deadline, goes on
+    as long as it runs. The coordinator carries that state across a boundary
+    (`initial_dispatch_released`) with the commitment and its clock, which stay.
+    """
+    previous, _ = _initial(problem)
+    return bool(
+        problem.initial_dispatch_released
+        and problem.battery
+        and problem.minimum_mode_minutes
+        and dwell_group(previous) == "PV_FOLLOW"
+    )
+
+
+def _resume(model, v, members, released, depleted) -> None:
+    """Let a HOLD released from a depleted pack go back to the commitment (`back`).
+
+    A released HOLD does not go back to the commitment, except where the pack it
+    was released for is still depleted: the surplus is then what the pack takes, and
+    a HOLD cannot pass the PV above the export cap. The return is the commitment
+    going on, not a PV-follow run of its own: its deadline is the only one.
+    """
+    back = v["back"] = model.variable(binary=True)
+    followed = {v[f"mode_{mode}"]: 1 for mode in members}
+    model.constrain({**followed, **released, back: -1}, -np.inf, 1)
+    model.constrain(
+        {back: 1, **{key: -value for key, value in followed.items()}}, -np.inf, 0
+    )
+    model.constrain(
+        {back: 1, **{key: -value for key, value in released.items()}}, -np.inf, 0
+    )
+    model.constrain({back: 1, **depleted}, -np.inf, 0)
 
 
 def _offer_curtail(model, v, seen_full, full, curtailing, released) -> None:
@@ -808,6 +864,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                         {v["flex_load"]: 1, begins: top - room}, -np.inf, top
                     )
             model.constrain(continues, -np.inf, 0)
+    released_start = _released_start(problem)
     # Per idle committed interval, the binary that tells a real HOLD run from a bridge.
     runs = {}
     # Intervals whose HOLD started from a carried PV-follow commitment: no clock of its own.
@@ -844,6 +901,14 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         curtailing = {}
         # The HOLD or the HOLD run released from the commitment, in the previous interval.
         released = {}
+        if released_start:
+            # The interval before the first was a HOLD released from the depleted pack:
+            # that HOLD goes on, or goes back to the commitment (`_resume`).
+            fixed = model.variable(upper=1.0)
+            model.lower[fixed] = 1.0
+            held = {fixed: -1}
+            released = {fixed: 1}
+            depleted = {fixed: -1}
         if "CHARGE_PV" in members and (flexible_load or 0 not in idle):
             # The observed pack may already be at the first interval's ceiling: there
             # is no earlier interval to leave it full, so the release is a constant.
@@ -929,13 +994,10 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 held = {real: -1}
                 if follows_pv:
                     # As in any committed interval: a released HOLD does not go back
-                    # to the commitment and starts no clock of its own.
+                    # to the commitment (unless the pack is depleted) and starts no
+                    # clock of its own.
                     if released:
-                        model.constrain(
-                            {**{v[f"mode_{mode}"]: 1 for mode in members}, **released},
-                            -np.inf,
-                            1,
-                        )
+                        _resume(model, v, members, released, depleted)
                     free_hold.add(i)
                     released = {real: 1}
                 curtailing = {v["mode_CURTAIL"]: -1} if curtails else {}
@@ -994,15 +1056,13 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 model.constrain(kept, 1, 1)
                 if follows_pv:
                     # A released HOLD does not go back to the commitment (a released
-                    # CURTAIL is held by its own minimum duration), and it starts no
-                    # clock of its own: the commitment's deadline is the only one, so it
-                    # may end in CURTAIL at once.
+                    # CURTAIL is held by its own minimum duration), except while the
+                    # pack is depleted: the surplus it takes is what the inverter does
+                    # there, and a HOLD cannot pass the PV above the export cap. It
+                    # starts no clock of its own: the commitment's deadline is the only
+                    # one, so it may end in CURTAIL at once.
                     if released:
-                        model.constrain(
-                            {**{v[f"mode_{mode}"]: 1 for mode in members}, **released},
-                            -np.inf,
-                            1,
-                        )
+                        _resume(model, v, members, released, depleted)
                     free_hold.add(i)
                     released = {v["mode_HOLD"]: 1}
             depleted = {}
@@ -1097,7 +1157,18 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             prior, prior_const = (
                 indicators[group][i - 1]
                 if i
-                else ({}, int(previous is not None and dwell_group(previous) == group))
+                else (
+                    {},
+                    int(
+                        (
+                            previous is not None
+                            and dwell_group(previous) == group
+                            and not (released_start and group == "PV_FOLLOW")
+                        )
+                        # The released HOLD goes on: a HOLD run with no clock.
+                        or (released_start and group == "HOLD")
+                    ),
+                )
             )
             rise = {
                 key: current.get(key, 0) - prior.get(key, 0)
@@ -1105,6 +1176,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             }
             rise = {key: value for key, value in rise.items() if value}
             bound = prior_const - current_const
+            # A return to the commitment (`back`) is that commitment going on, not a run.
+            if group == "PV_FOLLOW" and "back" in v:
+                rise = {**rise, v["back"]: -1}
             if (
                 rise
                 and ACTIVE.intersection(members)
@@ -1127,13 +1201,24 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             model.constrain(holding, -np.inf, current_const)
 
 
-def _follow_tolerance(big_m: float) -> float:
-    """Import or export the noise of a follow row of bound `big_m` kWh may leave."""
-    return max(_IMPORT_TOLERANCE, _ROW_TOLERANCE * (2 * big_m + 1))
+def _follow_tolerance(big_m: float, binaries: int = 2) -> float:
+    """Import or export the noise of a follow row of bound `big_m` kWh may leave.
+
+    `binaries` is how many of the row's binaries (mode, relief, and with a flexible
+    load the power one) carry the bound: each leaves 1e-6 of it.
+    """
+    return max(_IMPORT_TOLERANCE, _ROW_TOLERANCE * (binaries * big_m + 1))
 
 
-def _check_load_following(problem: Problem, slot, flow, mode) -> None:
-    """Reject import beside a partial discharge in a SELF_CONSUME interval."""
+def _check_load_following(
+    problem: Problem, slot, flow, mode, flex_max: float = 0.0
+) -> None:
+    """Reject import beside a partial discharge in a SELF_CONSUME interval.
+
+    `flex_max` is the flexible load's largest draw in the interval (kWh): its rows
+    carry a third binary and a bound that includes it, while `slot` holds the load
+    the plan realised (the base load plus the probe it drew).
+    """
     if mode != "SELF_CONSUME":
         return
     hours = (
@@ -1143,8 +1228,11 @@ def _check_load_following(problem: Problem, slot, flow, mode) -> None:
         problem.battery.discharge_kw * hours,
         problem.site.inverter_kw * hours - slot.pv_kwh,
     )
-    # Bound of every row's M (docs/model.md): the power limit, or the net load below the slot's load.
-    tolerance = _follow_tolerance(max(power_limit, slot.load_kwh))
+    # Bound of every row's M (docs/model.md): the power limit, or the net load plus
+    # the flexible load's largest draw (the base load is at most the realised one).
+    tolerance = _follow_tolerance(
+        max(power_limit, slot.load_kwh + flex_max), 3 if flex_max > 0 else 2
+    )
     if flow.grid_import_kwh <= tolerance:
         return
     reserve = problem.battery.capacity_kwh * problem.battery.minimum_soc_fraction
@@ -1158,13 +1246,20 @@ def _check_load_following(problem: Problem, slot, flow, mode) -> None:
         )
 
 
-def _check_surplus_following(problem: Problem, slot, flow, mode, index) -> None:
-    """Reject export beside a partial charge in a CHARGE_PV interval."""
+def _check_surplus_following(
+    problem: Problem, slot, flow, mode, index, flex_max: float = 0.0
+) -> None:
+    """Reject export beside a partial charge in a CHARGE_PV interval.
+
+    `flex_max` is as for `_check_load_following`: a third binary on the surplus row.
+    """
     if mode != "CHARGE_PV":
         return
     hours = _hours(slot)
     # Bound of every row's M (docs/model.md): the charge limit, or the surplus below the slot's PV.
-    tolerance = _follow_tolerance(max(problem.battery.charge_kw * hours, slot.pv_kwh))
+    tolerance = _follow_tolerance(
+        max(problem.battery.charge_kw * hours, slot.pv_kwh), 3 if flex_max > 0 else 2
+    )
     if flow.grid_export_kwh <= tolerance:
         return
     ceiling = problem.battery.capacity_kwh * (
@@ -1182,8 +1277,14 @@ def _check_surplus_following(problem: Problem, slot, flow, mode, index) -> None:
         )
 
 
-def validate_modes(problem: Problem, flows, bridges=None) -> None:
+def validate_modes(
+    problem: Problem, flows, bridges=None, flex_max: Sequence[float] = ()
+) -> frozenset[int]:
     """Independently certify labels, activity, coverage and carried commitments.
+
+    Returns the rows of a HOLD released from a PV-follow commitment whose pack was
+    depleted, for as long as that HOLD runs: the coordinator carries that release
+    (`initial_dispatch_released`).
 
     `bridges` lists the committed idle rows the plan reads as a bridge, the rest
     of the HOLD rows start or continue a HOLD run (the solver says which, since
@@ -1196,6 +1297,10 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
     where a commitment (or a CURTAIL run) can be under way, and the validator accepts
     any idle HOLD row as one while the carried commitment lasts. The solver passes the
     model's own bridges; the readings are for callers that have none.
+
+    `flex_max` gives, per interval, the largest draw (kWh) of the flexible load the
+    plan was solved with; `problem` then holds the load the plan realised. It widens
+    the follow checks to the bound of the rows a flexible load adds. Empty: none.
     """
     if bridges is None and problem.battery and problem.minimum_mode_minutes:
         previous, _ = _initial(problem)
@@ -1216,21 +1321,26 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
         failure = None
         for reading in readings:
             try:
-                return _certify_modes(problem, flows, reading)
+                return _certify_modes(problem, flows, reading, flex_max)
             except SolveError as error:
                 failure = failure or error
         raise failure
-    _certify_modes(problem, flows, frozenset(bridges or ()))
+    return _certify_modes(problem, flows, frozenset(bridges or ()), flex_max)
 
 
-def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
+def _certify_modes(
+    problem: Problem, flows, bridges: frozenset[int], flex_max: Sequence[float] = ()
+) -> frozenset[int]:
     """Certify the flows of a plan that reads the committed idle rows in `bridges` as bridges."""
     if not problem.battery:
-        return
+        return frozenset()
     if not problem.minimum_mode_minutes:
-        for slot, flow in zip(problem.slots, flows, strict=True):
-            _check_load_following(problem, slot, flow, machine_state(slot, flow))
-        return
+        for index, (slot, flow) in enumerate(zip(problem.slots, flows, strict=True)):
+            mode = machine_state(slot, flow)
+            flexible = flex_max[index] if flex_max else 0.0
+            _check_load_following(problem, slot, flow, mode, flexible)
+            _check_surplus_following(problem, slot, flow, mode, index, flexible)
+        return frozenset()
     previous, since = _initial(problem)
     dwell = timedelta(minutes=problem.minimum_mode_minutes)
     coverage_end = problem.slots[-1].end.astimezone(UTC)
@@ -1239,6 +1349,12 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
     released = full_seen = False
     owed = _owed(problem, drains, since.astimezone(UTC) + dwell) if carried else ()
     idle = idle_slots(problem) if carried else frozenset()
+    # The HOLD released from a depleted pack before the first interval goes on: it starts
+    # no clock, and the commitment's deadline stays the only one.
+    emptied = resumed = _released_start(problem)
+    if emptied:
+        previous, carried, released = "HOLD", False, True
+    rows = []
     left = problem.battery.initial_kwh
     for index, (slot, flow) in enumerate(zip(problem.slots, flows, strict=True)):
         start = slot.start.astimezone(UTC)
@@ -1276,8 +1392,9 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
             raise SolveError(
                 "solver_failure", "invalid solver result: physical dispatch mode"
             )
-        _check_load_following(problem, slot, flow, mode)
-        _check_surplus_following(problem, slot, flow, mode, index)
+        flexible = flex_max[index] if flex_max else 0.0
+        _check_load_following(problem, slot, flow, mode, flexible)
+        _check_surplus_following(problem, slot, flow, mode, index, flexible)
         if (
             problem.initial_battery_mode is not None
             and start < problem.initial_battery_mode_since.astimezone(UTC) + dwell
@@ -1315,7 +1432,7 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
             # Too little PV to curtail: the CURTAIL run goes on and its clock with it.
             left = flow.end_soc_kwh
             continue
-        ends = False
+        ends = spent = False
         if dwell_group(mode) != dwell_group(previous):
             if previous is not None and start < since.astimezone(UTC) + dwell:
                 # A carried PV-follow commitment ends once the battery cannot go on:
@@ -1324,16 +1441,14 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
                 # curtail what the site cannot pass, and so may the HOLD released from a
                 # commitment whose pack has been full.
                 full = left >= _lock_ceiling(problem, drains, index) - _EMPTY_TOLERANCE
-                ends = (
+                spent = (
                     carried
                     and mode == "HOLD"
-                    and (
-                        not _takes_surplus(problem, slot)
-                        and left
-                        <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
-                        or full
-                    )
+                    and not _takes_surplus(problem, slot)
+                    and left
+                    <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
                 )
+                ends = spent or (carried and mode == "HOLD" and full)
                 curtails = mode == "CURTAIL" and (
                     carried and full or released and full_seen
                 )
@@ -1346,10 +1461,29 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
                     and mode == "CURTAIL"
                     and _curtail_need(problem, slot) > 0
                 )
-                if not (ends or curtails or takes_over):
+                # A HOLD released from a depleted pack goes back to the commitment: the
+                # HOLD has no legal flow for PV the site cannot pass, and the pack is
+                # what takes it. A HOLD released from a full pack does not.
+                resumes = (
+                    released
+                    and dwell_group(mode) == "PV_FOLLOW"
+                    and (
+                        left
+                        <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
+                        # The release the coordinator carried: its pack was depleted.
+                        or resumed
+                        and not index
+                    )
+                )
+                if not (ends or curtails or takes_over or resumes):
                     raise SolveError(
                         "solver_failure", "invalid solver result: minimum mode duration"
                     )
+                if resumes:
+                    carried, released, emptied = True, False, False
+                    previous = mode
+                    left = flow.end_soc_kwh
+                    continue
             if mode in ACTIVE and coverage_end < start + dwell:
                 raise SolveError(
                     "solver_failure",
@@ -1357,8 +1491,11 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
                 )
             # A HOLD released from the commitment starts no clock of its own: the
             # commitment's deadline stays the only one.
-            carried, released = False, ends
+            carried, released, emptied = False, ends, ends and spent
             if not ends:
                 since = start
         previous = mode
         left = flow.end_soc_kwh
+        if emptied and mode == "HOLD":
+            rows.append(index)
+    return frozenset(rows)

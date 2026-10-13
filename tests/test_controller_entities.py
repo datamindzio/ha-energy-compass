@@ -52,7 +52,11 @@ def test_the_three_entities_are_registered_by_key(hass, controller_site):
 
 def test_entity_classes_hold_the_documented_unrecorded_sets():
     assert DeyeControllerSensor._unrecorded_attributes == {"accepted", "tou"}
-    assert DeyeRuntimeSensor._unrecorded_attributes == {"runtime", "updated_at"}
+    assert DeyeRuntimeSensor._unrecorded_attributes == {
+        "runtime",
+        "updated_at",
+        "last_run",
+    }
     assert core.MODES == ("Off", "Simulation", "Auto")
 
 

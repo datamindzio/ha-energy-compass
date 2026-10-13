@@ -176,6 +176,29 @@ def test_validator_still_rejects_a_charge_short_by_more_than_the_noise_of_its_ro
         validate_modes(problem, (flow,))
 
 
+def test_validator_widens_the_charge_noise_to_the_three_binaries_of_a_flexible_row():
+    """T-054: with a flexible load the surplus row carries a third binary (the power one).
+
+    Surplus 83 kWh (PV 99, load 16) makes the row's M 83: it leaves up to
+    1e-6 * (3 * 83 + 1) = 2.5e-4 kWh short, above the 2.0e-4 kWh (2M + 1 with M = PV 99)
+    the check allows without a flexible load.
+    """
+    problem = big_battery(99, 16, 25)
+    short = 0.99e-6 * (3 * 83 + 1)
+    assert short > 1e-6 * (2 * 99 + 1)
+    charge = 25 - short
+    flow = Flow(0, 83 - charge, charge, 0, 0, charge, "charge", "CHARGE_PV")
+
+    validate_modes(problem, (flow,), flex_max=(30.0,))
+    with pytest.raises(SolveError, match="charge-from-PV exports"):
+        validate_modes(problem, (flow,))
+    # Twice the noise of the three binaries is a real partial charge.
+    charge = 25 - 2 * 1e-6 * (3 * 99 + 1)
+    flow = Flow(0, 83 - charge, charge, 0, 0, charge, "charge", "CHARGE_PV")
+    with pytest.raises(SolveError, match="charge-from-PV exports"):
+        validate_modes(problem, (flow,), flex_max=(30.0,))
+
+
 @pytest.mark.parametrize("left", [3, 2])
 @pytest.mark.parametrize("room", [0.3, 0.4])
 @pytest.mark.parametrize(
@@ -270,6 +293,119 @@ def test_flexible_load_probe_keeps_charge_pv_following():
         for slot, extra in zip(problem.slots, plan.schedule_kwh, strict=True)
     )
     assert_pv_following(replace(problem, slots=slots), plan.plan)
+
+
+def partial_need(slots=None, **changes):
+    """One sunny quarter, then three that draw the pack down.
+
+    The pack wants 0.6 of the 1.2 kWh of surplus. Without the rule it charged 0.6
+    next to export of 0.6, which a controller holding the charge cap cannot do.
+    """
+    changes = {"minimum_mode_minutes": 0, **changes}
+    rows = slots or (
+        (3.0, 0.1, 1.5, 0.3),
+        (2.0, 0.9, 0.0, 1.0),
+        (1.0, 0.1, 0.0, 0.8),
+        (0.5, 0.0, 0.0, 0.8),
+    )
+    problem = dispatch(rows, minutes=15, **changes)
+    return replace(
+        problem,
+        battery=replace(problem.battery, initial_kwh=2.0, allow_grid_charge=False),
+    )
+
+
+def test_charge_pv_follows_the_surplus_without_a_minimum_mode_duration():
+    problem = partial_need()
+    plan = solve(problem)
+    assert_pv_following(problem, plan)
+    first = plan.flows[0]
+    # The 4 kW battery takes 1 kWh a quarter hour: charge it all or not at all.
+    assert first.charge_kwh == pytest.approx(0) or first.charge_kwh == pytest.approx(1)
+
+
+def test_charge_pv_without_a_duration_exports_at_the_power_limit():
+    # 1.9 kWh of surplus per quarter hour; the 4 kW battery takes at most 1 kWh.
+    problem = partial_need(
+        slots=((1.0, 0.1, 2.0, 0.1),) * 2 + ((3.0, 0.0, 0.0, 1.0),) * 2
+    )
+    problem = replace(problem, battery=replace(problem.battery, initial_kwh=0))
+    plan = solve(problem)
+    charging = [f for f in plan.flows if f.charge_kwh > 1e-6]
+    assert charging
+    for flow in charging:
+        assert flow.charge_kwh == pytest.approx(1)
+        assert flow.grid_export_kwh == pytest.approx(0.9)
+    assert_pv_following(problem, plan)
+
+
+def test_charge_pv_without_a_duration_exports_once_the_pack_is_full():
+    problem = sunny(
+        slots=4,
+        initial=9.8,
+        lock=False,
+        terminal_value_per_kwh=2.0,
+        minimum_mode_minutes=0,
+    )
+    plan = solve(problem)
+    filling = [f for f in plan.flows if f.charge_kwh > 1e-6]
+    assert len(filling) == 1
+    assert filling[0].end_soc_kwh == pytest.approx(10)
+    assert filling[0].charge_kwh == pytest.approx(0.2)
+    assert filling[0].grid_export_kwh == pytest.approx(0.3)
+    assert_pv_following(problem, plan)
+
+
+@pytest.mark.parametrize(
+    ("pv", "request_"),
+    (
+        # The surplus (1.7 and 1.2 kWh) is above the 1 kWh charge limit, so the rule is
+        # "charge 1 kWh or none" less whatever the probe takes of the surplus.
+        (2.0, FlexibleLoadRequest(0.3, 1.0)),
+        (2.0, FlexibleLoadRequest(0.5, 4.0)),
+        (1.5, FlexibleLoadRequest(0.3, 1.0)),
+    ),
+)
+def test_flexible_load_probe_keeps_charge_pv_following_without_a_duration(pv, request_):
+    # Without the rule the probe's plan charged 0.6-0.65 kWh of the surplus at the
+    # first quarter and exported the rest, a state a controller holding the charge
+    # cap cannot produce.
+    problem = partial_need(
+        slots=(
+            (3.0, 0.1, pv, 0.3),
+            (2.0, 0.9, 0.0, 1.0),
+            (1.0, 0.1, 0.0, 0.8),
+            (0.5, 0.0, 0.0, 0.8),
+        )
+    )
+    result = solve_flexible_load(problem, request_)
+    assert sum(result.schedule_kwh) == pytest.approx(request_.energy_kwh)
+    slots = tuple(
+        replace(slot, load_kwh=slot.load_kwh + extra)
+        for slot, extra in zip(problem.slots, result.schedule_kwh, strict=True)
+    )
+    assert_pv_following(replace(problem, slots=slots), result.plan)
+    first = result.plan.flows[0]
+    # The 4 kW battery takes 1 kWh a quarter hour: charge it all or not at all, unless
+    # the probe's own load leaves less surplus than that.
+    assert (
+        first.charge_kwh == pytest.approx(0)
+        or first.charge_kwh >= min(1.0, pv - 0.3 - result.schedule_kwh[0]) - 1e-5
+    )
+
+
+def test_validator_rejects_partial_charge_with_export_without_a_duration():
+    problem = dispatch(((1, 0, 5, 0),) * 2, minutes=60, minimum_mode_minutes=0)
+
+    def rows(export_kwh, charge_kwh, soc):
+        return tuple(
+            Flow(0, export_kwh, charge_kwh, 0, 0, soc(i), "charge", "CHARGE_PV")
+            for i in range(2)
+        )
+
+    with pytest.raises(SolveError, match="charge-from-PV exports"):
+        validate_modes(problem, rows(4, 1, lambda i: (i + 1) * 1.0))
+    validate_modes(problem, rows(1, 4, lambda i: (i + 1) * 4.0))
 
 
 def full_pack_problem(pv, *, initial, export_cap=None, lead=15, drain=0.0, **site):
@@ -401,11 +537,12 @@ def test_full_pack_curtails_inside_the_commitment_above_the_inverter_rating():
     assert plan.flows[1].curtail_kwh == pytest.approx(0.2)
 
 
-def test_released_hold_does_not_go_back_to_the_commitment():
-    # An empty pack and no surplus in slot 0 end the commitment in HOLD. The
-    # surplus after it would pay to store (sells at 0.1, dear import after the
-    # commitment), but a member mode after the released HOLD is a second change
-    # inside the minimum duration: the plan holds until the commitment's deadline.
+def test_hold_released_from_a_depleted_pack_goes_back_to_the_commitment():
+    # An empty pack and no surplus in slot 0 end the commitment in HOLD. The pack is
+    # still empty when the surplus comes, and charging it is what the inverter does:
+    # the HOLD is released with no clock of its own, so the plan goes back to the
+    # commitment (T-050; before, it held until the commitment's deadline). The
+    # surplus pays to store (sells at 0.1, dear import after the commitment).
     rows = (
         (1.0, 0.1, 0.0, 0.1),
         *((1.0, 0.1, 0.9, 0.1),) * 3,
@@ -419,7 +556,10 @@ def test_released_hold_does_not_go_back_to_the_commitment():
         initial_dispatch_mode_since=problem.slots[0].start,
     )
     plan = solve(problem)
-    assert [flow.dispatch_mode for flow in plan.flows[:4]] == ["HOLD"] * 4
+    assert [flow.dispatch_mode for flow in plan.flows[:4]] == [
+        "HOLD",
+        *("CHARGE_PV",) * 3,
+    ]
 
 
 def test_a_pack_with_room_keeps_the_commitment_instead_of_curtailing():

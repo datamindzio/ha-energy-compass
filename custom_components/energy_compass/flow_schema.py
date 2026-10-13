@@ -51,9 +51,10 @@ def settings_schema(group: str, values: dict, currency="EUR") -> vol.Schema:
             )
     for key, (section, choices) in CHOICES.items():
         if section == group:
-            fields[vol.Optional(key, default=values.get(key, choices[0]))] = select(
-                choices
-            )
+            current = values.get(key, choices[0])
+            fields[
+                vol.Optional(key, default=current if current in choices else choices[0])
+            ] = select(choices)
     if group == "notifications":
         for key in ("quiet_start", "quiet_end"):
             fields[vol.Optional(key, default=values[key])] = selector.TimeSelector()

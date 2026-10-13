@@ -226,6 +226,16 @@ def _validate_balance(
     return first
 
 
+def _validate_settled(problem: Problem, settled: list[dict[str, float]]) -> None:
+    """The published rows keep one direction per slot, whatever noise the solver left."""
+    for flow in settled:
+        _check(min(flow["gin"], flow["gout"]) <= _TOL, "simultaneous grid directions")
+        if problem.battery:
+            _check(
+                min(flow["bc"], flow["bd"]) <= _TOL, "simultaneous battery directions"
+            )
+
+
 def _validate_solution(
     problem: Problem,
     vectors: list[dict[str, int]],
@@ -319,7 +329,9 @@ def _validate_solution(
         _check(
             gout <= problem.site.grid_export_kw * duration + _TOL, "grid export limit"
         )
-        _check(min(gin, gout) <= _TOL, "simultaneous grid directions")
+        # One direction per slot is the pair of rows below with `grid_mode` checked to
+        # be within 1e-6 of 0 or 1, up to the noise that leaves on the other side
+        # (1e-6 * (M + 1)): `_validate_settled` holds the published rows to it.
         _check(
             gin <= problem.site.grid_import_kw * duration * value("grid_mode") + _TOL,
             "grid import direction",
@@ -382,7 +394,7 @@ def _validate_solution(
                 <= battery.discharge_kw * duration * (1 - value("battery_mode")) + _TOL,
                 "discharge direction",
             )
-            _check(min(charge, discharge) <= _TOL, "simultaneous battery directions")
+            # Likewise `battery_mode` for the battery: noise on the idle side is settled.
             if not battery.allow_grid_charge or not price_allows_grid_charge(
                 problem, slot
             ):
@@ -899,6 +911,7 @@ def _solve(
         problem, vectors, values, balance_choices, balance_miss
     )
     settled = settle_mode_noise(problem, vectors, values, model.upper)
+    _validate_settled(problem, settled)
     flows = tuple(
         Flow(
             f["gin"],
@@ -945,7 +958,12 @@ def _solve(
         for i, v in enumerate(vectors)
         if "hold_run" in v and values[v["hold_run"]] < 0.5
     )
-    validate_modes(mode_problem, flows, bridges)
+    released = validate_modes(
+        mode_problem,
+        flows,
+        bridges,
+        tuple(model.upper[v["flex_load"]] for v in vectors) if flexible_load else (),
+    )
     # A HOLD that goes on with a CURTAIL run is a bridge for the commitment as well; an
     # idle row has both readings, and is listed once.
     bridges = tuple(
@@ -995,7 +1013,7 @@ def _solve(
     peak_import_kw = (
         float(values[vectors[0]["peak_import"]]) if "peak_import" in vectors[0] else 0.0
     )
-    episodes, reserve = validate_export_benefit(problem, vectors, values)
+    episodes, reserve = validate_export_benefit(problem, vectors, values, settled)
     charge_episodes, charge_reserve = validate_charge_benefit(problem, vectors, values)
     return FlexibleLoadPlan(
         Plan(
@@ -1017,6 +1035,7 @@ def _solve(
             time_limited=model.time_limited,
             mip_gap=model.mip_gap,
             carried_bridges=bridges,
+            released_holds=tuple(sorted(released)),
         ),
         probe,
     )

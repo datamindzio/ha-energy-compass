@@ -75,6 +75,12 @@ def _controller(call: ServiceCall):
 
 async def _async_runtime(call: ServiceCall) -> dict:
     controller = _controller(call)
+    if controller.engine == "native":
+        # A blueprint run that slipped past the mode guard stops before its first
+        # write, because it persists the runtime through this service first.
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="controller_native"
+        )
     try:
         return controller.async_update_runtime(
             call.data.get("runtime"), call.data.get("restore_pending")

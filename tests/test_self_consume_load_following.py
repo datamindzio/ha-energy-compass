@@ -207,6 +207,39 @@ def test_validator_accepts_the_discharge_a_follow_row_leaves_short_by_its_noise(
         validate_modes(problem, (flow,))
 
 
+def test_validator_widens_the_discharge_noise_to_the_flexible_rows():
+    """T-054: the flexible row's M is `load - PV + flex_max`, with three binaries.
+
+    Load 1 kWh, PV 0, a flexible load of at most 26 kWh that drew nothing, limit 25 kWh:
+    the row (M = 27) leaves up to 1e-6 * (3 * 27 + 1) = 8.2e-5 kWh of the realised load
+    uncovered, above the 5.1e-5 kWh (2M + 1 with M the limit) the realised load alone gives.
+    """
+    problem = dispatch(((1, 0, 0, 1),), minutes=60, minimum_mode_minutes=60)
+    problem = replace(
+        problem,
+        site=replace(problem.site, inverter_kw=100, grid_import_kw=100),
+        battery=replace(
+            problem.battery,
+            capacity_kwh=250,
+            initial_kwh=250,
+            charge_kw=25,
+            discharge_kw=25,
+        ),
+    )
+    short = 0.99e-6 * (3 * 27 + 1)
+    assert short > 1e-6 * (2 * 25 + 1)
+
+    def flow(short):
+        return Flow(short, 0, 0, 1 - short, 0, 249 + short, "discharge", "SELF_CONSUME")
+
+    validate_modes(problem, (flow(short),), flex_max=(26.0,))
+    with pytest.raises(SolveError, match="self-consume imports"):
+        validate_modes(problem, (flow(short),))
+    # Twice the noise of the three binaries is a real partial discharge.
+    with pytest.raises(SolveError, match="self-consume imports"):
+        validate_modes(problem, (flow(2 * 1e-6 * (3 * 27 + 1)),), flex_max=(26.0,))
+
+
 def test_flexible_load_probe_stays_feasible_in_self_consume():
     problem = flat_night(slots=12)
     plan = solve_flexible_load(problem, FlexibleLoadRequest(1.0, 2.0))

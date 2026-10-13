@@ -9,7 +9,10 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import (
     async_track_point_in_utc_time,
     async_track_state_change_event,
@@ -18,6 +21,16 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import controller as core
+from . import controller_hardware as hardware
+from .controller_profile import PACK_VOLTAGE_RANGE
+from .controller_run import ControllerUnavailable
+from .controller_setup import (
+    LIMIT_FIELDS,
+    READ_SERVICE,
+    ROLES,
+    derive_limits,
+    resolve,
+)
 from .settings import DOMAIN, NUMBERS
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,6 +111,147 @@ def device_in_use(hass: HomeAssistant, entry_id: str, device_id: str) -> bool:
     )
 
 
+BLUEPRINT_PATH = "energy_compass/deye_solarman_controller.yaml"
+WRITTEN_ROLES = ("charge", "discharge", "grid", "operation")
+
+
+def blueprint_automations(hass: HomeAssistant) -> list:
+    """Automation entities that use the Deye blueprint, switched on or off."""
+    from homeassistant.components import automation
+
+    if automation.DOMAIN not in hass.data:
+        return []
+    return [
+        entity
+        for entity in hass.data[automation.DATA_COMPONENT].entities
+        if entity.referenced_blueprint == BLUEPRINT_PATH
+    ]
+
+
+def active_blueprint_automations(hass: HomeAssistant) -> list[str]:
+    """Entity ids of blueprint automations that are on; `off` ones cannot write."""
+    return [
+        entity.entity_id
+        for entity in blueprint_automations(hass)
+        if (state := hass.states.get(entity.entity_id)) is not None
+        and state.state == "on"
+    ]
+
+
+def blueprint_prefill(hass: HomeAssistant, resolved, device_id: str) -> dict[str, dict]:
+    """Limits and entity overrides of the one blueprint automation, for the options form.
+
+    Only when the entities it writes through belong to this Solarman device: another
+    inverter's automation has nothing to say about these limits. Entity inputs only
+    where they differ from what the device resolves to. Nothing is applied until the
+    user confirms the form.
+    """
+    found = blueprint_automations(hass)
+    if len(found) != 1:
+        return {}
+    # The blueprint's first action copies every input, defaults included, into
+    # variables: they are what this automation actually runs with.
+    actions = (found[0].raw_config or {}).get("actions") or [{}]
+    inputs = actions[0].get("variables") or {}
+    owned = {
+        item.entity_id
+        for item in er.async_entries_for_device(
+            er.async_get(hass), device_id, include_disabled_entities=True
+        )
+    }
+    if any(inputs.get(f"{role}_entity") not in owned for role in WRITTEN_ROLES):
+        return {}
+    limits = {
+        key: inputs[key]
+        for key in LIMIT_FIELDS
+        if inputs.get(key) not in (None, "", []) and inputs.get(key) != resolved.energy
+    }
+    entities = {
+        role: inputs[f"{role}_entity"]
+        for role in ROLES
+        if inputs.get(f"{role}_entity")
+        and inputs[f"{role}_entity"] != resolved.entities.get(role)
+    }
+    return {"limits": limits, "entities": entities}
+
+
+def resolve_device(hass: HomeAssistant, device_id: str, overrides=None):
+    """The native controller's entities on one device."""
+    return resolve(
+        (
+            core.TouFact(
+                item.entity_id,
+                item.domain,
+                item.platform,
+                item.translation_key,
+                item.disabled,
+            )
+            for item in er.async_entries_for_device(
+                er.async_get(hass), device_id, include_disabled_entities=True
+            )
+        ),
+        overrides,
+    )
+
+
+def native_problem(
+    hass: HomeAssistant, device_id: str, overrides=None
+) -> tuple[str, dict[str, str]] | None:
+    """Why the native controller cannot run on this device: (error key, placeholders)."""
+    resolved = resolve_device(hass, device_id, overrides)
+    missing = list(resolved.missing)
+    if not hass.services.has_service(*READ_SERVICE):
+        missing.append(".".join(READ_SERVICE))
+    if missing:
+        return "controller_entity_missing", {"missing": ", ".join(missing)}
+    voltage = hass.states.get(resolved.entities["voltage"])
+    if voltage is None or not core.is_number(voltage.state):
+        # Without a reading the pack cannot be told from a 48 V one.
+        return "controller_voltage_unavailable", {
+            "entity": resolved.entities["voltage"]
+        }
+    if float(voltage.state) < PACK_VOLTAGE_RANGE[0]:
+        # Only high-voltage packs are supported (design DD-15).
+        return "controller_low_voltage_pack", {"voltage": voltage.state}
+    return None
+
+
+def limits_underivable(
+    hass: HomeAssistant,
+    device_id: str,
+    battery: Mapping[str, float],
+    limits: Mapping[str, Any] | None,
+    overrides=None,
+) -> bool:
+    """Whether the power cap or a current limit would come out as zero.
+
+    Zero limits would make every plan invalid, so the user has to enter them.
+    """
+    resolved = resolve_device(hass, device_id, overrides)
+
+    def maximum(role: str) -> Any:
+        state = hass.states.get(resolved.entities.get(role, ""))
+        return state.attributes.get("max") if state else None
+
+    derived = derive_limits(
+        limits,
+        charge_kw=battery["charge_kw"],
+        discharge_kw=battery["discharge_kw"],
+        charge_max=maximum("charge"),
+        grid_max=maximum("grid"),
+        resolved=resolved,
+    )
+    return (
+        min(
+            derived.max_power_w,
+            derived.max_current,
+            derived.max_grid_current,
+            derived.relinquish_current,
+        )
+        <= 0
+    )
+
+
 def async_auto_enable(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Enable the controller for a lone installation that already ran the package."""
     if "controller" in entry.options:
@@ -138,6 +292,8 @@ class DeyeController:
         self.state = core.ControllerState()
         self.session = 0.0
         self.device_id: str | None = None
+        self.engine = core.controller_engine(entry.options.get("controller"))
+        self.host = None
         self.resolution = core.TouResolution(None, (), None)
         self._store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.controller")
         self._tou_values: dict[str, str] = {}
@@ -150,6 +306,8 @@ class DeyeController:
         self._unsub_registry: CALLBACK_TYPE | None = None
         self._timer: CALLBACK_TYPE | None = None
         self._stopped = False
+        self._device_sensor: str | None = None
+        self.hardware = hardware.HardwareFacts()
 
     async def async_start(self) -> None:
         """Restore the store, resolve the TOU entities and begin listening."""
@@ -164,6 +322,10 @@ class DeyeController:
         elif any(event.kind == "dropped" for event in self.state.history[-1:]):
             _LOGGER.debug("Dropped the Deye controller plan of an earlier session")
         self.device_id = (self.entry.options.get("controller") or {}).get("device_id")
+        if self.engine != "native" and self.state.paused:
+            # The pause belongs to the native executor; a stale flag must not come
+            # back if the engine is switched again later.
+            self.state = replace(self.state, paused=False)
         self._resolve()
         self._unsub_registry = self.hass.bus.async_listen(
             er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_changed
@@ -183,10 +345,19 @@ class DeyeController:
             )
         self._save()
         self._evaluate()
+        if self.engine == "native":
+            from .controller_native import NativeHost
+
+            self.host = NativeHost(self.hass, self)
+            await self.host.async_start()
 
     async def async_stop(self) -> None:
         """Detach everything and persist the state."""
+        if self.host is not None:
+            await self.host.async_stop()
+            self.host = None
         self._stopped = True
+        ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
         for unsubscribe in (
             self._unsub_coordinator,
             self._unsub_tou,
@@ -210,10 +381,12 @@ class DeyeController:
     @callback
     def runtime_view(self) -> tuple[str, dict]:
         runtime = self.state.runtime
+        history = self.host.history if self.host is not None else []
         return runtime.get("code") or "waiting", {
             **core.runtime_summary(runtime, self.state.restore_pending),
             "runtime": dict(runtime),
             "updated_at": self.state.runtime_written_at,
+            "last_run": history[-1] if history else None,
         }
 
     @callback
@@ -236,6 +409,18 @@ class DeyeController:
             raise ValueError(mode)
         if mode == self.state.mode:
             return
+        # Two writers on one inverter would fight; a switched-off automation cannot
+        # write, so only an enabled one blocks.
+        if (
+            self.engine == "native"
+            and mode != "Off"
+            and (active := active_blueprint_automations(self.hass))
+        ):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="controller_blueprint_active",
+                translation_placeholders={"automation": ", ".join(active)},
+            )
         event = core.Event(
             dt_util.utcnow().isoformat(),
             "mode",
@@ -250,6 +435,32 @@ class DeyeController:
             )
         )
         self._evaluate()
+
+    @callback
+    def async_runtime_changed(self) -> None:
+        """Let the runtime sensor republish, e.g. after a run only changed `last_run`."""
+        self._notify(self._runtime_listeners)
+
+    @callback
+    def async_set_paused(self, paused: bool) -> None:
+        """Hold (or release) every inverter write; takes effect before the next write."""
+        if paused == self.state.paused:
+            return
+        event = core.Event(
+            dt_util.utcnow().isoformat(), "mode", None, f"paused {paused}"
+        )
+        self._replace(
+            replace(
+                self.state,
+                paused=paused,
+                history=(*self.state.history, event)[-core.HISTORY_LIMIT :],
+            )
+        )
+        self._publish()
+
+    async def async_save_now(self) -> None:
+        """Persist the state at once, e.g. a pause that must survive a crash."""
+        await self._store.async_save(self.state.to_dict())
 
     @callback
     def async_update_runtime(
@@ -280,6 +491,28 @@ class DeyeController:
             "restore_pending": self.state.restore_pending,
             "session": self.session,
         }
+
+    async def async_persist(
+        self,
+        runtime: Mapping | None,
+        restore_pending: bool | None,
+        *,
+        durable: bool = False,
+    ) -> tuple[dict, bool]:
+        """`async_update_runtime` for the native executor.
+
+        `durable` saves at once instead of after the one-second delay: the write that
+        follows must not outlive the restore obligation it depends on.
+        """
+        if self._stopped:
+            raise ControllerUnavailable("stopped")
+        result = self.async_update_runtime(runtime, restore_pending)
+        if durable and (runtime is not None or restore_pending is not None):
+            await self._store.async_save(self.state.to_dict())
+        return result["runtime"], result["restore_pending"]
+
+    def fallback_battery(self) -> dict[str, float]:
+        return self._fallback_battery()
 
     async def async_import_package(self, *, force: bool = False) -> dict:
         """One-time copy of the 0.1.36 package helpers into the controller state."""
@@ -366,6 +599,9 @@ class DeyeController:
             "device_id": self.device_id,
             "program_prefix": self.resolution.prefix,
             "tou_problem": self.resolution.problem,
+            "engine": self.engine,
+            "hardware": self.hardware.as_attribute(),
+            "run_history": self.host.history if self.host is not None else [],
             "session": self.session,
             "mode": self.state.mode,
             "restore_pending": self.state.restore_pending,
@@ -435,6 +671,7 @@ class DeyeController:
             return
         now = now or dt_util.utcnow()
         prefix = self.resolution.prefix
+        self._read_hardware()
         times = [
             self._tou_values.get(f"time.{prefix}{number}_time")
             for number in range(1, 7)
@@ -455,6 +692,7 @@ class DeyeController:
                 program_prefix=prefix,
                 tou_problem=self.resolution.problem,
                 next_tou_at=self._next_tou,
+                hardware=self.hardware.as_attribute() if self.hardware.known else None,
             ),
         )
         if self._timer:
@@ -484,17 +722,74 @@ class DeyeController:
 
     def _resolve(self) -> None:
         resolution = device_resolution(self.hass, self.device_id)
-        changed = resolution.entities != self.resolution.entities
+        sensor = self._find_device_sensor()
+        changed = (
+            resolution.entities != self.resolution.entities
+            or sensor != self._device_sensor
+        )
         self.resolution = resolution
+        self._device_sensor = sensor
         if changed or self._unsub_tou is None:
             if self._unsub_tou:
                 self._unsub_tou()
                 self._unsub_tou = None
-            if resolution.entities:
+            watched = [*resolution.entities, *([sensor] if sensor else [])]
+            if watched:
                 self._unsub_tou = async_track_state_change_event(
-                    self.hass, list(resolution.entities), self._tou_changed
+                    self.hass, watched, self._tou_changed
                 )
         self._read_tou()
+
+    def _find_device_sensor(self) -> str | None:
+        if not self.device_id:
+            return None
+        return next(
+            (
+                item.entity_id
+                for item in er.async_entries_for_device(
+                    er.async_get(self.hass), self.device_id
+                )
+                if item.platform == "solarman"
+                and item.domain == "sensor"
+                and item.translation_key == hardware.DEVICE_KEY
+            ),
+            None,
+        )
+
+    @property
+    def _issue_id(self) -> str:
+        return f"deye_hardware_unverified_{self.entry.entry_id}"
+
+    def _read_hardware(self) -> None:
+        state = (
+            self.hass.states.get(self._device_sensor) if self._device_sensor else None
+        )
+        device = (
+            dr.async_get(self.hass).async_get(self.device_id)
+            if self.device_id
+            else None
+        )
+        self.hardware = hardware.facts_from(
+            state.state if state else None,
+            state.attributes if state else None,
+            device.model if device else None,
+        )
+        facts = self.hardware
+        if self.engine == "native" and facts.known and not facts.verified:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                self._issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="deye_hardware_unverified",
+                translation_placeholders={
+                    "device_type": facts.device_type or "?",
+                    "protocol": facts.protocol or "?",
+                },
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
 
     def _read_tou(self) -> None:
         values: dict[str, Any] = {}

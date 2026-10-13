@@ -1,6 +1,6 @@
 [project]
 name = "ha-energy-compass"
-version = "0.1.37"
+version = "0.1.38"
 requires-python = ">=3.14.2"
 dependencies = [
     "scipy==1.18.1",
@@ -20,7 +20,10 @@ docs = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-markers = ["replan_cooldown: run with the shipped minimum_replan_seconds default"]
+markers = [
+    "replan_cooldown: run with the shipped minimum_replan_seconds default",
+    "blueprint_only: pins the shape of the generated Deye blueprint; skipped for the native controller",
+]
 # Slowest test measured at 10.02s (test_real_sink_thread_stops_within_its_bound_despite_a_hanging_transport[10]);
 # 45s gives >=3x headroom. method=thread: hangs in monkeypatched compute() run on
 # hass's executor thread, not just the main test thread, so the signal-based

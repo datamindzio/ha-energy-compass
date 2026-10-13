@@ -9,24 +9,27 @@ what the cap forces ends in the same release as a full pack.
 """
 
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from test_dispatch_policy import dispatch
 
-from custom_components.energy_compass.engine.dispatch_policy import (
-    dwell_group,
-    validate_modes,
-)
+from benchmarks.curtail_sweep import follow
+from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
+from custom_components.energy_compass.engine.dispatch_policy import validate_modes
 from custom_components.energy_compass.engine.models import (
     FlexibleLoadRequest,
     Flow,
+    InputError,
     SolveError,
 )
+from custom_components.energy_compass.engine.normalize import validate_problem
 from custom_components.energy_compass.engine.optimize import (
     solve,
     solve_flexible_load,
 )
+from custom_components.energy_compass.runtime import restore_commitment
 
 CURTAIL = Flow(0, 0.5, 0, 0, 0.3, 10, None, "CURTAIL")
 HOLD = Flow(0.1, 0, 0, 0, 0, 10, None, "HOLD")
@@ -309,28 +312,6 @@ def test_hold_after_a_long_curtail_run_is_not_a_bridge():
     assert plan.carried_bridges == ()
 
 
-def follow(problem, plan):
-    """The next problem when the first interval is carried out as planned.
-
-    A bridge row leaves the commitment and its clock as they are; any other row
-    continues the commitment when it is in the same dwell group, else starts its own.
-    """
-    flow = plan.flows[0]
-    commitment = (problem.initial_dispatch_mode, problem.initial_dispatch_mode_since)
-    if 0 not in plan.carried_bridges:
-        if dwell_group(commitment[0]) != dwell_group(flow.dispatch_mode):
-            commitment = (flow.dispatch_mode, problem.slots[0].start)
-        else:
-            commitment = (flow.dispatch_mode, commitment[1])
-    return replace(
-        problem,
-        slots=problem.slots[1:],
-        battery=replace(problem.battery, initial_kwh=flow.end_soc_kwh),
-        initial_dispatch_mode=commitment[0],
-        initial_dispatch_mode_since=commitment[1],
-    )
-
-
 def roll(problem, steps):
     """Plan, carry out the first interval, plan again: every step has a plan."""
     modes = []
@@ -533,8 +514,8 @@ def test_hold_after_the_run_that_took_a_hold_over_has_its_own_clock():
 
 def test_validator_does_not_read_curtail_as_taking_over_a_released_hold():
     # A HOLD released from a PV-follow commitment (the pack depleted, not full) has no
-    # clock of its own to take over; a CURTAIL after it is the commitment going on, and
-    # the commitment is not ended by a CURTAIL (ADR-0005, still infeasible: T-050).
+    # clock of its own to take over; a CURTAIL after it is not the commitment going on
+    # (the way back is CHARGE_PV or SELF_CONSUME, ADR-0005 amendment T-050).
     problem = capped((0.0, *(0.9,) * 5), initial=0.01)
     problem = carried(problem, mode="SELF_CONSUME")
     idle = Flow(0, 0, 0, 0, 0, 0.01, None, "HOLD")
@@ -588,3 +569,327 @@ def test_probes_around_the_need_are_planned_in_a_hold_that_must_last(pv, sell, e
         problem = carried(capped(pv, sell=sell), mode="HOLD")
         plan = probed(problem, energy, power).plan
         assert len(plan.flows) == len(pv)
+
+
+@pytest.mark.parametrize("mode", ["SELF_CONSUME", "CHARGE_PV"])
+@pytest.mark.parametrize(
+    ("pv", "export_cap", "initial", "committed", "released"),
+    [
+        (
+            (0, 0.9, 0.9, 0.9, 0.9, 0.9),
+            2,
+            0.01,
+            ("HOLD", "CHARGE_PV", "CHARGE_PV"),
+            (0,),
+        ),
+        (
+            (0.05, 0.3, 0.5, 0.7, 0.9, 0.9),
+            0,
+            0.01,
+            ("HOLD", "CHARGE_PV", "CHARGE_PV"),
+            (0,),
+        ),
+        # The first interval has a surplus the pack takes: the commitment goes on.
+        ((0.9,) * 6, 2, 0.02, ("CHARGE_PV",) * 3, ()),
+    ],
+)
+def test_a_depleted_carried_commitment_charges_the_pv_the_cap_cannot_pass(
+    mode, pv, export_cap, initial, committed, released
+):
+    # The pack is too empty to go on, so the commitment is released into HOLD; where
+    # the PV above the house cannot be exported the HOLD has no legal flow, and the
+    # inverter charges (T-050). Every sunrise on a zero-export site. The intervals
+    # inside the commitment's hour are pinned: the HOLD, then CHARGE_PV (CURTAIL is
+    # offered only after a full pack).
+    problem = carried(capped(pv, initial=initial, export_cap=export_cap), mode=mode)
+    plan = solve(problem)
+    validate_modes(problem, plan.flows, plan.carried_bridges)
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    assert tuple(modes[:3]) == committed
+    assert plan.released_holds == released
+
+
+def test_validator_accepts_a_depleted_hold_that_goes_back_to_charge_pv():
+    problem = carried(
+        capped((0.0, *(0.9,) * 5), initial=0.01, export_cap=2), mode="SELF_CONSUME"
+    )
+    idle = Flow(0, 0, 0, 0, 0, 0.01, None, "HOLD")
+    charges = tuple(
+        Flow(0, 0, 0.8, 0, 0, 0.01 + 0.8 * n, "charge", "CHARGE_PV")
+        for n in range(1, 6)
+    )
+    validate_modes(problem, (idle, *charges))
+
+
+def test_validator_rejects_a_hold_released_from_a_full_pack_that_goes_back():
+    # Only the depleted release returns (ADR-0005 point 2): the pack that was full
+    # leaves the commitment for good, a member mode after its HOLD is a second change.
+    problem = carried(capped((0.2,) * 6, initial=10.0), mode="CHARGE_PV")
+    hold = Flow(0, 0.1, 0, 0, 0, 10, None, "HOLD")
+    charge = Flow(0, 0, 0.1, 0, 0, 10, "charge", "CHARGE_PV")
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (hold, *(charge,) * 5))
+
+
+def test_the_return_to_the_commitment_is_not_a_run_of_its_own():
+    # The commitment's deadline is the only clock: a return that ends the horizon
+    # (less than the minimum duration left) is the commitment going on, not a new
+    # PV-follow run that has to last an hour.
+    problem = carried(capped((0.0, 0.18), initial=0.01, export_cap=0), mode="CHARGE_PV")
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == ["HOLD", "CHARGE_PV"]
+
+
+@pytest.mark.parametrize("export_cap", [0, 2])
+def test_a_depleted_pack_leaves_and_re_enters_the_commitment_more_than_once(export_cap):
+    # ADR-0005 point 17: the commitment's deadline is the only clock, so each time the
+    # pack is empty again it may be released into HOLD, and each return is the
+    # commitment going on. Two hours, the pack empties twice (T-050).
+    pv = (0, 0.25, 0, 0, 0, 0.25, 0, 0)
+    problem = dispatch(
+        tuple((1.0, 0.9, value, 0.1) for value in pv), minimum_mode_minutes=120
+    )
+    problem = carried(
+        replace(
+            problem,
+            site=replace(problem.site, grid_export_kw=export_cap),
+            battery=replace(problem.battery, initial_kwh=0.0),
+        ),
+        since=timedelta(0),
+    )
+    plan = solve(problem)
+    validate_modes(problem, plan.flows, plan.carried_bridges)
+    assert [flow.dispatch_mode for flow in plan.flows] == [
+        "HOLD",
+        "CHARGE_PV",
+        "SELF_CONSUME",
+        "SELF_CONSUME",
+        "HOLD",
+        "CHARGE_PV",
+        "SELF_CONSUME",
+        "SELF_CONSUME",
+    ]
+    assert plan.released_holds == (0, 4)
+
+
+def depleted(pv, *, mode="CHARGE_PV", export_cap=2, allow_curtailment=True, **changes):
+    """A sunrise on an empty pack, a PV-follow commitment carried in (T-050)."""
+    problem = carried(capped(pv, initial=0.01, export_cap=export_cap), mode=mode)
+    return replace(
+        problem,
+        site=replace(problem.site, allow_curtailment=allow_curtailment),
+        **changes,
+    )
+
+
+SUNRISES = [
+    ((0, *(0.9,) * 7), 2),
+    ((0.05, 0.3, 0.5, 0.7, *(0.9,) * 4), 0),
+]
+
+
+@pytest.mark.parametrize("allow_curtailment", [True, False])
+@pytest.mark.parametrize("mode", ["SELF_CONSUME", "CHARGE_PV"])
+@pytest.mark.parametrize(("pv", "export_cap"), SUNRISES)
+def test_a_release_from_a_depleted_pack_is_carried_across_the_boundary(
+    pv, export_cap, mode, allow_curtailment
+):
+    # The first plan releases into HOLD and charges from the next interval. Once the
+    # HOLD is carried out the coordinator stores the commitment, its clock and the
+    # release (not a HOLD with a clock of its own), so the plan from the boundary is the
+    # charge the first one published: it was a HOLD to the end or no plan before.
+    problem = depleted(
+        pv, mode=mode, export_cap=export_cap, allow_curtailment=allow_curtailment
+    )
+    first = solve(problem)
+    assert [flow.dispatch_mode for flow in first.flows[:3]] == [
+        "HOLD",
+        "CHARGE_PV",
+        "CHARGE_PV",
+    ]
+    after = follow(problem, first)
+    assert (after.initial_dispatch_mode, after.initial_dispatch_mode_since) == (
+        mode,
+        problem.initial_dispatch_mode_since,
+    )
+    assert after.initial_dispatch_released
+    second = solve(after)
+    assert [flow.dispatch_mode for flow in second.flows[:2]] == ["CHARGE_PV"] * 2
+    # And on to the end of the commitment, step after step.
+    assert roll(problem, 5)[:3] == ["HOLD", "CHARGE_PV", "CHARGE_PV"]
+
+
+@pytest.mark.parametrize("mode", ["SELF_CONSUME", "CHARGE_PV"])
+def test_a_released_hold_that_goes_on_is_carried_too(mode):
+    # The pack is empty and the PV below the house for two intervals: the HOLD is
+    # carried out twice, and the plan from the second boundary still goes back.
+    problem = depleted((0, 0, *(0.9,) * 6), mode=mode)
+    first = solve(problem)
+    assert [flow.dispatch_mode for flow in first.flows[:3]] == [
+        "HOLD",
+        "HOLD",
+        "CHARGE_PV",
+    ]
+    after = follow(follow(problem, first), solve(follow(problem, first)))
+    assert after.initial_dispatch_released
+    assert solve(after).flows[0].dispatch_mode == "CHARGE_PV"
+
+
+def stored(commitment, mode, start, released=(), minutes=60):
+    """What the coordinator stores for a plan whose current interval is `mode`."""
+    coordinator = SimpleNamespace(
+        _battery_commitment=dict(commitment) if commitment else None,
+        _dispatch_store=SimpleNamespace(async_delay_save=lambda *_: None),
+    )
+    EnergyCompassCoordinator._commit_battery_direction(
+        coordinator,
+        {
+            "generated_at": start,
+            "intervals": [{"dispatch_mode": mode, "start": start}],
+            "dispatch_policy": {
+                "enabled": True,
+                "minimum_mode_minutes": minutes,
+                "released_hold_starts": list(released),
+            },
+        },
+    )
+    return coordinator._battery_commitment
+
+
+def test_the_coordinator_keeps_the_commitment_and_its_clock_for_a_released_hold():
+    since, start = "2026-12-18T10:45:00+00:00", "2026-12-18T11:00:00+00:00"
+    held = {"mode": "SELF_CONSUME", "since": since}
+    kept = {**held, "released": True}
+    assert stored(held, "HOLD", start, [start]) == kept
+    # The HOLD that goes on, and the first interval after a plan that went back.
+    assert stored(kept, "HOLD", start, [start]) == kept
+    assert stored(kept, "CHARGE_PV", start) == {"mode": "CHARGE_PV", "since": since}
+    assert stored(kept, "SELF_CONSUME", start) == held
+    # Any other row leaves the commitment, and a HOLD the plan does not list as released
+    # (a full pack, a HOLD of its own) starts its own clock as before.
+    assert stored(held, "HOLD", start) == {"mode": "HOLD", "since": start}
+    assert stored(kept, "HOLD", start) == {"mode": "HOLD", "since": start}
+    assert stored(kept, "CURTAIL", start) == {"mode": "CURTAIL", "since": start}
+    # The HOLD that outlasted the commitment's hour goes back to a run of its own.
+    later = "2026-12-18T11:50:00+00:00"
+    assert stored(kept, "CHARGE_PV", later) == {"mode": "CHARGE_PV", "since": later}
+    assert stored(kept, "CHARGE_PV", later, minutes=0) == {
+        "mode": "CHARGE_PV",
+        "since": since,
+    }
+    assert stored(kept, "HOLD", later, [later]) == kept
+    # No commitment to keep: a HOLD is a HOLD.
+    assert stored(None, "HOLD", start, [start]) == {"mode": "HOLD", "since": start}
+    assert stored({"mode": "HOLD", "since": since}, "HOLD", start, [start]) == {
+        "mode": "HOLD",
+        "since": since,
+    }
+
+
+def test_a_stored_release_is_restored_only_for_a_pv_follow_commitment():
+    now = datetime.fromisoformat("2026-12-18T11:00:00+00:00")
+    since = "2026-12-18T10:45:00+00:00"
+    for mode in ("SELF_CONSUME", "CHARGE_PV"):
+        raw = {"mode": mode, "since": since, "released": True}
+        assert restore_commitment(raw, now) == raw
+    for raw in (
+        {"mode": "HOLD", "since": since, "released": True},
+        {"mode": "CURTAIL", "since": since, "released": True},
+        {"mode": "CHARGE_PV", "since": since, "released": "yes"},
+        {"mode": "CHARGE_PV", "since": since},
+    ):
+        assert "released" not in restore_commitment(raw, now)
+
+
+def test_a_release_needs_a_pv_follow_commitment_to_come_from():
+    problem = depleted((0, *(0.9,) * 7))
+    validate_problem(replace(problem, initial_dispatch_released=True))
+    for mode in ("HOLD", "CURTAIL"):
+        with pytest.raises(InputError, match="released HOLD"):
+            validate_problem(
+                replace(
+                    problem, initial_dispatch_mode=mode, initial_dispatch_released=True
+                )
+            )
+    with pytest.raises(InputError, match="released HOLD"):
+        validate_problem(
+            replace(
+                problem,
+                initial_dispatch_mode=None,
+                initial_dispatch_mode_since=None,
+                initial_dispatch_released=True,
+            )
+        )
+
+
+def test_a_released_hold_that_outlasts_the_commitment_goes_on_without_a_clock():
+    # The commitment's hour is up in the middle of the sunrise: the HOLD that was
+    # released from it is not a new HOLD run, which could not pass the PV above the cap.
+    problem = depleted(
+        (0.05, *(0.9,) * 7), mode="SELF_CONSUME", allow_curtailment=False
+    )
+    problem = replace(
+        problem,
+        battery=replace(problem.battery, allow_grid_charge=False),
+        initial_dispatch_mode_since=problem.slots[0].start - timedelta(minutes=75),
+    )
+    with pytest.raises(SolveError):
+        solve(problem)
+    flagged = replace(problem, initial_dispatch_released=True)
+    plan = solve(flagged)
+    assert [flow.dispatch_mode for flow in plan.flows[:2]] == ["HOLD", "CHARGE_PV"]
+    assert plan.released_holds == (0,)
+
+
+def test_a_recovered_pack_leaves_the_carried_release_to_the_plan():
+    # The pack the release was for is not empty any more: the HOLD may go on or go back
+    # to the commitment, as the plan finds best, and the commitment is not left.
+    problem = depleted((0, *(0.9,) * 7), mode="SELF_CONSUME")
+    problem = replace(
+        problem,
+        battery=replace(problem.battery, initial_kwh=5.0),
+        initial_dispatch_released=True,
+    )
+    plan = solve(problem)
+    assert plan.flows[0].dispatch_mode in {"HOLD", "SELF_CONSUME", "CHARGE_PV"}
+    validate_modes(problem, plan.flows, plan.carried_bridges)
+
+
+def test_validator_reads_the_carried_release_as_a_hold_that_may_go_back():
+    problem = replace(
+        depleted((0, *(0.9,) * 7), mode="SELF_CONSUME"), initial_dispatch_released=True
+    )
+    idle = Flow(0, 0, 0, 0, 0, 0.01, None, "HOLD")
+    # The PV the house does not use leaves as export: the HOLD of a sunny interval.
+    sunny = Flow(0, 0.8, 0, 0, 0, 0.01, None, "HOLD")
+    charges = tuple(
+        Flow(0, 0, 0.8, 0, 0, 0.01 + 0.8 * n, "charge", "CHARGE_PV")
+        for n in range(1, 8)
+    )
+    # The release goes on through the commitment (ends 45 minutes in) and goes back.
+    assert validate_modes(problem, (idle, *charges)) == {0}
+    assert validate_modes(problem, (idle, sunny, sunny, *charges[2:])) == {0, 1, 2}
+    # A CURTAIL is not on offer on a pack that is not full (ADR-0005 point 13).
+    curtail = Flow(0, 0, 0, 0, 0.8, 0.01, None, "CURTAIL")
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (idle, curtail, *charges[1:]))
+
+
+def test_a_depleted_release_is_planned_through_a_flexible_load_probe():
+    # With a probe the idle intervals that follow the HOLD are rows the probe may open:
+    # the model reads the release and the way back there too (`_resume` in the idle
+    # branch), and the plan is certified against the probe's load.
+    problem = carried(
+        capped((0, 0.1, 0.1, *(0.9,) * 5), initial=0.01, export_cap=2),
+        since=timedelta(0),
+        mode="SELF_CONSUME",
+    )
+    plan = probed(problem, 0.25, 0.5).plan
+    assert [flow.dispatch_mode for flow in plan.flows[:4]] == [
+        "HOLD",
+        "HOLD",
+        "HOLD",
+        "CHARGE_PV",
+    ]
+    assert plan.released_holds == (0, 1, 2)
+    validate_modes(problem, plan.flows, plan.carried_bridges)
