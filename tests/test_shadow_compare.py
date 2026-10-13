@@ -5,7 +5,7 @@ import importlib.util
 import json
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import deye_native_harness as native
@@ -288,3 +288,23 @@ def test_sidecars_are_not_taken_for_dumps(case):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "EQUAL 2" in result.stdout
     assert "reported.json" not in result.stdout
+
+
+def test_a_report_slightly_after_the_file_name_time_is_not_a_negative_age(case):
+    h, dumps, setup = case
+    write(dumps, h, 2)
+    for path in dumps.glob("*.reported.json"):
+        reported = json.loads(path.read_text())
+        path.write_text(
+            json.dumps(
+                {
+                    entity: (datetime.fromisoformat(value) + timedelta(seconds=0.4))
+                    .astimezone(UTC)
+                    .isoformat()
+                    for entity, value in reported.items()
+                }
+            )
+        )
+    result = run(dumps, setup)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "EQUAL 2" in result.stdout

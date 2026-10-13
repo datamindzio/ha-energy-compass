@@ -11,6 +11,7 @@ from .controller import MODES
 from .entity import entry_device_info
 
 DETAIL_DELAY_SECONDS = 60
+LAST_RUN_DELAY_SECONDS = 3
 CONTROLLER_UNRECORDED = frozenset({"accepted", "tou"})
 RUNTIME_UNRECORDED = frozenset({"runtime", "updated_at", "last_run"})
 
@@ -75,14 +76,20 @@ class DeyeModeSelect(DeyeControllerEntity, SelectEntity):
 
 
 class DeyeRuntimeSensor(DeyeControllerEntity, SensorEntity):
-    """The last decision summary. Detail-only changes are published at most once a minute."""
+    """The last decision summary.
+
+    Detail-only changes are published at most once a minute; a newer `last_run` alone
+    follows within a few seconds, which is one write per run.
+    """
 
     _unrecorded_attributes = RUNTIME_UNRECORDED
 
     def __init__(self, controller):
         super().__init__(controller, "deye_runtime")
         self._written = None
+        self._written_run = None
         self._timer = None
+        self._timer_delay = 0
 
     def _recorded(self):
         state, attrs = self.controller.runtime_view()
@@ -100,6 +107,7 @@ class DeyeRuntimeSensor(DeyeControllerEntity, SensorEntity):
     def _async_write_ha_state(self):
         super()._async_write_ha_state()
         self._written = self._recorded()
+        self._written_run = self.controller.runtime_view()[1]["last_run"]
 
     async def async_added_to_hass(self):
         self.async_on_remove(
@@ -111,10 +119,14 @@ class DeyeRuntimeSensor(DeyeControllerEntity, SensorEntity):
     def _runtime_changed(self):
         if self._recorded() != self._written:
             self._flush()
-        elif self._timer is None:
-            self._timer = async_call_later(
-                self.hass, DETAIL_DELAY_SECONDS, self._flush_later
-            )
+            return
+        newer = self.controller.runtime_view()[1]["last_run"] is not self._written_run
+        delay = LAST_RUN_DELAY_SECONDS if newer else DETAIL_DELAY_SECONDS
+        if self._timer is not None and self._timer_delay <= delay:
+            return
+        self._cancel_timer()
+        self._timer_delay = delay
+        self._timer = async_call_later(self.hass, delay, self._flush_later)
 
     @callback
     def _flush_later(self, _now):

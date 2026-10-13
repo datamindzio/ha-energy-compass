@@ -1442,7 +1442,11 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   słońca przy zerowym eksporcie, baterii 1 kW i 3,6 kW PV), to jest sam plan, a nie plan awaryjny.
   W przeniesionym zobowiązaniu <code>CURTAIL</code> jest oferowany w takim przedziale niezależnie od tego, co
   bateria miała wcześniej; przy próbce elastycznego zużycia tylko dla obciążeń próbki, przy których PV
-  zostaje poza baterią. Przy wyłączonym <code>allow_curtailment</code> taki przedział jest planowany tylko jako
+  zostaje poza baterią. <code>CURTAIL</code>, który otwiera taki przebieg, trwa przez jego minimalny czas: kolejne
+  przedziały zobowiązania oferują <code>CURTAIL</code>, dopóki przebieg trwa, także tam, gdzie PV nie przekracza już
+  tego, co przyjmie bateria (nie ładuje wtedy, więc bateria na rezerwie czeka do końca przebiegu: do 105
+  minut po pierwszym przedziale przy minimalnym czasie 120), bo przebieg nie może zmienić trybu w swoim
+  czasie, a <code>CHARGE_PV</code> zobowiązania nie jest z niego wyjściem. Przy wyłączonym <code>allow_curtailment</code> taki przedział jest planowany tylko jako
   wymuszone przycięcie, czyli gdy bateria ma mniej miejsca niż PV, którego instalacja nie przepuści:
   przedział <code>CURTAIL</code> ładuje wtedy tyle, ile bateria przyjmie, i przycina resztę. To samo dotyczy baterii
   z wolnym miejscem: ładuje mocą ładowania i przycina PV ponad nią, bez względu na wolne miejsce.</li>
@@ -2626,9 +2630,13 @@ z zapisywanych atrybutów, a inne zmiany najwyżej raz na minutę. Akceptacje, u
 sesji, zmiany trybu, importy i zmiany urządzenia trafiają do historii 50 wpisów w magazynie i w
 diagnostyce integracji (<code>deye_controller</code>); zdarzenia nie są wysyłane.</p>
 <p>Przy silniku natywnym sensor stanu pracy ma też <code>last_run</code> (nie jest zapisywany w historii): co uruchomiło ostatni
-przebieg, decyzję, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony lub zablokowany) i jak
-przebieg się zakończył. Ostatnie 50 przebiegów jest przechowywane w pamięci, nie w magazynie, i widnieje w diagnostyce
-jako <code>run_history</code>. Wpis w dzienniku zdarzeń podaje stary i nowy kod stanu pracy oraz potwierdzony tryb, gdy któryś się zmieni.</p>
+przebieg, decyzję, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony lub zablokowany), wynik
+próby układu rejestrów, gdy była wykonana (<code>probe</code>: <code>passed</code> lub <code>failed: &lt;encje&gt;</code>), i jak przebieg się zakończył.
+Ostatnie 50 przebiegów jest przechowywane w pamięci, nie w magazynie, i widnieje w diagnostyce jako <code>run_history</code>;
+ostatnie 20 przebiegów, które wysłały polecenie lub zakończyły się kodem stanu pracy innym niż <code>ok</code>, jest osobno jako
+<code>run_history_notable</code>, żeby zwykłe przebiegi ich nie wypychały. Silnik działa, gdy zmieni się coś, co czyta (plan,
+tryb, pauza, fakty TOU, najbliższa granica wiersza lub TOU), co pełną minutę i gdy zmieni się wartość falownika; nie
+działa przy każdym odświeżeniu Energy Compass. Wpis w dzienniku zdarzeń podaje stary i nowy kod stanu pracy oraz potwierdzony tryb, gdy któryś się zmieni.</p>
 <h3 id="usługi">Usługi</h3>
 <section class="table-scroll"><table>
 <thead>
@@ -2974,8 +2982,9 @@ Assistant (po polsku dla <code>pl</code>, w pozostałych przypadkach po angielsk
 <ul>
 <li><code>reason</code> i <code>reason_code</code> sensora stanu pracy oraz jego atrybut <code>last_run</code> (nie jest zapisywany w historii): wyzwalacz,
   decyzja, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony, zablokowany) i jak przebieg się zakończył;</li>
-<li>diagnostyka integracji (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code> i <code>run_history</code>, ostatnie 50 przebiegów
-  (w pamięci, więc restart je czyści);</li>
+<li>diagnostyka integracji (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code>, <code>run_history</code>, ostatnie 50 przebiegów, oraz
+  <code>run_history_notable</code>, ostatnie 20, które zapisały lub zakończyły się kodem innym niż <code>ok</code> (oba w pamięci, więc
+  restart je czyści);</li>
 <li>wpis w dzienniku zdarzeń sensora stanu pracy za każdym razem, gdy zmieni się kod stanu pracy lub potwierdzony tryb;</li>
 <li>kod <code>error</code> oraz problemy w Naprawach „Przebiegi sterownika Deye kończą się błędem” i „Automatyzacja blueprintu
   Deye nadal działa”, więc zatrzymany sterownik widać bez czytania logów.</li>

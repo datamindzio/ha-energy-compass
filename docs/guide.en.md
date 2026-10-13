@@ -943,7 +943,12 @@ Rules (defaults: 60 min, 0.1 kW):
   Where the pack is at the reserve under a carried `CHARGE_PV`/`SELF_CONSUME` commitment (a sunrise
   on a zero-export site with a 1 kW pack and 3.6 kW of PV) this is the plan itself, not a fallback.
   In a carried commitment `CURTAIL` is offered in such an interval whatever the pack held before;
-  with a flexible-load probe, only for the probe loads that leave PV beyond the pack. With
+  with a flexible-load probe, only for the probe loads that leave PV beyond the pack. The `CURTAIL`
+  that opens such a run goes on through the run's minimum duration: the later intervals of the
+  commitment offer `CURTAIL` while it is under way, also where the PV is no longer beyond the pack
+  (it does not charge there, so a pack at the reserve waits for the end of the run: up to 105
+  minutes after the first interval at a minimum duration of 120), because the run may not change
+  mode inside its duration and the commitment's `CHARGE_PV` is not a way out of it. With
   `allow_curtailment` off such an interval is planned only as a forced spill, where the pack has
   less room than the PV the site cannot pass: the `CURTAIL` interval then charges what the pack
   takes and spills the rest. The same holds for a pack with room: it charges at its power and
@@ -1737,9 +1742,13 @@ changes, imports and device changes go to a history of 50 entries in the store a
 diagnostics (`deye_controller`); no events are fired.
 
 With the native engine the runtime sensor also has `last_run` (not recorded): what triggered the last run, the
-decision, the planned commands, each write with its outcome (sent, failed, confirmed or blocked) and how the run
-ended. The last 50 runs are kept in memory, not in the store, and appear in the diagnostics as `run_history`. A
-logbook entry names the old and new runtime code and confirmed mode whenever either changes.
+decision, the planned commands, each write with its outcome (sent, failed, confirmed or blocked), the register
+layout probe result when one ran (`probe`: `passed` or `failed: <entities>`) and how the run ended. The last 50 runs
+are kept in memory, not in the store, and appear in the diagnostics as `run_history`; the last 20 runs that sent a
+command or ended with a runtime code other than `ok` are kept separately as `run_history_notable`, so routine runs
+cannot push them out. The engine runs when something it reads changes (a plan, the mode, a pause, the TOU facts, the
+next row or TOU boundary), on each full minute and when an inverter value changes; it does not run on every
+refresh of Energy Compass. A logbook entry names the old and new runtime code and confirmed mode whenever either changes.
 
 ### Services
 
@@ -1935,8 +1944,9 @@ The blueprint left an automation trace per run; the native engine replaces it wi
 
 - the runtime sensor's `reason` and `reason_code`, and its attribute `last_run` (not recorded): trigger,
   decision, planned commands, each write with its outcome (sent, failed, confirmed, blocked) and how the run ended;
-- the integration's diagnostics (`deye_controller`): `engine`, `hardware` and `run_history`, the last 50 runs
-  (kept in memory, so a restart empties it);
+- the integration's diagnostics (`deye_controller`): `engine`, `hardware`, `run_history`, the last 50 runs, and
+  `run_history_notable`, the last 20 that wrote or ended with a code other than `ok` (both kept in memory, so a restart
+  empties them);
 - a logbook entry on the runtime sensor whenever the runtime code or the confirmed mode changes;
 - the runtime code `error` and the repair issues "Deye controller runs are failing" and "Deye blueprint
   automation is still on", so a stopped controller is visible without reading logs.
