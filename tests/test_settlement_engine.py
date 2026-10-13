@@ -16,18 +16,20 @@ from custom_components.energy_compass.engine.models import (
 from custom_components.energy_compass.engine.normalize import validate_problem
 from custom_components.energy_compass.engine.optimize import solve
 from custom_components.energy_compass.engine.settlement import (
-    auto_pressure,
+    DEPOSIT_COEFFICIENT,
     factors,
-    hold_pressure,
     manual_pressure,
     planning_buy,
     planning_sell,
+    refund_share,
 )
 
 START = datetime(2026, 10, 12, tzinfo=UTC)
 # PGE G12 2026, gross (ADR-0001 worked example): day, night.
 DAY_BUY, DAY_ENERGY = 1.2418, 0.7018
 NIGHT_BUY, NIGHT_ENERGY = 0.6065, 0.4635
+# The refund share as `factors` takes it: already on a price with the 1.23 coefficient.
+# The engine tests below fix the share itself; `refund_share` is tested on its own.
 RHO = 0.30
 ETA = sqrt(0.89)
 
@@ -120,35 +122,49 @@ def test_the_energy_part_never_exceeds_a_nonpositive_buy_price():
     assert planning_buy(capped, slot) == -0.1
 
 
-def test_factors_and_pressure_for_the_adr_worked_example():
-    assert auto_pressure(2214, 2150, RHO)[0] == 0
-    pressure, unused = auto_pressure(2800, 2150, RHO)
-    assert unused == pytest.approx(0.232, abs=1e-3)
-    assert pressure == pytest.approx(0.55, abs=0.01)
-    export_factor, energy_factor = factors(pressure, RHO)
-    assert export_factor == pytest.approx(0.62, abs=0.01)
-    assert energy_factor == pytest.approx(0.45, abs=0.01)
-    assert auto_pressure(3300, 2150, RHO)[0] == 1
-    assert factors(1.0, RHO) == (pytest.approx(0.30), 0.0)
+def test_refund_share_is_the_percent_on_a_price_without_the_deposit_coefficient():
+    assert DEPOSIT_COEFFICIENT == 1.23
+    assert refund_share(30) == pytest.approx(0.30 / 1.23)
+    assert refund_share(20) == pytest.approx(0.20 / 1.23)
+    # A seller refunding a share of the deposit: 36.9 % / 24.6 % of the export value.
+    assert refund_share(36.9) == pytest.approx(0.30)
+    assert refund_share(24.6) == pytest.approx(0.20)
+    assert refund_share(0) == 0
+    assert refund_share(100) == pytest.approx(1 / 1.23)
 
 
-def test_degenerate_refund_caps():
-    assert auto_pressure(3000, 1000, 1.0)[0] == 0
-    assert auto_pressure(3000, 1000, 0.0)[0] == 1
-    assert auto_pressure(1000, 1000, 0.0)[0] == 0
+def test_the_export_value_factor_at_the_cap_is_the_share_over_1_23():
+    assert factors(1.0, refund_share(30)) == (pytest.approx(0.244, abs=5e-4), 0.0)
+    assert factors(1.0, refund_share(20)) == (pytest.approx(0.163, abs=5e-4), 0.0)
+    # 100 % does not cancel nothing: the floor is 1/1.23, not 1.
+    assert factors(1.0, refund_share(100))[0] == pytest.approx(1 / 1.23)
+    assert factors(0.0, refund_share(30)) == (1.0, 1.0)
+    export_factor, energy_factor = factors(0.55, RHO)
+    assert export_factor == pytest.approx(0.615)
+    assert energy_factor == pytest.approx(0.45)
+
+
+def test_manual_pressure_uses_the_refund_share():
     assert manual_pressure(0.3, 1.0) == 0
     assert manual_pressure(0.3, RHO) == 1
     assert manual_pressure(0.65, RHO) == pytest.approx(0.5)
     assert manual_pressure(1.0, RHO) == 0
+    # At the floor 0.244 the pressure is 1; above it, the share-of-1.23 base applies.
+    share = refund_share(30)
+    assert manual_pressure(share, share) == 1
+    assert manual_pressure(0.3, share) == pytest.approx(0.7 / (1 - share))
+    # A refund of 100 % is a share of 1/1.23, below 1: a floor remains.
+    assert manual_pressure(0.9, refund_share(100)) == pytest.approx(
+        0.1 / (1 - 1 / 1.23)
+    )
+    assert manual_pressure(0.5, refund_share(100)) == 1
 
 
-def test_dead_band_holds_small_moves_and_passes_the_extremes():
-    assert hold_pressure(None, 0.42) == 0.42
-    assert hold_pressure(0.40, 0.45) == 0.40
-    assert hold_pressure(0.40, 0.50) == 0.50
-    assert hold_pressure(0.05, 0.0) == 0.0
-    assert hold_pressure(0.95, 1.0) == 1.0
-    assert hold_pressure(0.5, 0.5) == 0.5
+def test_the_withdrawn_auto_model_has_no_engine_functions():
+    from custom_components.energy_compass.engine import settlement
+
+    assert not hasattr(settlement, "auto_pressure")
+    assert not hasattr(settlement, "hold_pressure")
 
 
 def test_default_factors_keep_the_plan_byte_identical():
@@ -195,6 +211,17 @@ def test_cap_binding_moves_the_battery_export_threshold_as_in_the_adr():
     between = (short + capped) / 2
     assert not sells(between)
     assert sells(between, **cap_binding())
+
+
+def test_the_threshold_with_the_refund_percent_over_1_23():
+    # Guide worked example: 0.73 while the cap does not bind; with the cap binding the
+    # floor is the percent over 1.23, so 30 % gives 0.88 and 20 % gives 1.31. A seller
+    # that refunds 36.9 % / 24.6 % of the deposit (the old 30 % / 20 % reading) gives
+    # 0.71 / 1.07.
+    assert threshold(**cap_binding(refund_share(30))) == pytest.approx(0.88, abs=0.02)
+    assert threshold(**cap_binding(refund_share(20))) == pytest.approx(1.31, abs=0.03)
+    assert threshold(**cap_binding(refund_share(36.9))) == pytest.approx(0.71, abs=0.02)
+    assert threshold(**cap_binding(refund_share(24.6))) == pytest.approx(1.07, abs=0.03)
 
 
 def test_a_lower_refund_cap_raises_the_battery_export_threshold():
