@@ -811,7 +811,9 @@ def test_unmoded_settle_leaves_the_balance_residual_the_discharge_cannot_cover_o
 def test_unmoded_settle_refuses_a_shortfall_beyond_the_balance_tolerance():
     flow = unmoded_slot_flow(gout=1e-5 + 1e-5, bd=1e-5)
 
-    assert _settle(("bc", "gout"), flow, {"bc": 20.0, "gout": 60.0}, moded=False) is None
+    assert (
+        _settle(("bc", "gout"), flow, {"bc": 20.0, "gout": 60.0}, moded=False) is None
+    )
 
 
 def test_moded_settle_still_refuses_what_the_discharge_cannot_absorb():
