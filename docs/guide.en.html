@@ -2583,14 +2583,14 @@ baterii (pojemność, sprawność) w planie</code>.</p>
 <td>all Disabled, SOC 10 %</td>
 </tr>
 <tr>
-<td><code>CURTAIL</code> with <code>charge_kwh</code> above 0</td>
-<td>cap / 0 A</td>
+<td><code>CURTAIL</code> with <code>charge_kwh</code> above 0.000001 kWh</td>
+<td>planned, from <code>hold_grid_current</code> to the cap / 0 A</td>
 <td>0 A</td>
 <td>all Disabled, SOC 10 %</td>
 </tr>
 <tr>
-<td><code>HOLD</code>, <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> at SOC ≥ 100 % in Voltage mode (<code>HOLD</code>: kept until SOC ≤ 99 %)</td>
-<td>cap / 0 A in <code>HOLD</code>, cap otherwise</td>
+<td><code>HOLD</code>, <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> and a charging <code>CURTAIL</code> at SOC ≥ 100 % in Voltage mode (<code>HOLD</code>: kept until SOC ≤ 99 %)</td>
+<td>cap / 0 A in <code>HOLD</code> and <code>CURTAIL</code>, cap otherwise</td>
 <td>0 A</td>
 <td>all Disabled, SOC 10 %</td>
 </tr>
@@ -2607,7 +2607,7 @@ baterii (pojemność, sprawność) w planie</code>.</p>
 <td>Sell on the active program, target SOC from the plan, power = planned, ≤ <code>max_power_w</code>; Disabled after the target is reached</td>
 </tr>
 <tr>
-<td><code>HOLD</code>, <code>CURTAIL</code> with <code>charge_kwh</code> 0</td>
+<td><code>HOLD</code>, <code>CURTAIL</code> with <code>charge_kwh</code> up to 0.000001 kWh</td>
 <td><code>hold_grid_current</code> / 0 A</td>
 <td><code>hold_grid_current</code></td>
 <td>Grid, target SOC = planned end SOC rounded down</td>
@@ -2645,12 +2645,18 @@ and 100 % does not rewrite the profile on every crossing. Each switch is one wri
 charge 0 A, and there is at most one per percentage point of SOC movement; without PV the pack drifts down on the
 inverter's own draw and <code>HOLD</code> tops it up from the grid, a cycle of hours. <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> need no
 hysteresis, because below 100 % they write the same values. <code>CHARGE_GRID</code> (it keeps <code>voltage_grid_charge_ceiling</code>
-and its 0 A charge current at 100 %), the balance hold and <code>Capacity</code> mode behave as before. A <code>CURTAIL</code> row that charges (<code>charge_kwh</code> above 0: the PV
-above what the site passes is more than the pack takes at the charge power) runs like <code>CHARGE_PV</code> without discharge: the
-charge current is the cap, the grid current 0 A, the discharge current 0 A, all programs Disabled, so the pack takes PV
-at the full cap and the inverter curtails the rest by itself. The controller never buys grid energy for such a row. At
-100 % SOC it follows <code>CHARGE_PV</code> (0 A in <code>Capacity</code> mode, the cap in <code>Voltage</code> mode) and it raises no warning. Any other
-<code>CURTAIL</code> row (<code>charge_kwh</code> 0) runs the <code>HOLD</code> profile with the warning <code>CURTAIL is not supported: HOLD applied</code>, because
+and its 0 A charge current at 100 %), the balance hold and <code>Capacity</code> mode behave as before. A <code>CURTAIL</code> row that charges (<code>charge_kwh</code> above 0.000001 kWh: the PV
+above what the site passes is more than the pack takes at the charge power) runs like <code>CHARGE_PV</code> without discharge, at the
+planned current: the charge current is <code>charge_kwh × eta_charge / (h × V)</code> rounded up to the step of the charge entity, at
+least <code>hold_grid_current</code> and at most the cap, the grid current 0 A, the discharge current 0 A, all programs Disabled, so the
+pack takes PV at that current and the inverter curtails the rest by itself. A row that plans the charge power over its whole
+interval gets the whole cap. A row that plans less (the charge of such a row is free between zero and the PV left after the
+curtailment and the house, and the plan took less) charges less than the cap would, so the pack ends where the plan says and
+not above it. The controller never buys grid energy for such a row. At 100 % SOC it follows <code>CHARGE_PV</code> (0 A in <code>Capacity</code>
+mode, the cap in <code>Voltage</code> mode) and it raises no warning. The threshold is the 0.000001 kWh the plan's own classifier reads
+as zero: the plan publishes the solver's flows unrounded, and a <code>CURTAIL</code> row that does not charge can carry up to about
+5e-13 kWh there (about one such row in twelve in the sweep of ADR-0005), which must not charge. Any other <code>CURTAIL</code> row
+(<code>charge_kwh</code> up to 0.000001 kWh) runs the <code>HOLD</code> profile with the warning <code>CURTAIL is not supported: HOLD applied</code>, because
 the controller cannot limit PV: it writes <code>hold_grid_current</code> (1 A by default) as the charge current and the grid current
 and holds the planned end state of charge.</p>
 <p>Only battery modes listed in <code>commissioned_battery_modes</code> are controlled; any other mode (for example
