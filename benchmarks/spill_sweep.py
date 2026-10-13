@@ -13,11 +13,12 @@ seeds on two checkouts and compare, as `curtail_sweep.py` does:
 `roll` follows each plan one interval at a time, as the coordinator does, and
 `rollcompare` prints the problems that were followed to the end before and are
 infeasible at some boundary now (a plan that is gone at the next boundary is no plan).
-`summary` prints, per minimum mode duration, how many of a run's problems are planned:
-"0 newly infeasible" says nothing about what stays infeasible.
+`summary` prints, per minimum mode duration, how many of a run's problems are planned
+(of a `bellroll` run: followed to the end of the day): "0 newly infeasible" says nothing
+about what stays infeasible.
 
 The draw is `curtail_sweep.make` with curtailment forced off and the minimum mode
-duration 0, 15 or 60 minutes (PV 0.6-1 times a peak in every interval: it never draws a
+duration 0, 15, 30 or 60 minutes (PV 0.6-1 times a peak in every interval: it never draws a
 tapering need, a need below the minimum activity or a pack that fills inside a minimum
 duration); `bell` and `bellroll` draw a bell-shaped day on the same sites, with cloud
 dips, that crosses every need level; `negrun` draws sell prices below zero and `probe`
@@ -93,7 +94,14 @@ def draws(kind, seed, count):
             sweep.roll(make(rng, kind == "negroll", moded=True)) for _ in range(count)
         ]
     if kind == "bellroll":
-        return [sweep.roll(make_bell(rng, moded=True)) for _ in range(count)]
+        # Followed to the end of the day: the taper after a long CURTAIL run is where a
+        # plan that cannot be followed stops.
+        out = []
+        for _ in range(count):
+            problem = make_bell(rng, moded=True)
+            row = sweep.roll(problem, steps=len(problem.slots))
+            out.append([*row, problem.minimum_mode_minutes])
+        return out
     if kind == "bell":
         return [tagged(make_bell(rng)) for _ in range(count)]
     return [tagged(make(rng, kind == "negrun")) for _ in range(count)]
@@ -109,8 +117,8 @@ def summary(path):
 
 
 def make_off(problem, rng, moded=False):
-    """Curtailment off, and a minimum mode duration of 15 or 60 minutes (also 0 unless `moded`)."""
-    minutes = rng.choice((15, 60) if moded else (0, 15, 60))
+    """Curtailment off, and a minimum mode duration of 15, 30 or 60 minutes (also 0 unless `moded`)."""
+    minutes = rng.choice((15, 30, 60) if moded else (0, 15, 30, 60))
     kw = (
         {"initial_dispatch_mode": None, "initial_dispatch_mode_since": None}
         if not minutes

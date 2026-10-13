@@ -3,6 +3,7 @@
 from dataclasses import dataclass, replace
 from datetime import UTC
 from math import isfinite
+from time import monotonic
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -15,6 +16,7 @@ from .charge_price import price_allows_grid_charge
 from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fractions
 from .dispatch_policy import (
     MODES,
+    carried_curtail,
     constrain_modes,
     curtail_limit,
     spill_gate,
@@ -64,6 +66,28 @@ class _Model:
     def constrain(self, terms: dict[int, float], lower: float, upper: float) -> None:
         self.rows.append((terms, lower, upper))
 
+    def _run(self, matrix, time_limit_s: float, **options):
+        return milp(
+            c=np.asarray(self.cost),
+            integrality=np.asarray(self.integrality),
+            bounds=Bounds(self.lower, self.upper),
+            constraints=LinearConstraint(
+                matrix,
+                [row[1] for row in self.rows],
+                [row[2] for row in self.rows],
+            ),
+            options={
+                "time_limit": time_limit_s,
+                **({"mip_rel_gap": 0} if self.exact_mip_gap else {}),
+                **options,
+            },
+        )
+
+    def _fractional(self, values) -> bool:
+        """Tell whether a binary of a returned point is neither 0 nor 1."""
+        binaries = np.asarray(values)[np.asarray(self.integrality, dtype=bool)]
+        return bool(np.any(np.minimum(np.abs(binaries), np.abs(binaries - 1)) > _TOL))
+
     def solve(self, time_limit_s: float) -> np.ndarray:
         entries = [
             (row_index, column, coefficient)
@@ -78,20 +102,18 @@ class _Model:
             ),
             shape=(len(self.rows), len(self.cost)),
         ).tocsc()
-        result = milp(
-            c=np.asarray(self.cost),
-            integrality=np.asarray(self.integrality),
-            bounds=Bounds(self.lower, self.upper),
-            constraints=LinearConstraint(
+        started = monotonic()
+        result = self._run(matrix, time_limit_s)
+        if result.x is not None and self._fractional(result.x):
+            # HiGHS can hand back, as optimal, a point whose binaries are fractional when
+            # its presolve fails to map the solution back (T-041: CURTAIL at 0.16 where the
+            # PV the site cannot pass is below the minimum activity). The same model
+            # without presolve solves; it gets what is left of the time limit.
+            result = self._run(
                 matrix,
-                [row[1] for row in self.rows],
-                [row[2] for row in self.rows],
-            ),
-            options={
-                "time_limit": time_limit_s,
-                **({"mip_rel_gap": 0} if self.exact_mip_gap else {}),
-            },
-        )
+                max(time_limit_s - (monotonic() - started), 1e-3),
+                presolve=False,
+            )
         # A time-limited run often holds the optimum long before HiGHS can
         # prove it. Only the base dispatch plan opts in; probes stay exact.
         if self.accept_incumbent and result.status == 1 and result.x is not None:
@@ -251,7 +273,7 @@ def _validate_solution(
     previous_energy = battery.initial_kwh if battery else 0.0
     drains = drain_schedule(problem)
     lifted = frozenset(problem.balance_lift_slots)
-    relayed = False
+    relayed = carried_curtail(problem)
     spent = {day: 0.0 for day in budgets}
     floor_slacks = [
         (
@@ -578,7 +600,13 @@ def _gate_forced_spill(
     upper = model.upper[v["curt"]]
     flex_upper = model.upper[v["flex_load"]] if flexible_load else 0.0
     gate = spill_gate(problem, drains, index, flex_upper)
-    if previous_energy_index is None and battery.initial_kwh < gate - 1e-6:
+    # A CURTAIL run carried into the plan keeps its first interval open, as a run inside
+    # the plan keeps the next one (`_relay_forced_spill`).
+    if (
+        previous_energy_index is None
+        and battery.initial_kwh < gate - 1e-6
+        and not carried_curtail(problem)
+    ):
         model.upper[v["curt"]] = 0
         return None
     slot = problem.slots[index]

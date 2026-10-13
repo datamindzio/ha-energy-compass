@@ -12,7 +12,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from custom_components.energy_compass.engine import optimize
+from custom_components.energy_compass.engine import dispatch_policy, optimize
+from custom_components.energy_compass.engine.dispatch_policy import dwell_group
 from custom_components.energy_compass.engine.machine_state import machine_state
 from custom_components.energy_compass.engine.models import (
     Battery,
@@ -237,14 +238,138 @@ def test_pinned_limit_pack_with_room_that_charges_too_slowly_has_no_plan(minutes
     assert all(flow.curtail_kwh == pytest.approx(0.95, abs=1e-5) for flow in plan.flows)
 
 
-def test_pinned_limit_a_carried_curtail_run_needs_a_full_pack():
-    # Pinned limit: a CURTAIL commitment still in its dwell cannot be kept while the pack
-    # has room (the spill is not forced), and the dwell leaves no other mode. A run that
-    # started from a plan began with a full pack; only a hand-set pack gets here.
+def followed(start, steps):
+    """Plan, take the first interval as planned, carry its mode and the pack, plan again."""
+    current, commitment, trace = start, None, []
+    for _ in range(steps):
+        plan = solve(current)
+        flow = plan.flows[0]
+        trace.append(flow.dispatch_mode)
+        if 0 in plan.carried_bridges:
+            pass  # the run and its clock go on
+        elif commitment and dwell_group(commitment[0]) == dwell_group(trace[-1]):
+            commitment = (trace[-1], commitment[1])
+        else:
+            commitment = (trace[-1], current.slots[0].start)
+        current = replace(
+            current,
+            slots=current.slots[1:],
+            battery=replace(
+                current.battery,
+                initial_kwh=min(flow.end_soc_kwh, current.battery.capacity_kwh),
+            ),
+            initial_dispatch_mode=commitment[0],
+            initial_dispatch_mode_since=commitment[1],
+        )
+    return trace
+
+
+@pytest.mark.parametrize("minutes", [15, 30, 60])
+@pytest.mark.parametrize(("first", "rest"), [(1.2, 0.7), (1.2, 0.5), (1.0, 0.6)])
+def test_followed_spill_keeps_its_plan_when_the_need_drops_below_the_room(
+    minutes, first, rest
+):
+    # Review round 2: 0.5 kWh of room, a need of 0.95 kWh opens the spill, and from the
+    # next interval the need (0.45 kWh) fits the room. The plan made one interval later
+    # starts inside the CURTAIL run it planned: the run keeps its first interval open.
+    rows = ((1.0, 0.1, first, 0),) + ((1.0, 0.1, rest, 0),) * 7
+    trace = followed(problem(rows, initial=4.5, minutes=minutes), 7)
+    assert trace[0] == "CURTAIL"
+    assert len(trace) == 7
+
+
+def test_carried_curtail_run_keeps_the_first_interval_open():
+    # A CURTAIL commitment in its dwell has no other legal mode: on a pack with room it
+    # goes on as the spill it is (the inverter throttles), as a run inside a plan does.
     rows = ((1.0, 0.1, 1.2, 0),) * 4
     carried = {"initial_dispatch_mode": "CURTAIL", "initial_dispatch_mode_since": START}
-    with pytest.raises(SolveError) as error:
-        solve(problem(rows, initial=3.0, minutes=60, **carried))
-    assert error.value.reason == "infeasible"
-    plan = solve(problem(rows, initial=5.0, minutes=60, **carried))
+    plan = solve(problem(rows, initial=3.0, minutes=60, **carried))
     assert [flow.dispatch_mode for flow in plan.flows] == ["CURTAIL"] * 4
+    # Without the run the same pack has room: no spill, it charges.
+    plan = solve(problem(rows, initial=3.0, minutes=60))
+    assert plan.flows[0].dispatch_mode == "CHARGE_PV"
+    assert plan.flows[0].curtail_kwh == 0
+
+
+def taper(lasting, minutes, **kw):
+    """A 10 kWh pack 0.125 kWh below full, a need of 0.101 kWh, `lasting` more of 0.1, then none."""
+    rows = (
+        ((1.0, 0.1, 0.701, 0.1),)
+        + ((1.0, 0.1, 0.7, 0.1),) * lasting
+        + ((1.0, 0.1, 0.5, 0.1),) * (10 - lasting)
+    )
+    base = problem(rows, cap_kw=2.0, minutes=minutes, **kw)
+    return replace(base, battery=replace(base.battery, capacity_kwh=10, initial_kwh=9.875))
+
+
+@pytest.mark.parametrize("minutes", [30, 60])
+@pytest.mark.parametrize("lasting", [0, 1, 2, 3, 4])
+def test_need_that_ends_inside_the_pv_follow_dwell_is_planned(minutes, lasting):
+    # Review round 2: the pack has room for the first need, so CHARGE_PV is the only mode
+    # and it fills the pack. The spill takes over while the need lasts and goes on as a
+    # HOLD bridge after it; with no need left at all the run ends in a HOLD of its own.
+    plan = solve(taper(lasting, minutes))
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    assert modes[0] == "CHARGE_PV"
+    assert modes[1 : 1 + lasting] == ["CURTAIL"] * lasting
+    assert set(modes[1 + lasting :]) == {"HOLD"}
+    assert plan.flows[0].end_soc_kwh == pytest.approx(10, abs=1e-5)
+
+
+def test_pv_follow_run_ends_in_hold_only_once_the_pack_is_full(monkeypatch):
+    # The model's release without its full-pack test: HOLD exports the later surplus at a
+    # price, so leaving CHARGE_PV early pays. The certificate reads the pack: it had room.
+    def release_anywhere(model, problem, vectors, *rest):
+        filled = {}
+        for i in range(1, len(vectors)):
+            filled[i] = model.variable(upper=1.0)
+            model.constrain({filled[i]: 1, vectors[i]["mode_HOLD"]: -1}, -math.inf, 0)
+        return filled
+
+    monkeypatch.setattr(dispatch_policy, "_fill_releases", release_anywhere)
+    rows = ((1.0, 0.1, 1.2, 0),) + ((1.0, 0.5, 0.2, 0),) * 5
+    with pytest.raises(SolveError) as error:
+        solve(problem(rows, initial=3.0, minutes=60))
+    assert "minimum mode duration" in str(error.value)
+
+
+def bell_day(minutes, initial, drain_kw):
+    """48 quarter hours of a 6 kW bell on a 10 kWh pack behind a 2 kW export cap."""
+    rows = tuple(
+        (1.0, 0.1, round(1.5 * math.sin(math.pi * (i + 0.5) / 48) ** 2, 3), 0.1)
+        for i in range(48)
+    )
+    base = problem(rows, cap_kw=2.0, minutes=minutes, drain_kw=drain_kw)
+    return replace(base, battery=replace(base.battery, capacity_kwh=10, initial_kwh=initial))
+
+
+@pytest.mark.parametrize("minutes", [30, 60])
+@pytest.mark.parametrize("initial", [8.0, 9.7])
+def test_bell_day_with_standby_loss_is_followed_to_its_end(minutes, initial):
+    # Review round 2: the afternoon taper after a long spill. The run leaves the room of
+    # its standby loss, the need drops below it, CHARGE_PV fills the pack and the need is
+    # gone inside the hour. Every plan on the way is the next one's start.
+    trace = followed(bell_day(minutes, initial, 0.02), 47)
+    assert len(trace) == 47
+    assert "CURTAIL" in trace
+
+
+def test_binary_left_fractional_by_the_solver_is_solved_again(monkeypatch):
+    # Review round 2: the bell day from its second interval, pack at 9.7 of 10. HiGHS
+    # returned this as optimal with CURTAIL at 0.16 in the interval whose need (0.004 kWh)
+    # is below the minimum activity; without presolve the same model has its plan.
+    day = bell_day(60, 9.7, 0.0)
+    day = replace(day, slots=day.slots[1:])
+    runs = []
+    run = optimize._Model._run
+
+    def counted(self, matrix, time_limit_s, **options):
+        runs.append(options)
+        return run(self, matrix, time_limit_s, **options)
+
+    monkeypatch.setattr(optimize._Model, "_run", counted)
+    plan = solve(day)
+    assert plan.flows[36].dispatch_mode == "CURTAIL"
+    assert plan.flows[36].curtail_kwh == pytest.approx(0.025, abs=1e-6)
+    # Solved once where the solver is sound; twice, the second without presolve, where not.
+    assert runs in ([{}], [{}, {"presolve": False}])
