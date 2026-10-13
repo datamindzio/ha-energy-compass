@@ -104,9 +104,9 @@ async def test_the_runtime_service_still_serves_the_blueprint_engine(
     assert "restore_pending" in result
 
 
-def test_the_manifest_lists_solarman_after_the_energy_dependency():
+def test_the_manifest_lists_solarman_and_logbook_after_the_energy_dependency():
     manifest = json.loads((COMPONENT / "manifest.json").read_text())
-    assert manifest["after_dependencies"] == ["energy", "solarman"]
+    assert manifest["after_dependencies"] == ["energy", "logbook", "solarman"]
     assert manifest["iot_class"] == "calculated"
 
 
