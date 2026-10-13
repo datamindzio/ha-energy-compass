@@ -14,7 +14,10 @@ from datetime import timedelta
 import pytest
 from test_dispatch_policy import dispatch
 
-from custom_components.energy_compass.engine.dispatch_policy import validate_modes
+from custom_components.energy_compass.engine.dispatch_policy import (
+    dwell_group,
+    validate_modes,
+)
 from custom_components.energy_compass.engine.models import Flow, SolveError
 from custom_components.energy_compass.engine.optimize import solve
 
@@ -279,3 +282,140 @@ def test_hold_after_a_long_curtail_run_is_not_a_bridge():
         "HOLD",
     ]
     assert plan.carried_bridges == ()
+
+
+def follow(problem, plan):
+    """The next problem when the first interval is carried out as planned.
+
+    A bridge row leaves the commitment and its clock as they are; any other row
+    continues the commitment when it is in the same dwell group, else starts its own.
+    """
+    flow = plan.flows[0]
+    commitment = (problem.initial_dispatch_mode, problem.initial_dispatch_mode_since)
+    if 0 not in plan.carried_bridges:
+        if dwell_group(commitment[0]) != dwell_group(flow.dispatch_mode):
+            commitment = (flow.dispatch_mode, problem.slots[0].start)
+        else:
+            commitment = (flow.dispatch_mode, commitment[1])
+    return replace(
+        problem,
+        slots=problem.slots[1:],
+        battery=replace(problem.battery, initial_kwh=flow.end_soc_kwh),
+        initial_dispatch_mode=commitment[0],
+        initial_dispatch_mode_since=commitment[1],
+    )
+
+
+def roll(problem, steps):
+    """Plan, carry out the first interval, plan again: every step has a plan."""
+    modes = []
+    for _ in range(steps):
+        plan = solve(problem)
+        modes.append(plan.flows[0].dispatch_mode)
+        problem = follow(problem, plan)
+    return modes
+
+
+@pytest.mark.parametrize("mode", ["CHARGE_PV", "SELF_CONSUME"])
+def test_a_carried_fill_and_curtail_plan_can_be_followed_to_the_next_boundary(mode):
+    # The plan fills the pack in the first interval and curtails from the second. One
+    # interval later the pack is full and the commitment is carried: the same release
+    # that planned the curtail must let the first interval of that plan go to CURTAIL.
+    problem = carried(capped((0.5, *(0.9,) * 11), initial=9.5), mode=mode)
+    modes = roll(problem, 5)
+    assert modes[0] != "CURTAIL"
+    assert modes[1:] == ["CURTAIL"] * 4
+
+
+@pytest.mark.parametrize("mode", ["CHARGE_PV", "SELF_CONSUME"])
+@pytest.mark.parametrize("initial", [9.9, 9.95])
+def test_carried_commitment_curtails_in_the_first_interval_when_the_pack_is_full(
+    mode, initial
+):
+    # 0.3 kWh above the cap and 0.1 kWh of room, the carried commitment cannot take
+    # it: the first interval is the release, as it is for every later one.
+    problem = carried(capped((0.9,) * 8, initial=initial), mode=mode)
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == ["CURTAIL"] * 8
+    assert plan.flows[0].curtail_kwh >= 0.3 - 1e-6
+
+
+@pytest.mark.parametrize("mode", ["CHARGE_PV", "SELF_CONSUME"])
+def test_carried_commitment_holds_in_the_first_interval_when_the_pack_is_full(mode):
+    # Nothing to curtail, nothing to take: a pack a hair below the ceiling is full.
+    problem = carried(capped((0.9,) * 8, initial=9.99, export_cap=8), mode=mode)
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == ["HOLD"] * 8
+    assert plan.carried_bridges == ()
+
+
+def test_carried_commitment_with_room_charges_in_the_first_interval():
+    problem = carried(capped((0.9,) * 8, initial=5.0, export_cap=8))
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows[:3]] == ["CHARGE_PV"] * 3
+
+
+@pytest.mark.parametrize("mode", ["CHARGE_PV", "SELF_CONSUME"])
+@pytest.mark.parametrize(
+    ("pv", "since", "bridges"),
+    [
+        # The carried hour is up at the third interval: CURTAIL runs from the second.
+        ((0.5, 0.9, *(0.0,) * 6), 15, (2, 3, 4)),
+        ((0.5, 0.9, 0.9, *(0.0,) * 5), 0, (3, 4)),
+        # The commitment's hour is over at once, the run is the one that counts.
+        ((0.5, 0.9, *(0.0,) * 6), 45, (2, 3, 4)),
+    ],
+)
+def test_a_curtail_run_and_the_carried_commitment_each_keep_their_own_clock(
+    mode, pv, since, bridges
+):
+    # The commitment ends in a release (CURTAIL), and the dry intervals that follow
+    # are the run going on: the commitment's HOLD-release rule does not apply to them.
+    problem = carried(
+        capped(pv, initial=9.5), since=timedelta(minutes=since), mode=mode
+    )
+    plan = solve(problem)
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    assert modes[1] == "CURTAIL"
+    assert modes[len(pv) - 6 :] == ["HOLD"] * 6 or modes[-1] == "HOLD"
+    assert plan.carried_bridges == bridges
+    # And it can be followed: the next plan, from the boundary after, exists.
+    roll(problem, 3)
+
+
+@pytest.mark.parametrize("load", [0.01, 0.0])
+def test_a_dry_interval_with_no_load_goes_on_with_the_curtail_run_too(load):
+    # Below the minimum activity the row is an idle one, whose HOLD would otherwise
+    # be a plain HOLD run of its own: it has to be the CURTAIL run going on as well.
+    problem = carried(capped((0.5, 0.9, *(0.0,) * 6), initial=9.5))
+    problem = replace(
+        problem, slots=tuple(replace(slot, load_kwh=load) for slot in problem.slots)
+    )
+    plan = solve(problem)
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    assert modes[1] == "CURTAIL"
+    assert modes[2:5] == ["HOLD"] * 3
+    assert plan.carried_bridges == (2, 3, 4)
+
+
+def test_validator_accepts_hold_in_the_first_interval_of_a_full_pack():
+    problem = carried(capped((0.9,) * 8, initial=9.99, export_cap=8))
+    plan = solve(problem)
+    assert plan.flows[0].dispatch_mode == "HOLD"
+    validate_modes(problem, plan.flows)
+
+
+def test_validator_rejects_hold_in_the_first_interval_when_the_pack_has_room():
+    problem = carried(capped((0.9,) * 8, initial=5.0, export_cap=8))
+    flows = solve(problem).flows
+    # What the plan does, with the first interval left idle: the pack could charge.
+    idle = replace(
+        flows[0],
+        grid_export_kwh=0.8,
+        charge_kwh=0,
+        end_soc_kwh=5.0,
+        battery_mode=None,
+        dispatch_mode="HOLD",
+    )
+    with pytest.raises(SolveError, match="minimum mode duration"):
+        validate_modes(problem, (idle, *flows[1:]))

@@ -701,9 +701,11 @@ Zasady (domyślnie 60 min, 0,1 kW):
   instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
   falownik przy pełnej baterii. Zwolniony `HOLD` nie ma własnego zegara — jedynym zegarem jest
   termin zobowiązania — więc może przejść w `CURTAIL` (który startuje własny zegar) przed tym
-  terminem; nie wraca do `CHARGE_PV`/`SELF_CONSUME`. Jeden przypadek nie jest objęty, a plan jest
-  `infeasible` (niewykonalny) do końca zobowiązania: pierwszy przedział zobowiązania, który ma już
-  mniej miejsca niż minimalna aktywność. Przedział zobowiązania, w którym bateria się napełnia,
+  terminem; nie wraca do `CHARGE_PV`/`SELF_CONSUME`. Pierwszy przedział zobowiązania jest oceniany tak samo
+  względem zaobserwowanego stanu naładowania: bateria, która jest już w obrębie obniżonej górnej
+  granicy tego przedziału (na przykład po wykonaniu przedziału, który ją napełnił), może od razu
+  przejść w `HOLD` lub `CURTAIL`, w obu trybach grupy. Zaobserwowany stan naładowania na górnej
+  granicy to wyjątek bezpieczeństwa opisany niżej. Przedział zobowiązania, w którym bateria się napełnia,
   a reszta nadwyżki nadal przekracza limit eksportu lub moc falownika, jest planowany: `CHARGE_PV`
   nie napełni baterii i nie przytnie nadwyżki w tym samym przedziale, więc bateria liczy się jako
   pełna dla następnego przedziału (może to być `HOLD` lub `CURTAIL`), gdy jest od górnej granicy
@@ -716,7 +718,9 @@ Zasady (domyślnie 60 min, 0,1 kW):
   `HOLD` i kończy się z czasem przebiegu; `HOLD` po nim ma własny zegar. Dotyczy przebiegu
   rozpoczętego przez PV, którego nie przepuści limit eksportu ani falownik, oraz przeniesionego
   `CURTAIL`; `dispatch_policy.carried_idle_starts` wymienia także te wiersze, a zapisane zobowiązanie
-  zachowuje tam swój tryb i początek.
+  zachowuje tam swój tryb i początek. Działa to także w przeniesionym zobowiązaniu
+  `CHARGE_PV`/`SELF_CONSUME` (zwolniony z niego `CURTAIL` trwa mimo przerwy w PV w obrębie czasu
+  samego zobowiązania) oraz w przedziale z obciążeniem poniżej minimalnej aktywności.
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.

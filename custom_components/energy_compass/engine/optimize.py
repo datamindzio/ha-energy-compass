@@ -944,15 +944,18 @@ def _solve(
         if "hold_run" in v and values[v["hold_run"]] < 0.5
     )
     validate_modes(mode_problem, flows, bridges)
-    # A HOLD that goes on with a CURTAIL run is a bridge for the commitment as well.
+    # A HOLD that goes on with a CURTAIL run is a bridge for the commitment as well; an
+    # idle row has both readings, and is listed once.
     bridges = tuple(
         sorted(
-            bridges
-            + tuple(
-                i
-                for i, v in enumerate(vectors)
-                if "curtail_bridge" in v and values[v["curtail_bridge"]] > 0.5
-            )
+            {
+                *bridges,
+                *(
+                    i
+                    for i, v in enumerate(vectors)
+                    if "curtail_bridge" in v and values[v["curtail_bridge"]] > 0.5
+                ),
+            }
         )
     )
     grid_cost = sum(

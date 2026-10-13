@@ -8,6 +8,11 @@ seeds on two checkouts and compare:
     python benchmarks/curtail_sweep.py run 11 300 /tmp/main_11.json   # a checkout of main
     python benchmarks/curtail_sweep.py compare /tmp/main_11.json /tmp/new_11.json
 
+`roll` follows each plan the way the coordinator does (one interval, carry the
+commitment and the pack, plan again) and `rollcompare` prints the problems that were
+planned all the way before and are infeasible at some boundary now: a plan that is
+there at the first boundary and gone at the next is no plan to the user.
+
 `compare` prints the problems that were planned before and are infeasible now
 (`NEWLY INFEASIBLE`), the ones that got worse (objective up by more than 1e-6) and a
 count of each outcome. T-037 ran seeds 11, 22 and 33 with 300 problems each.
@@ -17,9 +22,11 @@ Invoked by path, like the other benchmarks: the repository root must be on PYTHO
 import json
 import random
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from custom_components.energy_compass.engine.dispatch_policy import dwell_group
 from custom_components.energy_compass.engine.models import (
     Battery,
     Problem,
@@ -122,6 +129,59 @@ def run(problem):
     ]
 
 
+def roll(problem, steps=8):
+    """Plan, follow the first interval, carry the commitment and the pack, plan again."""
+    commitment = None
+    if problem.initial_dispatch_mode:
+        commitment = (
+            problem.initial_dispatch_mode,
+            problem.initial_dispatch_mode_since,
+        )
+    trace = []
+    battery = problem.battery
+    for step in range(steps):
+        if len(problem.slots) < 2:
+            break
+        try:
+            plan = solve(problem)
+        except SolveError as error:
+            return ["err", step, str(error)[:40], trace]
+        flow = plan.flows[0]
+        mode = flow.dispatch_mode
+        trace.append(mode + ("*" if 0 in plan.carried_bridges else ""))
+        if 0 in plan.carried_bridges:
+            pass  # a bridge row leaves the commitment and its clock as they are
+        elif commitment and dwell_group(commitment[0]) == dwell_group(mode):
+            commitment = (mode, commitment[1])
+        else:
+            commitment = (mode, problem.slots[0].start)
+        low = battery.capacity_kwh * battery.minimum_soc_fraction
+        high = battery.capacity_kwh * battery.maximum_soc_fraction
+        problem = replace(
+            problem,
+            slots=problem.slots[1:],
+            battery=replace(
+                problem.battery, initial_kwh=min(max(flow.end_soc_kwh, low), high)
+            ),
+            initial_dispatch_mode=commitment[0],
+            initial_dispatch_mode_since=commitment[1],
+        )
+    return ["ok", len(trace), "", trace]
+
+
+def roll_compare(before_path, after_path):
+    before = json.loads(Path(before_path).read_text())
+    after = json.loads(Path(after_path).read_text())
+    counts = {"newly_infeasible_while_followed": 0, "fixed_while_followed": 0}
+    for index, (a, b) in enumerate(zip(before, after, strict=True)):
+        if a[0] == "ok" and b[0] != "ok":
+            counts["newly_infeasible_while_followed"] += 1
+            print("NEWLY INFEASIBLE WHILE FOLLOWED", index, b)
+        elif a[0] != "ok" and b[0] == "ok":
+            counts["fixed_while_followed"] += 1
+    print(counts)
+
+
 def compare(before_path, after_path):
     before = json.loads(Path(before_path).read_text())
     after = json.loads(Path(after_path).read_text())
@@ -153,6 +213,19 @@ def compare(before_path, after_path):
 if __name__ == "__main__":
     if sys.argv[1] == "compare":
         compare(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "rollcompare":
+        roll_compare(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "roll":
+        rng = random.Random(int(sys.argv[2]))
+        out = [roll(make(rng)) for _ in range(int(sys.argv[3]))]
+        Path(sys.argv[4]).write_text(json.dumps(out))
+        print(
+            sum(row[0] == "ok" for row in out),
+            "followed to the end, of",
+            len(out),
+            "; infeasible at the first boundary:",
+            sum(row[0] == "err" and row[1] == 0 for row in out),
+        )
     else:
         rng = random.Random(int(sys.argv[2]))
         out = [run(make(rng)) for _ in range(int(sys.argv[3]))]

@@ -705,7 +705,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         return terms
 
     for i, (slot, v) in enumerate(zip(problem.slots, vectors, strict=True)):
-        if i in idle or not _curtail_dry(problem, slot):
+        if not _curtail_dry(problem, slot):
             continue
         # Only where a CURTAIL run can be under way: carried in, or begun by an
         # interval whose PV the cap or the inverter cannot pass, within its minimum
@@ -772,6 +772,18 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         curtailing = {}
         # The HOLD or the HOLD run released from the commitment, in the previous interval.
         released = {}
+        if "CHARGE_PV" in members and (flexible_load or 0 not in idle):
+            # The observed pack may already be at the first interval's ceiling: there
+            # is no earlier interval to leave it full, so the release is a constant.
+            # An idle first interval needs none, its HOLD is a bridge (a probe may
+            # still make it a real HOLD run, which does).
+            extra = model.upper[vectors[0]["flex_load"]] if flexible_load else 0.0
+            ceiling = _lock_ceiling(problem, drains, 0, extra)
+            if battery.initial_kwh >= ceiling - _EMPTY_TOLERANCE:
+                at_start = model.variable(upper=1.0)
+                model.lower[at_start] = 1.0
+                full[at_start] = -1
+                seen_full[at_start] = -1
         for i, (slot, start, v) in enumerate(
             zip(problem.slots, starts, vectors, strict=True)
         ):
@@ -803,6 +815,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 # may not put the slot's net load at the activity, or SELF_CONSUME would
                 # be open. Any other row (`run` set) is a normal committed interval.
                 run = runs[i] = v["hold_run"] = model.variable(binary=True)
+                if i in bridge:
+                    # A CURTAIL run going on is neither a HOLD run nor the commitment.
+                    model.constrain({run: 1, bridge[i]: 1}, -np.inf, 1)
                 top = model.upper[v["flex_load"]] if flexible_load else 0
                 room = probe_room(problem, slot) - _PROBE_MARGIN
                 if not _follow_open(
@@ -852,11 +867,15 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     free_hold.add(i)
                     released = {real: 1}
                 curtailing = {v["mode_CURTAIL"]: -1} if curtails else {}
+                if i in bridge:
+                    curtailing[bridge[i]] = -1
             elif i in idle:
                 # Nothing to follow: the flows are HOLD by classification. Either a HOLD
                 # run is under way or starts here on a release, as in any committed
                 # interval, or this row is a bridge and the commitment goes on.
                 run = runs[i] = v["hold_run"] = model.variable(binary=True)
+                if i in bridge:
+                    model.constrain({run: 1, bridge[i]: 1}, -np.inf, 1)
                 model.constrain({run: 1, **held}, 0, np.inf)
                 if not known:
                     model.constrain({run: 1, **held, **releases}, -np.inf, 0)
@@ -865,24 +884,32 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 if follows_pv:
                     free_hold.add(i)
                     released = {run: 1}
-                curtailing = {}
+                curtailing = {bridge[i]: -1} if i in bridge else {}
             else:
                 # HOLD starts only on a release, and not on a PV surplus the pack
                 # could take, but a run that began earlier goes on through it.
                 kept = {v[f"mode_{mode}"]: 1 for mode in members}
-                if i in bridge and "CURTAIL" in members:
-                    kept[bridge[i]] = 1
-                if known or held or releases:
+                # A HOLD that goes on with a CURTAIL run is not leaving the commitment:
+                # it needs no release, and it is not a HOLD run for the next interval.
+                going_on = {bridge[i]: 1} if i in bridge else {}
+                if known or held or releases or going_on:
                     if not known:
                         model.constrain(
-                            {v["mode_HOLD"]: 1, **held, **releases}, -np.inf, 0
+                            {
+                                v["mode_HOLD"]: 1,
+                                **held,
+                                **releases,
+                                **{key: -1 for key in going_on},
+                            },
+                            -np.inf,
+                            0,
                         )
-                    held = {v["mode_HOLD"]: -1}
+                    held = {v["mode_HOLD"]: -1, **going_on}
                     kept[v["mode_HOLD"]] = 1
                 if seen_full:
                     _offer_curtail(model, v, seen_full, full, curtailing, released)
                     kept[v["mode_CURTAIL"]] = 1
-                    curtailing = {v["mode_CURTAIL"]: -1}
+                    curtailing = {v["mode_CURTAIL"]: -1, **{k: -1 for k in going_on}}
                 model.constrain(kept, 1, 1)
                 if follows_pv:
                     # A released HOLD does not go back to the commitment (a released
@@ -944,20 +971,28 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     modes = {**modes, bridge[i]: -1 if group == "HOLD" else 1}
                 indicators[group].append((modes, 0))
             elif "hold_real" in v:
-                # The row is a bridge when `run` is 0: HOLD with the commitment going on.
+                # The row is a bridge when `run` is 0: HOLD with the commitment going on,
+                # or, with `bridge` set, with a CURTAIL run going on (that run's, not
+                # the commitment's).
+                going = {bridge[i]: -1} if i in bridge else {}
                 indicators[group].append(
-                    ({**modes, runs[i]: 1}, -1)
+                    ({**modes, runs[i]: 1, **going}, -1)
                     if group == "HOLD"
-                    else ({**modes, runs[i]: -1}, 1)
+                    else ({**modes, runs[i]: -1, **going}, 1)
                     if group == "PV_FOLLOW"
+                    else ({**modes, **{k: 1 for k in going}}, 0)
+                    if group == "CURTAIL"
                     else (modes, 0)
                 )
             else:
+                going = {bridge[i]: -1} if i in bridge else {}
                 indicators[group].append(
                     ({runs[i]: 1}, 0)
                     if group == "HOLD"
-                    else ({runs[i]: -1}, 1)
+                    else ({runs[i]: -1, **going}, 1)
                     if group == "PV_FOLLOW"
+                    else ({k: 1 for k in going}, 0)
+                    if group == "CURTAIL"
                     else ({}, 0)
                 )
     for group in GROUPS:
@@ -1049,7 +1084,12 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
     both have the same flows). None accepts any reading of the idle HOLD rows: every
     one a bridge, or only those before some row, from which a HOLD run goes on. A HOLD
     row that goes on with a CURTAIL run for lack of PV needs no listing: inside the
-    run's duration it can be nothing else.
+    run's duration it can be nothing else (the solver lists the idle ones too).
+
+    The None readings are looser than the model: the model gates a bridge on the rows
+    where a commitment (or a CURTAIL run) can be under way, and the validator accepts
+    any idle HOLD row as one while the carried commitment lasts. The solver passes the
+    model's own bridges; the readings are for callers that have none.
     """
     if bridges is None and problem.battery and problem.minimum_mode_minutes:
         previous, _ = _initial(problem)
@@ -1141,14 +1181,23 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
                 raise SolveError(
                     "solver_failure", "invalid solver result: legacy direction guard"
                 )
-        if (carried or released) and index and not full_seen:
+        # `problem` is the one the plan was realised on: a probe's load is in its slots
+        # already, so the ceilings here take no `extra_load`, which the model, planning
+        # the probe, bounds by its upper limit.
+        if (carried or released) and not full_seen:
             full_seen = left >= _lock_ceiling(problem, drains, index) - _EMPTY_TOLERANCE
         if index in bridges:
-            if not (carried and mode == "HOLD" and index in idle):
+            # Nothing to follow: HOLD by classification, the commitment goes on, or so
+            # does the CURTAIL run that a dry interval has nothing left to curtail for.
+            curtail_run = (
+                previous == "CURTAIL"
+                and _curtail_dry(problem, slot)
+                and start < since.astimezone(UTC) + dwell
+            )
+            if not ((carried or curtail_run) and mode == "HOLD" and index in idle):
                 raise SolveError(
                     "solver_failure", "invalid solver result: minimum mode duration"
                 )
-            # Nothing to follow: HOLD by classification, the commitment goes on.
             left = flow.end_soc_kwh
             continue
         if (
@@ -1168,9 +1217,7 @@ def _certify_modes(problem: Problem, flows, bridges: frozenset[int]) -> None:
                 # surplus, or too full to charge. It ends in HOLD; a full pack may also
                 # curtail what the site cannot pass, and so may the HOLD released from a
                 # commitment whose pack has been full.
-                full = bool(index) and (
-                    left >= _lock_ceiling(problem, drains, index) - _EMPTY_TOLERANCE
-                )
+                full = left >= _lock_ceiling(problem, drains, index) - _EMPTY_TOLERANCE
                 ends = (
                     carried
                     and mode == "HOLD"
