@@ -483,16 +483,32 @@ def test_curtail_takes_over_a_hold_that_cannot_pass_the_pv(problem, modes):
     roll(problem, len(modes) - 2)
 
 
-def test_curtail_takes_a_hold_over_only_where_the_site_cannot_pass_the_pv():
+def test_validator_reads_curtail_as_a_takeover_only_where_the_site_cannot_pass_the_pv():
     # PV below the cap leaves HOLD a legal mode: CURTAIL there would be a label to leave
-    # the minimum duration with, so the validator refuses it and the model never plans it.
-    problem = carried(capped((0.1, 0.5, 0.5, 0.5, 0.1, 0.1)), mode="HOLD")
-    plan = solve(problem)
-    assert [flow.dispatch_mode for flow in plan.flows[:3]] == ["HOLD"] * 3
+    # the minimum duration with, so the validator refuses it. The same rows on a PV the
+    # cap cannot pass are the takeover: the need is what decides, not the run's length.
     curtail = Flow(0, 0.1, 0, 0, 0.3, 10, None, "CURTAIL")
     hold = Flow(0, 0, 0, 0, 0, 10, None, "HOLD")
+    rows = (hold, *(curtail,) * 4, hold)
+    below = carried(capped((0.1, *(0.5,) * 4, 0.1)), mode="HOLD")
     with pytest.raises(SolveError, match="minimum mode duration"):
-        validate_modes(problem, (hold, curtail, curtail, curtail, hold, hold))
+        validate_modes(below, rows)
+    above = carried(capped((0.1, *(0.9,) * 4, 0.1)), mode="HOLD")
+    validate_modes(above, rows)
+
+
+def test_a_hold_is_taken_over_by_curtail_only_where_the_model_has_a_need_for_it():
+    # PV below the cap leaves HOLD a legal mode. With a sell price below zero a CURTAIL
+    # pays there, but the takeover is not offered: the HOLD lasts its hour, then CURTAIL.
+    # The PV above the cap at the end makes the takeover an option of the model at all.
+    pv = (0.1, *(0.5,) * 5, 0.9, 0.9)
+    for sell in (0.9, -0.5):
+        problem = carried(capped(pv, sell=sell), mode="HOLD")
+        plan = solve(problem)
+        modes = [flow.dispatch_mode for flow in plan.flows]
+        assert modes[:3] == ["HOLD"] * 3
+        validate_modes(problem, plan.flows)
+    assert modes[3:] == ["CURTAIL"] * 5
 
 
 def test_validator_reads_curtail_in_a_forced_interval_as_the_hold_taken_over():

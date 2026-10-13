@@ -34,6 +34,10 @@ QUARTER = timedelta(minutes=15)
 ENERGIES = (0, 0, 0.01, 0.02, 0.024, 0.025, 0.03, 0.05, 0.1, 0.2, 0.5)
 CAPACITY = 5
 
+# Each sweep takes ~8 s alone; a busy host (load average ~10 on 16 cpus) took it past the
+# suite's 45 s thread timeout, which kills the xdist worker without a traceback (T-051).
+pytestmark = pytest.mark.timeout(180)
+
 
 def corpus_problem(rng: random.Random) -> Problem:
     """One committed problem; every rule the commitment meets can be on or off."""
