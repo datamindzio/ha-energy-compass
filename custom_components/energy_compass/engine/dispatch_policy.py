@@ -498,7 +498,7 @@ def curtail_need(problem, slot, extra_load=0.0) -> float:
 
 
 def _beyond_the_pack(problem, slot, extra_load=0.0) -> float:
-    """Tell how much of `_curtail_need` the pack cannot take by its charge power (T-064).
+    """Tell how much of `curtail_need` the pack cannot take by its charge power (T-064).
 
     The model charges and curtails in one interval (a CURTAIL row may charge), and
     CHARGE_PV, which curtails nothing, has no flow where this is positive. The need from
@@ -506,7 +506,7 @@ def _beyond_the_pack(problem, slot, extra_load=0.0) -> float:
     only shrinks what the export cap needs.
     """
     battery = problem.battery
-    return _curtail_need(problem, slot, extra_load) - battery.charge_kw * _hours(slot)
+    return curtail_need(problem, slot, extra_load) - battery.charge_kw * _hours(slot)
 
 
 def _beyond_room(problem, slot) -> float:
