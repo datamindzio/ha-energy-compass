@@ -697,7 +697,7 @@ def test_a_released_hold_that_goes_on_is_carried_too(mode):
     assert solve(after).flows[0].dispatch_mode == "CHARGE_PV"
 
 
-def stored(commitment, mode, start, released=()):
+def stored(commitment, mode, start, released=(), minutes=60):
     """What the coordinator stores for a plan whose current interval is `mode`."""
     coordinator = SimpleNamespace(
         _battery_commitment=dict(commitment) if commitment else None,
@@ -708,7 +708,11 @@ def stored(commitment, mode, start, released=()):
         {
             "generated_at": start,
             "intervals": [{"dispatch_mode": mode, "start": start}],
-            "dispatch_policy": {"enabled": True, "released_hold_starts": list(released)},
+            "dispatch_policy": {
+                "enabled": True,
+                "minimum_mode_minutes": minutes,
+                "released_hold_starts": list(released),
+            },
         },
     )
     return coordinator._battery_commitment
@@ -728,6 +732,14 @@ def test_the_coordinator_keeps_the_commitment_and_its_clock_for_a_released_hold(
     assert stored(held, "HOLD", start) == {"mode": "HOLD", "since": start}
     assert stored(kept, "HOLD", start) == {"mode": "HOLD", "since": start}
     assert stored(kept, "CURTAIL", start) == {"mode": "CURTAIL", "since": start}
+    # The HOLD that outlasted the commitment's hour goes back to a run of its own.
+    later = "2026-12-18T11:50:00+00:00"
+    assert stored(kept, "CHARGE_PV", later) == {"mode": "CHARGE_PV", "since": later}
+    assert stored(kept, "CHARGE_PV", later, minutes=0) == {
+        "mode": "CHARGE_PV",
+        "since": since,
+    }
+    assert stored(kept, "HOLD", later, [later]) == kept
     # No commitment to keep: a HOLD is a HOLD.
     assert stored(None, "HOLD", start, [start]) == {"mode": "HOLD", "since": start}
     assert stored({"mode": "HOLD", "since": since}, "HOLD", start, [start]) == {
@@ -770,32 +782,37 @@ def test_a_release_needs_a_pv_follow_commitment_to_come_from():
         )
 
 
-@pytest.mark.parametrize(
-    "changes",
-    [
-        # The pack recovered: the commitment goes on, as if no HOLD had run.
-        {"battery": 5.0},
-        # The commitment's hour is up: nothing to go back to.
-        {"since": timedelta(minutes=75)},
-    ],
-)
-def test_a_release_that_no_longer_holds_is_ignored(changes):
+def test_a_released_hold_that_outlasts_the_commitment_goes_on_without_a_clock():
+    # The commitment's hour is up in the middle of the sunrise: the HOLD that was
+    # released from it is not a new HOLD run, which could not pass the PV above the cap.
+    problem = depleted(
+        (0.05, *(0.9,) * 7), mode="SELF_CONSUME", allow_curtailment=False
+    )
+    problem = replace(
+        problem,
+        battery=replace(problem.battery, allow_grid_charge=False),
+        initial_dispatch_mode_since=problem.slots[0].start - timedelta(minutes=75),
+    )
+    with pytest.raises(SolveError):
+        solve(problem)
+    flagged = replace(problem, initial_dispatch_released=True)
+    plan = solve(flagged)
+    assert [flow.dispatch_mode for flow in plan.flows[:2]] == ["HOLD", "CHARGE_PV"]
+    assert plan.released_holds == (0,)
+
+
+def test_a_recovered_pack_leaves_the_carried_release_to_the_plan():
+    # The pack the release was for is not empty any more: the HOLD may go on or go back
+    # to the commitment, as the plan finds best, and the commitment is not left.
     problem = depleted((0, *(0.9,) * 7), mode="SELF_CONSUME")
-    if "battery" in changes:
-        problem = replace(
-            problem, battery=replace(problem.battery, initial_kwh=changes["battery"])
-        )
-    else:
-        problem = replace(
-            problem,
-            initial_dispatch_mode_since=problem.slots[0].start - changes["since"],
-        )
-    plain = solve(problem)
-    flagged = solve(replace(problem, initial_dispatch_released=True))
-    assert [flow.dispatch_mode for flow in flagged.flows] == [
-        flow.dispatch_mode for flow in plain.flows
-    ]
-    assert flagged.released_holds == plain.released_holds == ()
+    problem = replace(
+        problem,
+        battery=replace(problem.battery, initial_kwh=5.0),
+        initial_dispatch_released=True,
+    )
+    plan = solve(problem)
+    assert plan.flows[0].dispatch_mode in {"HOLD", "SELF_CONSUME", "CHARGE_PV"}
+    validate_modes(problem, plan.flows, plan.carried_bridges)
 
 
 def test_validator_reads_the_carried_release_as_a_hold_that_may_go_back():

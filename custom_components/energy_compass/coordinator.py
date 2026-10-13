@@ -1157,11 +1157,22 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             self._battery_commitment["mode"]
         ) == dwell_group(mode):
             # CHARGE_PV <-> SELF_CONSUME keeps the inverter state and its clock.
-            self._battery_commitment = {
+            kept = {
                 key: value
                 for key, value in self._battery_commitment.items()
                 if key != "released"
             } | {"mode": mode}
+            minutes = policy.get("minimum_mode_minutes")
+            if (
+                self._battery_commitment.get("released")
+                and minutes
+                and parse_timestamp(result["generated_at"])
+                >= parse_timestamp(kept["since"]) + timedelta(minutes=minutes)
+            ):
+                # The released HOLD went on past the commitment's deadline: what it goes
+                # back to is a PV-follow run of its own, from here.
+                kept["since"] = result["generated_at"]
+            self._battery_commitment = kept
         elif not self._battery_commitment or self._battery_commitment["mode"] != mode:
             previous = self._battery_commitment
             self._battery_commitment = {"mode": mode, "since": result["generated_at"]}

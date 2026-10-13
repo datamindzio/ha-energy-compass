@@ -526,27 +526,16 @@ def _released_start(problem: Problem) -> bool:
     """Tell whether the interval before the first one was a HOLD released from a depleted pack.
 
     A HOLD released from a PV-follow commitment because its pack is depleted starts no
-    clock and may go back to the commitment. The coordinator carries that state across
-    a boundary (`initial_dispatch_released`) with the commitment and its clock, which
-    stay. It holds inside the commitment's duration and while the pack is still
-    depleted: a pack that has recovered is the commitment going on.
+    clock, may go back to the commitment and, past the commitment's deadline, goes on
+    as long as it runs. The coordinator carries that state across a boundary
+    (`initial_dispatch_released`) with the commitment and its clock, which stay.
     """
-    previous, since = _initial(problem)
-    if (
-        not problem.initial_dispatch_released
-        or not problem.battery
-        or not problem.minimum_mode_minutes
-        or dwell_group(previous) != "PV_FOLLOW"
-    ):
-        return False
-    held_until = since.astimezone(UTC) + timedelta(minutes=problem.minimum_mode_minutes)
-    if problem.slots[0].start.astimezone(UTC) >= held_until:
-        return False
-    drains = drain_schedule(problem)
-    owed = _owed(problem, drains, held_until)
-    return (
-        problem.battery.initial_kwh
-        <= _lock_floor(problem, drains, owed, 0) + _EMPTY_TOLERANCE
+    previous, _ = _initial(problem)
+    return bool(
+        problem.initial_dispatch_released
+        and problem.battery
+        and problem.minimum_mode_minutes
+        and dwell_group(previous) == "PV_FOLLOW"
     )
 
 
@@ -1154,9 +1143,13 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 else (
                     {},
                     int(
-                        previous is not None
-                        and dwell_group(previous) == group
-                        and not (released_start and group == "PV_FOLLOW")
+                        (
+                            previous is not None
+                            and dwell_group(previous) == group
+                            and not (released_start and group == "PV_FOLLOW")
+                        )
+                        # The released HOLD goes on: a HOLD run with no clock.
+                        or (released_start and group == "HOLD")
                     ),
                 )
             )
@@ -1273,7 +1266,7 @@ def validate_modes(
     """Independently certify labels, activity, coverage and carried commitments.
 
     Returns the rows of a HOLD released from a PV-follow commitment whose pack was
-    depleted, inside the commitment's duration: the coordinator carries that release
+    depleted, for as long as that HOLD runs: the coordinator carries that release
     (`initial_dispatch_released`).
 
     `bridges` lists the committed idle rows the plan reads as a bridge, the rest
@@ -1342,10 +1335,9 @@ def _certify_modes(
     released = full_seen = False
     owed = _owed(problem, drains, since.astimezone(UTC) + dwell) if carried else ()
     idle = idle_slots(problem) if carried else frozenset()
-    held_until = since.astimezone(UTC) + dwell if since else None
     # The HOLD released from a depleted pack before the first interval goes on: it starts
     # no clock, and the commitment's deadline stays the only one.
-    emptied = _released_start(problem)
+    emptied = resumed = _released_start(problem)
     if emptied:
         previous, carried, released = "HOLD", False, True
     rows = []
@@ -1461,8 +1453,13 @@ def _certify_modes(
                 resumes = (
                     released
                     and dwell_group(mode) == "PV_FOLLOW"
-                    and left
-                    <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
+                    and (
+                        left
+                        <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
+                        # The release the coordinator carried: its pack was depleted.
+                        or resumed
+                        and not index
+                    )
                 )
                 if not (ends or curtails or takes_over or resumes):
                     raise SolveError(
@@ -1485,6 +1482,6 @@ def _certify_modes(
                 since = start
         previous = mode
         left = flow.end_soc_kwh
-        if emptied and mode == "HOLD" and start < held_until:
+        if emptied and mode == "HOLD":
             rows.append(index)
     return frozenset(rows)
