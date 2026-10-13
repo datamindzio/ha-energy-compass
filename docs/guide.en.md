@@ -2039,8 +2039,10 @@ small negative values that rounding in statistics can leave, e.g. in `import + P
 names the place, `days[n][i]` (day `n` from 1, interval `i` from 0) or `line n` of a CSV.
 
 An interval may also carry `buy_energy` (CSV column too): the energy part of `buy`, the part the
-deposit can pay (the rest of `buy` is distribution), in the same units, not above `buy` and empty or
-missing meaning 0. It matters only with the
+deposit can pay (the rest of `buy` is distribution), in the same units, as invoiced, so it may be
+negative (a draw at a negative energy price, dynamic offer without an index floor); it is not above
+`max(buy, 0)`, and when negative not above `buy`; empty or missing means 0. The planner uses
+`max(buy_energy, 0)` (capped at `max(buy, 0)`, as the engine does). It matters only with the
 [deposit model](#net-billing-deposit-value), which you switch on with `--set deposit_model=manual
 --set export_value_factor=0.3` (experimental). `buy` stays the invoice
 price, so `buy_distribution_mode`, `buy_distribution_rate` and `buy_distribution_off_peak_rate` are
@@ -2133,7 +2135,11 @@ the refund and the void of each bill. Compare two runs by the difference of `K` 
 gives the no-planner reference. The input is one JSON object (`timezone`, `start`, `rho`, `fixed`,
 `initial_soc_percent`, `settings` and `hours[]`) or a CSV, one row per **hour** with `start`, `buy`,
 `sell`, `buy_energy`, `pv_forecast`, `load_forecast`, `pv`, `load` — the same values as above; the
-format is in the tool's docstring, `--rho`, `--fixed` and `--initial-soc` override the file. Hours
+format is in the tool's docstring, `--rho`, `--fixed` and `--initial-soc` override the file.
+`buy_energy` is the energy part as invoiced, with its sign: the bills sum it per month (a draw at a
+negative energy price lowers the month, and a month that ends below zero stays in the bill at full
+value and adds nothing to `E_owed`), while the planner sees `max(buy_energy, 0)`, so the plan does
+not depend on the negative values. Hours
 must be consecutive real hours, one row each; a JSON row may carry its own `start`, which must then
 match its position. `--refresh-hours` must not exceed `horizon_hours`. The number of failed plan
 solves is printed on stderr in both output formats.
@@ -2148,9 +2154,9 @@ repeated autumn hour it is the first occurrence, unless the row before it is tha
 Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
 charge band that depends on the annual import is not modelled (take `fixed` from the no-battery bill
 and expect a small constant error where the band differs); a stretch shorter than a year is read as
-a year with empty months; `buy_energy` stays non-negative as in the engine, so a month with a
-negative energy part reaches the bills only as a signed energy list through the Python API (`bill()`),
-not through the hourly input; the result is only as good as the forecast series you give it.
+a year with empty months; the settlement period is the calendar month; a seller that bills a longer
+period nets across its months, which the tool does not model; energy is valued per hour; the result is only as good as the forecast
+series you give it.
 
 ## Reason code reference
 

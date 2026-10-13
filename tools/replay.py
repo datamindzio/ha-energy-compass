@@ -13,7 +13,8 @@ installation's currency:
 Use `--set key=value` (repeatable) to override a planner setting, so two runs can
 be compared; the net-billing deposit settings (`deposit_model`,
 `export_value_factor`, ...) work the same way and need the optional `buy_energy`
-per interval (the energy part of `buy`; the rest of `buy` is the distribution). The input format is described in docs/guide.en.md#offline-replay-tool.
+per interval (the energy part of `buy` as invoiced, with its sign; the rest of `buy` is the
+distribution; the planner sees it clamped at 0). The input format is described in docs/guide.en.md#offline-replay-tool.
 
     python tools/replay.py tools/replay_sample.json
     python tools/replay.py tools/replay_sample.json --set allow_grid_charge=false
@@ -112,7 +113,8 @@ class Interval:
     load_forecast: float
     pv: float
     load: float
-    # Part of the invoice `buy` the prosumer deposit can pay (energy, no distribution).
+    # Energy part of the invoice `buy`, as invoiced (signed: a dynamic offer without an index
+    # floor bills a draw at a negative price). The planner sees `planner_energy` instead.
     buy_energy: float = 0.0
 
 
@@ -213,14 +215,19 @@ def _interval(start: datetime, row, where: str) -> Interval:
         for name in _VALUES
     ]
     raw = row.get("buy_energy")
-    energy = (
-        0.0
-        if raw is None or raw == ""
-        else _number(raw, where, "buy_energy", non_negative=True)
-    )
+    energy = 0.0 if raw is None or raw == "" else _number(raw, where, "buy_energy")
     if energy > max(values[0], 0.0) + 1e-9:
         raise ReplayError(f"{where}: buy_energy must not exceed buy, got {raw!r}")
+    if energy < 0 and energy > values[0] + 1e-9:
+        raise ReplayError(
+            f"{where}: buy_energy below zero must not exceed buy, got {raw!r}"
+        )
     return Interval(start, *values, energy)
+
+
+def planner_energy(interval: Interval) -> float:
+    """The energy part the planner sees: min(max(buy_energy, 0), max(buy, 0)) (ADR-0001)."""
+    return min(max(interval.buy_energy, 0.0), max(interval.buy, 0.0))
 
 
 def _aware(text: str, zone: ZoneInfo, where: str) -> datetime:
@@ -613,7 +620,7 @@ def _slots(day: Day, begin: int, count: int, realized: bool) -> tuple[Slot, ...]
             interval.sell,
             interval.pv if realized else interval.pv_forecast,
             interval.load if realized else interval.load_forecast,
-            interval.buy_energy,
+            planner_energy(interval),
         )
         for interval in day.intervals[begin : begin + count]
     )
