@@ -746,7 +746,10 @@ Zasady (domyślnie 60 min, 0,1 kW):
   instalacja nie przepuści, bo `HOLD` nie ma tam legalnego przepływu: plan wykonany przez jeden
   przedział dotarłby inaczej do następnej granicy z przeniesionym zobowiązaniem i bez planu. `HOLD`
   zwolniony przy pełnej baterii tam nie wraca: przez granicę zachowuje własny zegar, a tam, gdzie
-  instalacja nie przepuści PV, jest `CURTAIL` (wyżej). Powrót to dalszy ciąg zobowiązania, a nie nowy
+  instalacja nie przepuści PV, jest `CURTAIL` (wyżej). Nie wraca też dlatego, że regułę końcową
+  wyczerpała bateria: to liczy się przy zwolnieniu i przy powrocie `HOLD`, który zaczął się na
+  rozładowanej baterii (koordynator przenosi go jako zwolniony), a nie przy tym, który wraca tylko
+  wtedy, gdy bateria jest rozładowana sama w sobie. Powrót to dalszy ciąg zobowiązania, a nie nowy
   przebieg: jedynym zegarem pozostaje termin zobowiązania. Bateria, która opróżni się ponownie w
   tym samym zobowiązaniu, jest znowu zwalniana i znowu wraca, tyle razy, ile trwa zobowiązanie.
   Zwolnienie przechodzi przez granicę przedziału: plan oznacza wiersze takiego `HOLD`

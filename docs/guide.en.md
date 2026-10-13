@@ -732,6 +732,9 @@ Rules (defaults: 60 min, 0.1 kW):
   legal flow: a plan followed one interval would otherwise reach the next boundary with a carried
   commitment and no plan. A `HOLD` released from a full pack does not go back there: it keeps its
   own clock across the boundary, and where the site cannot pass the PV it is `CURTAIL` (above).
+  Nor does it go back because the terminal rule has spent the pack: that counts for the release
+  and for the return of a `HOLD` that began on a depleted pack (the coordinator carries it as
+  released), not for this one, which returns only when the pack is depleted in itself.
   The return is the commitment going on, not a new
   run: the commitment's deadline stays the only clock. A pack that empties again inside the same
   commitment is released again and goes back again, as often as the commitment lasts. The release
