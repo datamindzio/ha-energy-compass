@@ -868,3 +868,27 @@ plan now may say so.
   `curtail_sweep.py deprobe` seeds 11, 22, 33 and 44: 62 newly planned, 0 newly infeasible. The 76 draws still without
   a plan are none infeasible with curtailment on: 42 of the 47 base draws start from a carried `HOLD` or `CURTAIL`
   commitment with room in the pack (pinned: `test_pinned_limit_*`), the rest are listed in the model document.
+
+## Amendment (T-082): a carried HOLD run is taken over by the spill, and the relay rides through a bridge
+
+T-066 left 47 base draws of `spill_sweep` (seeds 11 and 22, `run`, `negrun`, `bell`) without a plan; 42 start from a
+carried `HOLD` (22) or `CURTAIL` (20) commitment with room in the pack and curtailment off. Two rows had no legal mode.
+
+- **Carried `HOLD` with room.** The `HOLD` run (a clock of its own, `initial_dispatch_mode_since`) cannot pass PV the
+  site cannot pass, and cannot charge; the `CURTAIL` that takes it over (`takeover`) needs `curt ≥ activity`, while the
+  gate row holds `curt ≤ forced` with room in the pack. `takeover` now opens the gate (`_Spill.held`), in the intervals of
+  the carried run only (`dispatch_policy.carried_hold`). The certificate (`_validate_solution`) accepts a spill above the
+  forced part for a `CURTAIL` that takes a carried `HOLD` over (`takes_over`), and for no other.
+- **Bridge.** A `CURTAIL` run goes on through an interval with no need (`curtail_bridge`); the relay stopped there, so a
+  need that came back smaller than the room had the gate closed and the run's clock forbade the charge. The relay now
+  opens the gate of the interval after a bridge (model and certificate).
+- **Not changed:** the owner decision of T-062 B (a pack that can take the need never spills by choice), a site that can
+  curtail, the Deye controller, and every interval where nothing is beyond the pack. A first form that opened the
+  takeover in every interval let the solver spill by choice after a voluntary `HOLD` in 86 of 300 `bell` plans (seed 11)
+  and lost 11 rolls; the carried-run form does not.
+- **Measured** (`benchmarks/spill_sweep.py`, seeds 11 and 22 × 300 per draw, against the T-066 head `d917b02`): not
+  planned `run` 13 → 4, `negrun` 14 → 4, `bell` 20 → 4, `probe` 29 → 22; not followed `roll` 19 → 6, `negroll` 12 → 2,
+  `bellroll` 26 → 8; 0 newly infeasible and 0 solver failures in all 14 draws. 35 of the 47 base draws are planned.
+- **Limit that stays** (pinned: `test_pinned_limit_hold_the_plan_chose_meets_a_need_with_room_in_the_pack`): 12 base draws
+  where a `HOLD` run that the plan itself starts (60 minutes) meets a need with room in the pack. The spill would be the
+  plan's choice, which the model does not offer. Tests: `tests/test_forced_spill.py`.

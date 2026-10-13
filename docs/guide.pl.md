@@ -921,15 +921,20 @@ Zasady (domyślnie 60 min, 0,1 kW):
   dzwonowym przebiegu PV, śledzony przedział po przedziale do końca, zachowuje plan przez cały
   czas w 207 z 214 dni przy 15 minutach, 172 z 189 przy 30 minutach i 158 z 197 przy 60 minutach
   (bez przycięcia 27, 23 i 23); większość pozostałych nie ma planu od pierwszego
-  przedziału. Reszta nadal nie ma planu, głównie z powodu, którego plan nie obejmuje:
-  przeniesione zobowiązanie `HOLD` lub `CURTAIL`, którego czasu trwania model nie umie zakończyć,
-  gdy bateria ma wolne miejsce, częściej przy 60 minutach, oraz część losowań z próbką
-  elastycznego zużycia. Część wymuszona (T-066) zmniejszyła liczbę z 2400 problemów rozwiązanych
-  raz bez planu z 226 do 76, a liczbę losowań śledzonych przedział po przedziale i niedoprowadzonych
-  do końca z 190 do 57 z 1800, bez nowego problemu „brak planu” (`infeasible`) wśród rozwiązanych
-  raz, które main planował; z 3600 dni śledzonych przedział po przedziale na czterech ziarnach
-  jeden, który main prowadzi do końca, zatrzymuje się na granicy, w której nie ma planu na żadnej
-  instalacji (liczby i commity w dokumencie modelu)
+  przedziału. Reszta nadal nie ma planu, głównie z powodu, którego plan nie obejmuje: przebieg
+  `HOLD`, który plan sam rozpoczyna i który spotyka PV, którego instalacja nie przepuści, gdy
+  bateria ma wolne miejsce (przycięcie byłoby wtedy wyborem planu), częściej przy 60 minutach,
+  oraz część losowań z próbką elastycznego zużycia. Część wymuszona (T-066) zmniejszyła liczbę z
+  2400 problemów rozwiązanych raz bez planu z 226 do 76, a liczbę losowań śledzonych przedział po
+  przedziale i niedoprowadzonych do końca z 190 do 57 z 1800, bez nowego problemu „brak planu”
+  (`infeasible`) wśród rozwiązanych raz, które main planował; z 3600 dni śledzonych przedział po
+  przedziale na czterech ziarnach jeden, który main prowadzi do końca, zatrzymuje się na granicy,
+  w której nie ma planu na żadnej instalacji. Przeniesione zobowiązanie `HOLD` lub `CURTAIL` nie
+  kończy już planu (T-082): tam, gdzie instalacja nie przepuści PV, `CURTAIL` przejmuje
+  przeniesiony `HOLD` przy wolnym miejscu w baterii, a przebieg `CURTAIL` trwa przez przedział bez
+  nadwyżki do nadwyżki, która wraca mniejsza niż wolne miejsce; to zmniejszyło liczbę z 2400
+  losowań bez planu z 76 do 34, a liczbę losowań śledzonych i niedoprowadzonych do końca z 57 do
+  16 z 1800, bez żadnego nowego „brak planu” (`infeasible`) (liczby i commity w dokumencie modelu)
   ([model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget), EN).
 - **`CURTAIL` trwa mimo przerwy w PV.** Przebieg `CURTAIL` trwa minimalny czas, a PV może w tym
   czasie spaść. `HOLD` w przedziale z PV poniżej minimalnej aktywności (`minimum_mode_power_kw × h`)

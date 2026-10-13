@@ -633,6 +633,37 @@ def carried_curtail(problem) -> bool:
     return bool(problem.minimum_mode_minutes) and _initial(problem)[0] == "CURTAIL"
 
 
+def carried_hold_until(problem):
+    """Tell when the HOLD run carried into the plan may end, or None where there is none (mode model).
+
+    A HOLD takes none of the PV the site cannot pass (`curtail_need`): on a site that
+    cannot curtail the inverter throttles by itself where the run must last, a CURTAIL
+    that takes the HOLD over, and that spill is the commitment's, not the plan's choice
+    (T-082). A HOLD the plan chose itself is no reason to spill into a pack with room,
+    and one released from the commitment has no clock. The safety exception's HOLD is a
+    full pack, which spills anyway.
+    """
+    if (
+        not problem.minimum_mode_minutes
+        or problem.initial_dispatch_mode != "HOLD"
+        or problem.initial_dispatch_mode_since is None
+        or problem.initial_dispatch_released
+        or not problem.battery
+        or problem.site.allow_curtailment
+    ):
+        return None
+    return problem.initial_dispatch_mode_since.astimezone(UTC) + timedelta(
+        minutes=problem.minimum_mode_minutes
+    )
+
+
+def carried_hold(problem, slot=None) -> bool:
+    """Tell whether a slot (the first one) starts inside the run `carried_hold_until` names."""
+    until = carried_hold_until(problem)
+    slot = slot or (problem.slots[0] if problem.slots else None)
+    return until is not None and slot is not None and slot.start.astimezone(UTC) < until
+
+
 def _curtail_dry(problem, slot) -> bool:
     """Tell whether a slot has nothing to curtail the minimum activity from.
 
