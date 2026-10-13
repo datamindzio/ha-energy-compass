@@ -400,13 +400,46 @@ przez <a href="#wykryte-źródła-nowe-instalacje">Wykryte źródła</a> ustawia
 <p><code>sell_multiplier</code> w systemie opustów to jednorazowa kopia współczynnika, a nie odnośnik do ceny
 zakupu: to przybliżenie (roczny bilans kWh i niedopasowanie stref G12 nie są modelowane), a
 późniejsza zmiana ceny zakupu go nie aktualizuje.</p>
+<p><strong>Instalacja w systemie opustów pracuje z baterią w własnym trybie autokonsumpcji falownika.</strong> Ustaw
+falownik na autokonsumpcję (najpierw obciążenie, bez ładowania z sieci i bez eksportu z baterii), zostaw
+„Ładowanie z sieci” (<code>allow_grid_charge</code>) i „Eksport energii z baterii” (<code>allow_battery_export</code>)
+wyłączone (domyślnie są wyłączone i te profile tego nie zmieniają) i nie włączaj
+<a href="#włączenie-sterownika">sterownika Deye</a>. Opust nie jest rozliczany godzinowo: według ustawy o
+odnawialnych źródłach energii (tekst jednolity Dz.U. 2026 poz. 68, art. 4) energia oddana jest
+rozliczana z pobraną w stosunku 1 : 0,8 (1 : 0,7 powyżej 10 kW), a nadwyżka jest przenoszona przez 12
+miesięcy, więc oddana kWh jest warta <code>współczynnik</code> kWh późniejszego importu — nic, gdy roczny kredyt
+pokrywa roczny import — a część stała rachunku zmienia się skokowo z rocznym poborem (progi opłaty
+mocowej przy 500, 1 200 i 2 800 kWh). Nic z tego nie jest ceną godzinową ani nie mieści się w horyzoncie
+24-48 h, więc plan nie obniży rocznego rachunku. Planista się tu wycofuje: bez zmian silnika, strategii
+ani profilu, a pokazywane koszty (<code>expected_net_cost</code>, <code>consumption_cost</code>, karta kosztów,
+<code>tools/replay.py</code>) pozostają cenami godzinowymi — kWh są dokładne, kwoty są przybliżeniem.</p>
+<p>Pomiar na 40 symulowanych domach (G11 i G12, współczynnik 0,8, bateria 10 kWh, rok z przeliczaniem co
+godzinę, względem tej samej baterii w czystej autokonsumpcji, wycena rocznym rachunkiem,
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/adr/0008-net-metering-plain-self-consumption.md">ADR-0008</a>): plan domyślny (<code>cost_min</code>, jak w profilu)
+zmienia roczny koszt o −93…+70 PLN (średnio −1), nigdy nie obniża rachunku o więcej niż 10 PLN, a roczny
+import rośnie o +33…+704 kWh. Wyceniony godzinowo, tak jak raportuje go Home Assistant, ten sam plan na
+G12 pokazuje zysk +343 PLN rocznie, którego rozliczenie nie wypłaca. Z włączonym <strong>Ładowaniem z sieci</strong>
+(13 domów) roczny koszt zmienia się o −209…+139 PLN względem autokonsumpcji, a import rośnie o +897 kWh
+(mediana). Ograniczenia: domy symulowane, jeden rozmiar baterii (10 kWh), jeden rok cen, interwały
+godzinowe, strefy G12 netowane jako jedna średnia stawka.</p>
 <p>Podgląd pokazuje pochodzenie profili startowych dla profilowanej nowej instalacji: które klucze
 wypełniła każda oś, źródło zakupu wstępnie wybrane przez profil <code>buy_tariff</code>, każdą wartość
 zmienioną po wypełnieniu (także klucz powiązany z pomocnikiem, wraz z jego efektywną wartością) oraz
 uwagi dotyczące rozliczenia — Sell only PV wyłączone, źródło sprzedaży stosujące już własny
 mnożnik rozliczeniowy, surowe ceny RCE bez progu 0 (z poprawką w postaci skrótu „Cena rynkowa RCE”)
 albo z progiem, ale bez mnożnika 1,23, lub sprzedaż w systemie opustów, która przestała śledzić
-zakup — widoczne tylko dla instalacji, które użyły profilu startowego.</p>
+zakup — widoczne tylko dla instalacji, które użyły profilu startowego.
+Dla profilu opustu Podgląd zawsze dodaje jeszcze dwie uwagi (tylko po angielsku):</p>
+<ul>
+<li>„Note: net-metering is settled on yearly kWh (an exported kWh takes back 0.8 kWh within 12 months),
+  not on hourly prices: price-driven dispatch does not lower the yearly bill and the costs shown are an
+  hourly approximation. Run the battery in the inverter's own self-use mode and do not let a controller
+  follow this plan." (0,7 w profilu 70 %.)</li>
+<li>gdy włączone jest <strong>Ładowanie z sieci</strong> lub <strong>Eksport energii z baterii</strong>: „Note: Allow grid charge is
+  on: under net-metering energy sent through the grid comes back at 0.8 and raises the yearly import;
+  turn it off.” (z nazwą tego, co jest włączone, albo „Allow grid charge and Allow battery export are
+  on”).</li>
+</ul>
 <p>Wybór, razem z wersją profili startowych, która go wyliczyła, jest zapisywany we wpisie
 konfiguracji (<code>setup_profiles</code>) i trafia do diagnostyki.</p>
 <h3 id="wbudowane-taryfy-osd">Wbudowane taryfy OSD</h3>
@@ -2232,6 +2265,8 @@ Odrzuca urządzenie, gdy brakuje programu lub jest wyłączony, gdy identyfikato
 wspólnego prefiksu albo gdy inny wpis Energy Compass już steruje tym urządzeniem. Włączenie przeładowuje
 wpis raz; przeniesienie sterownika na inne urządzenie działa na żywo. Oba są odrzucane, gdy tryb nie jest <code>Off</code> albo oczekuje przywrócenie: najpierw wybierz <code>Off</code> i poczekaj, aż <code>restore_pending</code> wygaśnie, bo inaczej nic nie przywróci profilu bazowego. Krok jest widoczny bez przełącznika
 ustawień eksperckich.</p>
+<p>Nie włączaj sterownika w instalacji z opustem: właściwym planem jest tam własny tryb autokonsumpcji
+falownika (zob. <a href="#profile-startowe-nowe-instalacje">Profile startowe</a>).</p>
 <p>Instalacja, która używała pakietu 0.1.36, ma jeden wpis Energy Compass i dokładnie jedno urządzenie Solarman
 ze wszystkimi sześcioma programami, dostaje sterownik włączony automatycznie przy pierwszym starcie
 0.1.37. Tryb zaczyna od <code>Off</code>, więc nic się nie zapisuje, dopóki go nie wybierzesz; zob.
@@ -2949,6 +2984,9 @@ grupowane w dni według lokalnej daty <code>start</code>; ustawienia podaje się
   nie jest nadrabiany. <code>DISCHARGE_GRID</code> rozładowuje zaplanowaną energię, <code>HOLD</code> zatrzymuje baterię. Eksport ponad
   <code>grid_export_kw</code> jest ucinany (curtailment), a zmagazynowana energia nie jest eksportowana ponad
   dotychczasową produkcję PV, gdy włączone jest <strong>Sell only PV</strong> (<code>limit_export_to_pv</code>).</li>
+<li><strong>W pliku z opustem koszty to ceny godzinowe, a nie rozliczenie.</strong> Opust jest rozliczany w rocznych
+  kWh (<a href="#profile-startowe-nowe-instalacje">Profile startowe</a>), więc <code>plan − self_use</code> nie jest tam
+  oszczędnością; nie porównuj po nim strategii.</li>
 <li><a href="#zapas-na-drogie-okresy">Zapas na drogie okresy</a> (<code>peak_reserve_margin_kwh</code>) jest odtwarzany jak w integracji: wymaga
   <code>limit_grid_charge_price</code> (jego pułap to cena „tania”), w przeciwnym razie ostrzeżenie mówi, że nie
   ma efektu.</li>

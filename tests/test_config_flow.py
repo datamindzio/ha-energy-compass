@@ -1372,6 +1372,12 @@ async def test_preview_warns_net_metering_copy(
     )
     text = preview["description_placeholders"]["preview"]
     assert "Note: net-metering sell is a copy, not linked to buy" in text
+    assert (
+        "Note: net-metering is settled on yearly kWh (an exported kWh takes "
+        "back 0.8 kWh within 12 months), not on hourly prices" in text
+    )
+    assert "Run the battery in the inverter's own self-use mode" in text
+    assert "under net-metering energy sent through the grid" not in text
 
 
 _RCE_RECORDS = [
