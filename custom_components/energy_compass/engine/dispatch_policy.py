@@ -1,6 +1,7 @@
 """Physical operating modes and elapsed-time advice commitments."""
 
 import math
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, timedelta
@@ -556,13 +557,17 @@ def _released_start(problem: Problem) -> bool:
     )
 
 
-def _resume(model, v, members, released, depleted) -> None:
+def _resume(model, v, members, released, depleted, emptied) -> None:
     """Let a HOLD released from a depleted pack go back to the commitment (`back`).
 
     A released HOLD does not go back to the commitment, except where the pack it
     was released for is still depleted: the surplus is then what the pack takes, and
-    a HOLD cannot pass the PV above the export cap. The return is the commitment
-    going on, not a PV-follow run of its own: its deadline is the only one.
+    a HOLD cannot pass the PV above the export cap. `emptied` is the HOLD run that was
+    released from a depleted pack, offered in an interval whose PV the site cannot
+    pass: that HOLD has no legal flow there, so it goes back whatever the pack holds
+    (a HOLD released from a full pack does not: the coordinator carries it as a HOLD
+    with a clock of its own). The return is the commitment going on, not a PV-follow
+    run of its own: its deadline is the only one.
     """
     back = v["back"] = model.variable(binary=True)
     followed = {v[f"mode_{mode}"]: 1 for mode in members}
@@ -573,7 +578,36 @@ def _resume(model, v, members, released, depleted) -> None:
     model.constrain(
         {back: 1, **{key: -value for key, value in released.items()}}, -np.inf, 0
     )
-    model.constrain({back: 1, **depleted}, -np.inf, 0)
+    model.constrain(
+        {back: 1, **depleted, **{key: -value for key, value in emptied.items()}},
+        -np.inf,
+        0,
+    )
+
+
+def _nonzero(terms) -> dict:
+    return {key: value for key, value in terms.items() if value}
+
+
+def _emptied_hold(model, v, hold, origin, held, emptied) -> dict:
+    """Tell the HOLD run `hold` began on a depleted pack (`emptied_hold`, 1 where it did).
+
+    `origin` is what released it from a depleted pack (the terms of `depleted`, signs
+    flipped as in `releases`), `held` the HOLD run going on from the interval before
+    (signed as `held`), `emptied` that interval's own result. A run goes on as it began,
+    so a run released from a full pack stays one when the pack empties under it.
+    """
+    row = v["emptied_hold"] = model.variable(upper=1.0)
+    model.constrain({row: 1, hold: -1}, -np.inf, 0)
+    # Released from a depleted pack here, or the run went on with its release.
+    began = Counter(origin)
+    began.update({key: -value for key, value in emptied.items()})
+    model.constrain({row: 1, **_nonzero(began)}, -np.inf, 0)
+    # A run going on is the one before it: only a run that starts here has an origin.
+    going = Counter({key: -value for key, value in held.items()})
+    going.update({key: -value for key, value in emptied.items()})
+    model.constrain({row: 1, **_nonzero(going)}, -np.inf, 1)
+    return {row: 1}
 
 
 def _offer_curtail(model, v, seen_full, full, curtailing, released) -> None:
@@ -832,6 +866,15 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
     taken = {}
     margin = _PROBE_MARGIN if flexible_load else 0.0
     rooms = [_takeover_room(problem, slot) - margin for slot in problem.slots]
+    # PV the site cannot pass whatever the probe adds: a HOLD has no legal flow there.
+    unpassable = [
+        _curtail_need(
+            problem, slot, model.upper[v["flex_load"]] if flexible_load else 0.0
+        )
+        - margin
+        > 0
+        for slot, v in zip(problem.slots, vectors, strict=True)
+    ]
     if any(
         model.upper[v["mode_CURTAIL"]] > 0 and room > 0
         for room, v in zip(rooms, vectors, strict=True)
@@ -901,6 +944,11 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         curtailing = {}
         # The HOLD or the HOLD run released from the commitment, in the previous interval.
         released = {}
+        # That HOLD run, when it was released from a depleted pack (`_emptied_hold`): in
+        # an interval whose PV the site cannot pass it goes back to the commitment even
+        # if the pack has since been charged (the coordinator carries it, a full-pack
+        # release it does not).
+        emptied = {}
         if released_start:
             # The interval before the first was a HOLD released from the depleted pack:
             # that HOLD goes on, or goes back to the commitment (`_resume`).
@@ -908,6 +956,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             model.lower[fixed] = 1.0
             held = {fixed: -1}
             released = {fixed: 1}
+            emptied = {fixed: 1}
             depleted = {fixed: -1}
         if "CHARGE_PV" in members and (flexible_load or 0 not in idle):
             # The observed pack may already be at the first interval's ceiling: there
@@ -927,9 +976,21 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             if start >= held_until:
                 break
             chargeable = _takes_surplus(problem, slot)
+            # A released HOLD run of a depleted pack goes back to the commitment where
+            # the site cannot pass the PV (`_resume`); the run before is carried over.
+            resumable = emptied if unpassable[i] else {}
+            held_before, emptied_before, emptied = held, emptied, {}
+            track = follows_pv and any(unpassable[i + 1 :])
             # The pack is known to be spent: HOLD starts, with nothing to test.
             known = spent and not i
-            releases = {**full, **({} if chargeable else depleted)}
+            # What starts a HOLD run from a depleted pack, and the releases of both kinds.
+            origin = {} if chargeable else depleted
+            releases = {**full, **origin}
+            if known and track:
+                # The first interval's pack is observed spent: a constant.
+                sure = model.variable(upper=1.0)
+                model.lower[sure] = 1.0
+                origin = {sure: -1}
             if flexible_load and chargeable:
                 # The surplus is chargeable as realised: a probe may take it below the
                 # minimum activity, which is what the plan is certified against.
@@ -937,6 +998,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 bar = _surplus_bar(problem, slot)
                 model.constrain({v["flex_load"]: 1, open_surplus: bar}, bar, np.inf)
                 releases = dict(full)
+                origin = {}
                 if pack_spent if not i else depleted:
                     # Depleted and not chargeable as realised: HOLD may start.
                     release = model.variable(binary=True)
@@ -944,6 +1006,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     if i:
                         model.constrain({release: 1, **depleted}, -np.inf, 0)
                     releases[release] = -1
+                    origin = {release: -1}
             # An idle interval is CURTAIL on the terms of any committed interval: nothing
             # to follow does not make room in a full pack. A CURTAIL row is not a bridge.
             curtails = bool(seen_full) and model.upper[v["mode_CURTAIL"]] > 0
@@ -997,7 +1060,11 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     # to the commitment (unless the pack is depleted) and starts no
                     # clock of its own.
                     if released:
-                        _resume(model, v, members, released, depleted)
+                        _resume(model, v, members, released, depleted, resumable)
+                    if track:
+                        emptied = _emptied_hold(
+                            model, v, real, origin, held_before, emptied_before
+                        )
                     free_hold.add(i)
                     released = {real: 1}
                 curtailing = {v["mode_CURTAIL"]: -1} if curtails else {}
@@ -1016,6 +1083,10 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 held = {run: -1}
                 model.constrain({v["mode_HOLD"]: 1}, 1, 1)
                 if follows_pv:
+                    if track:
+                        emptied = _emptied_hold(
+                            model, v, run, origin, held_before, emptied_before
+                        )
                     free_hold.add(i)
                     released = {run: 1}
                 curtailing = {bridge[i]: -1} if i in bridge else {}
@@ -1062,7 +1133,16 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     # starts no clock of its own: the commitment's deadline is the only
                     # one, so it may end in CURTAIL at once.
                     if released:
-                        _resume(model, v, members, released, depleted)
+                        _resume(model, v, members, released, depleted, resumable)
+                    if track:
+                        emptied = _emptied_hold(
+                            model,
+                            v,
+                            v["mode_HOLD"],
+                            origin,
+                            held_before,
+                            emptied_before,
+                        )
                     free_hold.add(i)
                     released = {v["mode_HOLD"]: 1}
             depleted = {}
@@ -1463,13 +1543,19 @@ def _certify_modes(
                 )
                 # A HOLD released from a depleted pack goes back to the commitment: the
                 # HOLD has no legal flow for PV the site cannot pass, and the pack is
-                # what takes it. A HOLD released from a full pack does not.
+                # what takes it. A HOLD released from a full pack does not (the pack
+                # takes it where it has room again, and the coordinator carries that
+                # HOLD with a clock of its own).
                 resumes = (
                     released
                     and dwell_group(mode) == "PV_FOLLOW"
                     and (
                         left
                         <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
+                        # Or PV the site cannot pass, for the run released from a
+                        # depleted pack: the pack may have been charged since.
+                        or emptied
+                        and _curtail_need(problem, slot) > 0
                         # The release the coordinator carried: its pack was depleted.
                         or resumed
                         and not index

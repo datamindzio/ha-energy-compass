@@ -7,15 +7,17 @@ PV-export counters reset at local midnight, every plan executed on the realized 
 `replay.realize`. The hourly grid import and export it produces are valued by two net-billing bills
 (ADR-0001 revision 3, ADR-0031 of the calculator):
 
-    annual   deposit D = 1.23 x V pays the energy part E; refund min(D - min(D, E), rho x V)
+    annual   deposit D = 1.23 x V pays the liability E+ = sum of max(E_t, 0) of the monthly energy
+             parts; refund min(D - min(D, E+), rho x V)
     ledger   monthly vintages, booked the following month, used oldest first for 12 months,
              refund min(unused, rho x V_month) at expiry; the steady state of a repeated year:
-             D <= E -> applied = D, refund 0; D > E -> a warm-up year from a FULL account (every
+             D <= E+ -> applied = D, refund 0; D > E+ -> a warm-up year from a FULL account (every
              live vintage at its whole deposit), then the measured year
 
 Per run: both bills, wear, the SOC drift (initial minus final SOC at the mean buy price),
-K = annual bill + wear + SOC drift (KL the same with the ledger), D, V, E, the refund and the void
-(deposit that neither pays energy nor comes back) of each bill.
+K = annual bill + wear + SOC drift (KL the same with the ledger), D, V, E (signed), E+ (the liability
+the deposit pays), the refund and the void (deposit that neither pays energy nor comes back) of each
+bill.
 
     python tools/replay_year.py site.json --set capacity_kwh=10 --refresh-hours 6
     python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
@@ -47,7 +49,9 @@ naive JSON `start` in that hour is the first occurrence.
 
 Limits: the fixed part of the bill is one number given in the input (taken from the no-battery bill
 of the home); it does not follow the flow, so a charge band that depends on the annual import is
-not modelled. The ledger bins hours by the local month, so a partial first and last month are one
+not modelled. `buy_energy` is non-negative as in the engine (`normalize.py`), so a month with a
+negative energy part reaches `bill()` only as a signed `energy` list through the Python API, not
+through this input. The ledger bins hours by the local month, so a partial first and last month are one
 month of the cycle, and a stretch shorter than a year is read as a year with empty months. Energy
 is valued per hour: intervals other than one hour are rejected. No household data belongs in the
 repository; `tests/test_replay_year.py` uses a synthetic series.
@@ -119,8 +123,10 @@ def ledger_year(
     """Monthly vintage ledger from January; `(applied, refund, void)` of each of `passes` years.
 
     Month t: (a) the vintage of the previous month (December for January) is booked with its
-    month's deposit; (b) the energy part E_t is paid from the oldest vintage; (c) the vintage of
-    month t, in use for 12 months, expires: min(balance, rho x V_t) comes back, the rest is void.
+    month's deposit; (b) the liability max(E_t, 0) is paid from the oldest vintage; (c) the vintage
+    of month t, in use for 12 months, expires: min(balance, rho x V_t) comes back, the rest is void.
+    A month with a negative energy part owes nothing and never feeds the account (art. 4c ust. 1,
+    ADR-0031 Amendment T-471): the caller keeps it on the bill side at full value.
     `full` starts from a full account: the vintages of January..November hold their whole deposit.
     """
     queue: list[list[float]] = []  # [last step it is usable, balance, V of its month]
@@ -138,7 +144,7 @@ def ledger_year(
         booked = (step - 1) % 12 + 1
         if (step > 0 or full) and deposit[booked] > 0:
             queue.append([step + 11, deposit[booked], deposit[booked] / DEPOSIT_FACTOR])
-        due = energy[month]
+        due = max(energy[month], 0.0)
         for vintage in queue:
             used = min(vintage[1], due)
             vintage[1] -= used
@@ -168,16 +174,24 @@ def bill(
     rho: float,
     fixed: float = 0.0,
 ) -> dict:
-    """Both yearly bills of an hourly import/export flow (see the module docstring)."""
+    """Both yearly bills of an hourly import/export flow (see the module docstring).
+
+    `E` is the signed energy part, `E_owed` the liability E+ = sum of max(E_t, 0) the deposit pays.
+    bill = gross - applied - refund with gross = fixed + sum(import x buy): the energy part of a
+    month (its negative part too) is inside gross, so a negative month stays on the bill at full
+    value, never refunded, capped or voided (ADR-0031 Amendment T-471).
+    """
     gross = fixed + sum(i * b for i, b in zip(imp, buy, strict=True))
     deposit_m, energy_m = monthly_totals(
         months, [e * max(s, 0.0) for e, s in zip(exp, sell, strict=True)], imp, energy
     )
     deposit, paid = sum(deposit_m), sum(energy_m)
+    # both bills pay the liability E+ = sum of max(E_t, 0); a negative month stays in `gross`
+    owed = sum(max(part, 0.0) for part in energy_m[1:])
     value = deposit / DEPOSIT_FACTOR
-    applied = min(deposit, paid)
+    applied = min(deposit, owed)
     refund = min(deposit - applied, rho * value)
-    if deposit <= paid:
+    if deposit <= owed:
         applied_l, refund_l, void_l = applied, 0.0, 0.0
     else:
         applied_l, refund_l, void_l = ledger_year(deposit_m, energy_m, rho, full=True)[
@@ -188,6 +202,7 @@ def bill(
         "D": deposit,
         "V": value,
         "E": paid,
+        "E_owed": owed,
         "applied": applied,
         "refund": refund,
         "void": deposit - applied - refund,
@@ -457,6 +472,7 @@ def format_result(result: dict, currency: str) -> str:
         ("D deposit", result["D"]),
         ("V value", result["V"]),
         ("E energy part", result["E"]),
+        ("E+ liability", result["E_owed"]),
         ("refund annual", result["refund"]),
         ("refund ledger", result["refund_ledger"]),
         ("void annual", result["void"]),

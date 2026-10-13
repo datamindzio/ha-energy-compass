@@ -1216,11 +1216,15 @@ directly by any other available mode.</p>
   rest of the commitment is <code>HOLD</code> with the surplus exported, or <code>CURTAIL</code> where the site cannot
   pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
   pack. The released <code>HOLD</code> starts no clock of its own — the commitment's deadline stays the only
-  one — so it may turn to <code>CURTAIL</code> (which starts its own clock) before then. A <code>HOLD</code> released
-  from a full pack does not go back to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>; one released from a depleted
-  pack does, in any later interval of the commitment while the pack is still depleted: the pack
-  takes the surplus, and a <code>HOLD</code> could not pass the PV above the export cap (on a site with
-  <code>grid_export_kw = 0</code> that is every sunrise). The return is the commitment going on, not a new
+  one — so it may turn to <code>CURTAIL</code> (which starts its own clock) before then. A released
+  <code>HOLD</code> goes back to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> in any later interval of the commitment while the
+  pack is still depleted: the pack takes the surplus, and a <code>HOLD</code> could not pass the PV above the
+  export cap (on a site with <code>grid_export_kw = 0</code> that is every sunrise). A <code>HOLD</code> released from a
+  depleted pack also goes back in an interval whose PV the site cannot pass, where a <code>HOLD</code> has no
+  legal flow: a plan followed one interval would otherwise reach the next boundary with a carried
+  commitment and no plan. A <code>HOLD</code> released from a full pack does not go back there: it keeps its
+  own clock across the boundary, and where the site cannot pass the PV it is <code>CURTAIL</code> (above).
+  The return is the commitment going on, not a new
   run: the commitment's deadline stays the only clock. A pack that empties again inside the same
   commitment is released again and goes back again, as often as the commitment lasts. The release
   survives the interval boundary: the plan marks the rows of such a <code>HOLD</code>
@@ -3286,11 +3290,11 @@ are valued by two bills:</p>
 <tbody>
 <tr>
 <td><code>annual</code></td>
-<td>the deposit D = 1.23 × V (V = value of the exported energy at <code>max(sell, 0)</code>) pays the energy part E of the imports; the refund is <code>min(D − min(D, E), ρ × V)</code></td>
+<td>the deposit D = 1.23 × V (V = value of the exported energy at <code>max(sell, 0)</code>) pays the liability E⁺ = Σ max(E<sub>t</sub>, 0) of the monthly energy parts E<sub>t</sub> of the imports; the refund is <code>min(D − min(D, E⁺), ρ × V)</code>. A month with a negative energy part (dynamic price without an index floor, charging in negative-price hours) owes nothing and never feeds the deposit: it stays on the bill at full value, never refunded, capped or voided (ADR-0031 Amendment T-471). So bill = fixed + Σ import × buy − applied − refund, and the signed energy part (a negative month included) is inside Σ import × buy</td>
 </tr>
 <tr>
 <td><code>ledger</code></td>
-<td>the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry <code>min(unused, ρ × V of the month)</code> comes back and the rest is void. It is the steady state of a repeated year: <code>D ≤ E</code> gives the annual result, <code>D &gt; E</code> a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year</td>
+<td>the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry <code>min(unused, ρ × V of the month)</code> comes back and the rest is void. It is the steady state of a repeated year: <code>D ≤ E⁺</code> gives the annual result, <code>D &gt; E⁺</code> a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year</td>
 </tr>
 </tbody>
 </table></section>
@@ -3298,7 +3302,7 @@ are valued by two bills:</p>
 python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
 </code></pre>
 <p>It prints (or, with <code>--json</code>, returns) both bills, <code>wear</code>, the SOC drift (initial minus final SOC at
-the mean buy price), <code>K</code> = annual bill + wear + SOC drift (<code>KL</code> with the ledger), <code>D</code>, <code>V</code>, <code>E</code>, and
+the mean buy price), <code>K</code> = annual bill + wear + SOC drift (<code>KL</code> with the ledger), <code>D</code>, <code>V</code>, <code>E</code> (signed), <code>E_owed</code> (E⁺; the text output labels it <code>E+ liability</code>), and
 the refund and the void of each bill. Compare two runs by the difference of <code>K</code> (or <code>KL</code>); <code>--self-use</code>
 gives the no-planner reference. The input is one JSON object (<code>timezone</code>, <code>start</code>, <code>rho</code>, <code>fixed</code>,
 <code>initial_soc_percent</code>, <code>settings</code> and <code>hours[]</code>) or a CSV, one row per <strong>hour</strong> with <code>start</code>, <code>buy</code>,
@@ -3316,7 +3320,9 @@ repeated autumn hour it is the first occurrence, unless the row before it is tha
 <p>Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
 charge band that depends on the annual import is not modelled (take <code>fixed</code> from the no-battery bill
 and expect a small constant error where the band differs); a stretch shorter than a year is read as
-a year with empty months; the result is only as good as the forecast series you give it.</p>
+a year with empty months; <code>buy_energy</code> stays non-negative as in the engine, so a month with a
+negative energy part reaches the bills only as a signed energy list through the Python API (<code>bill()</code>),
+not through the hourly input; the result is only as good as the forecast series you give it.</p>
 <h2 id="reason-code-reference">Reason code reference</h2>
 <h3 id="coverage--quality-reasons-reason-reasons-attributes">Coverage / quality reasons (<code>reason</code>, <code>reasons</code> attributes)</h3>
 <section class="table-scroll"><table>
