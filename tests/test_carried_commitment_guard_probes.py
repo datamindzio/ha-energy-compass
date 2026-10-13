@@ -694,12 +694,14 @@ def test_a_surplus_the_guard_keeps_out_of_a_full_pack_is_curtailed_under_a_probe
     assert result.plan.carried_bridges == (0,)
 
 
-def test_an_idle_interval_does_not_curtail_while_the_pack_has_room():
-    # The terms of ADR-0005 hold in an idle interval too: the pack was never full, so
-    # the commitment does not end in CURTAIL, and HOLD has nowhere to put the surplus.
-    with pytest.raises(SolveError) as error:
-        solve(guarded_surplus(3))
-    assert error.value.reason == "infeasible"
+def test_an_idle_interval_curtails_the_surplus_a_pack_with_room_cannot_take():
+    # The pack was never full, so the commitment does not end in CURTAIL on ADR-0005's
+    # terms, but 0.28 kWh is more than its charge power takes (0.125 kWh) and HOLD has
+    # nowhere to put it: the interval charges and curtails the rest (T-064; no plan before).
+    problem = guarded_surplus(3)
+    plan = solve(problem)
+    assert modes(plan) == ["HOLD", "CURTAIL", "CURTAIL", "CURTAIL"]
+    assert all(flow.curtail_kwh >= 0.28 - 0.125 - 1e-6 for flow in plan.flows[1:])
 
 
 # Sweep t038_review5_full.py, plain-nl seed 11001 #151: no guard and no probe, and no
