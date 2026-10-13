@@ -34,7 +34,10 @@ the inverter).
 4. Idle committed intervals (T-025, [ADR-0004](0004-carried-lock-release-for-standby-loss.md)): a real `HOLD`
    run there (`hold_run` = 1) is a release like any other and starts no clock either, so a spent pack whose
    idle first interval is a bridge may start its `HOLD` in the next one; a bridge never follows a released
-   `HOLD` (the commitment has ended).
+   `HOLD` (the commitment has ended). `CURTAIL` is offered in an idle interval on the terms of point 1 and 2
+   as well, and a `CURTAIL` row is never a bridge (T-038: the idle set grew by the rows a legacy direction
+   guard or a flexible-load probe leaves with nothing to follow, and an idle row that offered `HOLD` only
+   left a full pack on a site without export no plan).
 
 ## Alternatives rejected
 

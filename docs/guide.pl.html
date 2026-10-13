@@ -1160,11 +1160,23 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   i nie kończy zobowiązania: plan go przemostkowuje (nie startuje zegar <code>HOLD</code>, a zapisane
   zobowiązanie zachowuje tryb i start) albo, gdy bateria jest wyczerpana lub pełna, zaczyna tam
   prawdziwy przebieg <code>HOLD</code>, tak jak w każdym innym przedziale
-  (<code>dispatch_policy.carried_idle_starts</code> wymienia przemostkowane przedziały). Plan jest
+  (<code>dispatch_policy.carried_idle_starts</code> wymienia przemostkowane przedziały). Przy pełnej baterii
+  w instalacji, która nie może oddać PV, taki przedział może być też <code>CURTAIL</code>, jak każdy inny
+  przedział zobowiązania; nie jest wtedy przemostkowany. Plan jest
   <code>infeasible</code> (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
   (<code>preserve_initial</code> bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
-  dom); rzadkie pozostałe przypadki opisuje
-  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a> (EN).</li>
+  dom; sonda obciążenia elastycznego daje plan tylko wtedy, gdy jej obciążenie zostawia każdemu
+  przedziałowi zobowiązania coś do naśladowania albo sprowadza nadwyżkę poniżej minimalnej
+  aktywności) albo gdy dzienny budżet przepustowości nie
+  pokryje minimalnej aktywności, której wymaga zobowiązanie; rzadkie pozostałe przypadki opisuje
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a> (EN). Kierunek
+  zablokowany przez dawną blokadę kierunku (<code>initial_battery_mode</code>) nie jest otwarty: bateria,
+  która nie może się ładować, nie ma <code>CHARGE_PV</code> do naśladowania, a ta, która nie może się
+  rozładowywać, nie ma <code>SELF_CONSUME</code>, więc przedział z tylko takim kierunkiem też jest
+  przemostkowany. Sonda obciążenia elastycznego jest mostkowana tak samo, dopóki zabrane przez nią
+  obciążenie zostawia przedział bez aktywności; nadwyżka PV sprowadzona przez sondę poniżej
+  minimalnej aktywności nie jest nadwyżką, którą bateria mogłaby przyjąć, więc <code>HOLD</code> może się na
+  niej zacząć.</li>
 <li><strong><code>CHARGE_PV</code> podąża za nadwyżką.</strong> Falownik ładuje każdym watem, którego dom nie zużywa, więc plan
   nigdy nie łączy częściowego ładowania z eksportem do sieci: w przedziale <code>CHARGE_PV</code> bateria
   przejmuje całą nadwyżkę PV, a eksport pojawia się dopiero, gdy ładowanie jest na limicie mocy
@@ -1992,7 +2004,7 @@ powrót do mediany następuje przy najbliższym okresowym przeliczeniu (<code>re
 </tr>
 <tr>
 <td><code>mip_gap</code></td>
-<td>Względna luka MIP zgłoszona przez solver dla opublikowanego planu: <code>0</code> = udowodnione optimum (udowodniony plan zwykle ma <code>0</code> albo najwyżej <code>0.0001</code>, gdy żaden próg epizodu nie jest aktywny; to nie twarda granica: HiGHS zatrzymuje się też na luce bezwzględnej <code>1e-6</code>, której nie da się wyłączyć, więc gdy <a href="#co-zmienia-każda-strategia">cel ważony, który minimalizuje solver</a>, mieści się w granicach około ±0,01 od zera, luka względna może być większa, do około <code>1e-6 / |cel|</code>, czyli powyżej 1, gdy cel jest bliżej zera niż <code>1e-6</code>; ten cel to koszt planu plus rezerwy epizodów i kary strategii, więc może być bliski zera, gdy koszt planu nie jest, i odwrotnie; udowodniony plan od nieudowodnionego odróżnia <code>time_limited</code>, nie <code>mip_gap == 0</code>); dla planu <code>time_limited</code> górna granica odległości jego celu od optimum (np. <code>0.017</code> = 1,7 %).</td>
+<td>Względna luka MIP zgłoszona przez solver dla opublikowanego planu: <code>0</code> = udowodnione optimum (udowodniony plan zwykle ma <code>0</code> albo najwyżej <code>0.0001</code>, gdy żaden próg epizodu nie jest aktywny; to nie twarda granica: HiGHS zatrzymuje się też na luce bezwzględnej <code>1e-6</code>, której nie da się wyłączyć, więc gdy <a href="#co-zmienia-każda-strategia">cel ważony, który minimalizuje solver</a>, mieści się w granicach około ±0,01 od zera, luka względna może być większa, do około <code>1e-6 / |cel|</code>, czyli powyżej 1, gdy cel jest bliżej zera niż <code>1e-6</code>; ten cel to koszt planu plus rezerwy epizodów i kary strategii, więc może być bliski zera, gdy koszt planu nie jest, i odwrotnie; udowodniony plan od nieudowodnionego odróżnia <code>time_limited</code>, nie <code>mip_gap == 0</code>); dla planu <code>time_limited</code> górna granica odległości ważonego celu solvera od optimum (np. <code>0.017</code> = 1,7 %). Nie ogranicza kosztu planu w walucie, a sam plan może różnić się od udowodnionego w wielu interwałach (zob. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/runtime-validation.md#how-far-the-time-limit-leaves-the-plan-from-the-proof"><code>docs/runtime-validation.md</code></a>).</td>
 </tr>
 <tr>
 <td><code>cap_violation_kwh</code></td>

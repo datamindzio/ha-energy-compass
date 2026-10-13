@@ -664,11 +664,21 @@ Rules (defaults: 60 min, 0.1 kW):
   classification and does not end the commitment: the plan bridges it (no `HOLD` clock starts,
   and the persisted commitment keeps its mode and start) or, when the battery is spent or full,
   starts a real `HOLD` run there as in any other interval
-  (`dispatch_policy.carried_idle_starts` lists the bridged intervals). The plan is
+  (`dispatch_policy.carried_idle_starts` lists the bridged intervals). With a full battery on a
+  site that cannot pass the PV, such an interval may be `CURTAIL` as well, like any other
+  committed interval; it is then not bridged. The plan is
   `infeasible` until the commitment ends when the
   terminal rule cannot be met afterwards (`preserve_initial` with no later PV or grid charge to
-  refill what the house drew); the rare remaining cases are listed in
-  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget).
+  refill what the house drew; a flexible-load probe plans it only if its load leaves every
+  committed interval something to follow or takes a surplus below the minimum activity) or when the daily
+  throughput budget cannot pay the minimum activity the commitment asks for; the rare remaining
+  cases are listed in
+  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget). A direction the
+  legacy direction guard blocks (`initial_battery_mode`) is not open: a pack that may not charge
+  has no `CHARGE_PV` to follow and one that may not discharge has no `SELF_CONSUME`, so an interval
+  with only that direction to follow is bridged too. A flexible-load probe is bridged the same
+  way, as long as the probe it takes leaves the interval idle; a PV surplus it takes below the
+  minimum activity is not one the pack could take, so `HOLD` may start on it.
 - **`CHARGE_PV` follows the surplus.** The inverter charges with every watt the house does not
   use, so the plan never pairs a partial charge with grid export: in a `CHARGE_PV` interval the
   battery takes the whole PV surplus, and export appears only once the charge is at its interval
@@ -1225,7 +1235,7 @@ takes effect at the next periodic recalculation (`refresh_minutes`) or source ch
 | `autonomy_shortfall_kwh` | Total shortfall below the autonomy floor; `0` = floor met. |
 | `peak_reserve_shortfall_kwh` | Total shortfall below the [peak-period reserve](#peak-period-reserve); `0` = met or off. |
 | `time_limited` | `true` when the base solve hit `solve_time_limit_s` and the best validated solution found so far was published instead of a proven optimum. |
-| `mip_gap` | Relative MIP gap the solver reported for the published plan: `0` = proven optimal (a proven plan normally reads `0`, or at most `0.0001` when no episode hurdle is active; not a hard bound: HiGHS also stops on its absolute gap of `1e-6`, which cannot be switched off, so when the [weighted objective the solver minimises](#what-each-strategy-changes) is within about ±0.01 of zero the relative gap can be larger, up to roughly `1e-6 / |objective|`, which exceeds 1 once the objective is within `1e-6` of zero; that objective is the plan's cost plus the episode reserves and the strategy's penalty terms, so it can be near zero while the plan's cost is not, and the reverse; `time_limited`, not `mip_gap == 0`, tells a proven plan from an unproven one); for a time-limited plan, the bound on how far its objective may be from the optimum (e.g. `0.017` = 1.7 %). |
+| `mip_gap` | Relative MIP gap the solver reported for the published plan: `0` = proven optimal (a proven plan normally reads `0`, or at most `0.0001` when no episode hurdle is active; not a hard bound: HiGHS also stops on its absolute gap of `1e-6`, which cannot be switched off, so when the [weighted objective the solver minimises](#what-each-strategy-changes) is within about ±0.01 of zero the relative gap can be larger, up to roughly `1e-6 / |objective|`, which exceeds 1 once the objective is within `1e-6` of zero; that objective is the plan's cost plus the episode reserves and the strategy's penalty terms, so it can be near zero while the plan's cost is not, and the reverse; `time_limited`, not `mip_gap == 0`, tells a proven plan from an unproven one); for a time-limited plan, the bound on how far the solver's weighted objective may be from the optimum (e.g. `0.017` = 1.7 %). It does not bound the plan's cost in currency, and the plan itself can differ from the proven one in many intervals (see [`docs/runtime-validation.md`](runtime-validation.md#how-far-the-time-limit-leaves-the-plan-from-the-proof)). |
 | `cap_violation_kwh` | Total energy above `grid_friendly` soft caps; `0` = caps met. |
 
 ### Strategy-switch release

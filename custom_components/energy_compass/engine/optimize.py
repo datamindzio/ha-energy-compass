@@ -919,12 +919,20 @@ def _solve(
         )
         for v in vectors
     )
+    # A probe is a load: solver noise below zero (-3e-17) is none. Left in, it would
+    # lift a slot that sits exactly at the minimum activity from idle (the base
+    # reading) to open as realised, and the mode certificate would fail.
+    probe = (
+        tuple(max(float(values[v["flex_load"]]), 0.0) for v in vectors)
+        if flexible_load
+        else ()
+    )
     mode_problem = (
         replace(
             problem,
             slots=tuple(
-                replace(slot, load_kwh=slot.load_kwh + float(values[v["flex_load"]]))
-                for slot, v in zip(problem.slots, vectors, strict=True)
+                replace(slot, load_kwh=slot.load_kwh + extra)
+                for slot, extra in zip(problem.slots, probe, strict=True)
             ),
         )
         if flexible_load
@@ -1005,5 +1013,5 @@ def _solve(
             mip_gap=model.mip_gap,
             carried_bridges=bridges,
         ),
-        tuple(float(values[v["flex_load"]]) for v in vectors) if flexible_load else (),
+        probe,
     )
