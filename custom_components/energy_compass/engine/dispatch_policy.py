@@ -482,7 +482,7 @@ def _lock_floor(problem, drains, owed, index) -> float:
     return keep + drains[index] + discharge / battery.eta_discharge
 
 
-def _curtail_need(problem, slot, extra_load=0.0) -> float:
+def curtail_need(problem, slot, extra_load=0.0) -> float:
     """Energy a slot must send to the pack or curtail, because the site cannot pass it.
 
     PV above the house, a flexible load of at most `extra_load` and the export cap
@@ -526,7 +526,7 @@ def _beyond_room(problem, slot) -> float:
 
 
 def _takeover_room(problem, slot) -> float:
-    """Tell how much flexible load a slot takes while `_curtail_need` stays positive.
+    """Tell how much flexible load a slot takes while `curtail_need` stays positive.
 
     The inverter rating needs no help from the load, so PV above it is a need whatever
     a probe adds (inf). Otherwise the load takes from the export cap's need what it
@@ -538,19 +538,9 @@ def _takeover_room(problem, slot) -> float:
     return slot.pv_kwh - slot.load_kwh - problem.site.grid_export_kw * hours
 
 
-def _lock_ceiling(problem, drains, index, extra_load=0.0) -> float:
-    """Energy above which the battery cannot keep CHARGE_PV active in a slot.
-
-    CHARGE_PV is kept by its minimum activity, or by what the site cannot pass
-    (`_curtail_need`) when that is more: a pack with less room cannot charge the
-    interval and stay below the export cap or the inverter rating.
-    """
+def _ceiling_less(problem, drains, index, absorbed) -> float:
+    """Energy above which a pack cannot take `absorbed` kWh more (before charge losses) in a slot."""
     battery = problem.battery
-    slot = problem.slots[index]
-    hours = _hours(slot)
-    absorbed = max(
-        problem.minimum_mode_power_kw * hours, _curtail_need(problem, slot, extra_load)
-    )
     return (
         battery.capacity_kwh
         * (1 if index in problem.balance_lift_slots else battery.maximum_soc_fraction)
@@ -559,10 +549,88 @@ def _lock_ceiling(problem, drains, index, extra_load=0.0) -> float:
     )
 
 
+def _lock_ceiling(problem, drains, index, extra_load=0.0) -> float:
+    """Energy above which the battery cannot keep CHARGE_PV active in a slot.
+
+    CHARGE_PV is kept by its minimum activity, or by what the site cannot pass
+    (`curtail_need`) when that is more: a pack with less room cannot charge the
+    interval and stay below the export cap or the inverter rating.
+    """
+    slot = problem.slots[index]
+    absorbed = max(
+        problem.minimum_mode_power_kw * _hours(slot),
+        curtail_need(problem, slot, extra_load),
+    )
+    return _ceiling_less(problem, drains, index, absorbed)
+
+
+def curtail_limit(problem, slot, extra_load=0.0):
+    """Largest curtailment (kWh) a slot may carry.
+
+    A site that can curtail may curtail all its PV. One that cannot still spills
+    what the grid export cap or the inverter rating leaves it no way to pass once
+    the pack cannot take it (a forced spill, T-041): the inverter throttles by itself
+    and the plan reads that as CURTAIL. With a minimum mode duration a CURTAIL
+    interval carries at least the minimum activity, so a smaller need is offered as
+    that much (the controller's inverter spills what it must; the label needs the activity).
+    """
+    if problem.site.allow_curtailment:
+        return slot.pv_kwh
+    if not problem.battery:
+        return 0
+    need = curtail_need(problem, slot, extra_load)
+    if need <= 0:
+        # An integer zero keeps the rows built from this bound identical to a site that
+        # never spills (the golden model hash).
+        return 0
+    if problem.minimum_mode_minutes:
+        need = max(need, problem.minimum_mode_power_kw * _hours(slot))
+    return need
+
+
+def spill_gate(problem, drains, index, extra_load=0.0) -> float:
+    """Energy at the start of a slot from which the pack cannot take the slot's need.
+
+    The ceiling (plus the standby loss the slot takes) less what the pack would have to
+    absorb, `curtail_need` and, with a minimum mode duration, at least the minimum
+    activity: from here CHARGE_PV is not open, and a forced spill is the only thing left
+    for the PV the site cannot pass. `extra_load` is the flexible load the slot may take
+    at most (the pack's gate rises with it: the less to absorb, the more room it needs).
+    """
+    slot = problem.slots[index]
+    absorbed = curtail_need(problem, slot, extra_load)
+    if problem.minimum_mode_minutes:
+        absorbed = max(absorbed, problem.minimum_mode_power_kw * _hours(slot))
+    return _ceiling_less(problem, drains, index, absorbed)
+
+
+def carried_curtail(problem) -> bool:
+    """Tell whether the plan starts inside a CURTAIL run (mode model).
+
+    On a site that cannot curtail that run is a forced spill under way: it keeps the
+    first interval's spill open the way a run inside the plan keeps the next one, so the
+    plan made one interval into a spill is the one that planned it.
+    """
+    return bool(problem.minimum_mode_minutes) and _initial(problem)[0] == "CURTAIL"
+
+
 def _curtail_dry(problem, slot) -> bool:
-    """Tell whether a slot has too little PV to curtail the minimum activity."""
+    """Tell whether a slot has nothing to curtail the minimum activity from.
+
+    Too little PV for it, or, on a site that cannot curtail, no PV the site cannot pass:
+    a forced spill is the inverter's own throttling, so a run of it goes on as HOLD
+    while there is none.
+    """
     activity = problem.minimum_mode_power_kw * _hours(slot)
-    return activity > 2e-6 and slot.pv_kwh < activity
+    if activity <= 2e-6:
+        return False
+    if slot.pv_kwh < activity:
+        return True
+    return (
+        not problem.site.allow_curtailment
+        and problem.battery is not None
+        and curtail_need(problem, slot) <= 0
+    )
 
 
 def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
@@ -617,6 +685,51 @@ def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
             flex_max,
             highest >= ceiling - 1e-9,
         )
+
+
+def _fill_releases(model, problem, vectors, drains, starts, dwell, flexible_load):
+    """Let a PV-follow run that filled the pack end in HOLD on a site that cannot curtail.
+
+    There the PV the site cannot pass makes CHARGE_PV the only legal mode while the pack
+    has room for it, so the run is not the plan's choice, and once the pack is full it
+    has nothing to charge: where the need is over as well (no forced spill to hand over
+    to), it ends in a HOLD that starts its own clock. Offered within a minimum duration
+    of an interval with such PV, per interval the flag of the release; the pack is full
+    by the reading of a carried commitment (`_lock_ceiling`). A carried CURTAIL is such
+    an interval just before the horizon: the plan it comes from counted on the release.
+    """
+    filled = {}
+    if problem.site.allow_curtailment:
+        return filled
+    needs = [curtail_need(problem, slot) > 0 for slot in problem.slots]
+    spilled = starts[0] - (problem.slots[0].end - problem.slots[0].start)
+    for i, v in enumerate(vectors):
+        if not i or needs[i]:
+            continue
+        if not (
+            any(needs[j] and starts[i] < starts[j] + dwell for j in range(i))
+            or carried_curtail(problem)
+            and starts[i] < spilled + dwell
+        ):
+            continue
+        before = vectors[i - 1]
+        ended = filled[i] = v["fill_release"] = model.variable(upper=1.0)
+        model.constrain({ended: 1, v["mode_HOLD"]: -1}, -np.inf, 0)
+        model.constrain(
+            {
+                ended: 1,
+                **{before[f"mode_{mode}"]: -1 for mode in _members("PV_FOLLOW")},
+            },
+            -np.inf,
+            0,
+        )
+        extra = model.upper[v["flex_load"]] if flexible_load else 0.0
+        ceiling = _lock_ceiling(problem, drains, i, extra)
+        if ceiling > model.lower[before["energy"]]:
+            full = v["fill_full"] = model.variable(binary=True)
+            model.constrain({before["energy"]: 1, full: -ceiling}, 0, np.inf)
+            model.constrain({ended: 1, full: -1}, -np.inf, 0)
+    return filled
 
 
 def _released_start(problem: Problem) -> bool:
@@ -999,7 +1112,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         carried_run = held_curtail and starts[i] < curtail_until
         if not carried_run and not any(
             starts[i] < starts[j] + dwell
-            and _curtail_need(problem, problem.slots[j]) > 0
+            and curtail_need(problem, problem.slots[j]) > 0
             for j in range(i)
         ):
             continue
@@ -1024,7 +1137,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             len(window) - int(held_curtail and -1 in window),
         )
     # A HOLD takes no curtailment: in an interval whose PV the site cannot pass
-    # (`_curtail_need`) a HOLD run inside its minimum duration has no legal mode left
+    # (`curtail_need`) a HOLD run inside its minimum duration has no legal mode left
     # but CURTAIL, which the inverter does by itself. That CURTAIL takes the HOLD over
     # (`takeover`): the HOLD's remaining duration is the CURTAIL run's from then on
     # (it lasts longer), and a HOLD after the run starts its own clock. Only where the
@@ -1037,7 +1150,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
     rooms = [_takeover_room(problem, slot) - margin for slot in problem.slots]
     # PV the site cannot pass whatever the probe adds: a HOLD has no legal flow there.
     unpassable = [
-        _curtail_need(
+        curtail_need(
             problem, slot, model.upper[v["flex_load"]] if flexible_load else 0.0
         )
         - margin
@@ -1452,6 +1565,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 -np.inf,
                 current_const,
             )
+    filled = _fill_releases(
+        model, problem, vectors, drains, starts, dwell, flexible_load
+    )
     for group in GROUPS:
         members = _members(group)
         # A group's start is a continuous flag: it is at least the rise of the
@@ -1505,6 +1621,18 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             if group == "HOLD" and i in taken:
                 # A CURTAIL that took the HOLD over is the HOLD going on.
                 holding[taken[i]] = -1
+            if group == "PV_FOLLOW" and not problem.site.allow_curtailment:
+                # A site that cannot curtail has CURTAIL only as a forced spill, into a
+                # pack that cannot take the PV: a PV-follow run that fills the pack
+                # ends there (its own minimum duration is not the pack's to wait out).
+                # The spill goes on as a CURTAIL run does (a bridge where the need is
+                # over), and where there is no need the run ends in a HOLD (`filled`).
+                if model.upper[v["mode_CURTAIL"]] > 0 or i in bridge:
+                    for key in curtail_terms(i):
+                        holding[key] = -1
+                for j, ended in filled.items():
+                    if j <= i and starts[i] < starts[j] + dwell:
+                        holding[ended] = -1
             model.constrain(holding, -np.inf, current_const)
 
 
@@ -1777,7 +1905,24 @@ def _certify_modes(
                     previous == "HOLD"
                     and not released
                     and mode == "CURTAIL"
-                    and _curtail_need(problem, slot) > 0
+                    and curtail_need(problem, slot) > 0
+                )
+                # A site that cannot curtail spills only into a pack that cannot take the
+                # PV (the plan's gate, certified with the flows): a PV-follow run that
+                # fills the pack hands over to that spill.
+                hands_over = (
+                    mode == "CURTAIL"
+                    and dwell_group(previous) == "PV_FOLLOW"
+                    and not problem.site.allow_curtailment
+                )
+                # Where there is no such PV left the run that filled the pack ends in a
+                # HOLD with its own clock (a carried one is released above).
+                fills = (
+                    mode == "HOLD"
+                    and not carried
+                    and dwell_group(previous) == "PV_FOLLOW"
+                    and not problem.site.allow_curtailment
+                    and full
                 )
                 # A HOLD released from a depleted pack goes back to the commitment: the
                 # HOLD has no legal flow for PV the site cannot pass, and the pack is
@@ -1799,14 +1944,16 @@ def _certify_modes(
                             left
                             <= _lock_floor(problem, drains, owed, index)
                             + _EMPTY_TOLERANCE
-                            or _curtail_need(problem, slot) > 0
+                            or curtail_need(problem, slot) > 0
                         )
                         # The release the coordinator carried: its pack was depleted.
                         or resumed
                         and not index
                     )
                 )
-                if not (ends or curtails or takes_over or resumes):
+                if not (
+                    ends or curtails or takes_over or hands_over or fills or resumes
+                ):
                     raise SolveError(
                         "solver_failure", "invalid solver result: minimum mode duration"
                     )

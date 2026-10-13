@@ -1163,7 +1163,7 @@ przechowuje własną kopię zaakceptowanego planu przez przeładowanie wpisu, al
 <td><code>CURTAIL</code></td>
 <td>Ograniczanie PV</td>
 <td>Ograniczenie produkcji ≥ activity, bateria nieaktywna.</td>
-<td><code>allow_curtailment</code> włączone.</td>
+<td><code>allow_curtailment</code> włączone; bez niego tylko PV, którego nie przepuści limit eksportu ani moc falownika i na które bateria nie ma miejsca (wymuszone przycięcie, niżej).</td>
 </tr>
 </tbody>
 </table></section>
@@ -1272,12 +1272,35 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   nie dalej niż potrzeba przycięcia tego przedziału (PV, które musi trafić do baterii albo zostać
   przycięte, co najmniej minimalna aktywność).
   Przy <code>minimum_mode_minutes = 0</code> reguła kosztuje czas obliczeń (tabela w
-  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN) i jeden
-  przypadek więcej nie ma planu: gdy eksport do sieci jest ograniczony (albo falownik ma moc
-  poniżej PV), a ograniczanie produkcji PV (<code>allow_curtailment</code>) jest wyłączone, bateria
-  zapełniona przed ostatnią nadwyżką zostawia tę nadwyżkę bez miejsca. Model z trybami ma to samo
-  ograniczenie; plan powstaje po włączeniu ograniczania produkcji PV albo przy wyższym limicie
-  eksportu lub mocy falownika.</li>
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN). Instalacja,
+  która nie może ograniczać produkcji PV (<code>allow_curtailment</code> wyłączone), z limitem eksportu do
+  sieci albo falownikiem o mocy poniżej PV zostałaby z PV bez miejsca, gdy bateria jest pełna.
+  W większości przypadków plan powstaje zamiast wyniku „brak planu” (<code>infeasible</code>; pomiar
+  niżej): PV ponad to, co przepuści limit i
+  falownik (potrzeba przycięcia; przy minimalnym czasie trwania co najmniej minimalna aktywność),
+  jest tracone w przedziale, w którym bateria nie może go przyjąć, i ma etykietę <code>CURTAIL</code>
+  (falownik przycina sam; sterownik Deye wykonuje wtedy profil <code>HOLD</code>). Bramką jest wolne miejsce
+  w baterii: przedział zaczyna się na poziomie górnej granicy pomniejszonej o to, co bateria
+  musiałaby przyjąć, więc bateria z niewielkim wolnym miejscem, która nie przyjmie nadwyżki, też
+  ją traci, a bateria, która ją przyjmie, nigdy, bez względu na cenę sprzedaży. Przy minimalnym
+  czasie trwania przebieg <code>CURTAIL</code> utrzymuje bramkę następnego przedziału otwartą (nic nie ładuje,
+  więc bateria opada tylko o straty postojowe), przebieg <code>CHARGE_PV</code> lub <code>SELF_CONSUME</code> może
+  zakończyć się w <code>CURTAIL</code>, gdy bateria napełni się w jego trakcie (albo w <code>HOLD</code>, gdy skończy
+  się też PV, które musiał przyjąć), a wolne miejsce poniżej bramki zostaje puste w przedziale
+  <code>CURTAIL</code> do następnego przeliczenia, które odczyta rzeczywisty stan naładowania. Przebieg
+  <code>CURTAIL</code> przeniesiony do następnego planu traci PV dalej, dopóki trwa potrzeba, także gdy
+  bateria opadła w tym czasie poniżej pełnej. Instalacja, która przepuści swoje PV, działa jak
+  dotąd.
+  Pomiar na powtarzalnie losowanych problemach (2400 problemów rozwiązanych raz): z przycięciem
+  plan powstaje w 533 z 589 przy minimalnym czasie trwania 0, 565 z 606 przy 15 minutach, 582 z
+  620 przy 30 minutach i 503 z 585 przy 60 minutach (bez niego 171, 160, 149 i 97). Dzień o
+  dzwonowym przebiegu PV, śledzony przedział po przedziale do końca, zachowuje plan przez cały
+  czas w 207 z 214 dni przy 15 minutach, 172 z 189 przy 30 minutach i 158 z 197 przy 60 minutach
+  (bez przycięcia 27, 23 i 23); większość pozostałych nie ma planu od pierwszego
+  przedziału. Reszta nadal nie ma planu, jak dotąd, głównie z dwóch powodów, których plan jeszcze
+  nie obejmuje: bateria z wolnym miejscem, której moc ładowania jest poniżej nadwyżki, oraz
+  przeniesione zobowiązanie, którego model nie umie zakończyć, częściej przy 60 minutach
+  (<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN; zadanie T-066).</li>
 <li><strong><code>CURTAIL</code> trwa mimo przerwy w PV.</strong> Przebieg <code>CURTAIL</code> trwa minimalny czas, a PV może w tym
   czasie spaść. <code>HOLD</code> w przedziale z PV poniżej minimalnej aktywności (<code>minimum_mode_power_kw × h</code>)
   w trakcie tego czasu to ten sam przebieg, a nie nowy <code>HOLD</code>: falownik nie ma czego przycinać,
