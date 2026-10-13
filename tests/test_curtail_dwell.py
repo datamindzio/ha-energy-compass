@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 from test_dispatch_policy import dispatch
 
-from benchmarks.curtail_sweep import follow, make_depleted
+from benchmarks.curtail_sweep import follow, make_depleted, rungs
 from benchmarks.curtail_sweep import roll as sweep
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
 from custom_components.energy_compass.engine.dispatch_policy import (
@@ -26,7 +26,6 @@ from custom_components.energy_compass.engine.dispatch_policy import (
     validate_modes,
 )
 from custom_components.energy_compass.engine.models import (
-    Battery,
     FlexibleLoadRequest,
     Flow,
     InputError,
@@ -1496,3 +1495,10 @@ def test_without_curtailment_the_surplus_beyond_the_pack_has_no_plan():
     with pytest.raises(SolveError) as error:
         solve(stuck)
     assert error.value.reason == "infeasible"
+
+
+def test_the_rungs_command_counts_each_draw_once():
+    counts = rungs("deprun", 11, 20)
+    assert sum(counts.values()) == 20
+    assert set(counts) <= {"first", "reserve_hold", "uncommitted", "none"}
+    assert counts.get("first", 0) > 0

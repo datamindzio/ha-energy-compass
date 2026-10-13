@@ -520,9 +520,7 @@ def _beyond_room(problem, slot) -> float:
     charge = problem.battery.charge_kw * hours
     if slot.pv_kwh - problem.site.inverter_kw * hours - charge > _ROW_TOLERANCE:
         return math.inf
-    return (
-        slot.pv_kwh - slot.load_kwh - problem.site.grid_export_kw * hours - charge
-    )
+    return slot.pv_kwh - slot.load_kwh - problem.site.grid_export_kw * hours - charge
 
 
 def _takeover_room(problem, slot) -> float:

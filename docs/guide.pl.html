@@ -1162,7 +1162,7 @@ przechowuje własną kopię zaakceptowanego planu przez przeładowanie wpisu, al
 <tr>
 <td><code>CURTAIL</code></td>
 <td>Ograniczanie PV</td>
-<td>Ograniczenie produkcji ≥ activity, bateria nieaktywna.</td>
+<td>Ograniczenie produkcji ≥ activity, bez rozładowania; bateria ładuje obok tylko tam, gdzie PV powyżej tego, co instalacja przepuszcza, przekracza to, co przyjmie moc ładowania (niżej).</td>
 <td><code>allow_curtailment</code> włączone; bez niego tylko PV, którego nie przepuści limit eksportu ani moc falownika i na które bateria nie ma miejsca (wymuszone przycięcie, niżej).</td>
 </tr>
 </tbody>
@@ -1244,8 +1244,7 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   Bateria dokładnie na rezerwie (zwykły stan
   pusty falownika) jest rozładowana w tym sensie, a nie wyjątkiem bezpieczeństwa: przeniesione
   <code>SELF_CONSUME</code> jest tam zwalniane i ładuje jak 0,01 kWh nad rezerwą. Gdy zwolniony <code>HOLD</code> nie ma
-  planu (moc ładowania nie przyjmie PV powyżej limitu eksportu, a ładowanie i ucinanie w jednym
-  przedziale nie jest modelowane), dom i tak nigdy nie zostaje bez planu. Planem jest pierwszy z
+  planu (zobowiązanie, którego żaden plan nie utrzyma), dom i tak nigdy nie zostaje bez planu. Planem jest pierwszy z
   poniższych, który ma rozwiązanie, każdy próbowany dopiero wtedy, gdy poprzedni go nie ma, a
   wszystkie w jednym budżecie czasu przeliczenia: zwolnienie; własny <code>HOLD</code> zobowiązania z jego
   zegarem, jak wyjątek bezpieczeństwa poniżej, który ucina tam, gdzie ucinanie jest dozwolone; plan
@@ -1325,6 +1324,17 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   przejmowany. Próbka elastycznego zużycia się liczy: jej obciążenie jest częścią tego, co
   instalacja przepuszcza, więc przejęcie jest oferowane tylko dla obciążeń próbki, przy których PV
   nadal przekracza limit.</li>
+<li><strong><code>CURTAIL</code> ładuje tyle, ile bateria przyjmie.</strong> Gdy PV powyżej tego, co instalacja przepuszcza
+  (powyżej limitu eksportu po odjęciu domu albo powyżej mocy falownika), przekracza to, co bateria
+  przyjmie mocą ładowania w jednym przedziale, ani <code>CHARGE_PV</code> (nic nie przycina), ani <code>CURTAIL</code>,
+  który nic nie ładował, nie pomieściłyby go; falownik ładuje mocą ładowania i przycina resztę, i tak
+  samo robi plan: przedział to <code>CURTAIL</code>, z ładowaniem od zera do PV zostającego po odjęciu domu.
+  Gdy bateria stoi na rezerwie przy przeniesionym zobowiązaniu <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> (wschód
+  słońca przy zerowym eksporcie, baterii 1 kW i 3,6 kW PV), to jest sam plan, a nie plan awaryjny.
+  W przeniesionym zobowiązaniu <code>CURTAIL</code> jest oferowany w takim przedziale niezależnie od tego, co
+  bateria miała wcześniej; przy próbce elastycznego zużycia tylko dla obciążeń próbki, przy których PV
+  zostaje poza baterią. Przy wyłączonym <code>allow_curtailment</code> nic nie przyjmie tego PV i planu dla
+  niego nie ma.</li>
 <li><strong>Grupa podążania za PV:</strong> <code>CHARGE_PV</code> i <code>SELF_CONSUME</code> dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.</li>

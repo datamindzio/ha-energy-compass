@@ -1154,7 +1154,7 @@ hours: <code>activity = minimum_mode_power_kw × h</code> (default 0.1 kW) and
 <tr>
 <td><code>CURTAIL</code></td>
 <td>Curtail PV</td>
-<td>Curtailment ≥ activity, no battery activity.</td>
+<td>Curtailment ≥ activity, no discharge; the pack charges beside it only where the PV above what the site passes is more than the charge power takes (below).</td>
 <td><code>allow_curtailment</code> on; without it, only the PV that the export cap or the inverter rating cannot pass and the pack has no room for (a forced spill, below).</td>
 </tr>
 </tbody>
@@ -1229,8 +1229,7 @@ directly by any other available mode.</p>
   A pack exactly at the reserve (the inverter's usual
   empty state) is depleted in this sense, not a safety exception: a carried <code>SELF_CONSUME</code> there is
   released and charges like one 0.01 kWh above the reserve. Where that released <code>HOLD</code> has no plan
-  (the charge power cannot take the PV above the export cap, and charging and curtailing in one
-  interval is not modelled) the house is still never left without one. The plan is the first of
+  (a commitment no plan can keep) the house is still never left without one. The plan is the first of
   these that has a solution, each tried only when the one before has none and all within the
   recalculation's one time budget: the release; the commitment's own <code>HOLD</code> with its clock, as the
   safety exception below, which curtails where curtailment is allowed; the plan without the
@@ -1304,6 +1303,16 @@ directly by any other available mode.</p>
   <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment has no clock of its own and is not taken over. A
   flexible-load probe counts: its load is part of what the site passes, so the takeover is offered
   only for the probe loads that leave PV above the cap.</li>
+<li><strong><code>CURTAIL</code> charges what the pack can take.</strong> When the PV above what the site passes (above the
+  export cap after the house, or above the inverter rating) is more than the pack takes by its charge
+  power in one interval, neither <code>CHARGE_PV</code> (which curtails nothing) nor a <code>CURTAIL</code> that charged
+  nothing could hold it; the inverter charges at the charge power and curtails the rest, and so does
+  the plan: the interval is <code>CURTAIL</code>, with the charge between zero and the PV left after the house.
+  Where the pack is at the reserve under a carried <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment (a sunrise
+  on a zero-export site with a 1 kW pack and 3.6 kW of PV) this is the plan itself, not a fallback.
+  In a carried commitment <code>CURTAIL</code> is offered in such an interval whatever the pack held before;
+  with a flexible-load probe, only for the probe loads that leave PV beyond the pack. With
+  <code>allow_curtailment</code> off nothing can take that PV and there is no plan for it.</li>
 <li><strong>PV-follow group:</strong> <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.</li>

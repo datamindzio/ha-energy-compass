@@ -701,9 +701,7 @@ def test_an_idle_interval_curtails_the_surplus_a_pack_with_room_cannot_take():
     problem = guarded_surplus(3)
     plan = solve(problem)
     assert modes(plan) == ["HOLD", "CURTAIL", "CURTAIL", "CURTAIL"]
-    assert all(
-        flow.curtail_kwh >= 0.28 - 0.125 - 1e-6 for flow in plan.flows[1:]
-    )
+    assert all(flow.curtail_kwh >= 0.28 - 0.125 - 1e-6 for flow in plan.flows[1:])
 
 
 # Sweep t038_review5_full.py, plain-nl seed 11001 #151: no guard and no probe, and no
