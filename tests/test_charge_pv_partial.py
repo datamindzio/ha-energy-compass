@@ -295,6 +295,119 @@ def test_flexible_load_probe_keeps_charge_pv_following():
     assert_pv_following(replace(problem, slots=slots), plan.plan)
 
 
+def partial_need(slots=None, **changes):
+    """One sunny quarter, then three that draw the pack down.
+
+    The pack wants 0.6 of the 1.2 kWh of surplus. Without the rule it charged 0.6
+    next to export of 0.6, which a controller holding the charge cap cannot do.
+    """
+    changes = {"minimum_mode_minutes": 0, **changes}
+    rows = slots or (
+        (3.0, 0.1, 1.5, 0.3),
+        (2.0, 0.9, 0.0, 1.0),
+        (1.0, 0.1, 0.0, 0.8),
+        (0.5, 0.0, 0.0, 0.8),
+    )
+    problem = dispatch(rows, minutes=15, **changes)
+    return replace(
+        problem,
+        battery=replace(problem.battery, initial_kwh=2.0, allow_grid_charge=False),
+    )
+
+
+def test_charge_pv_follows_the_surplus_without_a_minimum_mode_duration():
+    problem = partial_need()
+    plan = solve(problem)
+    assert_pv_following(problem, plan)
+    first = plan.flows[0]
+    # The 4 kW battery takes 1 kWh a quarter hour: charge it all or not at all.
+    assert first.charge_kwh == pytest.approx(0) or first.charge_kwh == pytest.approx(1)
+
+
+def test_charge_pv_without_a_duration_exports_at_the_power_limit():
+    # 1.9 kWh of surplus per quarter hour; the 4 kW battery takes at most 1 kWh.
+    problem = partial_need(
+        slots=((1.0, 0.1, 2.0, 0.1),) * 2 + ((3.0, 0.0, 0.0, 1.0),) * 2
+    )
+    problem = replace(problem, battery=replace(problem.battery, initial_kwh=0))
+    plan = solve(problem)
+    charging = [f for f in plan.flows if f.charge_kwh > 1e-6]
+    assert charging
+    for flow in charging:
+        assert flow.charge_kwh == pytest.approx(1)
+        assert flow.grid_export_kwh == pytest.approx(0.9)
+    assert_pv_following(problem, plan)
+
+
+def test_charge_pv_without_a_duration_exports_once_the_pack_is_full():
+    problem = sunny(
+        slots=4,
+        initial=9.8,
+        lock=False,
+        terminal_value_per_kwh=2.0,
+        minimum_mode_minutes=0,
+    )
+    plan = solve(problem)
+    filling = [f for f in plan.flows if f.charge_kwh > 1e-6]
+    assert len(filling) == 1
+    assert filling[0].end_soc_kwh == pytest.approx(10)
+    assert filling[0].charge_kwh == pytest.approx(0.2)
+    assert filling[0].grid_export_kwh == pytest.approx(0.3)
+    assert_pv_following(problem, plan)
+
+
+@pytest.mark.parametrize(
+    ("pv", "request_"),
+    (
+        # The surplus (1.7 and 1.2 kWh) is above the 1 kWh charge limit, so the rule is
+        # "charge 1 kWh or none" less whatever the probe takes of the surplus.
+        (2.0, FlexibleLoadRequest(0.3, 1.0)),
+        (2.0, FlexibleLoadRequest(0.5, 4.0)),
+        (1.5, FlexibleLoadRequest(0.3, 1.0)),
+    ),
+)
+def test_flexible_load_probe_keeps_charge_pv_following_without_a_duration(pv, request_):
+    # Without the rule the probe's plan charged 0.6-0.65 kWh of the surplus at the
+    # first quarter and exported the rest, a state a controller holding the charge
+    # cap cannot produce.
+    problem = partial_need(
+        slots=(
+            (3.0, 0.1, pv, 0.3),
+            (2.0, 0.9, 0.0, 1.0),
+            (1.0, 0.1, 0.0, 0.8),
+            (0.5, 0.0, 0.0, 0.8),
+        )
+    )
+    result = solve_flexible_load(problem, request_)
+    assert sum(result.schedule_kwh) == pytest.approx(request_.energy_kwh)
+    slots = tuple(
+        replace(slot, load_kwh=slot.load_kwh + extra)
+        for slot, extra in zip(problem.slots, result.schedule_kwh, strict=True)
+    )
+    assert_pv_following(replace(problem, slots=slots), result.plan)
+    first = result.plan.flows[0]
+    # The 4 kW battery takes 1 kWh a quarter hour: charge it all or not at all, unless
+    # the probe's own load leaves less surplus than that.
+    assert (
+        first.charge_kwh == pytest.approx(0)
+        or first.charge_kwh >= min(1.0, pv - 0.3 - result.schedule_kwh[0]) - 1e-5
+    )
+
+
+def test_validator_rejects_partial_charge_with_export_without_a_duration():
+    problem = dispatch(((1, 0, 5, 0),) * 2, minutes=60, minimum_mode_minutes=0)
+
+    def rows(export_kwh, charge_kwh, soc):
+        return tuple(
+            Flow(0, export_kwh, charge_kwh, 0, 0, soc(i), "charge", "CHARGE_PV")
+            for i in range(2)
+        )
+
+    with pytest.raises(SolveError, match="charge-from-PV exports"):
+        validate_modes(problem, rows(4, 1, lambda i: (i + 1) * 1.0))
+    validate_modes(problem, rows(1, 4, lambda i: (i + 1) * 4.0))
+
+
 def full_pack_problem(pv, *, initial, export_cap=None, lead=15, drain=0.0, **site):
     problem = dispatch(
         tuple((1.0, 0.9, value, 0.1) for value in pv), minimum_mode_minutes=60

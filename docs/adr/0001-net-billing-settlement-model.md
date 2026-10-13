@@ -1,10 +1,27 @@
 # ADR-0001: Net-billing settlement model — energy/distribution split and deposit value factors
 
-Status: proposed — becomes accepted when the owner approves gate T-004
-Date: 2026-10-12 (revision 2, after the first gate review)
+Status: proposed — becomes accepted when the owner approves it at the gate
+Date: 2026-10-12 (revision 3, after the annual-bill measurement of T-448)
 
-No implementation is part of this ADR. It fixes the model, the settings and the contract between
-runtime and engine; tickets are planned after the gate.
+This ADR fixes the model, the settings and the contract between runtime and engine. Revision 2 was
+implemented on `main` by T-005 (`engine/settlement.py`, `settlement.py`) and is in no release yet
+(v0.1.37 does not contain it).
+
+Revision 3 changes, from a one-year replay of the real planner valued by the bill
+([Revision 3](#revision-3-the-model-measured-on-the-annual-bill)):
+
+- `deposit_model: off` stays the default and is the **only recommended setting**, also for a site
+  whose deposit is forfeited. No configuration of the model lowered the yearly bill by more than
+  44 PLN, and the factor at the cap (π = 1) raised it in 40 of 40 hourly-RCE homes.
+- `auto` is **withdrawn** with its two inputs, the daily evaluation and the dead band. `manual` stays
+  as an **experimental** setting.
+- The refund share applies to the export value **without** the 1.23 coefficient, so the floor of the
+  export value factor on a sell price that contains 1.23 is ρ / 1.23 (0.244 with hourly RCE, 0.163
+  with RCEm), not ρ.
+- The profile heuristics (export episode hurdle 1 PLN, import penalty 0.20 PLN/kWh) stay as they are,
+  and are not scaled with the planning prices.
+- Decisions 2, 3 and 5 below are kept as the record of revision 2; where revision 3 changes them the
+  text says so.
 
 Revision 2 changes, from the gate review:
 
@@ -69,7 +86,7 @@ refund = min(U, ρ × G)        void = max(U - ρ × G, 0)
 
 | Contract fact | Variants found | Where it goes |
 | --- | --- | --- |
-| Settlement price of export, and with it ρ | **RCEm** (monthly): prosumers who started before 1 July 2024 and did not switch → ρ = 20 %. **RCE** (hourly): everyone who started from 1 July 2024, and older prosumers after a declaration to the seller that cannot be taken back → ρ = 30 % (in force since 27 December 2024; Energa applies it from 1 February 2025) | `deposit_refund_percent`; the sell source already selects RCE or RCEm |
+| Settlement price of export, and with it ρ | **RCEm** (monthly): prosumers who started before 1 July 2024 and did not switch → ρ = 20 %. **RCE** (hourly): everyone who started from 1 July 2024, and older prosumers after a declaration to the seller that cannot be taken back → ρ = 30 % (in force since 27 December 2024; Energa applies it from 1 February 2025) | `deposit_refund_percent`; the sell source already selects RCE or RCEm. The share is of the **value of the exported energy**, which the statute names separately from the deposit it raises by 1.23 (art. 4 sec. 11a); one seller page words it as a share "of the month's deposit" (revision 3, point 2) |
 | Energy price | **G-tariff price list**: one rate per zone (G11, G12, G12w), fixed for the price-list period. **Dynamic-price contract**: hourly TGE day-ahead price (RDN Fixing I) plus the seller's per-kWh add-on (Tauron: 0.1097 PLN/kWh gross; market range in 2024: 0.10–0.15) plus a monthly fee | the buy source: `schedule`/`fixed` for a price list, `forecast` for a dynamic price |
 | Distribution price | billed by the distributor's tariff group whatever the energy contract is: a dynamic-price contract keeps its G11 or G12 distribution zones. Rates differ per distributor and group and change with every approved tariff | new distribution rates and distribution tariff (Decision 1) |
 | Offers beyond the statute | one seller is reported to apply the deposit to the whole invoice with no expiry (a single trade blog, not verified) | not modelled: `deposit_model: off` or ρ = 100 % |
@@ -166,6 +183,9 @@ is an average (open question 2).
 
 ### 2. Deposit inputs
 
+Revision 3 withdraws `auto`, `deposit_yearly_value`, `deposit_yearly_energy_cost` and stage 2, and
+marks `manual` experimental. The table and the bullets are the revision 2 record.
+
 | Setting | Group | Default | Range | Meaning |
 | --- | --- | --- | --- | --- |
 | `deposit_model` | tariffs | `off` | `off` · `manual` · `auto` | how the factors are obtained |
@@ -200,7 +220,11 @@ export_value_factor  φx = 1 - π × (1 - ρ)        # 1 → ρ
 import_energy_factor φe = 1 - π                  # 1 → 0
 ```
 
-`auto`:
+Revision 3 replaces ρ in these two formulas and in `manual` below by `ρp = ρ / 1.23`, the refund share
+expressed on a sell price that contains the 1.23 coefficient (point 2 of revision 3), and withdraws
+`auto` together with its hysteresis and the `inputs_missing` and `held` reasons.
+
+`auto` (withdrawn in revision 3):
 
 ```text
 s = clamp(1 - E / D, 0, 1)                       # unused share of the yearly deposit
@@ -276,6 +300,10 @@ New diagnostics, under `dispatch_policy.settlement` in the plan attributes: `mod
 
 ### 5. Interactions
 
+Revision 3 measured the first, second and fourth row: with the amounts unscaled, π = 1 raises the
+yearly bill; scaling them removes most of that and still does not beat `off` (points 3 and 4 of
+revision 3). The rules stay as written.
+
 | Existing piece | Rule |
 | --- | --- |
 | `import_penalty_per_kwh` | unchanged and still additive on top of `buy_plan`. It covers forecast error inside an interval, not settlement. The 0.20 backtested on the reference site was tuned with full-price export; re-check it only if π leaves 0 |
@@ -346,6 +374,179 @@ Reading it:
   1.23 PLN/kWh, and the reference site would already sit on the edge. That model would block sales
   that pay in cash.
 
+## Revision 3: the model measured on the annual bill
+
+Revision 2 was accepted on a worked example. Nothing valued a year of its plans by the bill. The
+calculator repository did that for its TypeScript port of this planner (energy-compass ADR-0030,
+T-433): the factors raised the yearly bill, by up to 1 672 PLN at π = 1, with the note "indicative
+for Home Assistant — reproduce before deciding". T-448 reproduced it on the planner itself.
+
+### Method
+
+- **Planner**: `engine/optimize.py::solve` of `main` at 7f7ce2b, problems built by
+  `tools/replay.py::build_problem`, plans executed on the realized series by
+  `tools/replay.py::realize`. Horizon 24 h in 1 h slots, the state of charge carried through the
+  year, the daily PV-export budget reset at local midnight, mode duration 60 min.
+- **Homes**: the 80 net-billing homes of T-433 — five distributors × G11/G12 × four sizes
+  (2 500 kWh with 4 kWp, 3 600 with 6, 2 500 with 10, 6 000 with 10), each settled with hourly RCE and
+  with RCEm, on the offer the calculator picks for a planner. 8 760 h from 12 October 2025, the
+  calculator's price series, load and PV from the distributor's standard profiles. `n` in each
+  table is the number of homes the configuration ran on.
+- **Site**: 10 kWh, floor 10 %, 0.5 C, round trip 0.9, wear 0.0916 PLN/kWh, grid 14 kW, the
+  `pl_net_billing` profile (import penalty 0.20, terminal value 0.60, export episode hurdle 1,
+  `limit_export_to_pv` on) with `allow_grid_charge` and `allow_battery_export` **on**. Both are off
+  by default; the measurement describes a site that switched them on.
+- **Forecast**: yesterday's PV and the 14-day mean load of the hour, never the realized series.
+- **Cadence**: re-plan every 6 h, the first 6 h of each plan executed. Checked against 1 h and
+  against plan-once-a-day on six homes (table below).
+- **Valuation**, two bills for the same hourly import and export:
+  - *annual* — the calculator's formula: the deposit `D = 1.23 × V` pays energy and excise `E`, the
+    refund is `min(D − min(D, E), ρ × V)`;
+  - *ledger* — monthly vintages booked the following month, used oldest first for 12 months, the
+    refund of each vintage capped at ρ × that month's export value, steady state of a repeated year.
+  `K` = bill + battery wear + the change of stored energy at the mean buy price. ρ = 30 % on the RCE
+  homes, 20 % on the RCEm homes.
+- **Checks**: the bill function returns the calculator's bill for the same flow (2 589.78 PLN on
+  both sides without a battery; 503.01 against 502.99 on the port's 10 kWh flow). `K` of `off` is
+  within 1 PLN of the port's `K` at the median (n = 66, −8 … +103). 76 of 763 580 solves ended
+  without a plan; those intervals ran as self-consumption.
+
+Both valuations are kept because they disagree where it matters. The annual formula pools the year,
+so winter purchases absorb summer deposit and the refund cap is one yearly number. The ledger is
+closer to the statute (the cap is per month) and gives a bill higher by 125 PLN at the median and by
+up to 353 PLN on the RCE homes with `off`. Under `off`, 34 of 40 RCE homes have `D > E`, the yearly
+cap binds in 21 and the ledger forfeits deposit in 30 (median 402, up to 2 349 PLN a year); 6 of 26
+RCEm homes forfeit.
+
+### Results
+
+Difference to `off` in PLN per year, positive = dearer. "worse" and "better" count homes beyond
+10 PLN.
+
+Hourly RCE, 10 kWh:
+
+| Configuration | n | annual: median (min … max) | worse / better | ledger: median (min … max) | worse / better |
+| --- | --- | --- | --- | --- | --- |
+| `manual`, π = 0.25 | 24 | +18 (+3 … +50) | 14 / 0 | −1 (−21 … +57) | 9 / 4 |
+| `manual`, π = 0.5 | 40 | +58 (+6 … +143) | 36 / 0 | +4 (−27 … +102) | 18 / 11 |
+| `manual`, π = 0.75 | 24 | +111 (+19 … +215) | 24 / 0 | +41 (−44 … +152) | 17 / 2 |
+| `manual`, π = 1 (φx = 0.30) | 40 | +292 (+68 … +431) | 40 / 0 | +146 (+21 … +306) | 40 / 0 |
+| π = 1 with ρ / 1.23 (φx = 0.244) | 16 | +348 (+110 … +516) | 16 / 0 | +147 (+54 … +332) | 16 / 0 |
+| π = 1, heuristics scaled | 16 | +2 (−33 … +57) | 5 / 4 | 0 (−25 … +150) | 6 / 3 |
+| `auto`, `D` and `E` of the year without a battery | 24 | 0 (0 … +122) | 6 / 0 | 0 (0 … +106) | 6 / 0 |
+| `auto`, `D` and `E` of the `off` year | 24 | +78 (0 … +333) | 15 / 0 | +13 (−8 … +151) | 12 / 0 |
+| `allow_battery_export` off | 16 | +423 (+154 … +662) | 16 / 0 | +244 (+102 … +493) | 16 / 0 |
+| export episode hurdle 0 | 24 | −15 (−94 … −1) | 0 / 14 | +10 (−94 … +39) | 12 / 7 |
+| import penalty 0 | 24 | −11 (−36 … 0) | 0 / 13 | +20 (−22 … +75) | 16 / 4 |
+| hurdle 0 and import penalty 0 | 27 | +14 (−37 … +75) | 16 / 7 | +62 (−37 … +220) | 24 / 1 |
+
+- The best π of {0, 0.25, 0.5, 0.75, 1} chosen per home with hindsight (n = 24): on the annual bill
+  it is 0 in all 24; on the ledger it gains 6 PLN at the median and 44 PLN at most (π = 0 in 10
+  homes, 0.25 in 3, 0.5 in 8, 0.75 in 3, 1 in none).
+- Where the yearly cap binds under `off` (21 homes) π = 1 is still dearer in all 21: +160 at the
+  median (+68 … +421) on the annual bill, +63 (+21 … +182) on the ledger.
+- `auto` from the year without a battery leaves 18 of 24 homes at π = 0 and sets π = 1 in 6; from the
+  `off` year it sets π > 0 in 16. No home is cheaper by more than 10 PLN on either bill.
+- Other capacities (5, 15, 20 kWh; 15 rows): π = 1 is dearer in all, +128 at the median
+  (+62 … +314) on the annual bill, +81 (+38 … +153) on the ledger.
+- Monthly RCEm, 10 kWh (n = 24–26): π = 1, hurdle 0, import penalty 0 and both at 0 all stay within
+  −9 … +6 PLN on both bills. The price is flat within a month, so a factor on it moves no decision.
+- "Heuristics scaled" is π = 1 with the hurdle at ρ × 1 PLN and the import penalty and the terminal
+  value multiplied by mean `buy_plan` / mean `buy`. It is cheaper than plain π = 1 by 252 PLN at the
+  median on the annual bill and by 56 PLN on the ledger.
+
+Cadence, π = 1 against `off` at 10 kWh, re-plan every 1 h / 6 h / 24 h:
+
+| Home | annual | ledger | `K` of `off` |
+| --- | --- | --- | --- |
+| Energa G12, 3 600 kWh, 6 kWp, RCE | +392 / +377 / +778 | +298 / +270 / +643 | 1 125 / 1 107 / 1 133 |
+| PGE G12, 2 500 kWh, 10 kWp, RCE | +92 / +90 / +198 | +41 / +32 / +154 | 10 / 6 / 18 |
+| PGE G12, 3 600 kWh, 6 kWp, RCE | +228 / +183 / +661 | +91 / +52 / +402 | 794 / 795 / 807 |
+| Stoen G11, 6 000 kWh, 10 kWp, RCE | +200 / +198 / +910 | +200 / +198 / +910 | 2 586 / 2 575 / 2 553 |
+| Tauron G11, 2 500 kWh, 10 kWp, RCE | +97 / +95 / +160 | +53 / +43 / +250 | −57 / −66 / −54 |
+| PGE G12, 3 600 kWh, 6 kWp, RCEm | +3 / −1 / +190 | +3 / −1 / +190 | 1 587 / 1 593 / 1 599 |
+
+The 6 h cadence reproduces the 1 h cadence and slightly understates the loss. Plan-once-a-day, with
+hours 7–24 of a plan executed, multiplies it by 2 to 4 and creates a loss on RCEm that the planner
+does not have. That is the mode of the calculator's port: its π = 1 loss on the same 40 RCE homes is
++758 PLN at the median against +292 here, and +224 against 0 on RCEm. The sign of T-433 holds for
+Home Assistant; its size does not.
+
+### Decisions
+
+1. **`off` is the only recommended setting; `auto` is withdrawn; `manual` is experimental.**
+   - `auto` is removed before the first release that would carry it: the `auto` option, the settings
+     `deposit_yearly_value` and `deposit_yearly_energy_cost`, the daily evaluation, the settlement
+     Store, the dead band, the reasons `inputs_missing` and `held`, and stage 2. A stored `auto`
+     (development installs only) is read as `off`. It raised π in 6 to 16 of 24 homes and none got
+     cheaper.
+   - `manual` stays, labelled experimental in the selector and the guides, with the measured result
+     next to it. It is the handle a later model is tested through, and it costs one option and one
+     number.
+   - A deposit setting is recommended, or `auto` returns, only when a one-year replay of the planner
+     at a re-plan interval of 6 h or less shows, against `off` and on **both** bills, a lower median
+     and no home dearer by more than 10 PLN a year. The numbers go into this ADR.
+2. **Refund share base and ρ per price kind.** The statute caps the refund at 20 % or 30 % of the
+   *value of the energy exported in the month* (art. 4 sec. 11a) and raises the *deposit* by 1.23
+   elsewhere, so the cap is ρ × V while the sell price the planner sees is 1.23 × the settlement
+   price. One more unit of export under a binding cap is therefore worth `ρp = ρ / 1.23` of the sell
+   price: 0.244 with hourly RCE, 0.163 with RCEm. `engine/settlement.py` uses ρ (0.30, 0.20).
+   - The engine divides `deposit_refund_percent` by 1.23 in `factors` and in the `manual` derivation
+     of π. 1.23 is a constant of the model, like `D = 1.23 × V`; a sell price without it already
+     misstates the deposit and Preview says so.
+   - `deposit_refund_percent` keeps the statutory meaning and the default 30 (hourly RCE, the
+     settlement of everyone who started from 1 July 2024). 20 for RCEm stays a documented value: the
+     integration does not know the settlement kind, and on RCEm the factor changes the bill by less
+     than 10 PLN a year either way. A seller that refunds a share of the deposit is entered as
+     36.9 or 24.6.
+   - With the corrected base π = 1 is dearer than with the coded one by 76 PLN at the median on the
+     annual bill (+23 … +156) and by 57 PLN on the ledger (+21 … +133). The correction is made
+     because the number is wrong, not because it helps.
+3. **Heuristics under planning prices: not scaled.** Scaling the hurdle, the import penalty and the
+   terminal value takes π = 1 on its 16 homes from +274 at the median to about `off` (+2 annual,
+   0 ledger; 5 or 6 of 16 homes dearer, 4 or 3 cheaper). A model that needs three more rules to reach the result of doing nothing
+   is not worth them. If π > 0 is ever proposed as a recommended setting again, scaled heuristics
+   are part of the proposal and of its measurement.
+4. **Profile heuristics: unchanged.** Hurdle 1 PLN and import penalty 0.20 PLN/kWh stay.
+   - Hurdle 0: −15 PLN at the median on the annual bill, +10 on the ledger (12 homes dearer, 7
+     cheaper). Import penalty 0: −11 annual, +20 ledger (16 dearer, 4 cheaper). Both at 0: +14 and
+     +62. On RCEm: within 9 PLN.
+   - The two bills disagree on the sign, the effects are 1–2 % of `K` (806 PLN annual, 992 ledger at
+     the median) and of the size of the cadence error above. Neither amount is shown to be wrong,
+     and both also limit mode changes and the exposure to forecast error, which no bill here prices.
+   - Where the yearly cap does not bind (11 homes) hurdle 0 is cheaper in all 11 on the annual bill
+     (−57 at the median) and in 5 on the ledger (3 dearer). Not enough for a change; it is the first
+     thing to re-measure once a replay with a measured forecast exists.
+5. **What a user whose deposit is forfeited sets today: nothing.** `deposit_model` stays `off`.
+   Battery export, where the user allows it, stays allowed: switching it off cost 154 to 662 PLN a
+   year on the annual bill and 102 to 493 PLN on the ledger, in all 16 homes, and 411 / 202 PLN at
+   the median in the homes whose yearly cap binds. An evening export at a high price raises the
+   month's export value and with it the refund cap, also when the rest of the deposit is void.
+
+### Why the factors lose
+
+Measured: on the 16 homes that ran both, scaling the fixed amounts removes 97 % of the summed loss
+of π = 1 on the annual bill and 82 % on the ledger (decision 3). With φx = 0.30 an export period must earn 1 PLN of a value cut to 30 %,
+and an import is charged a 0.20 penalty on a price cut to its distribution part.
+
+Not measured, from the settlement rules:
+
+- One yearly π devalues every export of the year. On the ledger the forfeited amount sits in the
+  summer vintages; the October–March exports are used in full and are worth their full price.
+- A uniform factor does not change which hour is the best to export in. It only moves the
+  comparison with wear, with the hurdle and with imports, and there it stops exports that still pay
+  (decision 5).
+
+### Limits
+
+- Load and PV are distributor standard profiles and a PV model, as the meter sees them: `pv` is the
+  surplus after self-consumption, so the `limit_export_to_pv` budget is tighter than on a site that
+  reports gross PV.
+- One year, one price history, a simple forecast, no standby loss, 10 kWh in the matrix (other
+  capacities for π = 1 only), a 6 h cadence calibrated on six homes.
+- The measurement code is not in the repository: a harness around `engine/` and `tools/replay.py`,
+  stored with its results as artifacts of T-448. Committing it as a tool with a test is a ticket.
+
 ## Alternatives rejected
 
 1. **Fixed sell multiplier** (lower `sell_multiplier`, or one constant factor on the sell price) —
@@ -385,6 +586,31 @@ Reading it:
     statute and the owner's decision say energy only; the one offer reported to differ also drops the
     expiry, which makes the whole model unnecessary for it.
 
+Added in revision 3:
+
+12. **Keep `auto` and label it experimental** — rejected because a label does not change what it
+    does: it switched the factors on in 6 to 16 of 24 homes, made up to 15 of them dearer (up to
+    333 PLN a year) and none cheaper. It is in no release, so removing it needs no migration; a
+    released option would need one.
+13. **Withdraw the whole model, `manual` and the distribution component included** — rejected
+    because the distribution component is buy-source behaviour of its own (a dynamic energy price
+    plus a zoned distribution tariff) and `manual` is the only way to test a later model on the
+    replay. Removing both is a larger change than removing `auto` and buys nothing the label and the
+    default do not give.
+14. **Repair the model instead: scaled heuristics, a monthly π, the corrected base** — rejected for
+    now. Scaled heuristics alone bring π = 1 back to `off`, not below it, and the best π per home
+    chosen with hindsight gains 44 PLN a year at most on one bill and nothing on the other. A
+    monthly π is alternative 4 again, with the same need for a 12-month forecast of both sides.
+15. **Leave the refund base as coded** (ρ on a price that contains 1.23) — rejected because the
+    documented meaning of `export_value_factor` at the cap would stay wrong by a factor of 1.23,
+    although the coded value loses less (decision 2 of revision 3).
+16. **Lower the export episode hurdle or the import penalty in `pl_net_billing`** — rejected: 10 to
+    20 PLN a year at the median with opposite signs on the two bills, and nothing on RCEm
+    (decision 4 of revision 3).
+17. **Adopt the calculator's numbers without a replay of this planner** — rejected because the port
+    plans once a day and executes the tail of the plan, which this planner never does; the loss it
+    reports is 2 to 4 times the loss measured here and exists on RCEm only there.
+
 ## Consequences
 
 - With the defaults nothing changes for any installation: no migration, no profile revision, golden
@@ -400,9 +626,24 @@ Reading it:
   reference site.
 - Under π > 0 the consumption windows still report invoice prices, so they understate how cheap
   surplus PV really is. Accepted for stage 1; revisit with real data.
-- The reference site gets factor 1.0 today. The feature pays off for sites whose PV is large against
-  their consumption, and for the reference site only if battery arbitrage pushes the yearly deposit
-  above ~2530 PLN (ρ = 30 %).
+- The reference site gets factor 1.0 today. Revision 2 expected the feature to pay off for sites
+  whose PV is large against their consumption. Revision 3 measured those sites (10 kWp against
+  2 500 kWh): it does not.
+- Revision 3: with `auto` gone, five settings become three (`deposit_model` with `off` and `manual`,
+  `deposit_refund_percent`, `export_value_factor`), `dispatch_policy.settlement` loses
+  `unused_share`, `yearly_deposit`, `yearly_energy_cost` and `evaluated_on`, and the reasons are
+  `ok`, `off` and `split_missing`. The distribution component is untouched.
+- Revision 3: the guides, the READMEs and the setting descriptions say that `off` is the setting for
+  every site, the forfeited-deposit site included, and carry the measured numbers for `manual`.
+- Revision 3: the yearly bill of a plan is now the test of a change to the planning prices or to
+  the profile amounts. Until the harness is a tool in `tools/`, the artifacts of T-448 are the only
+  copy.
+- Work after revision 3:
+  1. T-459 — withdraw `auto`, label `manual` experimental, the refund base, strings and the doc
+     sweep with the text for the forfeited-deposit site;
+  2. T-460 — the yearly replay and the two bills as a tool with tests;
+  3. T-461 (calculator repository) — the yearly refund formula against the monthly ledger, and the
+     size of the π loss quoted in energy-compass ADR-0030.
 - Work to plan after the gate (each line is at least one ticket, in this order; T-005 as written
   covers lines 1–4 and should be split along them):
   1. buy price composition: the three distribution settings, `PriceSource.distribution_schedule` and
@@ -421,8 +662,8 @@ Reading it:
 
 Approving the gate accepts the recommended answer of each.
 
-1. **Stage 2 (inputs from history).** Recommended: not now. Stage 1 takes the two yearly sums from
-   settings; history bindings follow only if a site reaches the ramp.
+1. **Stage 2 (inputs from history).** Closed by revision 3: `auto` is withdrawn, so there is nothing
+   to feed.
 2. **Groups outside the catalog** (G13, G12n, a dynamic distribution tariff). Recommended: stage 1
    gives them one distribution rate; a third zone is a separate task if someone needs it.
 3. **Statute text.** The rules above come from seller pages and tax rulings that quote the RES Act;
@@ -436,6 +677,16 @@ contract (setting), what the deposit pays (energy only), the buy source of a dyn
 
 ## Sources
 
+- Revision 3: RES Act amendment of 27 November 2024 (Dz. U. 2024 item 1847), art. 4 sec. 11a — the
+  refund may not exceed 20 % (art. 4b sec. 1, RCEm) or 30 % (art. 4b sec. 2, hourly RCE) of "the
+  value of the electricity fed into the grid in the calendar month the refund concerns"; the 1.23
+  coefficient raises the deposit of the month, not that value. Read through search excerpts of the
+  act, not on ISAP — <https://eli.gov.pl/eli/DU/2024/1847/ogl/pol/pdf>
+- Revision 3: energy-compass `docs/adr/0030-cel-planu-ems-a-rozliczenie-prosumenta.md` (T-433), the
+  calculator's measurement on its port of this planner; its yearly formula is
+  `packages/calc/src/cost/settlement.ts`.
+- Revision 3: artifacts of T-448 (`README-t448.md`, `harness.py`, `runner.py`, `results.jsonl`,
+  `tables.txt`) — the replay, the two bills and every number of the revision 3 tables.
 - Energa, net-billing page: the deposit settles "the purchase of electricity from the seller", cannot
   cover distribution charges or other charges such as the trade fee; oldest amounts first; 12 months;
   refund up to 20 % (RCEm) or, from 1 February 2025, 30 % (RCE) of the month's deposit; the switch to

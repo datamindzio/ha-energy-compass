@@ -1170,7 +1170,8 @@ directly by any other available mode.</p>
   use, so the plan never pairs a partial charge with grid export: in a <code>CHARGE_PV</code> interval the
   battery takes the whole PV surplus, and export appears only once the charge is at its interval
   power limit or the battery has been filled to its upper bound. Otherwise the row is not
-  <code>CHARGE_PV</code>. Applies while <code>minimum_mode_minutes</code> is above 0. A carried
+  <code>CHARGE_PV</code>. The rule also holds with <code>minimum_mode_minutes = 0</code>: there are no modes then, and the
+  charge in any interval the flows label <code>CHARGE_PV</code> is bound the same way. A carried
   <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment is held to the same rule. If the battery is full before it
   ends (the next interval could not take even the minimum activity above the upper bound), the
   rest of the commitment is <code>HOLD</code> with the surplus exported, or <code>CURTAIL</code> where the site cannot
@@ -1196,7 +1197,13 @@ directly by any other available mode.</p>
   above the export cap or the inverter rating is planned: <code>CHARGE_PV</code> cannot fill the pack and
   curtail in the same interval, so the pack counts as full for the next interval, which may be
   <code>HOLD</code> or <code>CURTAIL</code>, once it is within that interval's curtail need of the ceiling (the PV that
-  must go to the pack or be curtailed, at least the minimum activity).</li>
+  must go to the pack or be curtailed, at least the minimum activity).
+  With <code>minimum_mode_minutes = 0</code> the rule costs solve time (see the table in
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model and limitations</a>), and one more
+  case has no plan: with grid export capped (or the inverter rated below the PV) and curtailment
+  (<code>allow_curtailment</code>) off, a pack that fills before the last surplus leaves that surplus nowhere
+  to go. The mode model has the same limit; curtailment on, or a higher export cap or inverter
+  rating, gives a plan.</li>
 <li><strong><code>CURTAIL</code> goes on through a PV gap.</strong> A <code>CURTAIL</code> run lasts the minimum duration, and PV can
   drop inside it. A <code>HOLD</code> in an interval with PV below the minimum activity (<code>minimum_mode_power_kw × h</code>)
   inside that duration is the run going on, not a new <code>HOLD</code>: the inverter has nothing to curtail
@@ -1236,7 +1243,7 @@ directly by any other available mode.</p>
 <li><strong>Strategy change (reset):</strong> writing a new strategy drops the carried commitment for the next
   plan, which starts unlocked (see <a href="#strategy-switch-release">strategy-switch release</a>).</li>
 <li>Setting <code>minimum_mode_minutes = 0</code> disables duration and minimum-power rules; the
-  <code>SELF_CONSUME</code> load-following rule stays on.</li>
+  <code>SELF_CONSUME</code> and <code>CHARGE_PV</code> load-following rules stay on.</li>
 </ul>
 <h3 id="policies-that-gate-modes">Policies that gate modes</h3>
 <section class="table-scroll"><table>
@@ -1572,8 +1579,8 @@ Max):</p>
 interval already on the default 24 h horizon, and on a 48 h horizon no strategy completes its probes
 (with a 15-minute display interval 18–67 of 96 are known). At 48 h the base plan of these two
 strategies also runs into <code>solve_time_limit_s</code> and is published as <code>time_limited</code>.
-<code>minimum_mode_minutes = 0</code> does not lift the limit: at 24 h 13 of 24 (<code>self_sufficiency</code>) and 20 of 24
-(<code>backup_ready</code>) probes are known, which is still <code>short_coverage</code>. A slower host, such as a
+<code>minimum_mode_minutes = 0</code> does not lift the limit: at 24 h 1 of 24 (<code>self_sufficiency</code>) and 8 to 17
+of 24 (<code>backup_ready</code>) probes are known, which is still <code>short_coverage</code>. A slower host, such as a
 Raspberry Pi, reaches each limit at a shorter horizon.</p>
 <p>The <a href="#flexible-energy-depth">flexible energy depth</a> is bound by the same two settings: each of its
 five solves gets <code>probe_time_limit_s</code>, inside what the probes left of <code>total_time_limit_s</code>. With
