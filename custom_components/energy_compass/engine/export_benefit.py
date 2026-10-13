@@ -103,8 +103,9 @@ def validate_export_benefit(
                 problem.battery.discharge_kw * hours
             ) and export > noise_bound(problem.site.grid_export_kw * hours)
         else:
-            # `settle_mode_noise` zeroes the gated flow; what it left is a real pair.
-            wrong = min(settled[i]["bd"], settled[i]["gout"]) > tolerance
+            # `settle_mode_noise` zeroes the gated flow; what it left is a real pair once
+            # the classifier reads both flows (above 1e-6, whatever the activity floor).
+            wrong = min(settled[i]["bd"], settled[i]["gout"]) > _TOL
         if wrong:
             raise SolveError(
                 "solver_failure", "invalid solver result: physical export indicator"
