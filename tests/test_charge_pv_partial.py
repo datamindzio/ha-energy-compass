@@ -312,12 +312,30 @@ def test_curtail_under_way_goes_on_while_standby_loss_drains_the_pack():
     )
 
 
+def test_curtail_under_way_goes_on_when_the_pack_falls_well_below_the_ceiling():
+    # 0.15 kWh of standby loss per interval takes the pack out of "full" after two
+    # intervals; the 0.9 kWh of PV still has 0.3 kWh above the cap to curtail, so the
+    # CURTAIL under way must go on without the full pack's licence.
+    problem = full_pack_problem(
+        (0.5, *(0.9,) * 7), initial=9.7, export_cap=2, lead=0, drain=0.6
+    )
+    plan = solve(problem)
+    assert [flow.dispatch_mode for flow in plan.flows] == [
+        "CHARGE_PV",
+        *("CURTAIL",) * 7,
+    ]
+    assert plan.flows[3].end_soc_kwh < 9.55
+
+
 def test_released_hold_turns_to_curtail_after_standby_loss_drained_the_pack():
     # Slot 3 is the last committed interval; the pack (9.975 kWh) is below the
-    # 9.9875 kWh ceiling there, so only the released HOLD allows the CURTAIL.
+    # 9.9875 kWh ceiling there, so only the released HOLD allows the CURTAIL. The
+    # 0.62 kWh of PV is 0.02 kWh above the cap, less than the minimum activity: the
+    # pack could still take it, and a charge costs wear, so curtailing is the choice.
     problem = full_pack_problem(
-        (0.5, 0.0, 0.0, *(0.9,) * 5), initial=9.7, export_cap=2, lead=0, drain=0.05
+        (0.5, 0.0, 0.0, *(0.62,) * 5), initial=9.7, export_cap=2, lead=0, drain=0.05
     )
+    problem = replace(problem, battery=replace(problem.battery, wear_per_kwh=0.3))
     plan = solve(problem)
     assert [flow.dispatch_mode for flow in plan.flows] == [
         "CHARGE_PV",

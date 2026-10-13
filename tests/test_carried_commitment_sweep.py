@@ -107,8 +107,8 @@ def starts_hold_on_a_surplus(problem: Problem, plan) -> list[int]:
     """List the committed intervals where HOLD starts although CHARGE_PV is open.
 
     Written from the rows alone: a row that continues the carried commitment (a
-    bridge) counts as PV-follow, a full pack has nothing left to take, and a
-    direction the legacy guard blocks is not open.
+    bridge) counts as PV-follow, a full pack has nothing left to take (the observed
+    pack included, T-037), and a direction the legacy guard blocks is not open.
     """
     if safety_exception(problem):
         return []
@@ -132,7 +132,7 @@ def starts_hold_on_a_surplus(problem: Problem, plan) -> list[int]:
         bridge = i in plan.carried_bridges
         if flow.dispatch_mode == "HOLD" and not bridge:
             surplus = slot.pv_kwh - slot.load_kwh
-            full = i and left >= ceiling - activity(problem) - 1e-3
+            full = left >= ceiling - activity(problem) - 1e-3
             open_surplus = min(battery.charge_kw * 0.25, surplus) >= activity(problem)
             # A direction the legacy guard blocks is not open.
             if problem.initial_battery_mode == "discharge" and slot.start < guard_until:

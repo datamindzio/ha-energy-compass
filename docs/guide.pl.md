@@ -701,11 +701,26 @@ Zasady (domyślnie 60 min, 0,1 kW):
   instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
   falownik przy pełnej baterii. Zwolniony `HOLD` nie ma własnego zegara — jedynym zegarem jest
   termin zobowiązania — więc może przejść w `CURTAIL` (który startuje własny zegar) przed tym
-  terminem; nie wraca do `CHARGE_PV`/`SELF_CONSUME`. Dwa przypadki nie są objęte, a plan jest
-  `infeasible` (niewykonalny) do końca zobowiązania: pierwszy przedział zobowiązania, który ma już
-  mniej miejsca niż minimalna aktywność, oraz przedział zobowiązania, w którym bateria się
-  napełnia, a reszta nadwyżki nadal przekracza limit eksportu lub moc falownika (`CHARGE_PV` nie
-  napełni baterii i nie przytnie nadwyżki w tym samym przedziale).
+  terminem; nie wraca do `CHARGE_PV`/`SELF_CONSUME`. Pierwszy przedział zobowiązania jest oceniany tak samo
+  względem zaobserwowanego stanu naładowania: bateria, która jest już w obrębie obniżonej górnej
+  granicy tego przedziału (na przykład po wykonaniu przedziału, który ją napełnił), może od razu
+  przejść w `HOLD` lub `CURTAIL`, w obu trybach grupy. Zaobserwowany stan naładowania na górnej
+  granicy to wyjątek bezpieczeństwa opisany niżej. Przedział zobowiązania, w którym bateria się napełnia,
+  a reszta nadwyżki nadal przekracza limit eksportu lub moc falownika, jest planowany: `CHARGE_PV`
+  nie napełni baterii i nie przytnie nadwyżki w tym samym przedziale, więc bateria liczy się jako
+  pełna dla następnego przedziału (może to być `HOLD` lub `CURTAIL`), gdy jest od górnej granicy
+  nie dalej niż potrzeba przycięcia tego przedziału (PV, które musi trafić do baterii albo zostać
+  przycięte, co najmniej minimalna aktywność).
+- **`CURTAIL` trwa mimo przerwy w PV.** Przebieg `CURTAIL` trwa minimalny czas, a PV może w tym
+  czasie spaść. `HOLD` w przedziale z PV poniżej minimalnej aktywności (`minimum_mode_power_kw × h`)
+  w trakcie tego czasu to ten sam przebieg, a nie nowy `HOLD`: falownik nie ma czego przycinać,
+  a bateria i sieć robią to, co przy `HOLD`. Liczy się do zegara `CURTAIL`, nie uruchamia zegara
+  `HOLD` i kończy się z czasem przebiegu; `HOLD` po nim ma własny zegar. Dotyczy przebiegu
+  rozpoczętego przez PV, którego nie przepuści limit eksportu ani falownik, oraz przeniesionego
+  `CURTAIL`; `dispatch_policy.carried_idle_starts` wymienia także te wiersze, a zapisane zobowiązanie
+  zachowuje tam swój tryb i początek. Działa to także w przeniesionym zobowiązaniu
+  `CHARGE_PV`/`SELF_CONSUME` (zwolniony z niego `CURTAIL` trwa mimo przerwy w PV w obrębie czasu
+  samego zobowiązania) oraz w przedziale z obciążeniem poniżej minimalnej aktywności.
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.

@@ -1177,11 +1177,25 @@ directly by any other available mode.</p>
   pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
   pack. The released <code>HOLD</code> starts no clock of its own — the commitment's deadline stays the only
   one — so it may turn to <code>CURTAIL</code> (which starts its own clock) before then; it does not go back
-  to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>. Two cases are not covered, and the plan is <code>infeasible</code> until the
-  commitment ends: a first committed interval that already has less room than the minimum
-  activity, and a committed interval in which the pack fills while the rest of the surplus is
-  still above the export cap or the inverter rating (<code>CHARGE_PV</code> cannot fill the pack and curtail
-  in the same interval).</li>
+  to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>. The first committed interval is judged the same way against the
+  observed state of charge: a pack already within the lowered ceiling of that interval (for
+  example after the interval that filled it was carried out) may be <code>HOLD</code> or <code>CURTAIL</code> at once,
+  in either member mode. An observed state of charge at the upper bound is the safety exception
+  below. A committed interval in which the pack fills while the rest of the surplus is still
+  above the export cap or the inverter rating is planned: <code>CHARGE_PV</code> cannot fill the pack and
+  curtail in the same interval, so the pack counts as full for the next interval, which may be
+  <code>HOLD</code> or <code>CURTAIL</code>, once it is within that interval's curtail need of the ceiling (the PV that
+  must go to the pack or be curtailed, at least the minimum activity).</li>
+<li><strong><code>CURTAIL</code> goes on through a PV gap.</strong> A <code>CURTAIL</code> run lasts the minimum duration, and PV can
+  drop inside it. A <code>HOLD</code> in an interval with PV below the minimum activity (<code>minimum_mode_power_kw × h</code>)
+  inside that duration is the run going on, not a new <code>HOLD</code>: the inverter has nothing to curtail
+  and the pack and the grid do what <code>HOLD</code> does. It counts for the <code>CURTAIL</code> clock, starts no <code>HOLD</code>
+  clock, and ends with the run's duration; the <code>HOLD</code> after it starts its own clock. It applies to a
+  run begun by PV that the export cap or the inverter cannot pass, and to a <code>CURTAIL</code> carried in;
+  <code>dispatch_policy.carried_idle_starts</code> lists these rows too, and the persisted commitment keeps its
+  mode and start there. It holds inside a carried <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> commitment as well (a
+  <code>CURTAIL</code> released from it goes on through a PV gap within the commitment's own duration), and for
+  an interval with a load below the minimum activity.</li>
 <li><strong>PV-follow group:</strong> <code>CHARGE_PV</code> and <code>SELF_CONSUME</code> share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.</li>
