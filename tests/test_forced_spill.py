@@ -198,13 +198,30 @@ def test_forced_spill_beyond_the_charge_power_charges_beside_the_spill(minutes):
     assert sun[-1].end_soc_kwh == pytest.approx(5.0, abs=1e-5)
 
 
-def test_forced_spill_beyond_the_charge_power_needs_the_gate_open():
-    # The same site with 1 kWh of room (more than the need): no spill is forced, the pack
-    # cannot take the need by its charge power, and there is still no plan (T-066).
+@pytest.mark.parametrize("minutes", [0, 15, 60])
+def test_forced_spill_beyond_the_charge_power_needs_no_gate(minutes):
+    # The same site with 1 kWh of room (more than the need, so the gate is shut): the pack
+    # still cannot take the need by its charge power, and the inverter spills what is
+    # beyond it whatever the room (T-066). The pack charges at its power beside the spill.
     rows = ((1.0, 0.1, 1.2, 0),) * 4 + ((3.0, 0.1, 0, 1.0),) * 6
-    with pytest.raises(SolveError) as error:
-        solve(problem(rows, initial=4.0, minutes=60, charge_kw=1))
-    assert error.value.reason == "infeasible"
+    site = problem(rows, initial=4.0, minutes=minutes, charge_kw=1)
+    plan = solve(site)
+    dispatch_policy.validate_modes(site, plan.flows, ())
+    for flow in plan.flows[:4]:
+        assert flow.charge_kwh == pytest.approx(0.25, abs=1e-5)
+        assert flow.curtail_kwh == pytest.approx(0.7, abs=1e-5)
+        assert flow.dispatch_mode in (None, "CURTAIL")
+
+
+def test_forced_spill_beyond_the_charge_power_spills_no_more_than_that_with_room():
+    # The spill with room is the PV beyond the pack and not a kWh more: where the evening
+    # pays for energy, the pack takes all its power allows. 0.95 kWh against 0.25 kWh a
+    # quarter hour leaves 0.7 to spill; a pack that held more would be worth more.
+    rows = ((1.0, 0.1, 1.2, 0),) * 4 + ((3.0, 0.1, 0, 1.0),) * 6
+    plan = solve(problem(rows, initial=1.0, charge_kw=1))
+    for flow in plan.flows[:4]:
+        assert flow.charge_kwh == pytest.approx(0.25, abs=1e-5)
+        assert flow.curtail_kwh == pytest.approx(0.7, abs=1e-5)
 
 
 @pytest.mark.parametrize("minutes", [15, 60])
@@ -257,17 +274,33 @@ def test_validator_requires_the_pack_to_be_full_at_the_start_of_a_spill(monkeypa
 
 
 @pytest.mark.parametrize("minutes", [0, 15, 60])
-def test_pinned_limit_pack_with_room_that_charges_too_slowly_has_no_plan(minutes):
-    # Pinned limit (docs/model.md, forced spill): the gate reads the room of the pack, not
-    # its charge power. At 0.4 kW the pack takes 0.1 kWh a quarter hour of a 0.95 kWh
-    # surplus: the inverter would throttle the rest, but the pack has room, so the plan
-    # may not call that a spill. Once the pack is full the same site is planned.
+def test_pack_with_room_that_charges_too_slowly_is_planned(minutes):
+    # T-066 (was a pinned limit of T-041): the gate reads the room of the pack, not its
+    # charge power. At 0.4 kW the pack takes 0.1 kWh a quarter hour of a 0.95 kWh surplus
+    # and the inverter throttles the rest: that is a forced spill whatever the room.
     rows = ((1.0, 0.1, 1.2, 0),) * 4
-    with pytest.raises(SolveError) as error:
-        solve(problem(rows, initial=1.0, minutes=minutes, charge_kw=0.4))
-    assert error.value.reason == "infeasible"
-    plan = solve(problem(rows, initial=5.0, minutes=minutes, charge_kw=0.4))
-    assert all(flow.curtail_kwh == pytest.approx(0.95, abs=1e-5) for flow in plan.flows)
+    for initial in (1.0, 5.0):
+        site = problem(rows, initial=initial, minutes=minutes, charge_kw=0.4)
+        plan = solve(site)
+        dispatch_policy.validate_modes(site, plan.flows, ())
+        for flow in plan.flows:
+            assert flow.charge_kwh + flow.curtail_kwh + flow.grid_export_kwh == (
+                pytest.approx(1.2, abs=1e-5)
+            )
+            assert flow.curtail_kwh >= 0.85 - 1e-5
+            assert flow.charge_kwh <= 0.1 + 1e-5
+
+
+@pytest.mark.parametrize("minutes", [15, 30, 60])
+def test_a_forced_curtail_at_the_first_interval_keeps_its_run_open_with_room(minutes):
+    # T-066: the first interval's PV is beyond the pack's charge power (spilled whatever the
+    # room), the second is not, and the dwell forbids CHARGE_PV there. The run goes on as
+    # CURTAIL, which the first interval has to relay (it has no gate row of its own).
+    rows = ((1.0, 0.1, 1.41, 0.1), (1.0, 0.1, 0.98, 0.05), (1.0, 0.1, 0, 0.5))
+    site = problem(rows, initial=3.0, minutes=minutes, charge_kw=3, cap_kw=1)
+    plan = solve(site)
+    assert plan.flows[0].dispatch_mode == "CURTAIL"
+    assert plan.flows[0].curtail_kwh == pytest.approx(0.31, abs=1e-5)
 
 
 def followed(start, steps):
@@ -701,6 +734,9 @@ def test_pinned_limit_highs_without_presolve_calls_a_worse_plan_optimal(monkeypa
     # The default run is the one taken here, so the plan is the better one. Red after a
     # SciPy upgrade means HiGHS no longer does this: correct `docs/model.md` (forced spill)
     # and ADR-0007 (Amendment T-072) with what the new version does.
+    # The matrix is the one before T-066: with the spill beyond the charge power ungated
+    # the model is easier and HiGHS without presolve finds the optimum on it.
+    monkeypatch.setattr(optimize, "forced_spill_limit", lambda *a, **k: 0)
     seen = {}
     run = optimize._Model._run
 
@@ -720,3 +756,73 @@ def test_pinned_limit_highs_without_presolve_calls_a_worse_plan_optimal(monkeypa
     assert second.status == 0
     assert second.fun == pytest.approx(-1.7465, abs=1e-3)
     assert second.fun > first.fun + 2.5
+
+
+# T-066 review: one draw of `benchmarks/spill_sweep.py probe` (seed 77, index 282): a pack
+# at 9.9 of 10 kWh behind a 0.5 kW export cap, a flexible load of 2 kWh at 2 kW.
+PROBE_DAY = (
+    (1.01, 0.57, 1.94, 0.05),
+    (0.8, -0.46, 1.54, 0.1),
+    (0.85, -0.57, 1.72, 0.02),
+    (1.45, 0.18, 2.11, 0.2),
+    (1.13, 0.52, 1.94, 0.4),
+    (1.4, 0.23, 1.61, 0.2),
+    (0.55, 0.29, 1.88, 0.2),
+    (1.13, -0.35, 1.32, 0.1),
+    (1.45, 0.41, 1.61, 0.02),
+    (1.3, 0.19, 1.7, 0.2),
+    (1.44, 0.75, 1.82, 0.05),
+    (0.37, -0.4, 1.6, 0.05),
+    (0.44, 0.25, 1.56, 0.4),
+    (0.79, 0.62, 2.13, 0.05),
+)
+
+
+def probe_day() -> Problem:
+    start = datetime(2026, 12, 18, 11, tzinfo=UTC)
+    return Problem(
+        tuple(
+            Slot(start + i * QUARTER, start + (i + 1) * QUARTER, *row)
+            for i, row in enumerate(PROBE_DAY)
+        ),
+        SiteLimits(8, 8, 0.5, False),
+        Battery(10, 0, 1, 9.9, 4, 4, 0.95, 0.95, 0.01, True, True, 0.05),
+        "value",
+        0,
+        (),
+        "UTC",
+        minimum_mode_minutes=0,
+        minimum_export_episode_benefit=0.0,
+    )
+
+
+def test_probe_with_a_spill_beyond_the_charge_power_is_planned_at_the_certified_cost():
+    # A plan at -0.396053 satisfies every row of the model (also of the model before the
+    # spill row was split into an ungated and a gated part, where HiGHS called -0.339803
+    # optimal with status 0, gap 0 and no fractional binary: the default run was the
+    # worse one and the second attempt never fired).
+    plan = solve_flexible_load(probe_day(), FlexibleLoadRequest(2, 2)).plan
+    assert plan.objective <= -0.396053 + 1e-4
+
+
+def test_both_solver_switches_find_the_certified_cost_of_the_probe_day(monkeypatch):
+    # T-066 review, LESSONS solver-defect-pinned-on-one-switch: the same matrix solved with
+    # and without presolve, each against the certified point.
+    seen = {}
+    run = optimize._Model._run
+
+    def kept(self, matrix, time_limit_s, **options):
+        result = run(self, matrix, time_limit_s, **options)
+        seen.setdefault("first", (self, matrix, options, result))
+        return result
+
+    monkeypatch.setattr(optimize._Model, "_run", kept)
+    solve_flexible_load(probe_day(), FlexibleLoadRequest(2, 2))
+    model, matrix, options, first = seen["first"]
+    assert model.second_attempt
+    assert options == {}
+    assert first.status == 0
+    assert first.fun <= -0.396053 + 1e-4
+    unprocessed = run(model, matrix, 30.0, presolve=False)
+    assert unprocessed.status == 0
+    assert unprocessed.fun <= -0.396053 + 1e-4

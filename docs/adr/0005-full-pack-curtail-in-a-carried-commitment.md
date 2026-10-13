@@ -440,7 +440,7 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
     `_commit_battery_direction` with the commitment of the problem as built. With `allow_curtailment` false and no plan on any rung the problem stays infeasible, as
     before. Charging at the charge power and curtailing the rest in one interval is the proper plan for rung 2's
     class: planned since T-064 (amendment below), which makes rung 2 rarer, not the safety exception only (the
-    T-069 amendment measures what is left); forced spill with room is T-066, the unmoded CHARGE_PV rule T-041.
+    T-069 amendment measures what is left); forced spill with room is T-066 (amendment below), the unmoded CHARGE_PV rule T-041.
 
     **25a. A flexible-load level takes the ladder too (T-067).** (Numbered 26 until T-079; the T-069 amendment
     below has its own point 26, so "point 26" written before T-079 with T-067 beside it means this one.) The base plan of the draw above is `CHARGE_PV` five
@@ -469,7 +469,7 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
     merged, solved once, as for point 24's table): 0 newly infeasible (main `fde1cc5` without this change: 1, seed
     44 draw 10), 105, 101, 107 and 121 newly planned. The `curtail_sweep.py` of `38d560f` itself probes without
     a base plan, so a comparison made with it counts 14 newly infeasible draws (5, 5, 4 and 0): every one has
-    `allow_curtailment` false and no base plan on `38d560f` or on head (T-041, T-064 and T-066 as below), and the
+    `allow_curtailment` false and no base plan on `38d560f` or on head (T-041, T-064 and T-066 as below; T-066 plans 12 of the 14), and the
     runtime never probes a problem without a plan.
 
 Measured with `benchmarks/curtail_sweep.py` (its `run`/`roll` solve through `solve_released` where the tree has
@@ -728,15 +728,15 @@ the case (T-058 planned the commitment's `HOLD` with `CURTAIL`, rung 2).
     can keep (the class T-070 measured: 123 of 1600 aimed problems, ADR-0004).
 
 `allow_curtailment = false` with PV above the cap and above what the pack takes by its charge power is planned only
-as a forced spill (T-041), that is where the pack cannot take the need by its room and the gate is open. Point 29
+as a forced spill (T-041), that is where the pack cannot take the need by its room and the gate is open, or, from T-066 (amendment below), the part of it that the pack cannot take by its charge power whatever its room. Point 29
 holds on any row where `CURTAIL` can be chosen, so that row now charges what the pack takes and spills the rest,
 where it spilled everything before: a site that cannot curtail is changed by this amendment as well. In a reviewer's
 draw (bell-shaped days rolled to the end, seed 81 × 150, 64 of them with `allow_curtailment` off, this branch merged
 with main `f7f9ae1` against main `f7f9ae1`) 22 of those plans have a charging `CURTAIL` row, none imports in it, 21
 are cheaper, 1 is newly planned and none is newly infeasible; `tests/test_forced_spill.py` pins the row. A pack with
-room for the need still has no plan there (point 24 end): no spill is forced and nothing else can take the surplus.
-What the house does then (report over-capacity, throttle in the plan) is an owner decision, tracked in T-066 with the
-forced-spill cases.
+room for the need had no plan there (point 24 end) until T-066: the part the pack cannot take by its charge power is
+now spilled beside the charge whatever its room (T-066 amendment below). What the house does where the PV cannot be
+disposed of at all (infeasible with curtailment on too) stays `infeasible`; none of the draws measured is one.
 
 The Deye controller is not changed here. At this task it did not carry out the charge of such a row: `CURTAIL` ran
 the `HOLD` profile, whose maximum charge current and grid current are both `hold_grid_current` (1 A by default, about
@@ -788,8 +788,7 @@ rolled to the end): 135 plans contain a charging `CURTAIL` row, none imports in 
 PV is not beyond the pack; 0 newly infeasible, 0 solver failures, 150 of 150 followed to the end on both trees in
 both seeds.
 
-Still `infeasible`: `allow_curtailment = false` with PV above what the pack takes by its charge power while the pack
-has room for it (no forced spill; T-066), `preserve_initial`
+Still `infeasible`: `preserve_initial`
 whose terminal state of charge is out of reach (T-065, T-070), and a carried commitment no plan can keep (rung 3).
 
 ## Amendment (T-076): the controller carries out a charging CURTAIL row
@@ -834,6 +833,41 @@ Rejected: a grid direction on the row (the model never imports in a `CURTAIL` ro
 energy the plan does not); the cap as the charge current (it charges above the plan in 8.5 % of the charging rows
 and is right only where the row plans the charge power); a threshold of 0 (one plain `CURTAIL` row in twelve would
 charge from PV at the cap, not hold).
+
+## Amendment (T-066): the PV the pack cannot take by its charge power is spilled whatever the room
+
+T-064 let a `CURTAIL` row charge beside its spill, and left one class of site without a plan: `allow_curtailment`
+off, the PV above what the site passes more than the pack takes by its charge power, and the pack with room for the
+need. The gate of the forced spill reads the room (`spill_gate`, ADR-0007 amendment T-041), so it was shut and
+`CHARGE_PV`, which curtails nothing, had no flow either. The inverter throttles that part whatever the room, so the
+plan now may say so.
+
+- **A forced part needs no gate.** `dispatch_policy.forced_spill_limit` is `curtail_need − charge_kw × h`
+  (`_beyond_the_pack`) at most the curtailment bound, at least the minimum activity with a minimum mode duration, and
+  0 where nothing is beyond the pack, on a site that cannot curtail. In `optimize._gate_forced_spill` the spill row
+  is `curt ≤ forced + extra` with `extra ≤ (bound − forced) × spill_open` (one row with an offset was solved worse by
+  HiGHS: ADR-0007 amendment T-066); the gate row (`previous energy ≥ gate × spill_open`) is as before,
+  and `mode_CURTAIL ≤ spill_open` is left out where the forced part is positive. The part is taken at the flexible
+  load's upper bound, where the load lowers the export part of the need, so the model never offers more than the
+  certificate reads at the realised load. The first interval, which spilled nothing below the gate, has the forced
+  part too, and returns its slot to the relay: a forced `CURTAIL` there keeps the second interval's gate open
+  (`tests/test_forced_spill.py` `test_a_forced_curtail_at_the_first_interval_keeps_its_run_open_with_room`; without
+  it the second interval, whose need the pack could take, had no mode: `negroll` seed 22 draw 194 at its fourth boundary).
+- **The certificate** (`_validate_solution`): a spill above the forced part with room in the pack is still rejected,
+  and a `CURTAIL` interval that spilled at most the forced part relays the gate like one that spilled at the gate.
+- **What is not changed:** the Deye controller (still the `HOLD` profile in a `CURTAIL` interval, see the T-064
+  amendment), the owner decision of T-062 B (a pack that can take the need never spills), a site that can curtail,
+  and every interval where nothing is beyond the pack (the model rows are those of before; `tests/test_strategy_golden.py`).
+- **Measured** (`benchmarks/spill_sweep.py` seeds 11 and 22 × 300 per draw, main `7c33fe8` against this branch with
+  that main merged in, `8c72cfd`; the tables are in `docs/model.md`): problems solved once without a plan `run` 64 → 13,
+  `negrun` 40 → 14, `probe` 63 → 29, `bell` 59 → 20 of 600 each; followed one interval at a time not followed `roll`
+  65 → 19, `negroll` 54 → 12, `bellroll` 71 → 26 of 600 each; 0 newly infeasible and 0 solver failures anywhere,
+  133 more followed to the end. The rolls are 0 of 1800 newly infeasible on these seeds and 1 of 1800 on the seeds 5
+  and 77 of the T-066 review (`bellroll` seed 77 index 237 stops at boundary 36 on a problem with no plan on any
+  site, the class of T-057 and T-074);
+  `curtail_sweep.py deprobe` seeds 11, 22, 33 and 44: 62 newly planned, 0 newly infeasible. The 76 draws still without
+  a plan are none infeasible with curtailment on: 42 of the 47 base draws start from a carried `HOLD` or `CURTAIL`
+  commitment with room in the pack (pinned: `test_pinned_limit_*`), the rest are listed in the model document.
 
 ## Amendment (T-078): a CURTAIL run that PV beyond the pack opens goes on through its minimum duration
 

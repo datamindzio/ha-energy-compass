@@ -19,6 +19,7 @@ from .dispatch_policy import (
     carried_curtail,
     constrain_modes,
     curtail_limit,
+    forced_spill_limit,
     reserve_fallback,
     spill_gate,
     uncommitted_fallback,
@@ -377,12 +378,13 @@ def _validate_solution(
                 or previous_energy
                 >= spill_gate(problem, drains, index, extra_load) - _FULL_TOL
             )
+            forced = forced_spill_limit(problem, slot, extra_load)
             _check(
-                curt <= _TOL or open_gate,
+                curt <= forced + _TOL or open_gate,
                 "forced spill with room in the pack",
             )
             relayed = (
-                open_gate
+                (open_gate or curt > _TOL)
                 and "mode_CURTAIL" in variables
                 and value("mode_CURTAIL") > 0.5
                 and curtail_limit(problem, slot) > 0
@@ -667,6 +669,7 @@ class _Spill:
     """One slot's forced spill: its binary, its gate row and the gate the row is certified against."""
 
     gate: float
+    forced: float = 0.0
     binary: int | None = None
     row: dict[int, float] | None = None
 
@@ -677,13 +680,20 @@ def _gate_forced_spill(
     """Let a site that cannot curtail spill only the PV it cannot pass, into a pack that cannot take it.
 
     `spill_open` opens the slot's forced spill: the pack cannot take the slot's need at
-    its start (`spill_gate`). With minimum mode durations a CURTAIL run under way also
-    keeps the next slot open (`_relay_forced_spill`): CURTAIL discharges nothing, so the pack
-    drifts below the gate by its standby loss at most while the inverter throttles (a row
-    beyond the pack may charge: it only rises). The gate is
-    the strictest the flexible load allows, so what the model plans the certificate
-    (written with the load realised) accepts.
-    Returns the slot's gate for the relay, or None where the slot has no need or is shut.
+    its start (`spill_gate`). The part the pack cannot take by its charge power
+    (`forced_spill_limit`, T-066) is spilled whatever its room and is not gated: the row
+    is `curt <= forced + extra` with `extra <= (need - forced) * spill_open`, a plain
+    gate on a variable of its own (the same set as one row `curt - (need - forced) *
+    spill_open <= forced`, which HiGHS solved worse: a plan 16 % dearer called optimal,
+    see `tests/test_forced_spill.py`, `probe_day`). With minimum mode durations a CURTAIL
+    run under way also keeps the next slot open (`_relay_forced_spill`): CURTAIL
+    discharges nothing, so the pack drifts below the gate by its standby loss at most
+    while the inverter throttles (a row beyond the pack may charge: it only rises). The
+    gate is the strictest the flexible load allows, so what the model plans the
+    certificate (written with the load realised) accepts.
+    Returns the slot's `_Spill` for the relay, or None where the slot has no need, or is
+    shut with nothing forced: a pack below the gate at the start of the plan, whose first
+    slot spills only its forced part (and relays the gate to the second slot if it does).
     """
     if problem.site.allow_curtailment or model.upper[v["curt"]] <= 0:
         return None
@@ -691,6 +701,11 @@ def _gate_forced_spill(
     upper = model.upper[v["curt"]]
     flex_upper = model.upper[v["flex_load"]] if flexible_load else 0.0
     gate = spill_gate(problem, drains, index, flex_upper)
+    slot = problem.slots[index]
+    hours = (slot.end - slot.start).total_seconds() / 3600
+    # What the pack cannot take by its charge power is spilled whatever its room (T-066):
+    # the gate opens only the rest. The strictest the flexible load allows, as the gate.
+    forced = min(forced_spill_limit(problem, slot, flex_upper), upper)
     # A CURTAIL run carried into the plan keeps its first interval open, as a run inside
     # the plan keeps the next one (`_relay_forced_spill`).
     if (
@@ -698,11 +713,10 @@ def _gate_forced_spill(
         and battery.initial_kwh < gate - 1e-6
         and not carried_curtail(problem)
     ):
-        model.upper[v["curt"]] = 0
-        return None
-    slot = problem.slots[index]
-    hours = (slot.end - slot.start).total_seconds() / 3600
-    spill = _Spill(gate)
+        model.upper[v["curt"]] = forced
+        # A forced CURTAIL here still relays the gate to the next slot.
+        return _Spill(gate, forced=forced) if forced > 0 else None
+    spill = _Spill(gate, forced=forced)
     # Nothing to gate where even the emptiest pack cannot take the need.
     gated = (
         previous_energy_index is not None and gate > model.lower[previous_energy_index]
@@ -710,7 +724,12 @@ def _gate_forced_spill(
     if gated or flexible_load:
         model.second_attempt = True
         spill.binary = spill_open = v["spill_open"] = model.variable(binary=True)
-        model.constrain({v["curt"]: 1, spill_open: -upper}, -np.inf, 0)
+        if forced > 0:
+            extra = model.variable(upper=upper - forced)
+            model.constrain({v["curt"]: 1, extra: -1}, -np.inf, forced)
+            model.constrain({extra: 1, spill_open: -(upper - forced)}, -np.inf, 0)
+        else:
+            model.constrain({v["curt"]: 1, spill_open: -upper}, -np.inf, 0)
     if gated:
         spill.row = {previous_energy_index: 1, spill.binary: -gate}
         model.constrain(spill.row, 0, np.inf)
@@ -748,11 +767,15 @@ def _relay_forced_spill(model, vectors, spills) -> None:
     """Keep a CURTAIL run's spill open while the run lasts (minimum mode duration).
 
     CURTAIL discharges nothing (it charges only the PV beyond the pack), so the pack of a
-    run that began at the gate only drifts below it by its standby loss: the next slot's gate row takes the run's mode as the
-    reason to stay open, and CURTAIL itself is allowed only where the gate is open. A
-    chain rooted that way ends at a slot whose pack was at the gate, which is what the
-    certificate reads (`_validate_solution`). Without minimum durations the pack charges
-    its standby loss back, so there is nothing to relay.
+    run that began at the gate only drifts below it by its standby loss: the next slot's
+    gate row takes the run's mode as the reason to stay open, and a CURTAIL interval
+    that spills more than the forced part is allowed only where the gate is open. A run
+    may also start on a forced part into a pack with room (T-066): the intervals after it
+    spill their whole need while the run lasts, with room in the pack, and the chain
+    ends where the need falls back to the forced part or below. The certificate reads
+    that (`_validate_solution`: a slot that spills beyond its forced part has the gate
+    open or a CURTAIL interval that spilled before it). Without minimum durations the pack charges its
+    standby loss back, so there is nothing to relay.
     """
     for index, spill in enumerate(spills):
         if spill is None or "mode_CURTAIL" not in vectors[index]:
@@ -760,7 +783,7 @@ def _relay_forced_spill(model, vectors, spills) -> None:
         curtail = vectors[index]["mode_CURTAIL"]
         if model.upper[curtail] <= 0:
             continue
-        if spill.binary is not None:
+        if spill.binary is not None and spill.forced <= 0:
             model.constrain({curtail: 1, spill.binary: -1}, -np.inf, 0)
         following = spills[index + 1] if index + 1 < len(spills) else None
         if following is not None and following.row is not None:
