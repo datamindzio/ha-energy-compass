@@ -14,8 +14,17 @@ from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 
 from .atlas_env import BASE_URLS, ENROLLMENT_SECRETS
-from .controller import controller_options_change
-from .controller_ha import default_device, device_in_use, device_resolution
+from .controller import ENGINES, controller_engine, controller_options_change
+from .controller_ha import (
+    blueprint_prefill,
+    default_device,
+    device_in_use,
+    device_resolution,
+    limits_underivable,
+    native_problem,
+    resolve_device,
+)
+from .controller_setup import LIMIT_FIELDS, ROLES
 from .detect import (
     SKIP,
     Detection,
@@ -42,6 +51,7 @@ from .settings import (
     DOMAIN,
     EXPERT_GROUPS,
     GROUPS,
+    NUMBERS,
     default_configuration,
     explicit_strategy_fields,
     merged_configuration,
@@ -418,14 +428,24 @@ class Editor(SourceEditor):
     async def async_step_deye_controller(self, user_input=None):
         """Enable the integration-owned Deye controller and pick its Solarman device.
 
-        Only the enabled flag needs an entry reload. Moving the controller to
-        another device applies live, like the Atlas step.
+        Enabling or changing the engine reloads the entry. Moving the controller to
+        another device, and the limits and entity overrides of the expert group,
+        apply live: the next run reads them.
         """
         current = self.config_entry.options.get("controller") or {}
         errors = {}
+        placeholders: dict[str, str] = {}
+        runtime_data = getattr(self.config_entry, "runtime_data", None)
+        running = getattr(runtime_data, "controller", None)
+        prefill = self._controller_prefill(current)
+        expert = self._show_expert or bool(prefill)
         if user_input is not None:
             enabled = user_input["enabled"]
             device_id = user_input.get("device_id") or None
+            engine = user_input.get("engine") or controller_engine(current)
+            stored_limits, stored_entities = self._controller_expert(
+                user_input, current, expert
+            )
             if enabled:
                 if not device_id:
                     errors["device_id"] = "controller_device_required"
@@ -433,11 +453,35 @@ class Editor(SourceEditor):
                     errors["device_id"] = f"controller_{problem}"
                 elif device_in_use(self.hass, self.config_entry.entry_id, device_id):
                     errors["device_id"] = "controller_device_in_use"
+                elif engine == "native" and (
+                    found := native_problem(self.hass, device_id, stored_entities)
+                ):
+                    errors["device_id"] = found[0]
+                    placeholders |= found[1]
+                elif engine == "native" and limits_underivable(
+                    self.hass,
+                    device_id,
+                    running.fallback_battery()
+                    if running is not None
+                    else {
+                        key: NUMBERS[key][1] for key in ("charge_kw", "discharge_kw")
+                    },
+                    stored_limits,
+                    stored_entities,
+                ):
+                    errors["base"] = "controller_limits_required"
+                    self._show_expert = expert = True
+            # Keys the 0.1.37 form never wrote are stored only for a native
+            # controller, so saving an untouched entry changes nothing.
+            native = enabled and engine == "native"
             new = {"enabled": enabled, "device_id": device_id}
+            if native or "engine" in current:
+                new["engine"] = engine
+            if stored_limits and (native or "limits" in current):
+                new["limits"] = stored_limits
+            if stored_entities and (native or "entities" in current):
+                new["entities"] = stored_entities
             change = controller_options_change(current, new)
-            running = getattr(
-                getattr(self.config_entry, "runtime_data", None), "controller", None
-            )
             if (
                 not errors
                 and change != "none"
@@ -458,8 +502,7 @@ class Editor(SourceEditor):
                 return self.async_create_entry(
                     title="", data={**self.config_entry.options, "controller": new}
                 )
-        runtime_data = getattr(self.config_entry, "runtime_data", None)
-        controller = getattr(runtime_data, "controller", None)
+        controller = running
         polish = self.hass.config.language.startswith("pl")
         if controller is not None and controller.resolution.prefix:
             status = (
@@ -469,27 +512,158 @@ class Editor(SourceEditor):
             )
         else:
             status = "Nie skonfigurowano." if polish else "Not configured."
+        if prefill:
+            status += (
+                "\n\nUstawienia blueprintu zostały wczytane do grupy „Limity i przejęcie”; sprawdź je przed zapisem."
+                if polish
+                else "\n\nThe settings of your blueprint automation were loaded into the “Limits and takeover” group; review them before saving."
+            )
+        suggested_engine = (
+            current["engine"]
+            if "engine" in current
+            else ("blueprint" if current.get("enabled") else "native")
+        )
+        fields: dict = {
+            vol.Required(
+                "enabled", default=current.get("enabled", False)
+            ): selector.BooleanSelector(),
+            vol.Optional(
+                "device_id",
+                description={
+                    "suggested_value": current.get("device_id")
+                    or default_device(self.hass)
+                },
+            ): selector.DeviceSelector(
+                selector.DeviceSelectorConfig(integration="solarman")
+            ),
+            vol.Optional(
+                "engine", description={"suggested_value": suggested_engine}
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=list(ENGINES),
+                    translation_key="deye_engine",
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+        if expert:
+            fields.update(
+                self._controller_expert_fields(
+                    user_input or self._controller_suggestions(current, prefill)
+                )
+            )
         return self.async_show_form(
             step_id="deye_controller",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        "enabled", default=current.get("enabled", False)
-                    ): selector.BooleanSelector(),
-                    vol.Optional(
-                        "device_id",
-                        description={
-                            "suggested_value": current.get("device_id")
-                            or default_device(self.hass)
-                        },
-                    ): selector.DeviceSelector(
-                        selector.DeviceSelectorConfig(integration="solarman")
-                    ),
-                }
-            ),
+            data_schema=vol.Schema(fields),
             errors=errors,
-            description_placeholders={"status": status},
+            description_placeholders={"status": status, **placeholders},
         )
+
+    def _controller_prefill(self, current):
+        """Blueprint inputs for the form while the blueprint engine still runs."""
+        if not current.get("enabled") or controller_engine(current) != "blueprint":
+            return {}
+        if current.get("limits") or current.get("entities"):
+            return {}
+        device_id = current.get("device_id")
+        if not device_id:
+            return {}
+        found = blueprint_prefill(
+            self.hass, resolve_device(self.hass, device_id), device_id
+        )
+        return found if found.get("limits") or found.get("entities") else {}
+
+    @staticmethod
+    def _controller_suggestions(current, prefill):
+        stored = {
+            **(current.get("limits") or prefill.get("limits") or {}),
+            **{
+                f"{role}_entity": entity
+                for role, entity in (
+                    current.get("entities") or prefill.get("entities") or {}
+                ).items()
+            },
+        }
+        return stored
+
+    @staticmethod
+    def _controller_expert(user_input, current, expert):
+        """The limits and entity overrides to store: the form's when it showed them."""
+        if not expert:
+            return dict(current.get("limits") or {}), dict(
+                current.get("entities") or {}
+            )
+        limits = {
+            key: user_input[key]
+            for key in LIMIT_FIELDS
+            if user_input.get(key) not in (None, "", [])
+        }
+        entities = {
+            role: user_input[f"{role}_entity"]
+            for role in ROLES
+            if user_input.get(f"{role}_entity")
+        }
+        return limits, entities
+
+    @staticmethod
+    def _controller_expert_fields(values):
+        def number(key, maximum, unit):
+            return (
+                vol.Optional(key, description={"suggested_value": values.get(key)}),
+                selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        max=maximum,
+                        step="any",
+                        unit_of_measurement=unit,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+            )
+
+        def entities(key, domain, multiple=False):
+            return (
+                vol.Optional(key, description={"suggested_value": values.get(key)}),
+                selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain=domain, multiple=multiple)
+                ),
+            )
+
+        fields = [
+            number("max_power_w", 1000000, "W"),
+            number("max_current", 1000, "A"),
+            number("relinquish_current", 1000, "A"),
+            number("max_grid_current", 1000, "A"),
+            number("hold_grid_current", 100, "A"),
+            number("reached_discharge_current", 100, "A"),
+            number("balance_grid_current", 100, "A"),
+            number("voltage_grid_charge_ceiling", 100, "V"),
+            (
+                vol.Optional(
+                    "commissioned_battery_modes",
+                    description={
+                        "suggested_value": values.get("commissioned_battery_modes")
+                    },
+                ),
+                selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=["Capacity", "Voltage"],
+                        multiple=True,
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
+            ),
+            entities("old_writers", "automation", True),
+            entities("telemetry_entities", "sensor", True),
+            entities("discharge_energy_entity", "sensor"),
+            entities("charge_entity", "number"),
+            entities("discharge_entity", "number"),
+            entities("grid_entity", "number"),
+            entities("operation_entity", "select"),
+            entities("soc_entity", "sensor"),
+            entities("voltage_entity", "sensor"),
+        ]
+        return dict(fields)
 
     async def async_step_energy_atlas(self, user_input=None):
         """Opt-in Atlas delivery settings (ADR-0019 §2/§4, amendment T-411 §B).

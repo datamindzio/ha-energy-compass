@@ -912,6 +912,8 @@ for field in ["from", "to"]:
 
 DESCRIPTION = """Executes an Energy Compass plan on a Deye hybrid inverter through the Solarman integration.
 
+**Deprecated:** Energy Compass 0.1.38 runs the controller itself (Options → Deye controller → Engine `native`), so no blueprint or automation is needed. This blueprint is removed in the release after next; see the Deye section of the Energy Compass guide for the migration.
+
 Requires Energy Compass 0.1.37 or newer with **Options → Deye controller** enabled; select its *Deye controller* sensor below. No package or helpers are needed.
 
 Mode `Off` releases control after a confirmed restore, `Simulation` computes targets without writing, `Auto` writes and verifies every register. See the Deye controller section of the Energy Compass guide."""

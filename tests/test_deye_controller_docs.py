@@ -50,7 +50,7 @@ def controller_surface():
     strings = json.loads(TRANSLATIONS.read_text())
     keys = [
         key
-        for platform in ("sensor", "select")
+        for platform in ("sensor", "select", "switch")
         for key in strings["entity"][platform]
         if key.startswith("deye_")
     ]
@@ -88,7 +88,9 @@ def test_extraction_finds_the_known_surface():
         blueprint_inputs()
     )
     surface = controller_surface()
-    assert {"deye_controller", "deye_mode", "deye_runtime"} <= set(surface)
+    assert {"deye_controller", "deye_mode", "deye_runtime", "deye_pause"} <= set(
+        surface
+    )
     assert {"controller_schema", "plan_reason", "restore_pending", "tou"} <= set(
         surface
     )
