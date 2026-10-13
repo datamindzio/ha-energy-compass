@@ -4,7 +4,7 @@
 
 Przewodnik opisuje działanie Energy Compass, wszystkie stany, jakie mogą zgłaszać jego encje,
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
-**0.1.38**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
+**0.1.39**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
 instalację i dashboardy — [przewodnik instalacji](installation.md) (EN).
 
 Energy Compass jest **doradczy**. Liczy plan i publikuje go jako encje Home Assistant. Sam nie wysyła
@@ -1723,10 +1723,11 @@ parametrów baterii (pojemność, sprawność) w planie`.
 | Stan planu | Prąd ładowania / rozładowania | Prąd ładowania z sieci | Kierunek TOU, cel |
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | limit / limit | 0 A | wszystkie Disabled, SOC 10 % |
-| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` przy SOC ≥ 100 % w trybie Voltage (`HOLD`: utrzymany do SOC ≤ 99 %) | limit / 0 A w `HOLD`, limit w pozostałych | 0 A | wszystkie Disabled, SOC 10 % |
+| `CURTAIL` z `charge_kwh` powyżej 0,000001 kWh | z planu, od `hold_grid_current` do limitu / 0 A | 0 A | wszystkie Disabled, SOC 10 % |
+| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` i ładujący `CURTAIL` przy SOC ≥ 100 % w trybie Voltage (`HOLD`: utrzymany do SOC ≤ 99 %) | limit / 0 A w `HOLD` i `CURTAIL`, limit w pozostałych | 0 A | wszystkie Disabled, SOC 10 % |
 | `CHARGE_GRID` | limit / 0 A | planowana część sieciowa, ≤ `max_grid_current` | Grid w aktywnym programie, cel SOC z planu; w trybie Voltage napięcie TOU `voltage_grid_charge_ceiling` |
 | `DISCHARGE_GRID` | 0 A / z planu, ≤ limit; po osiągnięciu celu `reached_discharge_current`, ≤ limit | 0 A | Sell w aktywnym programie, cel SOC z planu, moc z planu, ≤ `max_power_w`; po osiągnięciu celu Disabled |
-| `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, cel SOC = końcowy SOC planu zaokrąglony w dół |
+| `HOLD`, `CURTAIL` z `charge_kwh` do 0,000001 kWh | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, cel SOC = końcowy SOC planu zaokrąglony w dół |
 | bazowy (zwolnienie, nieważny plan) | `relinquish_current` / `relinquish_current` | 0 A | wszystkie Disabled, SOC 10 %, 49,6 (496 V), moc `max_power_w` |
 
 Limit to `min(max_current, max_power_w / V)` przy ładowaniu i `min(max_current, max_power_w × eta_discharge / V)`
@@ -1754,12 +1755,20 @@ i zostaje w kolejnych przebiegach `HOLD`, dopóki SOC nie spadnie do 99 % lub ni
 zaczyna się od ładowania 0 A, i przypada najwyżej jedna na punkt procentowy zmiany SOC; bez PV pakiet opada na
 poborze własnym falownika, a `HOLD` doładowuje go z sieci, w cyklu liczonym w godzinach. `CHARGE_PV` i `SELF_CONSUME`
 nie potrzebują histerezy, bo poniżej 100 % zapisują te same wartości. `CHARGE_GRID` (zachowuje
-`voltage_grid_charge_ceiling` i prąd ładowania 0 A przy 100 %), `CURTAIL`,
-trzymanie balansu i tryb `Capacity` działają jak dotąd. `CURTAIL` wykonuje profil `HOLD` z ostrzeżeniem, bo sterownik nie ogranicza PV. Ten profil zapisuje `hold_grid_current`
-(domyślnie 1 A) jako prąd ładowania i prąd z sieci, więc przedział `CURTAIL`, w którym plan ładuje pakiet (PV, którego
-instalacja nie przepuści, `charge_kwh` powyżej 0), ładuje na falowniku mocą około 50 W, a planowany końcowy stan
-naładowania tego przedziału nie jest osiągany; następne przeliczenie odczytuje rzeczywisty stan naładowania i planuje od
-niego (zadanie następcze T-076).
+`voltage_grid_charge_ceiling` i prąd ładowania 0 A przy 100 %), trzymanie balansu i tryb `Capacity` działają jak dotąd. Wiersz `CURTAIL`, który ładuje (`charge_kwh` powyżej 0,000001 kWh: PV ponad to,
+co przepuszcza instalacja, jest większe niż pakiet przyjmuje przy mocy ładowania), działa jak `CHARGE_PV` bez
+rozładowania, z prądem z planu: prąd ładowania to `charge_kwh × eta_charge / (h × V)` zaokrąglone w górę do kroku encji
+ładowania, nie mniej niż `hold_grid_current` i nie więcej niż limit, prąd z sieci 0 A, prąd rozładowania 0 A, wszystkie
+programy Disabled, więc pakiet bierze PV tym prądem, a resztę falownik ogranicza sam. Wiersz, który planuje moc ładowania
+przez cały przedział, dostaje cały limit. Wiersz, który planuje mniej (ładowanie takiego wiersza jest dowolne między zerem
+a PV po ograniczeniu i po domu, a plan wziął mniej), ładuje mniej, niż pozwala limit, więc pakiet kończy tam, gdzie mówi plan,
+a nie powyżej. Sterownik nigdy nie kupuje w takim wierszu energii z sieci. Przy SOC 100 % idzie za `CHARGE_PV` (0 A w trybie
+`Capacity`, limit w trybie `Voltage`) i nie zgłasza ostrzeżenia. Próg to 0,000001 kWh, które własny klasyfikator planu czyta
+jako zero: plan publikuje przepływy solwera bez zaokrągleń, a wiersz `CURTAIL`, który nie ładuje, może tam nieść do około
+5e-13 kWh (około jeden taki wiersz na dwanaście w przeglądzie z ADR-0005), i nie wolno mu ładować. Każdy inny wiersz `CURTAIL`
+(`charge_kwh` do 0,000001 kWh) wykonuje profil `HOLD` z ostrzeżeniem `CURTAIL nieobsługiwany: zastosowano HOLD`,
+bo sterownik nie ogranicza PV: zapisuje `hold_grid_current` (domyślnie 1 A) jako prąd ładowania i prąd z sieci i trzyma
+planowany końcowy stan naładowania.
 
 Sterowane są tylko tryby baterii z listy `commissioned_battery_modes`; każdy inny tryb (np. Voltage
 przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Voltage cel poza zakresem
@@ -2265,7 +2274,7 @@ jak podany szereg prognoz.
 | --- | --- |
 | `complete` | Pełne pokrycie odniesienia, wszystkie próby udane. |
 | `available_reference_horizon` | Pokrycie źródeł krótsze niż żądany horyzont odniesienia; percentyle z dostępnych danych. |
-| `reference_horizon_uncovered` | Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.38. |
+| `reference_horizon_uncovered` | Zarezerwowany w tłumaczeniach; nie jest emitowany w 0.1.39. |
 | `reference_probe_failed` | Co najmniej jedna próba odniesienia nie powiodła się lub zabrakło czasu. |
 | `short_source_coverage` | Pokrycie cen/prognoz kończy się przed żądanym horyzontem planowania. |
 | `current_guidance_unavailable` | Próba dla bieżącego przedziału nieznana; późniejsze okna mogą być poprawne. |

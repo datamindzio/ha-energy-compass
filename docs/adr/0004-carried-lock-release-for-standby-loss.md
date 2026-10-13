@@ -135,8 +135,12 @@ flexible-load probe was held to the tightening without the bridge reading.
    probe that puts load into every committed interval, 0.3 kWh at 2 kW, or one that takes a chargeable surplus
    below the activity, #917, does give a plan, so the probe is not a constant of the problem), a
    daily throughput budget smaller than the minimum activity the commitment asks for, the standby loss case
-   above, and the terminal requirement of `preserve_initial` (T-065: `_owed` is a best case there too, 126 of 1600 aimed
-   first-boundary problems remain, 213 before). `docs/model.md` lists them; the optimizer reports `infeasible` and the last plan is retained.
+   above, and the terminal requirement of `preserve_initial` (T-065: `_owed` is a best case there too; 213 aimed first-boundary
+   problems on `main` 0778580, 126 on the T-065 head, 123 on `main` 06f935e, all counted as: no plan with the commitment, a plan
+   without it and a plan with the terminal value instead). Since T-058 the fallback plan without the commitment (rung 3 of
+   `solve_released`) plans them, with a first interval that is HOLD or CURTAIL. `docs/model.md` lists them; the follow-up (T-070)
+   below has the three counts and the tightening that was not kept; where no rung has a plan the optimizer reports `infeasible`
+   and the last plan is retained.
 4. `validate_modes(problem, flows, bridges=None)` tries the readings above, and a test covers `_publish_current`
    deriving `carried_idle` and `mode_start` from `carried_idle_starts`.
 5. **An idle committed interval may be `CURTAIL`, on the terms of
@@ -259,3 +263,141 @@ Checked against `main` 0778580 (T-057, T-052, T-473 and T-474 included; the bran
 
 Pinned problem #44 and the night with no refill (`test_carried_lock_without_a_way_to_refill_releases_to_hold`) are
 planned now; #917 stays `infeasible` without a probe.
+
+## Follow-up (T-070): the best case of the terminal rule stays as it is
+
+T-065 left a class: a carried `CHARGE_PV` or `SELF_CONSUME` under `preserve_initial` where `_owed` counts as recharge a
+surplus the pack cannot bank (the surplus of an idle interval below the minimum activity, a charge in the last
+interval where a run of the minimum duration cannot start, a run an idle interval breaks). T-070 measured it with an
+aimed generator (`make_aimed` in `benchmarks/curtail_sweep.py`, kinds `aimrun` and `aimroll`: a carried PV-follow
+commitment, `preserve_initial` always, PV within 0.3 kWh of the load, any pack, standby loss 0 to 0.2 kW, export cap 0,
+0.5, 2 or 8 kW, minimum duration 60 or 120 minutes; seeds 101, 202, 303 and 404, 400 first-boundary problems and 150
+rolls each).
+
+### Three counts, by name
+
+They answer different questions and are not interchangeable (`benchmarks/aimed_breakdown.py 400 101 202 303 404`, on
+`main` 06f935e with this branch merged in; the engine files are the same as `main`'s):
+
+| count | what it is | `main` 0778580 | T-065 head | `main` 06f935e | with 678f38a |
+| --- | --- | --- | --- | --- | --- |
+| the class on rung 1 | the plain solve has no plan with the commitment, has one without it and one with the terminal value | 213 | 126 | 123 | 47 |
+| planned by rung 3 | `solve_released` drops the commitment (first interval HOLD or CURTAIL) | n/a | n/a | 222 (173 HOLD, 49 CURTAIL) | 138 (89 HOLD, 49 CURTAIL) |
+| no plan on any rung | `solve_released` raises `infeasible` | n/a | n/a | 62 | 60 |
+
+The first count is the one T-065 reported; it barely moved since (126 to 123 on a later `main`) because rung 3 does not
+touch the plain solve. Rung 3 turned it from "no plan" into a plan whose first interval leaves the commitment, so what is left to the rung
+is the whole class (123 of 1600) and 99 more draws that have no plan with the terminal value either.
+
+### The tightening that was not kept
+
+Commit 678f38a on `task/T-070` (149 lines in `dispatch_policy`, `tests/test_carried_recharge_bound.py`) made `_owed` count
+only what a PV-follow or grid-charge run can take: no surplus of an idle interval below the minimum activity, none in an
+interval where a run of the minimum duration cannot start before the end of the coverage, none after an idle interval has
+ended the run, and SELF_CONSUME only where the pack can give the minimum activity above the reserve. Measured on the same tree (the engine of `main` 06f935e with that diff applied, the same four seeds,
+`curtail_sweep.py compare` and `rollcompare` read per seed):
+
+- plans (4 x 400): 0 newly infeasible, 2 newly planned, 15 worse and 21 better objectives;
+- rolls (4 x 150): 0 newly infeasible while followed, 1 fixed, failed rolls 26 to 25 of 600, 14 plans newly contradicted at
+  the next boundary against 8 that no longer are, 90 different traces;
+- rung 3: 84 of the 222 draws move to rung 1 (the HOLD starts of rung 3 fall from 173 to 89); the class falls from 123 to 47.
+
+It was not kept: 84 fewer last-resort plans out of 1600 aimed draws (the generator is aimed at this class; the other kinds
+do not draw it) against 149 engine lines in the region T-066, T-074 and T-078 are changing, an objective that moves both
+ways and six more plans that change at the next boundary. Rung 3 stays the answer to a commitment the bound cannot keep
+(ADR-0005 point 24); its first interval leaving the commitment is what that rung is. T-081 decided not to
+restore 678f38a (the follow-up below); `git show 678f38a` is the measured code, and the diff applies to `main` 06f935e.
+
+### What is not this class
+
+The 62 draws with no plan on any rung have no plan without the commitment either (rung 3 would have planned them), and one
+(seed 303, draw 153) has a plan with the terminal value. All 62 have `allow_curtailment` false (430 of the 1600 draws),
+an export cap of 0 or 0.5 kW and an interval whose PV is above the load plus the cap, which only a charge or a curtailment
+can take (188 of the 1600 draws have that profile): the forced-spill class of ADR-0007 (T-041, T-064), whose open limits
+are T-066 and T-074. 53 plan with `minimum_mode_minutes` = 0 and 42 with `allow_curtailment` true; the pack at the start
+does not separate them (30 within 0.3 kWh of its ceiling, 21 within 0.3 kWh of the reserve, 11 elsewhere). They are not
+classified further here; the corpus is the `aimrun` draws of seeds 101, 202, 303 and 404, of which
+`benchmarks/aimed_breakdown.py` prints the first eight.
+
+### How to repeat it
+
+`python benchmarks/aimed_breakdown.py 400 101 202 303 404` prints the three counts, the first modes of rung 3 and the facts
+above on the checkout it runs in; `python benchmarks/curtail_sweep.py rungs aimrun 101 400` the rungs per seed;
+`curtail_sweep.py aimrun|aimroll <seed> <count> <out.json>` on two checkouts and `compare` / `rollcompare` the differences.
+`tests/test_aimed_sweep_tool.py` runs these command lines on a few draws.
+
+## Follow-up (T-081): the tightening is not restored; rung 3 stays the answer
+
+Decided by the architect on 2026-10-13, on `main` dd40906 (the engine of 06f935e). T-070 left the choice open with one
+condition: restore 678f38a if a replay of days shows rung 3 starting `HOLD` on a surplus the pack could have charged.
+
+### What was measured
+
+The aimed sweep says how many problems of the class there are among problems drawn for it (222 of 1600 on rung 3). It
+does not say how often a house gets there: its horizons are 6 to 12 intervals, the PV is within 0.3 kWh of the load in
+every interval and the commitment and the pack are drawn independently of any plan. `benchmarks/day_replay_rungs.py`
+(new) follows days instead: seeded days of 96 quarter-hour intervals, planned on a forecast that misses the realized
+PV and load, one interval at a time through `tools/replay.py::run_plan` (the replay tool's loop, `solve_released`
+included), under `preserve_initial` with a minimum duration of 60 and 120 minutes and a standby loss of 0 and 0.13 kW,
+on a 10 kWh, 3 kW site with the defaults otherwise (the tool's docstring has the site and the day shapes). Four seasons, one of them (`gloom`) an overcast winter week whose
+PV at noon is about the load of the house, so the surplus is marginal every day. Two horizons: rolling 24 hours (fixed
+or tariff prices) and ending at midnight (`--coverage day`: day-ahead prices before tomorrow is published, the
+shortest horizon a house has). Each run on this tree and on the same tree with the engine diff of 678f38a applied:
+
+| run (command line after `benchmarks/day_replay_rungs.py`) | stretches | boundaries | inside a PV-follow dwell | rung 2 / rung 3 / no plan | with 678f38a |
+| --- | --- | --- | --- | --- | --- |
+| `3 11 --seasons winter,shoulder,summer` | 12 | 3 456 | 343 | 0 / 0 / 0 | the same rungs, the same cost (357.14) |
+| `7 11 22 33 44 55 --seasons gloom` | 20 | 13 440 | 232 | 0 / 0 / 0 | the same rungs; 227 inside a dwell; one stretch (seed 33, 120 min, 0.13 kW) costs 0.417 more (128.448 to 128.865), the other 19 the same |
+| `7 11 22 33 --coverage day` | 48 | 32 256 | 2 245 | 0 / 0 / 0 | the same rungs, the same cost (4 410.84) |
+| all | 80 | 49 152 (512 days) | 2 820 | 0 / 0 / 0 | 1 of 80 stretches differs, dearer |
+
+Every one of the 49 152 boundaries is planned by rung 1 on both trees; no plan starts `HOLD` on a chargeable surplus
+because no plan comes from rung 3. The count is not blind to the rung: the same function names rung 3 on 7 of the first
+30 aimed draws of seed 101, as `curtail_sweep.rung_of` does (`tests/test_day_replay_rungs_tool.py`).
+
+What a zero covers: a rate of one boundary in 16 400 (one in about 170 days of a house) would have shown nothing with a
+probability of 5 %, and one in 940 of the boundaries inside a dwell likewise. The replay bounds the rate below that on
+these day shapes and no lower. It does not draw recorded days (none are in the repository), an export cap that forces
+a spill (ADR-0007's class), grid charging, battery export or a flexible-load probe.
+
+Why a followed day does not get there is not measured; the likely reading is that every boundary puts the terminal
+requirement at the state of charge it observes, and a PV-follow commitment begins in a plan that had its recharge, so
+what a forecast miss leaves is either a recharge that is still there or none at all, which T-065 releases on rung 1.
+
+### Decision
+
+678f38a is not restored. A carried PV-follow commitment under `preserve_initial` whose best-case recharge the pack
+cannot bank is planned by rung 3 of `solve_released` (ADR-0005 point 24): the plan without the commitment, whose first
+interval may leave it. `_owed` keeps the best case of T-065. The class stays listed in `docs/model.md` with the counts
+of T-070.
+
+It is reopened by evidence of one kind: a followed day (this tool on another day shape, a recorded day, or a site's
+log once T-086 makes the rung visible) where rung 3 starts `HOLD` on a chargeable surplus. Whoever reopens it starts
+from `git show 678f38a` and still owes what the review of T-070 found missing: a split of the class by cause on the current tree, an explanation of the 47 draws the tightening
+leaves (seed 101 draws 22, 26, 90, 125, 141, 155 among them), `tests/test_carried_recharge_bound.py` restored with it,
+the head-against-`main` sweeps of every kind for zero newly infeasible, and a place in the dependency chain of the
+tasks that edit `dispatch_policy`.
+
+### Alternatives rejected
+
+1. Restore 678f38a (option B of T-081) — rejected because on followed days it changes no rung, and no realized cost
+   in 79 of 80 stretches, and makes the one it changes dearer, while it costs 134 added lines in
+   `_owed`/`_chargeable`, in the module the open engine tasks work in (T-066, T-078, T-082, T-083; a merge there has
+   cost a review round each time: LESSONS, T-041 and T-058), and on the aimed draws it moves the objective both ways
+   (15 worse, 21 better) and contradicts six more plans at the next boundary.
+2. Restore part of it (only "a surplus below the minimum activity is not a charge", the smallest of its four rules) —
+   rejected because no part was measured alone on the current tree (the dev log of T-070 has the split on the T-065
+   head only: 126 to 115 for that rule), and a rule that narrows the best case needs its own sweep for zero newly
+   infeasible; there is no followed day for it to improve.
+3. Ask the owner — rejected because nothing the product does changes: the house has a plan either way (ADR-0005
+   point 24 is the owner's decision), and the question is where engine lines are spent.
+
+### Consequences
+
+- No engine change. The numbers of follow-up T-070 stand as the status of the class.
+- `benchmarks/day_replay_rungs.py` is the tool for "how often does a house meet it" beside the aimed sweep's "how many
+  are there"; a change to the release, to `_owed` or to the ladder can be read on it against `main` (`--json` on two
+  checkouts, then `compare`). The three runs above took 67 minutes for both trees side by side, three processes each,
+  on a shared six-core machine.
+- A site cannot tell today which rung planned its interval. T-086 adds that to the log, so the condition above can be
+  met by a site and not only by a benchmark.
