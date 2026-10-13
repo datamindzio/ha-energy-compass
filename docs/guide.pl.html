@@ -1228,9 +1228,11 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   terminem. Zwolniony <code>HOLD</code> wraca do <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> w każdym
   późniejszym przedziale zobowiązania, dopóki bateria jest rozładowana: bateria przyjmuje nadwyżkę,
   a <code>HOLD</code> nie przepuściłby PV powyżej limitu eksportu (przy <code>grid_export_kw = 0</code> tak jest każdego
-  wschodu słońca). Niezależnie od tego, jak został zwolniony, wraca też w przedziale z PV, którego
+  wschodu słońca). <code>HOLD</code> zwolniony przy rozładowanej baterii wraca też w przedziale z PV, którego
   instalacja nie przepuści, bo <code>HOLD</code> nie ma tam legalnego przepływu: plan wykonany przez jeden
-  przedział dotarłby inaczej do następnej granicy z przeniesionym zobowiązaniem i bez planu. Powrót to dalszy ciąg zobowiązania, a nie nowy
+  przedział dotarłby inaczej do następnej granicy z przeniesionym zobowiązaniem i bez planu. <code>HOLD</code>
+  zwolniony przy pełnej baterii tam nie wraca: przez granicę zachowuje własny zegar, a tam, gdzie
+  instalacja nie przepuści PV, jest <code>CURTAIL</code> (wyżej). Powrót to dalszy ciąg zobowiązania, a nie nowy
   przebieg: jedynym zegarem pozostaje termin zobowiązania. Bateria, która opróżni się ponownie w
   tym samym zobowiązaniu, jest znowu zwalniana i znowu wraca, tyle razy, ile trwa zobowiązanie.
   Zwolnienie przechodzi przez granicę przedziału: plan oznacza wiersze takiego <code>HOLD</code>

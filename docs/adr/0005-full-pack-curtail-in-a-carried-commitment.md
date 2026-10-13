@@ -28,7 +28,8 @@ the inverter).
    commitment if the pack was at the ceiling in an earlier committed interval (cumulative, so not after an
    empty-battery release alone), and is free after the deadline. It does not go back to `CHARGE_PV`/`SELF_CONSUME` (an explicit
    row; before, the `HOLD` clock forbade it). This applies to the empty-battery release as well
-   (amended by T-050: not for a `HOLD` released from a depleted pack, point 13; by T-057: nor in an interval whose PV the site cannot pass, point 19).
+   (amended by T-050: not for a `HOLD` released from a depleted pack, point 13; by T-057: nor, for that release, in an
+   interval whose PV the site cannot pass, point 19. A `HOLD` released from a full pack never goes back, point 15).
 3. `validate_modes` mirrors it: a released `HOLD` keeps the commitment's clock, `CURTAIL` is accepted from
    the commitment in an interval that starts at the ceiling, or from the released `HOLD` once the pack was
    seen at the ceiling, nothing else is.
@@ -240,8 +241,8 @@ Decision:
     horizon infeasible (a new run of 60 min does not fit) and held the pack in the commitment for another
     hour. `validate_modes` accepts the return (`resumes`) where the state of charge at the start of the
     interval is at or below the lock floor, and no other mode change from a released `HOLD`.
-15. **A `HOLD` released from a full pack still does not go back** (point 2 stands for it; amended by T-057,
-    point 19, for an interval whose PV the site cannot pass): a full pack that
+15. **A `HOLD` released from a full pack still does not go back** (point 2 stands for it, in every interval,
+    also one whose PV the site cannot pass, point 19): a full pack that
     has room again is not a reason to leave the minimum duration, and a member mode after its `HOLD` would be
     the second change point 2 refuses. A full-pack release keeps its own clock and the `CURTAIL` takeover of
     points 1 and 11 across the boundary exactly as before.
@@ -328,27 +329,55 @@ released into `HOLD`, which meets a surplus of 0.2 kWh against a cap of 0.125 kW
 there, `CURTAIL` is offered only after a full pack (point 1), and the way back (point 13) needs a depleted
 pack, while this one (0.086 kWh) is above its lock floor (0.039 kWh). No mode is left.
 
-19. **A released `HOLD` goes back to `CHARGE_PV`/`SELF_CONSUME` in any committed interval whose PV the site
-    cannot pass**, that is, where the curtail need of the interval (`max(pv - load - grid_export_kw × h,
-    pv - inverter_kw × h, 0)`, less the margin) is positive: a `HOLD` there has no legal flow, and the
-    member mode is the only mode that takes the surplus. The `lock_depleted` bound of point 13 is lifted in
-    such an interval and stays everywhere else, so the return is no wider than that. The model does not
-    tell the two releases apart, so the rule covers a `HOLD` released from a full pack too (point 15): there
-    it is no longer a reason to leave the minimum duration, since `CURTAIL`, which would have to start its
-    own clock, is not open to a pack that has room again. It is the commitment going on (point 14): no
-    start flag, no coverage rule, the commitment's deadline is the only clock.
-20. **`validate_modes` mirrors it** (`resumes`): a return is accepted when the pack at the start of the
-    interval is at or below the lock floor, or the interval has a positive curtail need. A `HOLD` released
-    from a full pack that goes back where the export cap passes the PV is still rejected.
+19. **A `HOLD` released from a depleted pack goes back to `CHARGE_PV`/`SELF_CONSUME` in any committed interval
+    whose PV the site cannot pass**, that is, where the curtail need of the interval (`max(pv - load -
+    grid_export_kw × h, pv - inverter_kw × h, 0)`, less the margin) is positive: a `HOLD` there has no legal
+    flow, and the member mode is the only mode that takes the surplus. The `lock_depleted` bound of point 13
+    is lifted in such an interval and stays everywhere else, so the return is no wider than that. It is the
+    commitment going on (point 14): no start flag, no coverage rule, the commitment's deadline is the only
+    clock.
+20. **A `HOLD` released from a full pack does not**, whatever the interval. The first version of this
+    amendment did not tell the two releases apart, and the review found why that is wrong: the coordinator
+    carries a depleted release across the boundary (point 16) but stores a full-pack release as a plain
+    `HOLD` with a clock of its own, whose next problem has only `HOLD` and the `CURTAIL` takeover
+    (`follows_hold`). A plan that returned such a `HOLD` to the member mode in an unpassable interval was
+    infeasible at the boundary after the first interval followed, for either value of `allow_curtailment`
+    (a new failure the sweeps had not covered, since none rolled a full-pack release). Open there is `CURTAIL`,
+    which a pack that was full is offered (point 1).
+    In the model the release is tracked, not guessed: `emptied_hold` is 1 on a `HOLD` run that began on a
+    depleted pack (a continuous variable bounded by the `HOLD` of the interval, by the depleted origin or the
+    run before it, and by the return not being counted as a `HOLD`), and `_resume` lifts the `lock_depleted`
+    bound only by it. A run begins on a depleted pack where the interval releases it as point 13 describes (the
+    first interval: the carried `released` flag or the observed pack, as a constant). The tracking is built
+    only where an unpassable interval comes later in the horizon.
+21. **`validate_modes` mirrors it** (`resumes`): a return is accepted when the pack at the start of the
+    interval is at or below the lock floor, or the `HOLD` run began on a depleted pack (the `emptied` flag the
+    validator follows: the carried released `HOLD`, or a release with the pack spent) and the interval has a
+    positive curtail need. A `HOLD` released from a full pack that goes back is rejected, in an interval whose
+    PV the site cannot pass too.
+22. **The model's bound is the narrower one** with a flexible-load probe: it lifts `lock_depleted` where the
+    curtail need is positive at the probe's *upper* load, less the probe margin (`unpassable`), so the return
+    holds for every probe load, while `validate_modes` reads the need of the interval without a probe. Every
+    return the model plans is therefore one the validator accepts, and the converse need not hold, which is
+    the safe direction; without a flexible load the two are the same test (`need > 0`).
 
-Measured with `benchmarks/curtail_sweep.py`, unchanged, seeds 11, 22, 33, 44 × 300 each (1200 per kind);
-head is this branch, main is origin/main `4ba2232`:
+Measured with `benchmarks/curtail_sweep.py`, seeds 11, 22, 33, 44 × 300 each (1200 per kind); head is this
+branch, main is origin/main `4ba2232` (origin/main is `b2d6ffb` now, with the same engine files):
 
 | Kind | Result against main |
 | --- | --- |
-| `run`, `negrun`, `probe`, `roll`, `negroll` | identical, 0 changed |
-| `deprun`, `deprobe` | 0 newly infeasible, 6 and 3 newly planned |
-| `deproll` | 0 newly infeasible while followed, 10 fixed (seed 11: 2, 22: 4, 33: 2, 44: 2) |
+| `run`, `negrun`, `probe`, `fullrun` | identical, 0 changed |
+| `roll`, `negroll`, `fullroll` | identical: 0 newly infeasible while followed, no first failing boundary moved, no plan whose next boundary changes the mode |
+| `deprun`, `deprobe` | 0 newly infeasible, 0 worse, 9 and 3 newly planned |
+| `deproll` | 0 newly infeasible while followed, 10 fixed (seed 11: 2, 22: 4, 33: 2, 44: 2), 1 whose first failing boundary moves later |
+
+`fullrun` and `fullroll` are new generators of this amendment: a pack at the ceiling, a carried PV-follow
+commitment released into `HOLD` and PV above the export cap in a later interval, single-plan and rolled. They
+are the generators that separate the revisions: on the same seeds the first version of the amendment (f65995f)
+differs from main in 3 of the 1200 `fullroll` draws (the first failing boundary moves later in 2, the next
+boundary changes the mode of the plan in 2), this one in none. `rollcompare` now also counts the
+rows whose first failing boundary is earlier or later and the plans whose next boundary changes the mode (the
+last is common on main, so only the difference against main counts).
 
 The `deproll` draws still infeasible at a later boundary are not this change and none is newly infeasible:
 22/45, 22/167, 44/182 and 33/229 are the observed-SoC-at-the-reserve safety exception (T-058), 44/62 and
