@@ -427,8 +427,9 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
        T-065 released the part where the terminal rule cannot be met at all, and what is left, a requirement
        the pack could meet but the commitment cannot bank, left to this rung: T-070 measured it, on 1600 aimed first-boundary
        problems of `main` 06f935e, as 123 in the class (no plan with the commitment, a plan without it and one with the
-       terminal value), 222 planned by this rung and 62 with no plan on any rung, and did not tighten the bound: ADR-0004
-       follow-up T-070, the decision is T-081). It is the last resort: T-057 and T-065 made the rung rarer (below).
+       terminal value), 222 planned by this rung and 62 with no plan on any rung, and did not tighten the bound; T-081
+       decided it stays so, since on 49 152 followed boundaries of `benchmarks/day_replay_rungs.py` none is planned by
+       this rung with or without the tightening: ADR-0004 follow-ups T-070 and T-081). It is the last resort: T-057 and T-065 made the rung rarer (below).
 25. **One function solves it.** `optimize.solve_released(problem, time_limit_s=, budget_s=, accept_incumbent=,
     solver=)` returns `(plan, problem)`, the problem being the rung that was solved (a flexible-load probe runs on
     it). `runtime.compute`, `tools/replay.py`,
