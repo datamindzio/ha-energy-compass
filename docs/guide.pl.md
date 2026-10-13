@@ -791,8 +791,8 @@ Zasady (domyślnie 60 min, 0,1 kW):
   w baterii: przedział zaczyna się na poziomie górnej granicy pomniejszonej o to, co bateria
   musiałaby przyjąć, więc bateria z niewielkim wolnym miejscem, która nie przyjmie nadwyżki, też
   ją traci, a bateria, która ją przyjmie, nigdy, bez względu na cenę sprzedaży. Przy minimalnym
-  czasie trwania przebieg `CURTAIL` utrzymuje bramkę następnego przedziału otwartą (nic nie ładuje,
-  więc bateria opada tylko o straty postojowe), przebieg `CHARGE_PV` lub `SELF_CONSUME` może
+  czasie trwania przebieg `CURTAIL` utrzymuje bramkę następnego przedziału otwartą (nie rozładowuje
+  baterii, więc ta opada najwyżej o straty postojowe, a rośnie tam, gdzie przedział ładuje), przebieg `CHARGE_PV` lub `SELF_CONSUME` może
   zakończyć się w `CURTAIL`, gdy bateria napełni się w jego trakcie (albo w `HOLD`, gdy skończy
   się też PV, które musiał przyjąć), a wolne miejsce poniżej bramki zostaje puste w przedziale
   `CURTAIL` do następnego przeliczenia, które odczyta rzeczywisty stan naładowania. Przebieg

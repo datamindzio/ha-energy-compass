@@ -1521,6 +1521,49 @@ def test_a_curtail_row_validates_only_what_the_surplus_can_charge():
             validate_modes(problem, (*flows[:1], bad, *flows[2:]), ())
 
 
+def test_a_curtail_row_charges_only_from_the_pv_left_after_the_house():
+    # A negative buy price pays for every kWh imported, with grid charging allowed: the
+    # sunny rows still charge from the PV beyond the cap and import nothing, neither for
+    # the pack nor for the house beside PV that goes to the pack (T-064 review).
+    base = _surplus_beyond_the_pack()
+    problem = replace(
+        base,
+        slots=tuple(replace(slot, buy_per_kwh=-0.2) for slot in base.slots[:4])
+        + base.slots[4:],
+    )
+    assert problem.battery.allow_grid_charge
+    plan = solve(problem)
+    validate_modes(problem, plan.flows, ())
+    charging = [
+        (slot, flow)
+        for slot, flow in zip(problem.slots, plan.flows, strict=True)
+        if flow.dispatch_mode == "CURTAIL" and flow.charge_kwh > 1e-6
+    ]
+    assert charging
+    for slot, flow in charging:
+        assert flow.grid_import_kwh == pytest.approx(0, abs=1e-5)
+        left = slot.pv_kwh - flow.curtail_kwh - slot.load_kwh
+        assert flow.charge_kwh <= left + 1e-5
+
+
+def test_a_curtail_row_that_charges_from_the_grid_is_not_valid():
+    # The validator reads the charge against the PV left after the curtailment and the
+    # house, not against the surplus: the same row with more curtailed is a grid charge.
+    problem = _surplus_beyond_the_pack()
+    plan = solve(problem)
+    flows = list(plan.flows)
+    row = flows[1]
+    left = problem.slots[1].pv_kwh - row.curtail_kwh - problem.slots[1].load_kwh
+    assert row.charge_kwh == pytest.approx(left)
+    grid = replace(
+        row,
+        curtail_kwh=row.curtail_kwh + 0.1,
+        grid_import_kwh=row.grid_import_kwh + 0.1,
+    )
+    with pytest.raises(SolveError, match="mode"):
+        validate_modes(problem, (*flows[:1], grid, *flows[2:]), ())
+
+
 def test_a_probe_is_planned_with_a_curtail_that_charges():
     problem = _surplus_beyond_the_pack()
     plan = probed(problem, 0.5, 2).plan

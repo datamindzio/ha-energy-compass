@@ -773,8 +773,8 @@ Rules (defaults: 60 min, 0.1 kW):
   controller runs its `HOLD` profile). The gate is the room of the pack: the interval starts at or
   above the ceiling less what the pack would have to absorb, so a pack with a little room that
   cannot take the surplus spills too, and a pack that can take it never does, whatever the sell
-  price. With a minimum duration a `CURTAIL` run keeps the next interval's gate open (it charges
-  nothing, so the pack only drifts down by its standby loss), a `CHARGE_PV` or `SELF_CONSUME` run
+  price. With a minimum duration a `CURTAIL` run keeps the next interval's gate open (it discharges
+  nothing, so the pack only drifts down by its standby loss, or rises where the row charges), a `CHARGE_PV` or `SELF_CONSUME` run
   may end in `CURTAIL` when the pack fills inside it (or in `HOLD` when the PV it had to take is
   over as well), and room left below the gate stays empty during a `CURTAIL` interval until the
   next replanning reads the real state of charge. A `CURTAIL` run carried into the next plan

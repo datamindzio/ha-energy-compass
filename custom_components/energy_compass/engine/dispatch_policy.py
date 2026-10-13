@@ -963,6 +963,23 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 -np.inf,
                 0,
             )
+            # The charge of a CURTAIL row is the PV left after the house, never grid
+            # energy: where the direction flag says charge, nothing is imported at all,
+            # for the pack or beside it (a grid feed of the house with the PV going to
+            # the pack is the same flow). A CURTAIL that does not charge has the
+            # direction flag at 0 and the rows every CURTAIL had.
+            grid_cap = model.upper[v["grid_load"]] + model.upper[v["grid_battery"]]
+            if grid_cap > 0:
+                model.constrain(
+                    {
+                        v["grid_load"]: 1,
+                        v["grid_battery"]: 1,
+                        x["CURTAIL"]: grid_cap,
+                        v["battery_mode"]: grid_cap,
+                    },
+                    -np.inf,
+                    2 * grid_cap,
+                )
         else:
             model.constrain(
                 {v["battery_mode"]: 1, x["CHARGE_GRID"]: -1, x["CHARGE_PV"]: -1},
@@ -1814,6 +1831,13 @@ def _certify_modes(
             flow.grid_export_kwh,
         )
         surplus = max(slot.pv_kwh - slot.load_kwh, 0)
+        # A CURTAIL row charges from the PV left after the house and the curtailment:
+        # the model keeps the grid out of such a row with two binaries on the import
+        # limit, which leaves up to `_follow_tolerance` of it.
+        pass_noise = max(
+            noise,
+            _follow_tolerance(2 * problem.site.grid_import_kw * _hours(slot)),
+        )
         valid = {
             "CHARGE_GRID": charge >= surplus + activity - tolerance
             and max(abs(discharge), abs(curt)) <= noise,
@@ -1826,7 +1850,9 @@ def _certify_modes(
             "HOLD": max(abs(charge), abs(discharge), abs(curt)) <= noise,
             "CURTAIL": curt >= activity - tolerance
             and abs(discharge) <= noise
-            and -noise <= charge <= surplus + noise,
+            and -noise
+            <= charge
+            <= max(slot.pv_kwh - curt - slot.load_kwh, 0) + pass_noise,
         }
         if flow.dispatch_mode != mode or not valid[mode]:
             raise SolveError(
@@ -1889,6 +1915,10 @@ def _certify_modes(
                     <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
                 )
                 ends = spent or (carried and mode == "HOLD" and full)
+                # `_beyond_the_pack` reads the realised slot, whose load is the base load
+                # plus the probe the plan drew, as the model's `_open_beyond` does per
+                # probe load; the model also keeps `_PROBE_MARGIN` below the limit, so
+                # this reading is looser than the plan by that margin and no more.
                 curtails = mode == "CURTAIL" and (
                     carried
                     and full
