@@ -1,7 +1,7 @@
 """Reason codes of the Deye controller and their texts.
 
 A reason is stored in the runtime as a stable code (`reason_code`) and as the text
-in the user's language (`reason`). The Polish texts are the strings of the 0.1.37
+in the user's language (`reason`). The Polish texts are the strings of the 0.1.38
 blueprint, byte for byte; `tests/test_controller_texts.py` compares them with the
 frozen blueprint. Codes marked "run" in `STOPS` are explanations of one run and are
 never stored as the runtime reason.

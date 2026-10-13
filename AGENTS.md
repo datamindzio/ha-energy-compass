@@ -81,7 +81,7 @@ against a sanitized state sample, with `tests/deye_harness.py` playing Energy Co
 blueprint in `tests/golden/`, which must never change). The native engine (`controller_profile.py`,
 `controller_run.py`, `controller_native.py`, `controller_hardware.py`, `controller_setup.py`,
 `controller_texts.py`) is covered by `tests/test_controller_native_parity.py` (every scenario of the blueprint
-tests against the frozen 0.1.37 blueprint `tests/golden/deye_controller_v0137.yaml` and its harness
+tests against the blueprint of release 0.1.38 (frozen from main at 7888645: 0.1.37 plus #41 and #46) in `tests/golden/deye_controller_v0137.yaml` and its harness
 `tests/deye_oracle_v0137.py`; both must never change), `tests/test_controller_run.py`,
 `tests/test_controller_hardware.py`, `tests/test_controller_texts.py`, `tests/test_controller_native.py`,
 `tests/test_controller_native_review.py`, `tests/test_controller_native_guards.py`,

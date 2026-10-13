@@ -1,7 +1,10 @@
-"""Run the frozen v0.1.37 Deye blueprint against a sanitized state sample.
+"""Run the frozen 0.1.38 Deye blueprint against a sanitized state sample.
 
-`tests/golden/deye_controller_v0137.yaml` is the byte-identical blueprint that
-shipped with 0.1.37. It is the oracle the native controller must agree with (see
+`tests/golden/deye_controller_v0137.yaml` (the name is historical) is the blueprint of
+release 0.1.38 as frozen from main at 7888645: 0.1.37 plus #41 (keep charging from PV
+at SOC 100 % in Voltage mode) and #46 (HOLD full-pack hysteresis), without the
+deprecation line the release added to the description. The v0.1.37 tag holds an older file.
+It is the oracle the native controller must agree with (see
 `test_controller_native_parity.py`); it must not depend on `tools/deye_controller`,
 which is removed in a later release. `EnergyCompassSim` plays Energy Compass for
 both engines: the plan, optimizer status, validity and alert entities of the
