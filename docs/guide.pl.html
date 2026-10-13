@@ -1336,8 +1336,9 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   bateria miała wcześniej; przy próbce elastycznego zużycia tylko dla obciążeń próbki, przy których PV
   zostaje poza baterią. <code>CURTAIL</code>, który otwiera taki przebieg, trwa przez jego minimalny czas: kolejne
   przedziały zobowiązania oferują <code>CURTAIL</code>, dopóki przebieg trwa, także tam, gdzie PV nie przekracza już
-  tego, co przyjmie bateria (nie ładuje wtedy), bo przebieg nie może zmienić trybu w swoim czasie, a
-  <code>CHARGE_PV</code> zobowiązania nie jest z niego wyjściem. Przy wyłączonym <code>allow_curtailment</code> taki przedział jest planowany tylko jako
+  tego, co przyjmie bateria (nie ładuje wtedy, więc bateria na rezerwie czeka do końca przebiegu: do 105
+  minut po pierwszym przedziale przy minimalnym czasie 120), bo przebieg nie może zmienić trybu w swoim
+  czasie, a <code>CHARGE_PV</code> zobowiązania nie jest z niego wyjściem. Przy wyłączonym <code>allow_curtailment</code> taki przedział jest planowany tylko jako
   wymuszone przycięcie, czyli gdy bateria ma mniej miejsca niż PV, którego instalacja nie przepuści:
   przedział <code>CURTAIL</code> ładuje wtedy tyle, ile bateria przyjmie, i przycina resztę. Bateria, która ma
   miejsce na to PV, nadal nie ma tam planu.</li>

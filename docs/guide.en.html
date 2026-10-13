@@ -1315,8 +1315,9 @@ directly by any other available mode.</p>
   with a flexible-load probe, only for the probe loads that leave PV beyond the pack. The <code>CURTAIL</code>
   that opens such a run goes on through the run's minimum duration: the later intervals of the
   commitment offer <code>CURTAIL</code> while it is under way, also where the PV is no longer beyond the pack
-  (it does not charge there), because the run may not change mode inside its duration and the
-  commitment's <code>CHARGE_PV</code> is not a way out of it. With
+  (it does not charge there, so a pack at the reserve waits for the end of the run: up to 105
+  minutes after the first interval at a minimum duration of 120), because the run may not change
+  mode inside its duration and the commitment's <code>CHARGE_PV</code> is not a way out of it. With
   <code>allow_curtailment</code> off such an interval is planned only as a forced spill, where the pack has
   less room than the PV the site cannot pass: the <code>CURTAIL</code> interval then charges what the pack
   takes and spills the rest. A pack with room for that PV still has no plan there.</li>

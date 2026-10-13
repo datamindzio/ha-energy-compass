@@ -837,39 +837,59 @@ charge from PV at the cap, not hold).
 
 ## Amendment (T-078): a CURTAIL run that PV beyond the pack opens goes on through its minimum duration
 
-Status: implemented and swept on T-078. Measured against main `06f935e` (T-075 and T-064 merged); `origin/main` had
-not moved when the sweeps were taken, so the tables are of this branch merged with main. Decision 3 of the T-069
-amendment (rung 2 is decided afresh, nothing is stored) stands: the finding is a gap in the release problem, not a
-reason to carry the commitment's `HOLD`.
+Status: implemented and swept on T-078. Measured on main `ef55de2` (T-070, T-074, T-076, T-079 and T-081 merged over
+`06f935e`) against this branch with that main merged in; its engine is that of `ae75c25` and the sweeps ran on it.
+The first version of this amendment was measured on `06f935e` and reviewed there; the counts of the kinds it
+measured are the same on both mains. Decision 3 of the T-069 amendment (rung 2 is
+decided afresh, nothing is stored) stands: the finding is a gap in the release problem, not a reason to carry the
+commitment's `HOLD`.
 
-After T-064 the draws planned only on rung 2 were 90 of 900 `resrun` and 124 of 1200 `resroll` boundaries (80 of 306
+After T-064 the draws planned only on rung 2 were 90 of 900 `resrun` and 124 of 1200 `resroll` draws (80 of 306
 boundaries after a rung-2 row contradicted the next plan). The question was why the release problem, rung 1, had no
 plan for them, and whether the model should have one.
 
-32. **The release had no plan because `CURTAIL` was not offered inside a `CURTAIL` run.** The first interval of such
-    a draw has PV the pack cannot take (point 30), so it is `CURTAIL`, and a `CURTAIL` first row is what the
-    coordinator stores as the new commitment, with the commitment's minimum duration. The next interval has PV the
-    pack and the export cap take between them, so `beyond` is empty there; the pack has not been full, so
-    `seen_full` is empty; and the released `HOLD` is not in play. `_offer_curtail` was therefore never called for it,
-    `CURTAIL` had no licence, and the dwell rows of the run (`holding`) forbade leaving `CURTAIL` before the minimum
-    duration was over: the interval had no mode, and the problem no plan. The case is the rung-2 draw whose
-    commitment is the `SELF_CONSUME` of a pack at the reserve and whose first release row is the `CURTAIL` that
-    charges (`tests/test_curtail_dwell.py::test_a_curtail_run_that_the_pv_beyond_the_pack_opens_goes_on_through_its_duration`).
-33. **A `CURTAIL` under way is a licence to go on curtailing.** `_offer_curtail` takes the `curtailing` terms of
-    `constrain_modes` (the `CURTAIL` of the interval before) in its first rule as well, next to `seen_full`, `beyond`
-    and the released `HOLD`: `CURTAIL <= seen_full + beyond + curtailing`, and the offer is made when `curtailing` is
-    non-empty. The second rule (`full`, `curtailing`, `released`, `beyond`) had it already. A first `CURTAIL` still
+34. **The release had no plan because rule 1 of `_offer_curtail` forbade `CURTAIL` inside a `CURTAIL` run.** The first
+    interval of such a draw has PV the pack cannot take (point 30), so it is `CURTAIL`, and a `CURTAIL` first row is
+    what the coordinator stores as the new commitment (`SELF_CONSUME` to `CURTAIL`, a new group and a new clock from the
+    plan's time), with the commitment's minimum duration. The next interval has PV the pack and the export cap take
+    between them, so `beyond` is empty there, and the dwell rows of the run (`holding`) forbid leaving `CURTAIL` before
+    the minimum duration is over. `_offer_curtail` is called for that interval, and was before: `seen_full` is a
+    non-empty dict from the second committed interval on (a `lock_full` binary is added at the end of every committed
+    interval but the last, in a commitment that has `CHARGE_PV` among its modes), so the gate
+    (`seen_full or beyond is not None`) is open. Its first rule,
+    `CURTAIL <= sum(lock_full) + beyond`, is what forbids `CURTAIL`: every `lock_full` is 0 on a pack that was never
+    full, `beyond` is empty, and the term of the `CURTAIL` before it was not there (the second rule, `full`,
+    `curtailing`, `released`, `beyond`, had it). The interval had no mode and the problem no plan. Measured, not read:
+    the spy of `artifacts/T-078/offer.py` records two calls of `_offer_curtail` for the pinned problem on `ef55de2` (the
+    first with `beyond` True, the second with one `seen_full` term, one `curtailing` term and no `beyond`), and the
+    release is rung 2 at a pack of 1.0 kWh and rung 3 at 2.0 kWh there, rung 1 on both with the edit of point 35. The
+    case is the rung-2 draw whose commitment is the `SELF_CONSUME` of a pack at the reserve and whose first release row
+    is the `CURTAIL` that charges
+    (`tests/test_curtail_dwell.py::test_a_curtail_run_that_the_pv_beyond_the_pack_opens_goes_on_through_its_duration`).
+35. **A `CURTAIL` under way is a licence to go on curtailing: `curtailing` joins rule 1.** `_offer_curtail` takes the
+    `curtailing` terms of `constrain_modes` (the `CURTAIL` of the interval before) in its first rule as well, next to
+    `seen_full` and `beyond`: `CURTAIL <= seen_full + beyond + curtailing`. It is the only change to the engine. A
+    second edit was made with it, `or curtailing` in the gate, and removed in review: it never changes the offer
+    (`curtailing` is non-empty only after an interval that was `CURTAIL` or a bridge, and there `seen_full` is non-empty
+    already). Measured with a spy on `_offer_curtail` in a tree that has the term (`artifacts/T-078/gate.py`): of 18 337
+    calls over 3600 rolled draws (seeds 22 and 33 × 300 × `roll`, `negroll`, `deproll`, `resroll`, `fullroll` and
+    `aimroll`, 8 intervals) none has `seen_full` empty and `beyond` unset, so none was opened by `curtailing` alone;
+    and the tests of the file pass without it. The edit of rule 1 is the whole change: with it reverted both new tests
+    fail on the tree of `ef55de2`, and the pinned problem is rung 2 and rung 3 again. A first `CURTAIL` still
     needs one of the other licences, and `CURTAIL` to `CURTAIL` needs no dwell rule (`validate_modes` checks the dwell
     groups only), so the validator did not change; the plans the new offer opens are legal under it
     (`test_the_resrun_draw_the_release_could_not_plan_is_the_first_rung` solves draw 144 of seed 33 `resrun` on rung 1
     and validates it).
-34. **The licence is the previous interval's `CURTAIL`, not the minimum duration.** The chain is not cut where the
+36. **The licence is the previous interval's `CURTAIL`, not the minimum duration.** The chain is not cut where the
     minimum duration ends, and it is not a way to start a `CURTAIL` the pack could take as `CHARGE_PV`: the row
-    still curtails at least the activity of the mode and, where the PV is not beyond the pack, charges nothing (point 29), and the first row of a chain is licensed as before.
-    The commitment the coordinator stores is the same; the rungs of point 24 are as they were.
+    still curtails at least the activity of the mode and, where the PV is not beyond the pack, charges nothing (point
+    29), and the first row of a chain is licensed as before. The commitment the coordinator stores is the same, and
+    `test_the_coordinator_stores_the_curtail_run_and_the_next_plan_goes_on_with_it` runs `_commit_battery_direction`
+    on the first row (through the benchmark's `follow`) and plans the next boundary on rung 1 with the run as the
+    commitment; the rungs of point 24 are as they were.
 
-Measured with `benchmarks/curtail_sweep.py`, seeds 11, 22, 33 and 44 × 300 = 1200 draws per kind, this branch against
-main `06f935e`, both solved through `solve_released`. `compare` counts, main → head:
+Measured with `benchmarks/curtail_sweep.py`, seeds 11, 22, 33 and 44 × 300 = 1200 draws per kind, main `ef55de2`
+against this branch, both solved through `solve_released`. `compare` counts, main → head (`aimrun` is a kind of T-070):
 
 | Kind | Newly infeasible | Newly planned | Solver failure | Objective worse | better |
 | --- | --- | --- | --- | --- | --- |
@@ -880,6 +900,7 @@ main `06f935e`, both solved through `solve_released`. `compare` counts, main →
 | `deprobe` | 0 | 0 | 0 | 32 | 40 |
 | `resrun` | 0 | 0 | 0 | 23 | 9 |
 | `fullrun` | 0 | 0 | 0 | 0 | 0 |
+| `aimrun` | 0 | 0 | 0 | 1 | 4 |
 
 The plan sets are the same (no plan is gained or lost); what changes is the rung. `rungs` counts, draws per rung,
 main → head over 1200:
@@ -891,22 +912,83 @@ main → head over 1200:
 | `run` | 1181 → 1187 | 0 → 0 | 10 → 4 | 9 → 9 |
 | `negrun` | 1175 → 1182 | 0 → 0 | 13 → 6 | 12 → 12 |
 | `fullrun` | 1140 → 1140 | 0 → 0 | 25 → 25 | 35 → 35 |
+| `aimrun` | 984 → 993 | 0 → 0 | 171 → 162 | 45 → 45 |
 
-The objective is higher in the draws that main planned on rung 2 or 3 and head plans on rung 1: a plan that keeps the
-commitment costs more than one that leaves it, as after T-064, and it is the plan the commitment asked for. The
-rolled kinds (`rollcompare`, 1200 draws each): no draw is newly infeasible while followed, none is fixed, and the
-first failing boundary never moves. Rung-2 rows over the rolls fall from 308 to 0 in `resroll` and from 32 to 0 in
-`deproll`; rung-3 rows from 30 to 14 and from 95 to 9. Boundaries where the next plan contradicts the one before
-(draws with one): `resroll` 219 (199) → 129 (117), `deproll` 70 (63) → 59 (52), `roll` 118 (105) and `negroll` 134
-(106) as before, `fullroll` 963 (618) as before. The 129 that remain in `resroll` are not after a rung-2 row (there
-is none): they are what the release problem does with a changed forecast, not the commitment's `HOLD`.
+The rolled kinds (`rollcompare`, 1200 draws each): no draw is newly infeasible while followed, none is fixed, the
+first failing boundary never moves and no boundary newly changes; the executed trace differs in `roll` 6 draws,
+`negroll` 7, `deproll` 96, `resroll` 124, `aimroll` 9 and `fullroll` 0.
 
-The scripts behind these numbers (`sweep.sh`, `cmp.sh`, `rungs.sh`, `rolltot.py`, `find.py`, `exp.py`) are kept with the
-task's artifacts, not in the repository.
+**What the longer `CURTAIL` costs.** T-069 declined a longer `CURTAIL` ("the remedy is not a longer `CURTAIL`") on the
+kWh a carried rung 2 left in the pack against the boundaries it fixed, so this change is measured the same way, on the
+flows the rolls execute: each roll follows the first row of every plan for 8 intervals, the draws followed to the end
+on both trees, `artifacts/T-078/review/scripts/energy.py` and `analyse.py` (kept with the task's artifacts, not in the
+repository), main `ef55de2` → head `ae75c25`:
+
+| Executed over the rolls | `resroll` (1148 draws) | `deproll` (1130 draws) |
+| --- | --- | --- |
+| Draws with a different executed trace | 106 | 52 |
+| Rung-2 rows | 308 → 0 | 32 → 0 |
+| Rung-3 rows | 30 → 14 | 95 → 9 |
+| Boundaries contradicted (draws with one) | 219 (199) → 129 (117) | 70 (63) → 59 (52) |
+| Executed mode changes | 1877 → 1822 | 1693 → 1708 |
+| `CHARGE_PV` rows | 2048 → 1999 | 1674 → 1714 |
+| `CURTAIL` rows | 2571 → 2689 | 3992 → 3958 |
+| Charged into the pack, kWh | 1190.3 → 1174.5 | 1068.7 → 1079.9 |
+| Curtailed, kWh | 1862.6 → 1876.9 | 3881.2 → 3874.2 |
+| Exported, kWh | 1312.2 → 1315.0 | 826.7 → 822.4 |
+| Imported, kWh | 271.4 → 275.2 | 185.6 → 184.1 |
+| Pack at the end of the rolls, kWh (sum) | 1446.4 → 1434.0 | 1429.9 → 1438.9 |
+| Cost of the executed flows (negative: earned) | −310.81 → −309.00 | −190.89 → −190.29 |
+
+Of the draws that differ, `resroll`: the pack ends lower in 50 and higher in 33, the cost is higher in 60 and lower in
+46; `deproll`: lower in 20 and higher in 26, the cost higher in 18, lower in 21 and the same in 13. `roll` has 1 draw
+and `negroll` 2 with a different executed trace (+0.25 and −0.37 kWh at the end). The worst draw is seed 22, number 135
+of `resroll` (a pack at the reserve of 0 kWh, `SELF_CONSUME` since 10:59, 120 minutes, an export cap of 2 kW, a 5 kWh
+pack that charges 1 kWh an interval, and PV 0.9 to 1.8 kWh above the house in each of the first eight intervals): main
+executes `CURTAIL`, `CURTAIL` (rung 2, the second charging 1 kWh), `CHARGE_PV`, `CHARGE_PV`, `CURTAIL` (1 kWh) and
+three more `CURTAIL`, 4 kWh charged in all; the branch executes `CURTAIL` in all eight intervals, charges nothing and
+ends 3.72 kWh lower. Its intervals after the first have PV that the pack and the export cap take between them or leave
+0.09 kWh over, and the plan charges in none of them: where the PV is not beyond the pack a `CURTAIL` row charges
+nothing (point 29), and the row with PV beyond it is free to charge and the plan does not.
+
+Over the 2400 draws that is 4.5 kWh less charged (−15.8 in `resroll`, +11.3 in `deproll`), 3.4 kWh lower at the end
+of the rolls (−12.4 and +9.0), 7.4 kWh more PV curtailed (+14.3 and −7.0), 2.3 kWh more imported (+3.7 and −1.5), the
+executed cost 0.6 % (`resroll`) and 0.3 % (`deproll`) higher, and 101 fewer contradicted boundaries (−90 and −11).
+T-069's carry (table after T-064) took 46.3 kWh less charged (−42.0 and −4.3) for 48 fewer (−41 and −7): about 1 kWh of
+PV not stored for each boundary fixed, against 0.045 kWh here, a factor of about 20. The trade is accepted for four
+reasons:
+
+1. *It is the model's own plan, not a carried one.* Carrying rung 2 kept the commitment's `HOLD` past a boundary where
+   a charging plan exists (T-069 (i)) and needed a new stored key (reasons 1 and 2 of point 28). Here nothing is
+   stored, rung 2 is not reached, and the plan is the one the release problem finds under the commitment's minimum
+   duration.
+2. *A free interval after a `CURTAIL` that PV beyond the pack opened already plans `CURTAIL` on main.* The same two
+   intervals with the commitment over before the second (the 45-minute case of the test) plan `CURTAIL`, `CURTAIL`
+   on `ef55de2`. What this change adds is that the setting the user chose, the minimum duration, binds the run and
+   does not make the problem unsolvable: the plan is the same, and its rows no longer need rung 2 or 3 to exist.
+3. *The minimum duration is the user's setting.* `CURTAIL` is a dwell group of its own (`dwell_group`; a bridge is
+   the run going on, point 5): a run of it may not change mode inside its duration, and the first row of a `CURTAIL`
+   is what the coordinator stores. A `CHARGE_PV` inside it is a mode change the setting forbids; the executed
+   `CURTAIL`, `CHARGE_PV`, `CURTAIL` of point 27 was the rung-2 plan going back to the release, and it is not the
+   plan a user who chose a minimum duration of 120 minutes asked for.
+4. *The alternatives are worse for the pack.* Without this rule these draws are planned on rung 2, the commitment's
+   `HOLD` beside the pack, or on rung 3 without the commitment: 124 and 0 of 1200 `resrun` draws, 11 and 93 of `deprun`
+   (rungs table above).
+
+**What the user sees.** After one interval with PV beyond the pack, a pack at the reserve does not charge in the
+intervals of that `CURTAIL` run whose PV the pack and the export cap take between them, until the minimum duration is
+over: up to 105 minutes after the first interval at a minimum duration of 120 (the run starts with the plan's time
+and counts from it), 45 at 60, 15 at 30. In an interval of the run that has PV beyond the pack again the row may charge
+(point 29). The energy not stored is curtailed or exported; the figures above are what that came to in the sweeps.
+
+The scripts behind these numbers (`job3.sh`, `agg3.py`, `cmp3.sh`, `offer.py`, `draw.py` and the review's `energy.py`
+and `analyse.py`; the earlier `sweep.sh`, `rungs.sh`, `rolltot.py`, `find.py`, `exp.py`) are kept with the task's
+artifacts, not in the repository.
 
 Consequences:
 
 - The coordinator and the stored commitment are unchanged; `safety_exception` `observed_soc_minimum` is reported by
   rung 2 for the observed-SoC exception only, which the sweeps do not draw.
 - The guides and `docs/model.md` say it in one sentence in the minimum-duration paragraph: a `CURTAIL` run that the PV
-  beyond the pack opened goes on through its minimum duration.
+  beyond the pack opened goes on through its minimum duration, and does not charge in the intervals whose PV the pack
+  takes.
