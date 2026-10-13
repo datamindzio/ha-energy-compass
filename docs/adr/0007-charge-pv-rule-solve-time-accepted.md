@@ -199,8 +199,8 @@ profile) instead of ending `infeasible`.
   optimal ("invalid solver result: fractional mode_CURTAIL") and reported a problem with a plan as infeasible.
   `optimize._Model.solve` gives a problem that has forced-spill binaries a second attempt without presolve when
   it comes back infeasible or with a fractional binary, within the remaining time budget. A site that can pass
-  its PV has no such binary and is solved once. The run without presolve is not sound either and neither run
-  is a proof: see Amendment (T-072).
+  its PV has no such binary and is solved once (T-074: not once when its model has mode rows). The run without
+  presolve is not sound either and neither run is a proof: see Amendment (T-072).
 - Measured with `benchmarks/spill_sweep.py` (seeds 11 and 12 on main 5baf226 and here with that main merged in, 300 per seed and draw,
   the export-episode hurdle at zero so that a "worse" plan is not a hurdle artefact; every plan through
   `optimize.solve_released` as the runtime makes it, T-058): of 2400 problems drawn
@@ -261,7 +261,8 @@ SciPy 1.18.1 with HiGHS 1.12.0 in the test image, scripts and model files in the
   amendment below), 0 of 457 with curtailment on, a false
   infeasible with presolve in 1 of 60 at 96 slots. The 0 of 457 does not clear the models without forced-spill
   rows (at 2 in 860, 457 clean problems happen 35 % of the time); those models never take the run without
-  presolve, and no wrong result of their default run is known.
+  presolve, and no wrong result of their default run is known (both halves are void since T-074: the models
+  with mode rows take it, and one of them had a false `infeasible`).
 
 Decision:
 
@@ -270,12 +271,14 @@ Decision:
    what the solver says, not what is proven.
 2. The guard stays as T-041 built it: one run with presolve; a model with forced-spill binaries that comes
    back infeasible or with a fractional binary gets a second attempt without presolve in the remaining time.
-   The flag on the model is `second_attempt`.
+   The flag on the model is `second_attempt` (T-074 widens the models that carry it to every model with mode
+   rows).
 3. The forced-spill formulation is not changed and no HiGHS setting is changed.
 4. A plan from the second run is reported as any other, with the `mip_gap` HiGHS reports. It may be far from
    the optimum until the next recalculation: of the order of 1 solve in 25 000 on a site that cannot curtail
    (1 in 60 takes the second run with a plan to find, 2 in 860 of those are wrong; two rates from small
-   counts). An `infeasible` from the second run takes the rungs of `solve_released`.
+   counts; the models with mode rows only are in Amendment T-074). An `infeasible` from the second run takes
+   the rungs of `solve_released`.
 5. The day is pinned twice in `tests/test_forced_spill.py`: the plan is at −4.5041 or better, and the run
    without presolve returns −1.7465 (`test_pinned_limit_highs_without_presolve_calls_a_worse_plan_optimal`).
    The second test goes red when SciPy ships a HiGHS that behaves differently; this amendment and
@@ -341,3 +344,72 @@ rate of 2.8e-4 per matrix, 7584 clean matrices happen 12 % of the time, so it is
 above, "none where the default run was the worse one", holds for the T-041 corpus only. The alternative the review
 named, solving a forced-spill model with both switches and keeping the cheaper certified plan, doubles the solve
 inside the same time limit and is not shipped; T-085 decides it with the draws above.
+
+## Amendment (T-074): the second attempt covers every model with mode rows
+
+HiGHS's presolve reported as infeasible a model that has a plan, and no forced-spill binary is in it. The state
+is `benchmarks/spill_sweep.py negroll 12`, problem 205, followed as the runtime follows it (`solve_released`,
+the commitment stored with the safety exception of the plan before): a site that cannot curtail (`allow_curtailment`
+off) with no PV above its export cap (2 kW) or its inverter rating (3 kW), so that `curtail_need` is 0 in every
+interval and the model has no gate, relay or `spill_open` row; a 10 kWh pack at 9.995 kWh (standby loss 0.02 kW;
+the 0.005 kWh it is below full is under the minimum activity); `CHARGE_PV` carried since 10:59 under
+`observed_soc_maximum`, a 60 minute minimum that is over at 12:00; negative sell prices; the `preserve_initial`
+terminal rule. The plan
+of all HOLD satisfies every row (objective 0.3883) and is the only way through, since the pack can neither take
+the 0.005 kWh nor give it up. At eight and nine intervals of that state the first run (presolve on) returns
+infeasible and the run without presolve returns that plan; at seven or fewer the first run is sound. It is not
+the class of T-064 or T-066, whose problems are infeasible as modelled (a pack that cannot take the surplus by
+charge power, a need no mode can serve); this model is feasible. Which rows presolve misjudges is not reduced:
+the evidence that the model has the plan is the plan, not a rule named.
+
+Decision:
+
+1. `optimize._solve` sets `second_attempt` on every model with mode rows (a battery and
+   `minimum_mode_minutes` above zero, the condition of `constrain_modes`), also where there is no forced-spill
+   binary. `_Model.solve` is unchanged: one run with presolve and, when it comes back infeasible or with a
+   fractional binary, a second without presolve in what is left of the time limit; the certificate decides
+   what is published. A model without mode rows and without forced-spill binaries is solved once.
+2. This replaces, for the models with mode rows, Decision 2 of Amendment T-072 ("a model with forced-spill
+   binaries") and three statements of the amendments before it: that models without forced-spill rows never take
+   the run without presolve; that no wrong result of their default run is known (T-074 is one: a false
+   `infeasible`); and the scope of the rate in Decision 4 ("1 in 25 000 on a site that cannot curtail"), which
+   is measured only for the forced-spill rows and is not carried over.
+3. A site with `minimum_mode_minutes` at zero has no mode rows and keeps one run. A truly infeasible model with
+   mode rows costs two runs from now on.
+
+Measured on `origin/main` 06f935e (T-075, T-064, T-072, T-067) and on this branch with it merged in, the
+Docker test image (SciPy 1.18.1, HiGHS 1.12.0), 300 problems per draw; the commands, per draw, are
+`benchmarks/spill_sweep.py <draw> <seed> 300 <file>` and the same for `curtail_sweep.py`, compared with
+`rollcompare` (rolled draws) and `compare` (`negrun`); the HiGHS runs were counted by wrapping
+`_Model._run` around the same commands (scripts in the T-074 artifacts):
+
+- 0 newly infeasible and no different trace in `spill_sweep` `negroll` 11 and 12, `bellroll` 12, `roll` 12 and
+  `negrun` 12 (283 plans the same, none better or worse) and in `curtail_sweep` `roll`, `negroll`, `deproll`,
+  `fullroll` and `resroll` seed 11. `negroll` 12 follows one more problem to the end: 273 of 300 against 272,
+  problem 205 (a trace of 8 boundaries; main stops at the fifth).
+- Of the 23 504 first HiGHS runs of the ten draws, 477 take the second run on this branch and 327 on main; 5
+  find a plan (4 on main). Of the 150 second runs T-074 adds, 149 are infeasible again and one is problem 205.
+  That is 1 solve in 23 504 where the second attempt on a model with mode rows only found a plan, on draws
+  aimed at sites that cannot curtail; it is not a rate for the field.
+- A plan of the second run replaces an `infeasible` or a fractional point only, so no plan that main had
+  changes (different trace 0 above). What is not measured is how far such a plan is from the optimum on a model
+  with mode rows only: the run without presolve may call a far worse plan optimal (Amendment T-072, measured on
+  forced-spill models), and the certificate remains the only guarantee.
+- At the runtime's horizon (`artifacts T-074: review_probe96.py`, `probe_summary.txt`): `solve_released` with
+  10 s per rung and a 60 s budget over 420 problems stretched to 96 slots (seven draws of 60: random, negative
+  prices, depleted, reserve, full, and curtailment off at 15, 30 and 60 minutes), head against main. Outcome
+  and first eight modes are the same in 420 of 420 (380 plans, 39 infeasible, 1 timeout on both: its first run
+  hit the limit, so no second attempt). The second run happens 82 times on this branch and 73 on main, every
+  one infeasible again; median 0.005 s, 95th percentile 0.049 s, longest 0.068 s, 1.1 s in all; total solve
+  time 265.2 s against 265.1 s. An earlier run on the branch before the merge (main da2c2e7) gave 111 and 74
+  second runs, longest 0.06 s, the same 420 of 420.
+- The hazard that is not observed: the second run is given what is left of the time limit, and one that times
+  out reports status 1, which `solve_released` reads as `timeout` and takes no rung for (only `infeasible` takes
+  one), so a problem that is infeasible would stop at `timeout` instead of reaching the later rungs. The longest
+  second run is 0.068 s against a 10 s limit at 96 slots; models above 96 slots (192, 384) were not measured.
+
+Pinned by `tests/test_mode_presolve.py`, built from the state above with no `benchmarks` import: the plan of all
+HOLD at nine intervals, at seven to nine, through `solve_released` with no rung after the first, and a truly
+infeasible model with mode rows that is reported as infeasible after two runs. The first test accepts one or two
+runs, so it stays green on a HiGHS that is sound on this model; the SciPy upgrade that makes it so is a reason to
+re-measure this amendment, not to remove the second attempt.
