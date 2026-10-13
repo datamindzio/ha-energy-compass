@@ -230,3 +230,40 @@ async def test_notable_runs_survive_a_flood_of_routine_ones(hass, site):
         run["outcome"] != "run_finished" or run["code"] != "ok" or run["writes"]
         for run in notable
     )
+
+
+async def test_a_steady_paused_state_does_not_push_the_writing_runs_out(hass, site):
+    entry, _ = site
+    host = await accepted_plan(hass, entry)
+    publish(entry, publication(generated_at=iso(17, 0, 50)))
+    refresh_telemetry(hass)
+    await settle(entry)
+    wrote = [run for run in host.history if any("attempt" in w for w in run["writes"])]
+    assert wrote
+    controller_of(entry).async_set_paused(True)
+    await settle(entry)
+    for number in range(60):
+        await run_once(entry, f"paused-{number}")
+    assert all(run["code"] == "paused" for run in list(host.history)[-40:])
+    notable = list(host.executor.notable)
+    assert all(run in notable for run in wrote)
+    assert sum(run["code"] == "paused" for run in notable) == 1
+
+
+async def test_an_unchanged_decision_stays_unstored_as_time_passes(hass, freezer, site):
+    entry, _ = site
+    await accepted_plan(hass, entry)
+    controller = controller_of(entry)
+    await run_once(entry)
+    stamp = controller.state.runtime_written_at
+    with (
+        patch.object(controller._store, "async_delay_save") as delayed,
+        patch.object(controller._store, "async_save") as saved,
+    ):
+        for _ in range(3):
+            freezer.tick(20)
+            refresh_telemetry(hass)
+            await run_once(entry)
+    assert delayed.call_count == 0
+    assert saved.call_count == 0
+    assert controller.state.runtime_written_at == stamp

@@ -75,9 +75,18 @@ class ExecutorPort(Protocol):
         """The holding registers as a mapping, or anything else when unreadable."""
 
 
-def _notable(record: Mapping[str, Any]) -> bool:
+def _mark(record: Mapping[str, Any]) -> tuple[Any, Any]:
+    return record.get("code"), record.get("outcome")
+
+
+def _notable(record: Mapping[str, Any], before: tuple[Any, Any] | None) -> bool:
+    """A run that sent a command, or whose code or outcome differs from the run before.
+
+    A steady blocked, paused or released state repeats every minute; only its first
+    run is kept, so it cannot push the writing runs out.
+    """
     sent = any(not write.get("blocked") for write in record["writes"])
-    return sent or record["code"] != "ok"
+    return sent or _mark(record) != before
 
 
 @dataclass
@@ -104,6 +113,7 @@ class DeyeExecutor:
         self._layout_session: Any = None
         self.history: deque[dict[str, Any]] = deque(maxlen=HISTORY_LIMIT)
         self.notable: deque[dict[str, Any]] = deque(maxlen=NOTABLE_LIMIT)
+        self._mark: tuple[Any, Any] | None = None
         self._record: dict[str, Any] | None = None
 
     def _snapshot(self, run: _Run, stage: str) -> profile.Snapshot:
@@ -209,8 +219,9 @@ class DeyeExecutor:
             record["seconds"] = round((self.port.now() - started).total_seconds(), 3)
             self._record = None
             self.history.append(record)
-            if _notable(record):
+            if _notable(record, self._mark):
                 self.notable.append(record)
+            self._mark = _mark(record)
 
     async def _pass(self) -> str:
         port = self.port
