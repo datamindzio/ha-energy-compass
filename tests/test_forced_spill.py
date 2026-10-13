@@ -533,3 +533,158 @@ def test_pack_refilled_after_a_carried_curtail_run_ends_the_pv_follow_run_in_hol
     ]
     assert 0 in plan.carried_bridges
     assert plan.flows[3].curtail_kwh == pytest.approx(0.03, abs=1e-6)
+
+
+# T-072: 96 quarter hours of `(buy, sell, pv, load)` from 2026-12-18 11:00 UTC, a bell-shaped
+# day on a 3 kW inverter behind a 2 kW export cap (random draw of the T-041 review, #61).
+WINTER_DAY = (
+    (0.91, 0.57, 0.0, 0.4),
+    (1.07, 0.27, 0.0, 0.02),
+    (1.31, 0.69, 0.0, 0.4),
+    (1.37, 0.36, 0.0, 0.4),
+    (1.19, 0.19, 0.0, 0.1),
+    (1.32, 0.24, 0.0, 0.02),
+    (1.37, 0.07, 0.0, 0.4),
+    (1.0, 0.43, 0.0, 0.4),
+    (0.27, 0.41, 0.0, 0.2),
+    (1.48, 0.7, 0.0, 0.05),
+    (1.34, 0.12, 0.0, 0.02),
+    (0.82, 0.16, 0.0, 0.05),
+    (1.34, 0.57, 0.0, 0.1),
+    (0.47, 0.39, 0.0, 0.1),
+    (0.99, 0.71, 0.0, 0.4),
+    (0.72, 0.72, 0.0, 0.05),
+    (0.54, 0.22, 0.0, 0.4),
+    (0.99, 0.44, 0.0, 0.1),
+    (1.05, 0.74, 0.0, 0.05),
+    (0.78, 0.48, 0.0, 0.4),
+    (0.76, 0.69, 0.0, 0.2),
+    (1.07, 0.64, 0.0, 0.05),
+    (0.34, 0.14, 0.0, 0.2),
+    (1.08, 0.35, 0.0, 0.2),
+    (0.91, 0.63, 0.002, 0.05),
+    (1.37, 0.02, 0.017, 0.05),
+    (0.87, 0.5, 0.045, 0.4),
+    (0.69, 0.45, 0.016, 0.1),
+    (0.6, 0.54, 0.031, 0.4),
+    (1.26, 0.1, 0.054, 0.1),
+    (1.08, 0.3, 0.305, 0.1),
+    (1.22, 0.42, 0.417, 0.2),
+    (0.42, 0.64, 0.601, 0.4),
+    (1.03, 0.5, 0.68, 0.05),
+    (1.27, 0.6, 0.654, 0.02),
+    (0.93, 0.29, 0.783, 0.2),
+    (0.21, 0.29, 0.915, 0.02),
+    (1.48, 0.02, 0.929, 0.2),
+    (0.78, 0.3, 1.155, 0.4),
+    (0.55, 0.65, 1.12, 0.4),
+    (0.9, 0.41, 1.355, 0.05),
+    (0.27, 0.36, 1.343, 0.1),
+    (0.52, 0.42, 1.574, 0.4),
+    (0.99, 0.19, 1.461, 0.02),
+    (1.06, 0.67, 1.642, 0.4),
+    (0.93, 0.15, 1.646, 0.2),
+    (1.39, 0.43, 1.592, 0.05),
+    (0.23, 0.2, 1.696, 0.02),
+    (0.39, 0.33, 1.623, 0.02),
+    (0.4, 0.56, 1.668, 0.2),
+    (0.43, 0.63, 1.561, 0.4),
+    (1.39, 0.06, 1.461, 0.4),
+    (1.24, 0.28, 1.814, 0.2),
+    (1.33, 0.32, 1.392, 0.1),
+    (0.37, 0.25, 1.746, 0.1),
+    (0.84, 0.76, 1.207, 0.02),
+    (1.11, 0.37, 1.268, 0.1),
+    (0.37, 0.09, 1.134, 0.4),
+    (0.7, 0.63, 1.018, 0.02),
+    (0.24, 0.55, 1.105, 0.05),
+    (0.24, 0.75, 0.854, 0.2),
+    (1.12, 0.72, 0.826, 0.1),
+    (0.68, 0.41, 0.675, 0.4),
+    (0.82, 0.55, 0.591, 0.05),
+    (0.58, 0.2, 0.357, 0.4),
+    (0.89, 0.07, 0.355, 0.05),
+    (0.61, 0.16, 0.234, 0.4),
+    (1.06, 0.22, 0.135, 0.4),
+    (0.76, 0.71, 0.096, 0.2),
+    (1.5, 0.35, 0.055, 0.4),
+    (0.81, 0.61, 0.021, 0.02),
+    (0.87, 0.52, 0.002, 0.02),
+    (0.54, 0.35, 0.0, 0.2),
+    (0.46, 0.7, 0.0, 0.1),
+    (0.63, 0.7, 0.0, 0.02),
+    (0.41, 0.21, 0.0, 0.4),
+    (0.94, 0.28, 0.0, 0.05),
+    (0.24, 0.61, 0.0, 0.02),
+    (0.85, 0.12, 0.0, 0.1),
+    (0.37, 0.58, 0.0, 0.02),
+    (1.22, 0.38, 0.0, 0.05),
+    (0.86, 0.19, 0.0, 0.1),
+    (0.8, 0.33, 0.0, 0.02),
+    (0.36, 0.08, 0.0, 0.1),
+    (0.87, 0.42, 0.0, 0.05),
+    (1.24, 0.39, 0.0, 0.2),
+    (0.8, 0.49, 0.0, 0.1),
+    (0.61, 0.66, 0.0, 0.4),
+    (1.38, 0.76, 0.0, 0.2),
+    (0.3, 0.66, 0.0, 0.05),
+    (1.15, 0.14, 0.0, 0.1),
+    (1.18, 0.1, 0.0, 0.1),
+    (0.42, 0.7, 0.0, 0.1),
+    (0.29, 0.46, 0.0, 0.02),
+    (0.22, 0.72, 0.0, 0.05),
+    (0.85, 0.68, 0.0, 0.05),
+)
+
+
+def winter_day() -> Problem:
+    start = datetime(2026, 12, 18, 11, tzinfo=UTC)
+    return Problem(
+        tuple(
+            Slot(start + i * QUARTER, start + (i + 1) * QUARTER, *row)
+            for i, row in enumerate(WINTER_DAY)
+        ),
+        SiteLimits(3, 8, 2, False),
+        Battery(10, 0, 1, 7.06, 4, 1, 0.95, 0.95, 0, False, True, 0.02),
+        "preserve_initial",
+        0,
+        (),
+        "UTC",
+        minimum_mode_minutes=0,
+        minimum_export_episode_benefit=0.0,
+    )
+
+
+def test_plan_of_the_day_highs_misjudges_without_presolve_is_the_better_one():
+    # T-072: the pack is emptied into the evening prices, filled by the PV and the rest
+    # spills. A point at -4.5041 satisfies every row; a plan above it is not the optimum.
+    plan = solve(winter_day(), time_limit_s=30.0)
+    assert plan.objective <= -4.5041 + 1e-4
+
+
+def test_pinned_limit_highs_without_presolve_calls_a_worse_plan_optimal(monkeypatch):
+    # T-072: the second attempt of `_Model.solve` is not a proof. On the same matrix HiGHS
+    # without presolve reports `Optimal` 2.76 above the plan of the default run (-1.7465
+    # against -4.5041; HiGHS 1.8.1 to 1.15.1, any seed): its root cuts cut the optimum off.
+    # The default run is the one taken here, so the plan is the better one. Red after a
+    # SciPy upgrade means HiGHS no longer does this: correct `docs/model.md` (forced spill)
+    # and ADR-0007 (Amendment T-072) with what the new version does.
+    seen = {}
+    run = optimize._Model._run
+
+    def kept(self, matrix, time_limit_s, **options):
+        result = run(self, matrix, time_limit_s, **options)
+        seen.setdefault("first", (self, matrix, options, result))
+        return result
+
+    monkeypatch.setattr(optimize._Model, "_run", kept)
+    plan = solve(winter_day(), time_limit_s=30.0)
+    model, matrix, options, first = seen["first"]
+    assert model.second_attempt
+    assert options == {}
+    assert first.status == 0
+    assert first.fun == pytest.approx(plan.objective, abs=1e-6)
+    second = run(model, matrix, 30.0, presolve=False)
+    assert second.status == 0
+    assert second.fun == pytest.approx(-1.7465, abs=1e-3)
+    assert second.fun > first.fun + 2.5

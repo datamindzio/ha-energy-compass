@@ -48,8 +48,8 @@ class _Model:
         self.exact_mip_gap = False
         self.accept_incumbent = False
         self.time_limited = False
-        # Set by the rows HiGHS's presolve is known to misjudge (`solve`).
-        self.presolve_unsound = False
+        # Set by the rows HiGHS is known to misjudge (`solve`).
+        self.second_attempt = False
         self.mip_gap: float | None = 0.0
         self.cost: list[float] = []
         self.lower: list[float] = []
@@ -108,15 +108,19 @@ class _Model:
         ).tocsc()
         started = perf_counter()
         result = self._run(matrix, time_limit_s)
-        if self.presolve_unsound and (
+        if self.second_attempt and (
             result.status == 2 or result.x is not None and self._fractional(result.x)
         ):
-            # HiGHS's presolve is not sound on the forced-spill rows (T-041): it handed
-            # back, as optimal, a point with CURTAIL at 0.16 (a need below the minimum
-            # activity), and called a model infeasible whose plan the same solver finds
-            # without presolve. A model with those rows that comes back infeasible, or
-            # with a fractional binary, is solved again without it, in what is left of
-            # the time limit.
+            # HiGHS is not sound on models with the forced-spill rows (T-041, T-072). With
+            # presolve it handed back, as optimal, a point with CURTAIL at 0.16 (a need
+            # below the minimum activity), and called a model infeasible whose plan the
+            # same solver finds without presolve. Without presolve its root cuts have cut
+            # the optimum off and it called a far worse plan optimal (HiGHS 1.8.1 to
+            # 1.15.1). So a model with those rows that comes back infeasible, or with a
+            # fractional binary, gets a second attempt without presolve, in what is left
+            # of the time limit. Neither run is a proof: the plan is accepted by the
+            # certificate (`_validate_solution`), its gap is only what HiGHS reports, and
+            # an infeasible second run may still have a plan.
             result = self._run(
                 matrix,
                 max(time_limit_s - (perf_counter() - started), 1e-3),
@@ -701,7 +705,7 @@ def _gate_forced_spill(
         previous_energy_index is not None and gate > model.lower[previous_energy_index]
     )
     if gated or flexible_load:
-        model.presolve_unsound = True
+        model.second_attempt = True
         spill.binary = spill_open = v["spill_open"] = model.variable(binary=True)
         model.constrain({v["curt"]: 1, spill_open: -upper}, -np.inf, 0)
     if gated:
