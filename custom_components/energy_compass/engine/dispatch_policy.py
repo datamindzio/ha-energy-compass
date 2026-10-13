@@ -1675,9 +1675,39 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 if model.upper[v["mode_CURTAIL"]] > 0 or i in bridge:
                     for key in curtail_terms(i):
                         holding[key] = -1
-                for j, ended in filled.items():
-                    if j <= i and starts[i] < starts[j] + dwell:
-                        holding[ended] = -1
+                relaxed = {
+                    j: ended
+                    for j, ended in filled.items()
+                    if j <= i and starts[i] < starts[j] + dwell
+                }
+                for ended in relaxed.values():
+                    holding[ended] = -1
+                if relaxed:
+                    # The sum above lets a release at `j` cancel the start of any run in
+                    # the window, one that began after it as well (T-083): a PV-follow
+                    # run that began at `s` ends in a HOLD at `j` only for `s < j`.
+                    # Row per start: `start_s <= indicator_i + the releases after s`.
+                    tail = {
+                        key: value
+                        for key, value in holding.items()
+                        if key not in relaxed.values()
+                        and key not in starts_here[: i + 1]
+                    }
+                    for s in range(i + 1):
+                        if starts[i] < starts[s] + dwell:
+                            model.constrain(
+                                {
+                                    **tail,
+                                    starts_here[s]: 1,
+                                    **{
+                                        ended: -1
+                                        for j, ended in relaxed.items()
+                                        if j > s
+                                    },
+                                },
+                                -np.inf,
+                                current_const,
+                            )
             model.constrain(holding, -np.inf, current_const)
 
 
