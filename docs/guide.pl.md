@@ -712,12 +712,11 @@ Zasady (domyślnie 60 min, 0,1 kW):
   prawdziwy przebieg `HOLD`, tak jak w każdym innym przedziale
   (`dispatch_policy.carried_idle_starts` wymienia przemostkowane przedziały). Przy pełnej baterii
   w instalacji, która nie może oddać PV, taki przedział może być też `CURTAIL`, jak każdy inny
-  przedział zobowiązania; nie jest wtedy przemostkowany. Plan jest
-  `infeasible` (niewykonalny) do końca zobowiązania, gdy potem nie da się spełnić reguły końcowej
+  przedział zobowiązania; nie jest wtedy przemostkowany. Gdy potem nie da się spełnić reguły końcowej
   (`preserve_initial` bez późniejszego PV lub ładowania z sieci, które uzupełniłyby to, co zużył
-  dom; sonda obciążenia elastycznego daje plan tylko wtedy, gdy jej obciążenie zostawia każdemu
-  przedziałowi zobowiązania coś do naśladowania albo sprowadza nadwyżkę poniżej minimalnej
-  aktywności) albo gdy dzienny budżet przepustowości nie
+  dom), przedział to `HOLD` z pełnym importem, jak przy wyczerpanej baterii, a bateria kończy tam,
+  gdzie zaczęła. Plan jest `infeasible` (niewykonalny) do końca zobowiązania, gdy dzienny budżet
+  przepustowości nie
   pokryje minimalnej aktywności, której wymaga zobowiązanie; rzadkie pozostałe przypadki opisuje
   [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget) (EN). Kierunek
   zablokowany przez dawną blokadę kierunku (`initial_battery_mode`) nie jest otwarty: bateria,
@@ -747,7 +746,10 @@ Zasady (domyślnie 60 min, 0,1 kW):
   instalacja nie przepuści, bo `HOLD` nie ma tam legalnego przepływu: plan wykonany przez jeden
   przedział dotarłby inaczej do następnej granicy z przeniesionym zobowiązaniem i bez planu. `HOLD`
   zwolniony przy pełnej baterii tam nie wraca: przez granicę zachowuje własny zegar, a tam, gdzie
-  instalacja nie przepuści PV, jest `CURTAIL` (wyżej). Powrót to dalszy ciąg zobowiązania, a nie nowy
+  instalacja nie przepuści PV, jest `CURTAIL` (wyżej). Nie wraca też dlatego, że regułę końcową
+  wyczerpała bateria: to liczy się przy zwolnieniu i przy powrocie `HOLD`, który zaczął się na
+  rozładowanej baterii (koordynator przenosi go jako zwolniony), a nie przy tym, który wraca tylko
+  wtedy, gdy bateria jest rozładowana sama w sobie. Powrót to dalszy ciąg zobowiązania, a nie nowy
   przebieg: jedynym zegarem pozostaje termin zobowiązania. Bateria, która opróżni się ponownie w
   tym samym zobowiązaniu, jest znowu zwalniana i znowu wraca, tyle razy, ile trwa zobowiązanie.
   Zwolnienie przechodzi przez granicę przedziału: plan oznacza wiersze takiego `HOLD`
@@ -2067,8 +2069,10 @@ drobne wartości ujemne, które zaokrąglenia w statystykach mogą zostawić, np
 błąd wskazuje miejsce: `days[n][i]` (dzień `n` od 1, interwał `i` od 0) albo `line n` w CSV.
 
 Interwał może mieć też `buy_energy` (także kolumna CSV): część energetyczna `buy`, czyli ta, którą może
-pokryć depozyt (reszta `buy` to dystrybucja), w tych samych jednostkach, nie większa niż `buy`; puste
-lub brak oznacza 0. Ma znaczenie tylko z
+pokryć depozyt (reszta `buy` to dystrybucja), w tych samych jednostkach, tak jak na fakturze, więc
+może być ujemna (pobór przy ujemnej cenie energii, oferta dynamiczna bez dolnego progu indeksu); nie
+większa niż `max(buy, 0)`, a gdy ujemna, nie większa niż `buy`; puste lub brak oznacza 0. Planer używa
+`max(buy_energy, 0)` (ograniczonego do `max(buy, 0)`, jak silnik). Ma znaczenie tylko z
 [modelem depozytu](#wartość-depozytu-w-net-billingu), który włączasz przez `--set
 deposit_model=manual --set export_value_factor=0.3` (eksperymentalny).
 `buy` zostaje ceną z faktury, więc `buy_distribution_mode`, `buy_distribution_rate` i
@@ -2162,7 +2166,11 @@ zwrot i przepadek każdego rachunku. Dwa przebiegi porównuje różnica `K` (alb
 punkt odniesienia bez planera. Wejście to jeden obiekt JSON (`timezone`, `start`, `rho`, `fixed`,
 `initial_soc_percent`, `settings` i `hours[]`) albo CSV, jeden wiersz na **godzinę** z `start`, `buy`,
 `sell`, `buy_energy`, `pv_forecast`, `load_forecast`, `pv`, `load` — te same wartości co wyżej; format
-opisuje docstring narzędzia, a `--rho`, `--fixed` i `--initial-soc` nadpisują plik. Godziny muszą
+opisuje docstring narzędzia, a `--rho`, `--fixed` i `--initial-soc` nadpisują plik. `buy_energy` to
+część energetyczna tak jak na fakturze, ze znakiem: rachunki sumują ją w miesiącu (pobór przy ujemnej
+cenie energii obniża miesiąc, a miesiąc kończący się poniżej zera zostaje w rachunku w pełnej
+wartości i nie dodaje nic do `E_owed`), a planer widzi `max(buy_energy, 0)`, więc plan nie zależy od
+wartości ujemnych. Godziny muszą
 następować kolejno, jedna rzeczywista godzina na wiersz; wiersz JSON może mieć własny `start`, który
 musi wtedy zgadzać się z jego pozycją. `--refresh-hours` nie może przekraczać `horizon_hours`. Liczba
 nieudanych rozwiązań planu trafia na stderr w obu formatach wyjścia.
@@ -2178,9 +2186,9 @@ godzinie to pierwsze wystąpienie; podaj przesunięcie, by oznaczyć drugie.
 Ograniczenia: część stała rachunku to jedna liczba z wejścia i nie podąża za przepływem, więc pasmo
 opłaty zależne od rocznego poboru nie jest modelowane (`fixed` weź z rachunku bez magazynu i licz się z
 niewielkim stałym błędem tam, gdzie pasmo jest inne); odcinek krótszy niż rok jest czytany jak rok z
-pustymi miesiącami; `buy_energy` pozostaje nieujemne jak w silniku, więc miesiąc z ujemną częścią
-energetyczną trafia do rachunków tylko jako lista części energetycznych ze znakiem przez API Pythona
-(`bill()`), nie przez wejście godzinowe; wynik jest tak dobry, jak podany szereg prognoz.
+pustymi miesiącami; okresem rozliczeniowym jest miesiąc kalendarzowy; sprzedawca rozliczający
+dłuższy okres netuje między jego miesiącami, czego narzędzie nie modeluje; energia jest wyceniana godzinowo; wynik jest tak dobry,
+jak podany szereg prognoz.
 
 ## Słownik kodów powodów
 
