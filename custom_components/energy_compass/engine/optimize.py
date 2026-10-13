@@ -48,7 +48,7 @@ class _Model:
         self.exact_mip_gap = False
         self.accept_incumbent = False
         self.time_limited = False
-        # Set by the rows HiGHS is known to misjudge (`solve`).
+        # Set by the rows HiGHS is known to misjudge: forced spill, mode rows (`solve`).
         self.second_attempt = False
         self.mip_gap: float | None = 0.0
         self.cost: list[float] = []
@@ -111,16 +111,17 @@ class _Model:
         if self.second_attempt and (
             result.status == 2 or result.x is not None and self._fractional(result.x)
         ):
-            # HiGHS is not sound on models with the forced-spill rows (T-041, T-072). With
-            # presolve it handed back, as optimal, a point with CURTAIL at 0.16 (a need
-            # below the minimum activity), and called a model infeasible whose plan the
-            # same solver finds without presolve. Without presolve its root cuts have cut
-            # the optimum off and it called a far worse plan optimal (HiGHS 1.8.1 to
-            # 1.15.1). So a model with those rows that comes back infeasible, or with a
-            # fractional binary, gets a second attempt without presolve, in what is left
-            # of the time limit. Neither run is a proof: the plan is accepted by the
-            # certificate (`_validate_solution`), its gap is only what HiGHS reports, and
-            # an infeasible second run may still have a plan.
+            # HiGHS is not sound on models with the forced-spill rows (T-041, T-072) or the
+            # mode rows (T-074). With presolve it handed back, as optimal, a point with
+            # CURTAIL at 0.16 (a need below the minimum activity), and called a model
+            # infeasible whose plan the same solver finds without presolve. Without
+            # presolve its root cuts have cut the optimum off and it called a far worse
+            # plan optimal (forced-spill rows, HiGHS 1.8.1 to 1.15.1; not measured on
+            # models with mode rows only). So a model with those rows that comes back
+            # infeasible, or with a fractional binary, gets a second attempt without
+            # presolve, in what is left of the time limit. Neither run is a proof: the
+            # plan is accepted by the certificate (`_validate_solution`), its gap is only
+            # what HiGHS reports, and an infeasible second run may still have a plan.
             result = self._run(
                 matrix,
                 max(time_limit_s - (perf_counter() - started), 1e-3),
@@ -1131,6 +1132,11 @@ def _solve(
         constrain_modes(
             model, problem, vectors, flexible_load=flexible_load is not None
         )
+        if problem.minimum_mode_minutes:
+            # The mode rows too: HiGHS's presolve called a model infeasible that a
+            # plan of all HOLD satisfies (T-074, negroll seed 12, problem 205), with no
+            # forced spill in it. Where it says so the model is solved once more without.
+            model.second_attempt = True
         _relay_forced_spill(model, vectors, spills)
         if problem.terminal_mode == "preserve_initial":
             model.constrain(
