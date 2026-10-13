@@ -652,7 +652,7 @@ Sensor **Kompas energii** pokazuje tryb pracy bieżącego przedziału; każdy wi
 | `DISCHARGE_GRID` | Rozładowanie z eksportem | Rozładowanie ≥ activity **i** eksport do sieci ≥ activity — bateria sprzedaje energię. | `allow_battery_export` włączone; moc eksportu > 0; pozwala na to budżet Sell only PV i próg korzyści eksportu. |
 | `SELF_CONSUME` | Autokonsumpcja | Rozładowanie ≥ activity, bez ładowania, eksportu i ograniczania — bateria zasila dom. Podąża za obciążeniem: import z sieci tylko przy rozładowaniu na limicie mocy albo gdy bateria jest opróżniona do rezerwy. | SOC powyżej rezerwy operacyjnej. |
 | `HOLD` | Wstrzymanie | Brak ładowania, rozładowania i ograniczania — bateria stoi; dom zasila sieć/PV. | Zawsze dostępny. |
-| `CURTAIL` | Ograniczanie PV | Ograniczenie produkcji ≥ activity, bez rozładowania; bateria ładuje obok tylko tam, gdzie PV powyżej tego, co instalacja przepuszcza, przekracza to, co przyjmie moc ładowania (niżej). | `allow_curtailment` włączone; bez niego tylko PV, którego nie przepuści limit eksportu ani moc falownika i na które bateria nie ma miejsca (wymuszone przycięcie, niżej). |
+| `CURTAIL` | Ograniczanie PV | Ograniczenie produkcji ≥ activity, bez rozładowania; bateria ładuje obok tylko tam, gdzie PV powyżej tego, co instalacja przepuszcza, przekracza to, co przyjmie moc ładowania (niżej). | `allow_curtailment` włączone; bez niego tylko PV, którego nie przepuści limit eksportu ani moc falownika i którego bateria nie przyjmie, ze względu na miejsce lub moc ładowania (wymuszone przycięcie, niżej). |
 
 Przy wyłączonym minimalnym czasie trybu (`minimum_mode_minutes = 0`) stan wyświetlany wynika z
 przepływów wg pierwszeństwa: CURTAIL → CHARGE_GRID → CHARGE_PV → DISCHARGE_GRID → SELF_CONSUME →
@@ -790,7 +790,11 @@ Zasady (domyślnie 60 min, 0,1 kW):
   (falownik przycina sam; sterownik Deye wykonuje wtedy profil `HOLD`). Bramką jest wolne miejsce
   w baterii: przedział zaczyna się na poziomie górnej granicy pomniejszonej o to, co bateria
   musiałaby przyjąć, więc bateria z niewielkim wolnym miejscem, która nie przyjmie nadwyżki, też
-  ją traci, a bateria, która ją przyjmie, nigdy, bez względu na cenę sprzedaży. Przy minimalnym
+  ją traci, a bateria, która ją przyjmie, nigdy, bez względu na cenę sprzedaży. Część, której bateria
+  nie przyjmie swoją mocą ładowania (PV ponad potrzebę przycięcia pomniejszoną o `charge_kw × h`),
+  jest tracona bez względu na wolne miejsce: bateria ładuje z pełną mocą, a falownik przycina resztę
+  w tym samym przedziale, więc bateria z wolnym miejscem i mocą ładowania poniżej nadwyżki ma plan.
+  Przy minimalnym
   czasie trwania przebieg `CURTAIL` utrzymuje bramkę następnego przedziału otwartą (nie rozładowuje
   baterii, więc ta opada najwyżej o straty postojowe, a rośnie tam, gdzie przedział ładuje), przebieg `CHARGE_PV` lub `SELF_CONSUME` może
   zakończyć się w `CURTAIL`, gdy bateria napełni się w jego trakcie (albo w `HOLD`, gdy skończy
@@ -805,10 +809,14 @@ Zasady (domyślnie 60 min, 0,1 kW):
   dzwonowym przebiegu PV, śledzony przedział po przedziale do końca, zachowuje plan przez cały
   czas w 207 z 214 dni przy 15 minutach, 172 z 189 przy 30 minutach i 158 z 197 przy 60 minutach
   (bez przycięcia 27, 23 i 23); większość pozostałych nie ma planu od pierwszego
-  przedziału. Reszta nadal nie ma planu, jak dotąd, głównie z dwóch powodów, których plan jeszcze
-  nie obejmuje: bateria z wolnym miejscem, której moc ładowania jest poniżej nadwyżki, oraz
-  przeniesione zobowiązanie, którego model nie umie zakończyć, częściej przy 60 minutach
-  ([model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget), EN; zadanie T-066).
+  przedziału. Reszta nadal nie ma planu, głównie z powodu, którego plan nie obejmuje:
+  przeniesione zobowiązanie `HOLD` lub `CURTAIL`, którego czasu trwania model nie umie zakończyć,
+  gdy bateria ma wolne miejsce, częściej przy 60 minutach, oraz część losowań z próbką
+  elastycznego zużycia. Część wymuszona (T-066) zmniejszyła liczbę z 2400 problemów rozwiązanych
+  raz bez planu z 226 do 76, a liczbę losowań śledzonych przedział po przedziale i niedoprowadzonych
+  do końca z 190 do 57 z 1800, bez nowego problemu „brak planu” (`infeasible`) wśród tych, które
+  main planował
+  ([model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget), EN).
 - **`CURTAIL` trwa mimo przerwy w PV.** Przebieg `CURTAIL` trwa minimalny czas, a PV może w tym
   czasie spaść. `HOLD` w przedziale z PV poniżej minimalnej aktywności (`minimum_mode_power_kw × h`)
   w trakcie tego czasu to ten sam przebieg, a nie nowy `HOLD`: falownik nie ma czego przycinać,
@@ -845,8 +853,8 @@ Zasady (domyślnie 60 min, 0,1 kW):
   bateria miała wcześniej; przy próbce elastycznego zużycia tylko dla obciążeń próbki, przy których PV
   zostaje poza baterią. Przy wyłączonym `allow_curtailment` taki przedział jest planowany tylko jako
   wymuszone przycięcie, czyli gdy bateria ma mniej miejsca niż PV, którego instalacja nie przepuści:
-  przedział `CURTAIL` ładuje wtedy tyle, ile bateria przyjmie, i przycina resztę. Bateria, która ma
-  miejsce na to PV, nadal nie ma tam planu.
+  przedział `CURTAIL` ładuje wtedy tyle, ile bateria przyjmie, i przycina resztę. To samo dotyczy baterii
+  z wolnym miejscem: ładuje mocą ładowania i przycina PV ponad nią, bez względu na wolne miejsce.
 - **Grupa podążania za PV:** `CHARGE_PV` i `SELF_CONSUME` dzielą jeden zegar — w obu falownik
   ładuje z nadwyżki i pokrywa deficyt z baterii, więc przełączanie między nimi nie jest zmianą
   trybu.

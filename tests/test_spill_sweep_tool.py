@@ -32,7 +32,7 @@ def _tool(*args):
 
 def test_a_roll_is_compared_and_summarised_by_the_tools_the_docs_name(tmp_path):
     path = tmp_path / "roll.json"
-    _tool("roll", 11, 4, path)
+    _tool("roll", 22, 10, path)
     rows = json.loads(path.read_text())
 
     # The draw has a roll followed to the end, one that stops and one whose next

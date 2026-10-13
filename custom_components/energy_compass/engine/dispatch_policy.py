@@ -586,6 +586,27 @@ def curtail_limit(problem, slot, extra_load=0.0):
     return need
 
 
+def forced_spill_limit(problem, slot, extra_load=0.0) -> float:
+    """Largest spill (kWh) a slot may carry whatever room the pack has (T-066).
+
+    On a site that cannot curtail, the PV above what the site passes that the pack cannot
+    take by its charge power (`_beyond_the_pack`) is spilled by the inverter whatever
+    room the pack has: the pack charges at its power beside it and nothing else can take
+    the rest. A spill that small needs no gate (`spill_gate`). With a minimum mode
+    duration a CURTAIL interval carries at least the minimum activity, so a smaller
+    shortfall is offered as that much, as `curtail_limit` does. Zero where nothing is
+    beyond the pack.
+    """
+    if problem.site.allow_curtailment or not problem.battery:
+        return 0
+    beyond = _beyond_the_pack(problem, slot, extra_load)
+    if beyond <= _ROW_TOLERANCE:
+        return 0
+    if problem.minimum_mode_minutes:
+        beyond = max(beyond, problem.minimum_mode_power_kw * _hours(slot))
+    return min(beyond, curtail_limit(problem, slot, extra_load))
+
+
 def spill_gate(problem, drains, index, extra_load=0.0) -> float:
     """Energy at the start of a slot from which the pack cannot take the slot's need.
 

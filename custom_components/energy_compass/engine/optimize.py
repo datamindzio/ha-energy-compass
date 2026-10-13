@@ -19,6 +19,7 @@ from .dispatch_policy import (
     carried_curtail,
     constrain_modes,
     curtail_limit,
+    forced_spill_limit,
     reserve_fallback,
     spill_gate,
     uncommitted_fallback,
@@ -376,12 +377,13 @@ def _validate_solution(
                 or previous_energy
                 >= spill_gate(problem, drains, index, extra_load) - _FULL_TOL
             )
+            forced = forced_spill_limit(problem, slot, extra_load)
             _check(
-                curt <= _TOL or open_gate,
+                curt <= forced + _TOL or open_gate,
                 "forced spill with room in the pack",
             )
             relayed = (
-                open_gate
+                (open_gate or curt > _TOL)
                 and "mode_CURTAIL" in variables
                 and value("mode_CURTAIL") > 0.5
                 and curtail_limit(problem, slot) > 0
@@ -666,6 +668,7 @@ class _Spill:
     """One slot's forced spill: its binary, its gate row and the gate the row is certified against."""
 
     gate: float
+    forced: float = 0.0
     binary: int | None = None
     row: dict[int, float] | None = None
 
@@ -690,6 +693,11 @@ def _gate_forced_spill(
     upper = model.upper[v["curt"]]
     flex_upper = model.upper[v["flex_load"]] if flexible_load else 0.0
     gate = spill_gate(problem, drains, index, flex_upper)
+    slot = problem.slots[index]
+    hours = (slot.end - slot.start).total_seconds() / 3600
+    # What the pack cannot take by its charge power is spilled whatever its room (T-066):
+    # the gate opens only the rest. The strictest the flexible load allows, as the gate.
+    forced = min(forced_spill_limit(problem, slot, flex_upper), upper)
     # A CURTAIL run carried into the plan keeps its first interval open, as a run inside
     # the plan keeps the next one (`_relay_forced_spill`).
     if (
@@ -697,11 +705,10 @@ def _gate_forced_spill(
         and battery.initial_kwh < gate - 1e-6
         and not carried_curtail(problem)
     ):
-        model.upper[v["curt"]] = 0
-        return None
-    slot = problem.slots[index]
-    hours = (slot.end - slot.start).total_seconds() / 3600
-    spill = _Spill(gate)
+        model.upper[v["curt"]] = forced
+        # A forced CURTAIL here still relays the gate to the next slot.
+        return _Spill(gate, forced=forced) if forced > 0 else None
+    spill = _Spill(gate, forced=forced)
     # Nothing to gate where even the emptiest pack cannot take the need.
     gated = (
         previous_energy_index is not None and gate > model.lower[previous_energy_index]
@@ -709,7 +716,7 @@ def _gate_forced_spill(
     if gated or flexible_load:
         model.second_attempt = True
         spill.binary = spill_open = v["spill_open"] = model.variable(binary=True)
-        model.constrain({v["curt"]: 1, spill_open: -upper}, -np.inf, 0)
+        model.constrain({v["curt"]: 1, spill_open: -(upper - forced)}, -np.inf, forced)
     if gated:
         spill.row = {previous_energy_index: 1, spill.binary: -gate}
         model.constrain(spill.row, 0, np.inf)
@@ -759,7 +766,7 @@ def _relay_forced_spill(model, vectors, spills) -> None:
         curtail = vectors[index]["mode_CURTAIL"]
         if model.upper[curtail] <= 0:
             continue
-        if spill.binary is not None:
+        if spill.binary is not None and spill.forced <= 0:
             model.constrain({curtail: 1, spill.binary: -1}, -np.inf, 0)
         following = spills[index + 1] if index + 1 < len(spills) else None
         if following is not None and following.row is not None:
