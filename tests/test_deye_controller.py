@@ -70,7 +70,9 @@ def test_state_table(h, state, charging, charge, discharge):
     row = h.data[P]["attributes"]["intervals"][0]
     row.update(
         state=state,
-        charge_kwh=0.5,
+        # A CURTAIL row that charges is not a HOLD (tests/test_controller_native_curtail.py);
+        # the frozen 0.1.37 blueprint replays this test and holds every CURTAIL row.
+        charge_kwh=0 if state == "CURTAIL" else 0.5,
         discharge_kwh=0.5,
         pv_kwh=0,
         load_kwh=0.05,

@@ -735,15 +735,11 @@ room for the need still has no plan there (point 24 end): no spill is forced and
 What the house does then (report over-capacity, throttle in the plan) is an owner decision, tracked in T-066 with the
 forced-spill cases.
 
-The Deye controller is not changed here, and it does not carry out the charge of such a row: `CURTAIL` runs the `HOLD`
-profile, whose maximum charge current and grid current are both `hold_grid_current` (1 A by default, about 50 W;
-`controller_profile.py`, the profiles table of the guide), with the planned end state of charge rounded down as the
-target. In a `CURTAIL` interval that charges, the pack takes about 50 W on the inverter where the plan has it take up
-to the charge power, so the end state of charge the plan publishes is not reached there and the `SELF_CONSUME` it
-pays for later starts lower; the next recalculation reads the real state of charge and plans from it. What the
-controller should write for a charging `CURTAIL` row (the `CHARGE_PV` charge cap without a grid direction is the
-candidate) is T-076, filed from the review of this task; the frozen blueprint and its goldens stay as they are. Until
-then the plan is right for the model and the pack on the inverter is lower than it says.
+The Deye controller is not changed here. At this task it did not carry out the charge of such a row: `CURTAIL` ran
+the `HOLD` profile, whose maximum charge current and grid current are both `hold_grid_current` (1 A by default, about
+50 W; `controller_profile.py`), with the planned end state of charge rounded down as the target, so the pack took about
+50 W where the plan has it take up to the charge power. What the controller writes for a charging `CURTAIL` row is
+decided in T-076 (amendment at the end of this record).
 
 Measured with `benchmarks/curtail_sweep.py`, seeds 11, 22, 33 × 300 = 900 draws per kind, this branch (engine
 `3679099`, main `fde1cc5` merged in) against main `fde1cc5`, both solved through `solve_released`. Main's tree was
@@ -792,3 +788,46 @@ both seeds.
 Still `infeasible`: `allow_curtailment = false` with PV above what the pack takes by its charge power while the pack
 has room for it (no forced spill; T-066), `preserve_initial`
 whose terminal state of charge is out of reach (T-065, T-070), and a carried commitment no plan can keep (rung 3).
+
+## Amendment (T-076): the controller carries out a charging CURTAIL row
+
+A `CURTAIL` row that charges (T-064) ran the `HOLD` profile on the inverter, so the pack took about 50 W where the plan
+has it take up to the charge power, the published state of charge was not reached, and the `SELF_CONSUME` it pays for
+started lower, at every replan.
+
+31. **A `CURTAIL` row with `charge_kwh` above 0.000001 kWh runs the PV charge profile at the planned current.** Charge
+    current = `charge_kwh × eta_charge / (h × V)` rounded up to the step of the charge entity, at least
+    `hold_grid_current` and at most the cap (the formula `CHARGE_GRID` uses for its planned grid share); grid current
+    0 A, discharge current 0 A, every TOU program Disabled with SOC 10 % and 49.6 V. The pack takes the PV at that
+    current and the inverter curtails the rest by itself. The charge of such a row is free between 0 and the PV left
+    after the curtailment and the load (point 29), so the plan chooses it, and it often chooses less than the charge
+    power: a row planning less than `charge_kw × h` while the pack ends below its ceiling is 75 of the 879 charging rows
+    of the sweep below (8.5 %), for example 0.137 kWh where 0.75 kWh fits (pack 0.725 of 5 kWh, PV 2.2, curtailment
+    1.54). At the cap such a row would end above the published trajectory and pay the model's wear cost for energy it
+    chose to curtail, so the cap is not the current; a row at `charge_kw × h` rounds up to the cap and gets all of it.
+    At 100 % SOC the row follows `CHARGE_PV` (0 A in `Capacity` mode, the cap in `Voltage` mode, whose SOC estimate
+    drifts) and there is no balance hold on it. It raises no `curtail_unsupported` warning: the charge is carried out.
+    A `CURTAIL` row with `charge_kwh` up to 0.000001 kWh stays the `HOLD` profile with the warning. The native
+    controller (`controller_profile.py`) and the generated blueprint (`tools/deye_controller/build.py`) make the same
+    decision.
+32. **The threshold is 1e-6 kWh, the display classifier's zero** (`machine_state._TOL`; `CURTAIL_CHARGE_MIN_KWH`, with a
+    test that the two are equal). The plan publishes the solver's flows unrounded (`machine_snapshot`), and
+    `settle_mode_noise` leaves a flow up to 1e-6 kWh as it is, so a `CURTAIL` row that does not charge carries
+    `charge_kwh` of 2e-34 to 4.7e-13 (or a hair below 0) as often as it carries 0. A test `> 0` would charge such a row at
+    the cap, silently, and which rows do it would depend on float noise.
+33. **The frozen goldens stay.** `tests/golden/` and `tests/deye_oracle_v0137.py` hold every `CURTAIL` row; the parity
+    corpus and the replay of `tests/test_deye_controller.py` keep `charge_kwh` at 0 on their `CURTAIL` rows (no rng
+    draw is added) and the new rule is pinned in `tests/test_controller_native_curtail.py` against both engines.
+
+Measured with `benchmarks/curtail_charge_rows.py 150 11 22` (draws of `curtail_sweep.py` `run`, `negrun`, `deprun`,
+`resrun`, `fullrun`, 1456 plans, planned through `solve_released`, rows as `machine_snapshot` publishes them), on this
+branch with main `06f935e` under it and again with main `7c33fe8` merged in; the counts are the same on both, since
+this task changes the controller only and not the engine: 7036 `CURTAIL` rows, 879 charge (above 0.001 kWh), 75 of them plan less than
+`charge_kw × h` below the ceiling; of the 6157 that do not charge, 5129 are exactly 0, 524 a hair below 0 and 504
+(8.2 %) between 2e-34 and 4.7e-13 kWh; none lies between 1e-6 and 1e-3 kWh, so the threshold sits six orders of
+magnitude above the largest noise (4.67e-13) and below every charge the sweep drew.
+
+Rejected: a grid direction on the row (the model never imports in a `CURTAIL` row, and the grid current would buy
+energy the plan does not); the cap as the charge current (it charges above the plan in 8.5 % of the charging rows
+and is right only where the row plans the charge power); a threshold of 0 (one plain `CURTAIL` row in twelve would
+charge from PV at the cap, not hold).

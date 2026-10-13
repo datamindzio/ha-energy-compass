@@ -302,6 +302,11 @@ def scenario(h, rng: random.Random, apply_limits=True):
         h.now = h.now.replace(hour=rng.randint(0, 23))
         for x in h.data.values():
             x["last_reported"] = h.now.isoformat()
+    # The frozen 0.1.37 blueprint holds every CURTAIL row; a CURTAIL row that charges
+    # (T-064) is a deliberate divergence of the native engine, pinned in
+    # tests/test_controller_native_curtail.py. No rng draw: the corpus is unchanged.
+    if row["state"] == "CURTAIL":
+        row["charge_kwh"] = 0
     h.accept()
     if rng.random() < 0.1 and h.data[CACHE]["attributes"].get("snapshot"):
         h.revoked = core.Revocation(
