@@ -550,14 +550,14 @@ async def test_s226_lookup_does_not_block_the_event_loop(hass, atlas):
     _home(hass, MAZOWIECKIE["lat"], MAZOWIECKIE["lng"])
     stop = asyncio.Event()
     gaps = []
+    last = [time.perf_counter()]
 
     async def ticker():
-        last = time.perf_counter()
         while not stop.is_set():
             await asyncio.sleep(0.005)
             now = time.perf_counter()
-            gaps.append(now - last)
-            last = now
+            gaps.append(now - last[0])
+            last[0] = now
 
     task = asyncio.create_task(ticker())
     await asyncio.sleep(0.05)
@@ -566,9 +566,11 @@ async def test_s226_lookup_does_not_block_the_event_loop(hass, atlas):
         for _ in range(3):
             hass.data.pop(location._DATA_KEY, None)
             gaps.clear()
+            last[0] = time.perf_counter()
             assert await location.home_municipality(hass, BASE) == "1414063"
-            assert gaps, "the loop never ran during the lookup"
-            worst.append(max(gaps))
+            # No tick at all while the lookup ran is the worst stall, not an error: the
+            # time since the last tick counts too.
+            worst.append(max([*gaps, time.perf_counter() - last[0]]))
             if worst[-1] < 0.1:
                 break
     finally:
