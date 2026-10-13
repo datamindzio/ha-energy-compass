@@ -14,7 +14,13 @@ from .balance import REACH_TOL, fallback_costs
 from .charge_benefit import constrain_charge_benefit, validate_charge_benefit
 from .charge_price import price_allows_grid_charge
 from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fractions
-from .dispatch_policy import MODES, constrain_modes, reserve_fallback, validate_modes
+from .dispatch_policy import (
+    MODES,
+    constrain_modes,
+    reserve_fallback,
+    uncommitted_fallback,
+    validate_modes,
+)
 from .export_benefit import constrain_export_benefit, validate_export_benefit
 from .idle_drain import cumulative, drain_schedule
 from .mode_noise import settle_mode_noise
@@ -515,39 +521,42 @@ def solve_released(
     accept_incumbent: bool = False,
     solver=None,
 ) -> tuple[Plan, Problem]:
-    """Solve a carried commitment's released plan; fall back to its HOLD, never to no plan.
+    """Solve a carried PV-follow commitment's plan; the house is never left without one.
 
-    A PV-follow commitment with the pack at the reserve is released first (ADR-0005
-    point 13); where that release has no plan (the PV above the export cap exceeds what
-    the pack can take by charge power) the house is not left without one: the problem is
-    solved again with the commitment's own HOLD kept (`reserve_fallback`). Returns the plan
-    and the problem it was solved for. Only `infeasible` takes the fallback; a timeout or
-    any other solver error propagates. `budget_s` bounds both solves together: the second
-    gets what is left of it, at most `time_limit_s`. `solver` is the single-solve function
-    (default `solve`), a seam for callers that count or replace the solve.
+    The problem as it is first. Where it has no plan (`infeasible`) the ladder of
+    ADR-0005 point 20 follows, each rung only where it applies: a commitment with the pack
+    at the reserve is released first (point 13), and where that release has no plan either
+    the commitment's own HOLD is planned (`reserve_fallback`); last, the plan is made
+    without the commitment (`uncommitted_fallback`). Returns the plan and the problem it
+    was solved for. Only `infeasible` takes a rung; a timeout or any other solver error
+    propagates. `budget_s` bounds all solves together: each later one gets what is left
+    of it, at most `time_limit_s`. `solver` is the single-solve function (default `solve`),
+    a seam for callers that count or replace the solve.
     """
     solver = solver or solve
     started = perf_counter()
-    try:
-        return (
-            solver(
-                problem, time_limit_s=time_limit_s, accept_incumbent=accept_incumbent
-            ),
-            problem,
-        )
-    except SolveError as err:
-        fallback = reserve_fallback(problem) if err.reason == "infeasible" else None
-        if fallback is None:
-            raise
-        limit = time_limit_s
+    limit = time_limit_s
+    failure = None
+    for rung in (None, reserve_fallback, uncommitted_fallback):
+        candidate = problem if rung is None else rung(problem)
+        if candidate is None:
+            continue
         if budget_s is not None:
-            limit = min(limit, budget_s - (perf_counter() - started))
+            limit = min(time_limit_s, budget_s - (perf_counter() - started))
             if limit <= 0:
-                raise SolveError("timeout") from err
-    return (
-        solver(fallback, time_limit_s=limit, accept_incumbent=accept_incumbent),
-        fallback,
-    )
+                raise SolveError("timeout") from failure
+        try:
+            return (
+                solver(
+                    candidate, time_limit_s=limit, accept_incumbent=accept_incumbent
+                ),
+                candidate,
+            )
+        except SolveError as err:
+            if err.reason != "infeasible":
+                raise
+            failure = failure or err
+    raise failure
 
 
 def solve_flexible_load(

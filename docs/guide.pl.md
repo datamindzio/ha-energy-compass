@@ -679,7 +679,7 @@ stateDiagram-v2
     CHARGE_GRID --> HOLD: po minimalnym czasie
     DISCHARGE_GRID --> HOLD: po minimalnym czasie
     CHARGE_GRID --> HOLD: wyjątek bezpieczeństwa<br/>(SOC max, cena ponad sufit)
-    PVF --> HOLD: wyjątek bezpieczeństwa<br/>(SOC max / na rezerwie)
+    PVF --> HOLD: wyjątek bezpieczeństwa<br/>(CHARGE_PV przy SOC max; SELF_CONSUME na rezerwie tylko gdy jego zwolnienie nie ma planu)
     DISCHARGE_GRID --> HOLD: wyjątek bezpieczeństwa<br/>(SOC na rezerwie)
 ```
 
@@ -747,8 +747,13 @@ Zasady (domyślnie 60 min, 0,1 kW):
   pusty falownika) jest rozładowana w tym sensie, a nie wyjątkiem bezpieczeństwa: przeniesione
   `SELF_CONSUME` jest tam zwalniane i ładuje jak 0,01 kWh nad rezerwą. Gdy zwolniony `HOLD` nie ma
   planu (moc ładowania nie przyjmie PV powyżej limitu eksportu, a ładowanie i ucinanie w jednym
-  przedziale nie jest modelowane) i ucinanie jest dozwolone, planem jest własny `HOLD` zobowiązania
-  z jego zegarem, jak wyjątek bezpieczeństwa poniżej, który ucina: dom nigdy nie zostaje bez planu.
+  przedziale nie jest modelowane), dom i tak nigdy nie zostaje bez planu. Planem jest pierwszy z
+  poniższych, który ma rozwiązanie, każdy próbowany dopiero wtedy, gdy poprzedni go nie ma, a
+  wszystkie w jednym budżecie czasu przeliczenia: zwolnienie; własny `HOLD` zobowiązania z jego
+  zegarem, jak wyjątek bezpieczeństwa poniżej, który ucina tam, gdzie ucinanie jest dozwolone; plan
+  bez zobowiązania, którego pierwszy tryb startuje własny zegar (tylko dla przeniesionego
+  `CHARGE_PV` lub `SELF_CONSUME`, które plan wykonany o jeden przedział może zostawić w stanie, który
+  jego własny minimalny czas czyni niewykonalnym).
   Powrót to dalszy ciąg zobowiązania, a nie nowy
   przebieg: jedynym zegarem pozostaje termin zobowiązania. Bateria, która opróżni się ponownie w
   tym samym zobowiązaniu, jest znowu zwalniana i znowu wraca, tyle razy, ile trwa zobowiązanie.

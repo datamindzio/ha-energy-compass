@@ -314,8 +314,8 @@ power (charging and curtailing in one interval would be needed), and a terminal 
 
 ## Amendment (T-058, decided in T-060): a PV-follow commitment with the pack at the reserve is the depleted release
 
-Status: decided in this amendment, implemented and swept on T-058. It narrows the T-050 amendment's "above the
-reserve, so no safety exception".
+Status: decided in this amendment, implemented and swept on T-058 (reviewed once: the sweeps below are against
+the merged main). It narrows the T-050 amendment's "above the reserve, so no safety exception".
 
 A carried `SELF_CONSUME` whose observed pack is exactly at the reserve (`initial_kwh <= capacity ×
 minimum_soc_fraction + 1e-9`) inside its minimum duration raised the safety exception `observed_soc_minimum`,
@@ -331,37 +331,70 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
     is chargeable, carried across the boundary as point 16. A pack that drops to the reserve during a carried
     release is not locked again. `CHARGE_GRID`, `DISCHARGE_GRID` and `CHARGE_PV` keep their exceptions (the
     reserve is no bound for the charging modes; `DISCHARGE_GRID` is not PV-follow).
-20. **The house is never left without a plan (owner, T-060).** Where the released `HOLD` has no plan, the old
-    reading is planned instead. The class: the pack's charge power cannot take the PV above the export cap, and
-    charging and curtailing in one interval is not modelled (the T-047 out-of-scope list; 0.01 kWh above the
-    reserve it has no plan either). `dispatch_policy.reserve_fallback(problem)` returns the problem with
-    `Problem.initial_dispatch_reserve_hold` set, which makes the exception back, and `runtime.compute` solves
-    that problem when `solve` raises `infeasible` for a problem for which the fallback changes the reading
-    (nothing else is retried). The plan is then `HOLD` with the commitment's clock and `CURTAIL` from the
-    takeover where `allow_curtailment` is true; `dispatch_policy.safety_exception` reports
-    `observed_soc_minimum`, the coordinator stores nothing for it (as for every exception) and the fallback
-    is decided afresh at every boundary. With `allow_curtailment` false the PV cannot be disposed of and the
-    problem stays infeasible, as before. Charging at the charge power and curtailing the rest in one interval
-    is the proper plan and is T-064; the carried `CHARGE_PV` that has no plan with a pack just above the
-    reserve and PV below the load is T-065.
+20. **The house is never left without a plan (owner, T-060).** Where the released `HOLD` has no plan, a plan is
+    still made, by a ladder in which each rung is tried only when the one before raised `infeasible` (any other
+    solver error ends it). A rung's solve gets `min(solve_time_limit_s, total_time_limit_s less the time the
+    ladder has used so far)`, so the rungs share one budget and `runtime.compute` still checks the whole
+    recalculation against it afterwards:
+    1. the problem as read (the release of point 19);
+    2. `dispatch_policy.reserve_fallback(problem)`: the previous reading, `Problem.initial_dispatch_reserve_hold`
+       set, which makes the exception back. The plan is `HOLD` with the commitment's clock and `CURTAIL` from
+       the T-047 takeover where `allow_curtailment` is true; `safety_exception` reports `observed_soc_minimum`
+       and the coordinator stores nothing for it, as for every exception. The class: the pack's charge power
+       cannot take the PV above the export cap, and charging and curtailing in one interval is not modelled
+       (the T-047 out-of-scope list; 0.01 kWh above the reserve it has no plan either);
+    3. `dispatch_policy.uncommitted_fallback(problem)`: the plan without the carried commitment, for a carried
+       `CHARGE_PV` or `SELF_CONSUME` only (the commitment and its clock are dropped; the first interval's mode
+       starts a new one, which the coordinator stores like any mode change). The class: a plan followed one
+       interval leaves a state in which the commitment's minimum duration makes the next plan infeasible
+       (a carried `CHARGE_PV` inside its duration with the pack just above the reserve and PV below the load, the
+       `preserve_initial` terminal rule: T-065; a tail the previous plan allowed and the next boundary does not:
+       T-057). It is the last resort: T-057 and T-065 close the cause and make the rung rarer.
+21. **One function solves it.** `optimize.solve_released(problem, time_limit_s=, budget_s=, accept_incumbent=,
+    solver=)` returns `(plan, problem)`, the problem being the rung that was solved (a flexible-load probe runs on
+    it). `runtime.compute`, `tools/replay.py`,
+    `tools/replay_year.py` and `benchmarks/curtail_sweep.py` all call it, so what the replay and the sweeps
+    measure is what ships. With `allow_curtailment` false and no plan on any rung the problem stays infeasible, as
+    before. Charging at the charge power and curtailing the rest in one interval is the proper plan for rung 2's
+    class (T-064; forced spill with room: T-066; the unmoded CHARGE_PV rule: T-041).
 
-Measured with `benchmarks/curtail_sweep.py` (its `run`/`roll` now solve as the runtime does, with the fallback
-where the tree has it), seeds 11, 22, 33, 44 × 300; head is this branch, main is `be0671c` (origin/main
-`a5afc13` plus T-050 `b5caf83`):
+Measured with `benchmarks/curtail_sweep.py` (its `run`/`roll` solve through `solve_released` where the tree has
+it; `resrun`/`resroll` draw the pack exactly at the reserve with a `SELF_CONSUME` commitment carried 0 to 45
+minutes, the state the exception reads), seeds 11, 22, 33, 44 × 300 = 1200 draws per kind. Head is this branch
+merged with main; main is `8c15491` (origin/main at the time of the merge), solved the old way (once, no rungs):
 
-| Kind | Result |
-| --- | --- |
-| `run`, `negrun`... `roll`, `negroll` (pack not at the reserve) | identical to main, 0 newly infeasible |
-| `deprun` (plan at the first boundary, `make_depleted` draws the pack at the reserve) | 709 planned vs 707, 0 newly infeasible, 2 newly planned |
-| `deproll` (plan followed one interval at a time) | 704 planned to the end vs 699, 6 fixed, 1 newly infeasible while followed |
+| Kind | Planned, main → head | Newly infeasible | Newly planned |
+| --- | --- | --- | --- |
+| `run` (plan at the first boundary) | 1076 → 1117 | 0 | 41 |
+| `negrun` (negative prices) | 1057 → 1102 | 0 | 45 |
+| `deprun` (`make_depleted`: sunrise, pack at the reserve) | 707 → 1121 | 0 | 414 |
+| `resrun` (`make_reserve`) | 1111 → 1145 | 0 | 34 |
+| `probe` (flexible load on `run`) | 1049 → 1099 | 0 | 50 |
+| `deprobe` (flexible load on `deprun`) | 677 → 1115 | 1 | 439 |
+| `roll` (followed one interval at a time, up to 8) | 1072 → 1117 | 0 | 45 |
+| `negroll` | 1046 → 1101 | 0 | 55 |
+| `deproll` | 699 → 1121 | 0 | 422 |
+| `resroll` | 1109 → 1145 | 0 | 36 |
 
-Without the fallback the first version of this amendment lost 48 of 1200 `deprun` and 49 of 1200 `deproll`
-plans (all in the charge-power class above: they have no plan 0.01 kWh above the reserve either); with it none.
-The one newly infeasible `deproll` draw (seed 11, draw 293, boundary 6) is a carried `CHARGE_PV` with the pack
-1.323 kWh above a 1 kWh reserve and PV below the load in the first interval; the same state is infeasible on
-main (checked with the pickled problem), the new trajectory merely reaches it, and it is T-065.
+The rolled kinds are the criterion: no draw that main follows to the end is lost while followed. Before rung 3
+`resroll` lost 42 of them (all in the class of rung 3; with T-057 and T-065 merged into a trial tree 17 of the 42
+remained, all `preserve_initial` with a carried `CHARGE_PV` in its duration, and every one of them has a plan
+without the commitment). The one newly infeasible `deprobe` draw (seed 44, draw 10) is the base plan solving on
+rung 1 while the 0.25 kWh probe on that same problem has no solution (it has one on rungs 2 and 3): one consumption
+level reports `infeasible`, the plan is untouched; it is T-067. Every draw with no plan on any rung (79 of 1200
+`deprun`, 55 `resrun`, 83 `run`) has `allow_curtailment` false: T-041, T-064 and T-066, which main has as well.
 
-What the followed plans execute (`deproll`, rows of the first interval over all 1200 draws, main → head):
-`CHARGE_PV` 1028 → 1361, `CURTAIL` 2074 → 1822, `HOLD` 1366 → 1288, `SELF_CONSUME` 336 → 373,
-`CHARGE_GRID` 18 → 14. The pack at the reserve now takes the surplus instead of `CURTAIL` beside it; 228 of the
-followed rows are the fallback's `HOLD` (the charge-power class), which curtails as before.
+On draws that main also plans, a plan's cost is not comparable between the readings (`deprun` 21 higher, 20 lower;
+`resrun` 287 higher, 250 lower): the commitment now binds, so the pack takes the surplus where main idled in a
+`HOLD` with a clock (`resrun` seed 11: 78 of the 79 higher first rows are `CHARGE_PV` where main has `HOLD` or
+`CURTAIL`). That is point 13's intention (a `CHARGE_PV`/`SELF_CONSUME` commitment follows the PV), paid in the
+objective of a more constrained problem.
+
+What the followed plans execute (rows of the first interval over the draws followed to the end on both trees, main
+→ head). `deproll` (699 draws): `CHARGE_PV` 1023 → 1329, `CURTAIL` 2070 → 1818, `HOLD` 1360 → 1275,
+`SELF_CONSUME` 333 → 368, `CHARGE_GRID` 18 → 14. `resroll` (1109 draws): `CHARGE_PV` 398 → 1832, `CURTAIL`
+3245 → 2579, `HOLD` 3571 → 2440, `SELF_CONSUME` 206 → 583. The pack at the reserve takes the surplus instead of
+`CURTAIL` beside it. Rung use over all 1200 `deproll` draws (7701 rows): rung 2 228 rows (179 `CURTAIL`, 49
+`HOLD`), rung 3 417 rows (269 `HOLD`, 146 `CURTAIL`, 2 `CHARGE_GRID`), the rest rung 1; over `resroll` (7791 rows) rung 2
+1225 rows (the reserve-aimed draws sit in the charge-power class) and rung 3 45 rows. `roll` and `negroll`
+use rung 3 for 45 and 55 rows and rung 2 never.

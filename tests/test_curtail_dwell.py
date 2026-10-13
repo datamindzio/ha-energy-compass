@@ -20,18 +20,22 @@ from custom_components.energy_compass.coordinator import EnergyCompassCoordinato
 from custom_components.energy_compass.engine.dispatch_policy import (
     reserve_fallback,
     safety_exception,
+    uncommitted_fallback,
     validate_modes,
 )
 from custom_components.energy_compass.engine.models import (
+    Battery,
     FlexibleLoadRequest,
     Flow,
     InputError,
+    SiteLimits,
     SolveError,
 )
 from custom_components.energy_compass.engine.normalize import validate_problem
 from custom_components.energy_compass.engine.optimize import (
     solve,
     solve_flexible_load,
+    solve_released,
 )
 from custom_components.energy_compass.runtime import restore_commitment
 
@@ -1025,3 +1029,215 @@ def test_the_runtime_plans_the_commitments_hold_when_the_release_has_no_plan(
     with pytest.raises(SolveError, match="timeout"):
         runtime.compute(config, states, now, battery_commitment=commitment)
     assert len(problems) == 1
+
+
+def _stranded():
+    """A carried CHARGE_PV, the pack just above the reserve, that no plan can keep (T-058).
+
+    The pack was charged one interval after a release at the reserve; the next boundary
+    asks the commitment to stay inside its minimum duration while `preserve_initial`
+    wants the pack back where it is, and the PV does not cover the load. The same state
+    has no plan on `main` (T-065 class); only the last rung of `solve_released` plans it.
+    """
+    rows = (
+        (1.24, 0.62, 0.05, 0.02),
+        (0.32, 0.4, 0, 0.2),
+        (1.34, 0.1, 0.01, 0.1),
+        (1.17, 0.45, 0.39, 0.4),
+        (0.39, 0.26, 0.37, 0.05),
+    )
+    problem = dispatch(rows, minimum_mode_minutes=60, terminal_mode="preserve_initial")
+    return carried(
+        replace(
+            problem,
+            site=SiteLimits(3, 8, 2, True),
+            battery=Battery(5, 0, 1, 0.1425, 3, 3, 0.95, 0.95, 0, True, True, 0),
+        ),
+        since=timedelta(minutes=16),
+    )
+
+
+def test_a_stranded_commitment_has_no_plan_but_without_it():
+    problem = _stranded()
+    with pytest.raises(SolveError) as error:
+        solve(problem)
+    assert error.value.reason == "infeasible"
+    assert reserve_fallback(problem) is None
+    free = uncommitted_fallback(problem)
+    assert free.initial_dispatch_mode is None
+    assert free.initial_dispatch_mode_since is None
+    plan = solve(free)
+    validate_modes(free, plan.flows, plan.carried_bridges)
+
+
+@pytest.mark.parametrize(
+    "mode", [None, "HOLD", "CURTAIL", "CHARGE_GRID", "DISCHARGE_GRID"]
+)
+def test_only_a_pv_follow_commitment_is_left_out_as_the_last_resort(mode):
+    problem = carried(capped((0.9,) * 4), mode=mode) if mode else capped((0.9,) * 4)
+    assert uncommitted_fallback(problem) is None
+
+
+class _Solver:
+    """A solver that fails with `reason` for the problems `fails` names, and records calls."""
+
+    def __init__(self, fails, reason="infeasible", seconds=0.0, clock=None):
+        self.fails, self.reason, self.seconds, self.clock = (
+            fails,
+            reason,
+            seconds,
+            clock,
+        )
+        self.calls = []
+
+    def __call__(self, problem, **kwargs):
+        self.calls.append((problem, kwargs))
+        if self.clock is not None:
+            self.clock[0] += self.seconds
+        if self.fails(problem):
+            raise SolveError(self.reason)
+        return solve(problem, **kwargs)
+
+
+def test_solve_released_solves_a_problem_with_a_plan_once_and_returns_it():
+    problem = depleted((0, *(0.9,) * 7), mode="SELF_CONSUME", export_cap=2)
+    solver = _Solver(lambda _: False)
+    plan, solved = solve_released(problem, accept_incumbent=True, solver=solver)
+    assert solved is problem
+    assert [call[0] for call in solver.calls] == [problem]
+    assert solver.calls[0][1] == {"time_limit_s": 10.0, "accept_incumbent": True}
+    assert plan.flows[0].dispatch_mode == "HOLD"
+
+
+def test_solve_released_plans_the_commitments_hold_before_leaving_it():
+    problem = _unreleasable()
+    plan, solved = solve_released(problem)
+    assert solved.initial_dispatch_reserve_hold
+    assert solved.initial_dispatch_mode == "SELF_CONSUME"
+    assert plan.flows[0].dispatch_mode == "HOLD"
+    validate_modes(solved, plan.flows, plan.carried_bridges)
+
+
+def test_solve_released_leaves_the_commitment_last():
+    problem = _unreleasable()
+    # Neither the release nor the commitment's own HOLD has a plan: the commitment goes.
+    solver = _Solver(lambda p: p.initial_dispatch_mode is not None)
+    plan, solved = solve_released(problem, solver=solver)
+    assert [
+        (p.initial_dispatch_reserve_hold, p.initial_dispatch_mode)
+        for p, _ in solver.calls
+    ] == [(False, "SELF_CONSUME"), (True, "SELF_CONSUME"), (False, None)]
+    assert solved is solver.calls[-1][0]
+    assert plan.flows
+
+
+def test_solve_released_plans_a_stranded_commitment_without_it():
+    problem = _stranded()
+    plan, solved = solve_released(problem)
+    assert solved.initial_dispatch_mode is None
+    assert len(plan.flows) == len(problem.slots)
+
+
+def test_solve_released_raises_the_first_failure_when_every_rung_has_none():
+    problem = _unreleasable()
+    solver = _Solver(lambda _: True)
+    with pytest.raises(SolveError) as error:
+        solve_released(problem, solver=solver)
+    assert error.value.reason == "infeasible"
+    assert len(solver.calls) == 3
+    # A problem with no PV-follow commitment has no rung at all.
+    solver = _Solver(lambda _: True)
+    with pytest.raises(SolveError):
+        solve_released(capped((0.9,) * 4), solver=solver)
+    assert len(solver.calls) == 1
+
+
+@pytest.mark.parametrize("reason", ["timeout", "invalid solver result"])
+def test_only_infeasible_takes_a_rung(reason):
+    solver = _Solver(lambda _: True, reason=reason)
+    with pytest.raises(SolveError) as error:
+        solve_released(_unreleasable(), solver=solver)
+    assert error.value.reason == reason
+    assert len(solver.calls) == 1
+
+
+def test_the_rungs_share_the_budget(monkeypatch):
+    from custom_components.energy_compass.engine import optimize
+
+    clock = [100.0]
+    monkeypatch.setattr(optimize, "perf_counter", lambda: clock[0])
+    # The release spends 7 of the 10 seconds: the next rung gets what is left, not 10.
+    solver = _Solver(
+        lambda p: not p.initial_dispatch_reserve_hold, seconds=7, clock=clock
+    )
+    solve_released(_unreleasable(), time_limit_s=10, budget_s=10, solver=solver)
+    assert [call[1]["time_limit_s"] for call in solver.calls] == [10, 3]
+    # A budget the release spent leaves no second solve: a timeout, not a second full limit.
+    clock[0] = 100.0
+    solver = _Solver(lambda _: True, seconds=10, clock=clock)
+    with pytest.raises(SolveError) as error:
+        solve_released(_unreleasable(), time_limit_s=10, budget_s=10, solver=solver)
+    assert error.value.reason == "timeout"
+    assert len(solver.calls) == 1
+
+
+def test_a_followed_stranded_commitment_goes_on_without_it():
+    # Rolled: the state is reached by following a release at the reserve; the plan that
+    # leaves the commitment is carried like any other and the next boundary has a plan.
+    problem = _stranded()
+    plan, solved = solve_released(problem)
+    after = follow(solved, plan)
+    assert after.initial_dispatch_mode == plan.flows[0].dispatch_mode
+    next_plan, _ = solve_released(after)
+    assert next_plan.flows
+
+
+def _real_compute_inputs():
+    from test_export_benefit import native_config
+    from test_strategy_runtime import _pv_binding, _pv_state
+
+    from custom_components.energy_compass.config_models import PvSource
+
+    config = native_config()
+    config["settings"].update(
+        minimum_mode_minutes=60, grid_export_kw=0, allow_curtailment=True
+    )
+    now = datetime(2026, 9, 18, 1, tzinfo=UTC)
+    config["sources"]["pv"] = PvSource(True, ((_pv_binding(),),)).to_dict()
+    rows = [
+        {
+            "start": now + timedelta(minutes=15 * i),
+            "end": now + timedelta(minutes=15 * (i + 1)),
+            "value": 0.0 if i == 0 else 0.9,
+        }
+        for i in range(8)
+    ]
+    states = {
+        "sensor.soc": {"state": "0", "attributes": {}, "last_updated": now},
+        **_pv_state(now, rows),
+    }
+    commitment = {
+        "mode": "SELF_CONSUME",
+        "since": (now - timedelta(minutes=15)).isoformat(),
+    }
+    return config, states, now, commitment
+
+
+def test_the_runtime_publishes_the_commitments_hold_when_the_release_really_has_no_plan():
+    # No monkeypatched solver: an export cap of 0, a charge power of 1 kW beside 3.6 kW
+    # of PV and a pack at the reserve. The released plan is infeasible (no charging and
+    # curtailing in one interval, T-064), the house still gets one.
+    from custom_components.energy_compass import runtime
+
+    config, states, now, commitment = _real_compute_inputs()
+    result = runtime.compute(config, states, now, battery_commitment=commitment)
+    modes = [row["dispatch_mode"] for row in result["intervals"]]
+    assert result["status"] == "ready"
+    assert modes[0] == "HOLD"
+    assert "CURTAIL" in modes
+    assert result["dispatch_policy"]["safety_exception"]["reason"] == (
+        "observed_soc_minimum"
+    )
+    assert result["dispatch_policy"]["safety_exception"]["interrupted_mode"] == (
+        "SELF_CONSUME"
+    )

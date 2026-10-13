@@ -303,6 +303,28 @@ def test_a_failing_hindsight_solve_names_the_day(tmp_path, capsys, monkeypatch):
     assert err.startswith("error: 2026-09-20: ") and "infeasible" in err
 
 
+def test_a_carried_commitment_without_a_plan_is_planned_without_it(capsys, monkeypatch):
+    # The runtime never leaves the house without a plan (T-058); the replay solves a
+    # carried commitment through the same ladder, so a step whose commitment has no plan
+    # is not a failed solve that "ran as self-consumption".
+    real = replay.solve
+    committed = []
+
+    def solve(problem, **kwargs):
+        if problem.initial_dispatch_mode in ("CHARGE_PV", "SELF_CONSUME"):
+            committed.append(problem)
+            raise replay.SolveError("infeasible")
+        return real(problem, **kwargs)
+
+    monkeypatch.setattr(replay, "solve", solve)
+
+    code, days, _ = run(capsys, "--set", "minimum_mode_minutes=60")
+
+    assert code == 0
+    assert committed
+    assert [d["solve_failures"] for d in days] == [0, 0]
+
+
 def test_failed_plan_solves_are_counted_per_day_in_json(capsys, monkeypatch):
     real = replay.solve
 

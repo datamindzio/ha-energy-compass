@@ -27,6 +27,10 @@ reads a slot's load.
 T-050 adds a sunrise on a depleted pack (`deprun`, `deproll`, `deprobe` through a flexible-load probe): a carried CHARGE_PV or
 SELF_CONSUME whose pack is at or just above the reserve, PV rising from nothing, and an
 export cap of 0, 0.5 or 2 kW. The base draws start from a full or nearly full pack.
+T-058 adds `resrun`/`resroll`: an ordinary draw with SELF_CONSUME carried and the pack exactly at
+the reserve (`make_reserve`; almost every draw reaches the safety exception, where `deprun` reaches
+it in about one draw in ten), the generator aimed at the reserve rule. `planned` goes through
+`solve_released`, so a tree with the fallback plans the commitment's HOLD when the release has none.
 Invoked by path, like the other benchmarks: the repository root must be on PYTHONPATH.
 """
 
@@ -39,7 +43,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
-from custom_components.energy_compass.engine import dispatch_policy
+from custom_components.energy_compass.engine import dispatch_policy, optimize
 from custom_components.energy_compass.engine.models import (
     Battery,
     FlexibleLoadRequest,
@@ -179,6 +183,27 @@ def make_depleted(rng):
     )
 
 
+def make_reserve(rng):
+    """An ordinary draw with a PV-follow commitment carried and the pack exactly at the reserve (T-058).
+
+    Any export cap, PV with gaps, a carried SELF_CONSUME since 0 to 45 minutes: the draws
+    where the safety exception of `dispatch_policy.safety_exception` applies (the pack at
+    the reserve, inside the commitment's minimum duration). `make_depleted` draws the pack at
+    the reserve in one of five draws and SELF_CONSUME in one of two, only on a sunrise.
+    """
+    problem = make(rng)
+    battery = problem.battery
+    return replace(
+        problem,
+        battery=replace(
+            battery, initial_kwh=battery.capacity_kwh * battery.minimum_soc_fraction
+        ),
+        initial_dispatch_mode="SELF_CONSUME",
+        initial_dispatch_mode_since=START
+        - timedelta(minutes=rng.choice((0, 1, 15, 16, 29, 45))),
+    )
+
+
 def make_depleted_probe(rng):
     """The sunrise on an empty pack with a flexible load on top (`deprobe`)."""
     problem = make_depleted(rng)
@@ -189,23 +214,20 @@ def make_depleted_probe(rng):
 
 
 def planned(problem, request=None):
-    """Solve as the runtime does: a depleted release without a plan falls back (T-058).
+    """Solve as the runtime does: `solve_released`, a depleted release without a plan falls back.
 
-    Returns the plan and the problem it was solved for. A tree without
-    `reserve_fallback` (a checkout of main to compare with) never falls back.
+    Returns the plan and the problem it was solved for. A tree without `solve_released`
+    (a checkout of main to compare with) solves once and never falls back. A flexible-load
+    request is planned on the problem the base plan was solved for, like the runtime's probes.
     """
-    try:
-        if request is None:
-            return solve(problem), problem
-        return solve_flexible_load(problem, request).plan, problem
-    except SolveError as error:
-        fallback = getattr(dispatch_policy, "reserve_fallback", None)
-        fallback = (
-            fallback(problem) if fallback and error.reason == "infeasible" else None
-        )
-        if fallback is None:
-            raise
-    return planned(fallback, request)
+    released = getattr(optimize, "solve_released", None)
+    if released:
+        plan, problem = released(problem)
+    else:
+        plan = solve(problem)
+    if request is None:
+        return plan, problem
+    return solve_flexible_load(problem, request).plan, problem
 
 
 def run(problem, request=None):
@@ -290,11 +312,16 @@ def follow(problem, plan):
 
 
 def roll(problem, steps=8):
-    """Plan, follow the first interval, carry the commitment and the pack, plan again."""
+    """Plan, follow the first interval, carry the commitment and the pack, plan again.
+
+    The trace names the executed mode of each interval: `*` a carried idle bridge, `!` the
+    plan of `reserve_fallback` (the commitment's own HOLD), `?` the plan without the commitment.
+    """
     trace = []
     for step in range(steps):
         if len(problem.slots) < 2:
             break
+        carried = problem.initial_dispatch_mode
         try:
             plan, problem = planned(problem)
         except SolveError as error:
@@ -303,6 +330,7 @@ def roll(problem, steps=8):
             plan.flows[0].dispatch_mode
             + ("*" if 0 in plan.carried_bridges else "")
             + ("!" if getattr(problem, "initial_dispatch_reserve_hold", False) else "")
+            + ("?" if carried and not problem.initial_dispatch_mode else "")
         )
         problem = follow(problem, plan)
     return ["ok", len(trace), "", trace]
@@ -364,10 +392,20 @@ def draws(kind, seed, count):
         return [run(*make_probe(rng)) for _ in range(count)]
     if kind == "deprobe":
         return [run(*make_depleted_probe(rng)) for _ in range(count)]
-    makers = {"run": make, "negrun": make_negative, "deprun": make_depleted}
+    makers = {
+        "run": make,
+        "negrun": make_negative,
+        "deprun": make_depleted,
+        "resrun": make_reserve,
+    }
     if kind in makers:
         return [run(makers[kind](rng)) for _ in range(count)]
-    makers = {"roll": make, "negroll": make_negative, "deproll": make_depleted}
+    makers = {
+        "roll": make,
+        "negroll": make_negative,
+        "deproll": make_depleted,
+        "resroll": make_reserve,
+    }
     return [roll(makers[kind](rng)) for _ in range(count)]
 
 
@@ -379,7 +417,7 @@ if __name__ == "__main__":
     else:
         out = draws(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
         Path(sys.argv[4]).write_text(json.dumps(out))
-        if sys.argv[1] in ("roll", "negroll", "deproll"):
+        if sys.argv[1] in ("roll", "negroll", "deproll", "resroll"):
             print(
                 sum(row[0] == "ok" for row in out),
                 "followed to the end, of",

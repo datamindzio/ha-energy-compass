@@ -138,6 +138,28 @@ def reserve_fallback(problem: Problem) -> Problem | None:
     return fallback if safety_exception(fallback) else None
 
 
+def uncommitted_fallback(problem: Problem) -> Problem | None:
+    """Return the problem without its carried PV-follow commitment, or None if it has none.
+
+    The last resort of `optimize.solve_released`, after `reserve_fallback`: a carried
+    CHARGE_PV or SELF_CONSUME inside its minimum duration can leave a state no plan
+    reaches (the previous plan allowed what the commitment now forbids, e.g. the
+    `preserve_initial` terminal rule beside a pack just above the reserve and PV below the
+    load), and the house is never left without a plan. The commitment's clock is dropped:
+    the first interval's mode starts a new one, which the coordinator stores as for any
+    mode change.
+    """
+    if dwell_group(problem.initial_dispatch_mode) != "PV_FOLLOW":
+        return None
+    return replace(
+        problem,
+        initial_dispatch_mode=None,
+        initial_dispatch_mode_since=None,
+        initial_dispatch_released=False,
+        initial_dispatch_reserve_hold=False,
+    )
+
+
 def _initial(problem):
     exception = safety_exception(problem)
     return (

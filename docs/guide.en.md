@@ -669,7 +669,7 @@ stateDiagram-v2
     CHARGE_GRID --> HOLD: after minimum duration
     DISCHARGE_GRID --> HOLD: after minimum duration
     CHARGE_GRID --> HOLD: safety exception<br/>(SOC at max, price above ceiling)
-    PVF --> HOLD: safety exception<br/>(SOC at max / at reserve)
+    PVF --> HOLD: safety exception<br/>(CHARGE_PV at SOC max; SELF_CONSUME at reserve only if its release has no plan)
     DISCHARGE_GRID --> HOLD: safety exception<br/>(SOC at reserve)
 ```
 
@@ -733,9 +733,13 @@ Rules (defaults: 60 min, 0.1 kW):
   empty state) is depleted in this sense, not a safety exception: a carried `SELF_CONSUME` there is
   released and charges like one 0.01 kWh above the reserve. Where that released `HOLD` has no plan
   (the charge power cannot take the PV above the export cap, and charging and curtailing in one
-  interval is not modelled) and curtailment is allowed, the plan is the commitment's own `HOLD`
-  with its clock, as the safety exception below, which curtails: the house is never left without
-  one. The return is the commitment going on, not a new
+  interval is not modelled) the house is still never left without one. The plan is the first of
+  these that has a solution, each tried only when the one before has none and all within the
+  recalculation's one time budget: the release; the commitment's own `HOLD` with its clock, as the
+  safety exception below, which curtails where curtailment is allowed; the plan without the
+  commitment, whose first mode starts a clock of its own (only for a carried `CHARGE_PV` or
+  `SELF_CONSUME`, which a plan followed one interval can leave in a state its own minimum duration
+  then makes infeasible). The return is the commitment going on, not a new
   run: the commitment's deadline stays the only clock. A pack that empties again inside the same
   commitment is released again and goes back again, as often as the commitment lasts. The release
   survives the interval boundary: the plan marks the rows of such a `HOLD`

@@ -1162,7 +1162,7 @@ def compute(
     plan, problem = solve_released(
         problem,
         time_limit_s=min(values["solve_time_limit_s"], values["total_time_limit_s"]),
-        budget_s=values["total_time_limit_s"] - (perf_counter() - started),
+        budget_s=values["total_time_limit_s"],
         accept_incumbent=True,
         solver=solve,
     )
