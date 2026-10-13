@@ -395,7 +395,14 @@ DECISION = r"""
    1 A, 21.09); przy progu <= SOC dryf w dol ograniczony do jednego kroku.
    Krzywa rozladowania (544 V przy 100%) trzyma cel w zatwierdzonym 495-560 V.
    Bez zatrzasku reached_key: cel sledzi plan w kazdym przebiegu. #}
-{% if state in ['HOLD','CURTAIL'] and ns.row %}
+{# CURTAIL z ladowaniem (charge_kwh > 0: PV ponad to, co przepusci instalacja,
+   przekracza ladowanie z charge_kw, T-064) laduje z samego PV pelnym capem jak
+   CHARGE_PV: siec 0 A, kierunek Disabled, rozladowanie 0 A. Pozostale HOLD/CURTAIL
+   trzymaja SOC. #}
+{% set curtail_charges = state == 'CURTAIL' and ns.row and ns.row.charge_kwh|float(0) > 0 %}
+{% if curtail_charges %}
+  {% set charge = charge_cap %}{% set discharge = 0 %}
+{% elif state in ['HOLD','CURTAIL'] and ns.row %}
   {% set target_soc = [100, [10, ns.row.end_soc_kwh|float / capacity_kwh * 100]|max]|min|round(0,'floor') %}
   {% set knots = [496,512,515,520,522,523,528,531,536,544] %}
   {% set lo = [8, (target_soc / 10)|int - 1]|min %}
@@ -425,11 +432,11 @@ DECISION = r"""
    nastawy. #}
 {% set held = rt.get('desired') if rt.get('desired') is mapping else {} %}
 {% set full_held = state == 'HOLD' and rt.get('state') == 'HOLD' and soc > 99 and held|length > 0 and 'Grid' not in held.values()|list %}
-{% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or (state == 'HOLD' and ns.row)) %}
+{% set full_pv = states(operation_entity)=='Voltage' and (soc >= 100 or full_held) and not balance and (state in ['CHARGE_PV','SELF_CONSUME'] or curtail_charges or (state == 'HOLD' and ns.row)) %}
 {% if full_pv %}
   {% set charge = charge_cap %}{% set grid = 0 %}{% set direction = 'Disabled' %}
   {% set target_soc = 10 %}{% set target_voltage = 49.6 %}{% set power = max_power_w %}
-{% elif state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
+{% elif (state in ['CHARGE_PV','SELF_CONSUME','CHARGE_GRID'] or curtail_charges) and soc >= 100 and not balance %}{% set charge=0 %}{% endif %}
 {% if states(operation_entity)=='Voltage' and (target_voltage < 49.5 or target_voltage > 56.0) %}
   {% set ns.valid=false %}{% set ns.reason='napięcie: cel przekracza zatwierdzony zakres 495–560 V; nie zmieniaj limitów BMS' %}
   {% set state='BASE' %}{% set target_soc=10 %}{% set target_voltage=49.6 %}{% set direction='Disabled' %}{% set charge=relinquish_current %}{% set discharge=relinquish_current %}{% set grid=0 %}{% set power=max_power_w %}
@@ -478,7 +485,7 @@ DECISION = r"""
   requested_mode=states(mode_entity), commissioned=commissioned, target_reached=ns.reached, reached_key=reached_key, voltage=v, soc=soc, target_voltage=target_voltage, target_soc=target_soc,
   energy_mode=energy_mode, discharged_kwh=discharged|round(3),
   slot_energy=dict(key=reached_key, discharge=slot_start) if energy_mode else rt.get('slot_energy'),
-  warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' else '') }}
+  warning='CURTAIL nieobsługiwany: zastosowano HOLD' if state=='CURTAIL' and not curtail_charges else '') }}
 """
 
 BASE_DECISION = DECISION.replace(

@@ -2614,6 +2614,12 @@ parametrów baterii (pojemność, sprawność) w planie</code>.</p>
 <td>wszystkie Disabled, SOC 10 %</td>
 </tr>
 <tr>
+<td><code>CURTAIL</code> z <code>charge_kwh</code> powyżej 0</td>
+<td>limit / 0 A</td>
+<td>0 A</td>
+<td>wszystkie Disabled, SOC 10 %</td>
+</tr>
+<tr>
 <td><code>HOLD</code>, <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> przy SOC ≥ 100 % w trybie Voltage (<code>HOLD</code>: utrzymany do SOC ≤ 99 %)</td>
 <td>limit / 0 A w <code>HOLD</code>, limit w pozostałych</td>
 <td>0 A</td>
@@ -2632,7 +2638,7 @@ parametrów baterii (pojemność, sprawność) w planie</code>.</p>
 <td>Sell w aktywnym programie, cel SOC z planu, moc z planu, ≤ <code>max_power_w</code>; po osiągnięciu celu Disabled</td>
 </tr>
 <tr>
-<td><code>HOLD</code>, <code>CURTAIL</code></td>
+<td><code>HOLD</code>, <code>CURTAIL</code> z <code>charge_kwh</code> 0</td>
 <td><code>hold_grid_current</code> / 0 A</td>
 <td><code>hold_grid_current</code></td>
 <td>Grid, cel SOC = końcowy SOC planu zaokrąglony w dół</td>
@@ -2670,12 +2676,14 @@ i zostaje w kolejnych przebiegach <code>HOLD</code>, dopóki SOC nie spadnie do 
 zaczyna się od ładowania 0 A, i przypada najwyżej jedna na punkt procentowy zmiany SOC; bez PV pakiet opada na
 poborze własnym falownika, a <code>HOLD</code> doładowuje go z sieci, w cyklu liczonym w godzinach. <code>CHARGE_PV</code> i <code>SELF_CONSUME</code>
 nie potrzebują histerezy, bo poniżej 100 % zapisują te same wartości. <code>CHARGE_GRID</code> (zachowuje
-<code>voltage_grid_charge_ceiling</code> i prąd ładowania 0 A przy 100 %), <code>CURTAIL</code>,
-trzymanie balansu i tryb <code>Capacity</code> działają jak dotąd. <code>CURTAIL</code> wykonuje profil <code>HOLD</code> z ostrzeżeniem, bo sterownik nie ogranicza PV. Ten profil zapisuje <code>hold_grid_current</code>
-(domyślnie 1 A) jako prąd ładowania i prąd z sieci, więc przedział <code>CURTAIL</code>, w którym plan ładuje pakiet (PV, którego
-instalacja nie przepuści, <code>charge_kwh</code> powyżej 0), ładuje na falowniku mocą około 50 W, a planowany końcowy stan
-naładowania tego przedziału nie jest osiągany; następne przeliczenie odczytuje rzeczywisty stan naładowania i planuje od
-niego (zadanie następcze T-076).</p>
+<code>voltage_grid_charge_ceiling</code> i prąd ładowania 0 A przy 100 %), trzymanie balansu i tryb <code>Capacity</code> działają jak dotąd. Wiersz <code>CURTAIL</code>, który ładuje (<code>charge_kwh</code> powyżej 0: PV ponad to,
+co przepuszcza instalacja, jest większe niż pakiet przyjmuje przy mocy ładowania), działa jak <code>CHARGE_PV</code> bez
+rozładowania: prąd ładowania to limit, prąd z sieci 0 A, prąd rozładowania 0 A, wszystkie programy Disabled, więc pakiet
+bierze PV pełnym limitem, a resztę falownik ogranicza sam. Sterownik nigdy nie kupuje w takim wierszu energii z sieci.
+Przy SOC 100 % idzie za <code>CHARGE_PV</code> (0 A w trybie <code>Capacity</code>, limit w trybie <code>Voltage</code>) i nie zgłasza ostrzeżenia. Każdy
+inny wiersz <code>CURTAIL</code> (<code>charge_kwh</code> 0) wykonuje profil <code>HOLD</code> z ostrzeżeniem <code>CURTAIL nieobsługiwany: zastosowano HOLD</code>,
+bo sterownik nie ogranicza PV: zapisuje <code>hold_grid_current</code> (domyślnie 1 A) jako prąd ładowania i prąd z sieci i trzyma
+planowany końcowy stan naładowania.</p>
 <p>Sterowane są tylko tryby baterii z listy <code>commissioned_battery_modes</code>; każdy inny tryb (np. Voltage
 przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Voltage cel poza zakresem
 495–560 V jest odrzucany.</p>

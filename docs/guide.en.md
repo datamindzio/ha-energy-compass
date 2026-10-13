@@ -1689,10 +1689,11 @@ baterii (pojemność, sprawność) w planie`.
 | Plan state | Charge / discharge current | Grid charge current | TOU direction, target |
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | cap / cap | 0 A | all Disabled, SOC 10 % |
+| `CURTAIL` with `charge_kwh` above 0 | cap / 0 A | 0 A | all Disabled, SOC 10 % |
 | `HOLD`, `CHARGE_PV`, `SELF_CONSUME` at SOC ≥ 100 % in Voltage mode (`HOLD`: kept until SOC ≤ 99 %) | cap / 0 A in `HOLD`, cap otherwise | 0 A | all Disabled, SOC 10 % |
 | `CHARGE_GRID` | cap / 0 A | planned grid share, ≤ `max_grid_current` | Grid on the active program, target SOC from the plan; in Voltage mode TOU voltage `voltage_grid_charge_ceiling` |
 | `DISCHARGE_GRID` | 0 A / planned, ≤ cap; after the target is reached `reached_discharge_current`, ≤ cap | 0 A | Sell on the active program, target SOC from the plan, power = planned, ≤ `max_power_w`; Disabled after the target is reached |
-| `HOLD`, `CURTAIL` | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, target SOC = planned end SOC rounded down |
+| `HOLD`, `CURTAIL` with `charge_kwh` 0 | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, target SOC = planned end SOC rounded down |
 | base (release, invalid plan) | `relinquish_current` / `relinquish_current` | 0 A | all Disabled, SOC 10 %, 49.6 (496 V), power `max_power_w` |
 
 The cap is `min(max_current, max_power_w / V)` for charging and `min(max_current, max_power_w × eta_discharge / V)`
@@ -1720,11 +1721,14 @@ and 100 % does not rewrite the profile on every crossing. Each switch is one wri
 charge 0 A, and there is at most one per percentage point of SOC movement; without PV the pack drifts down on the
 inverter's own draw and `HOLD` tops it up from the grid, a cycle of hours. `CHARGE_PV` and `SELF_CONSUME` need no
 hysteresis, because below 100 % they write the same values. `CHARGE_GRID` (it keeps `voltage_grid_charge_ceiling`
-and its 0 A charge current at 100 %), `CURTAIL`, the balance hold and `Capacity` mode behave as before. `CURTAIL` runs the `HOLD` profile with a warning, because the
-controller cannot limit PV. That profile writes `hold_grid_current` (1 A by default) as the charge current and as the grid
-current, so a `CURTAIL` interval in which the plan charges the pack (PV the site cannot pass, `charge_kwh` above 0) charges
-at about 50 W on the inverter, and the planned end state of charge of that interval is not reached; the next
-recalculation reads the real state of charge and plans from it (follow-up T-076).
+and its 0 A charge current at 100 %), the balance hold and `Capacity` mode behave as before. A `CURTAIL` row that charges (`charge_kwh` above 0: the PV
+above what the site passes is more than the pack takes at the charge power) runs like `CHARGE_PV` without discharge: the
+charge current is the cap, the grid current 0 A, the discharge current 0 A, all programs Disabled, so the pack takes PV
+at the full cap and the inverter curtails the rest by itself. The controller never buys grid energy for such a row. At
+100 % SOC it follows `CHARGE_PV` (0 A in `Capacity` mode, the cap in `Voltage` mode) and it raises no warning. Any other
+`CURTAIL` row (`charge_kwh` 0) runs the `HOLD` profile with the warning `CURTAIL is not supported: HOLD applied`, because
+the controller cannot limit PV: it writes `hold_grid_current` (1 A by default) as the charge current and the grid current
+and holds the planned end state of charge.
 
 Only battery modes listed in `commissioned_battery_modes` are controlled; any other mode (for example
 Voltage before its thresholds were proven) keeps the base profile. With Voltage allowed, a target

@@ -489,7 +489,16 @@ def decide(
                 direction = "Disabled"
                 reached = True
 
-    if state in ("HOLD", "CURTAIL") and row:
+    # A CURTAIL row that charges (the PV above what the site passes exceeds what the
+    # pack takes at charge_kw, T-064) charges from PV at the full cap: grid 0 A,
+    # direction Disabled, discharge 0 A. Every other HOLD/CURTAIL row holds the SOC.
+    curtail_charges = (
+        state == "CURTAIL" and bool(row) and _float(row.get("charge_kwh")) > 0
+    )
+    if curtail_charges:
+        charge = charge_cap
+        discharge = 0
+    elif state in ("HOLD", "CURTAIL") and row:
         target_soc = _round(
             min(100, max(10, _float(row.get("end_soc_kwh")) / capacity_kwh * 100)),
             0,
@@ -524,7 +533,11 @@ def decide(
         operation == "Voltage"
         and (soc >= 100 or full_held)
         and not balance
-        and (state in FORCING_STATES or (state == "HOLD" and bool(row)))
+        and (
+            state in FORCING_STATES
+            or curtail_charges
+            or (state == "HOLD" and bool(row))
+        )
     )
     if full_pv:
         charge = charge_cap
@@ -534,7 +547,7 @@ def decide(
         target_voltage = BASE_VOLTAGE
         power = max_power_w
     elif (
-        state in ("CHARGE_PV", "SELF_CONSUME", "CHARGE_GRID")
+        (state in ("CHARGE_PV", "SELF_CONSUME", "CHARGE_GRID") or curtail_charges)
         and soc >= 100
         and not balance
     ):
@@ -650,7 +663,9 @@ def decide(
         slot_energy={"key": reached_key, "discharge": slot_start}
         if energy_mode
         else rt.get("slot_energy"),
-        warning_code="curtail_unsupported" if state == "CURTAIL" else "",
+        warning_code="curtail_unsupported"
+        if state == "CURTAIL" and not curtail_charges
+        else "",
     )
 
 
