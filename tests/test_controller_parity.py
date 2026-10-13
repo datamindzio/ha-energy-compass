@@ -216,7 +216,9 @@ def test_golden_blueprint_is_byte_identical_to_v0_1_35():
     assert hashlib.sha256(GOLDEN.read_bytes()).hexdigest() == GOLDEN_SHA256
 
 
-def test_golden_blueprint_is_byte_identical_to_v0_1_37():
+# The file is the 0.1.38 blueprint frozen from main at 7888645 (0.1.37 plus #41 and #46),
+# not the file tagged v0.1.37; the name keeps its original release.
+def test_golden_blueprint_is_byte_identical_to_the_frozen_0_1_38_oracle():
     assert hashlib.sha256(GOLDEN_V0137.read_bytes()).hexdigest() == GOLDEN_V0137_SHA256
 
 

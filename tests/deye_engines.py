@@ -2,7 +2,7 @@
 
 `test_deye_controller.py` runs every scenario against the generated blueprint and
 the native controller; `test_controller_native_parity.py` runs it against the frozen
-v0.1.37 blueprint ("oracle") and the native controller. All three expose the same
+0.1.38 blueprint ("oracle"; 0.1.37 plus #41 and #46) and the native controller. All three expose the same
 harness API; `use` selects the active one and `Harness`/`Runner` build from it.
 """
 

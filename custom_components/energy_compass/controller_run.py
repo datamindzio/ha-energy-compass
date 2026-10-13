@@ -1,6 +1,6 @@
 """The native Deye executor: snapshot, decide and the write transaction loop.
 
-`DeyeExecutor.run` is the run algorithm of the 0.1.37 blueprint
+`DeyeExecutor.run` is the run algorithm of the 0.1.38 blueprint
 (`tools/deye_controller/build.py` ACTIONS and WRITE): up to three transactions,
 each writing the planned commands with up to three attempts per command, every
 write persisted first and read back from the registers. The profile math lives in

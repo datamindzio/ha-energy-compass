@@ -1,7 +1,7 @@
 """A CURTAIL row that charges (T-064) charges the pack from PV; any other CURTAIL holds.
 
 The scenarios run against the generated blueprint and the native controller. They live
-outside `test_deye_controller.py`, whose scenarios the frozen 0.1.37 blueprint replays:
+outside `test_deye_controller.py`, whose scenarios the frozen 0.1.38 blueprint replays:
 that blueprint holds every CURTAIL row, which is the divergence pinned here.
 """
 
