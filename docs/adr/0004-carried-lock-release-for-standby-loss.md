@@ -399,5 +399,8 @@ tasks that edit `dispatch_policy`.
   are there"; a change to the release, to `_owed` or to the ladder can be read on it against `main` (`--json` on two
   checkouts, then `compare`). The three runs above took 67 minutes for both trees side by side, three processes each,
   on a shared six-core machine.
-- A site cannot tell today which rung planned its interval. T-086 adds that to the log, so the condition above can be
-  met by a site and not only by a benchmark.
+- A site could not tell which rung planned its interval. `runtime.compute` now writes one `_LOGGER.debug` line
+  (`solve_released planned on rung 2|3: carried mode … since …, first planned mode …, first interval forecast PV … kWh
+  and load … kWh, pack at …%`) where the ladder took rung 2 or 3, and nothing on rung 1 (T-086; no entity, attribute
+  or engine change). A site enables `logger: logs: custom_components.energy_compass.runtime: debug` and quotes the
+  line, so the condition above can be met by a site and not only by a benchmark.
