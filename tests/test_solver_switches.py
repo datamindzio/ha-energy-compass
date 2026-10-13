@@ -1,9 +1,10 @@
 """HiGHS' default run against the run without presolve on the forced-spill rows (T-085).
 
-Two matrices of `benchmarks/spill_sweep.py probe` (seed 5 draw 7, seed 22 draw 294, second
-matrix of the draw) as `main` built them before T-066 split the spill row
-(dd40906): the default run returns status 0, gap 0 and no fractional binary at a plan that
-is dearer than one the same matrix has (rows to 1e-6). The fixture holds the model as the
+Three matrices of `benchmarks/spill_sweep.py probe` (second matrix of the draw): seed 5 draw 7
+and seed 22 draw 294 as `main` built them before T-066 split the spill row (dd40906), and
+seed 7 draw 277 as the head of T-085 builds it (the split row: the class is reachable there
+too). The default run returns status 0, gap 0 and no fractional binary at a plan that is
+dearer than one the same matrix has (rows to 1e-6). The fixture holds the model as the
 solver saw it, so no benchmark is imported.
 """
 
@@ -24,6 +25,7 @@ FIXTURES = (
 MATRICES = {
     "probe_5_7_run_1": (-0.206387, -0.263997),
     "probe_22_294_run_1": (-1.174629, -1.226629),
+    "probe_7_277_run_1": (-0.842105, -0.851579),
 }
 
 
@@ -128,17 +130,89 @@ def test_a_cheaper_run_that_breaks_a_row_is_not_taken(monkeypatch):
     assert cost(model, values) == pytest.approx(MATRICES[name][0], abs=1e-5)
 
 
-def test_a_proven_default_run_is_kept_when_the_other_is_not_cheaper(monkeypatch):
-    name = "probe_5_7_run_1"
-    model = load(name, compare=True)
+def second_run(monkeypatch, patch):
+    """Let `patch(result, first)` change the result of the run without presolve."""
     run = optimize._Model._run
+    firsts = []
 
-    def timed_out(self, matrix, time_limit_s, **options):
+    def patched(self, matrix, time_limit_s, **options):
         result = run(self, matrix, time_limit_s, **options)
         if options.get("presolve") is False:
-            result.status = 1
+            patch(result, firsts[0])
+        else:
+            firsts.append(result)
         return result
 
-    monkeypatch.setattr(optimize._Model, "_run", timed_out)
+    monkeypatch.setattr(optimize._Model, "_run", patched)
+
+
+def test_a_second_run_that_times_out_changes_nothing(monkeypatch):
+    name = "probe_5_7_run_1"
+    model = load(name, compare=True)
+
+    def timed_out(result, first):
+        result.status = 1
+
+    second_run(monkeypatch, timed_out)
     values = model.solve(30.0)
     assert cost(model, values) == pytest.approx(MATRICES[name][0], abs=1e-5)
+
+
+def test_a_proven_second_run_that_is_dearer_changes_nothing(monkeypatch):
+    name = "probe_5_7_run_1"
+    model = load(name, compare=True)
+
+    def dearer(result, first):
+        result.fun = first.fun + 1.0
+
+    second_run(monkeypatch, dearer)
+    values = model.solve(30.0)
+    assert cost(model, values) == pytest.approx(MATRICES[name][0], abs=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("times_the_margin", "taken"), [(0.5, False), (0.99, False), (1.01, True)]
+)
+def test_a_second_run_is_taken_only_beyond_the_margin(
+    monkeypatch, times_the_margin, taken
+):
+    name = "probe_5_7_run_1"
+    model = load(name, compare=True)
+
+    def cheaper(result, first):
+        margin = optimize._SWITCH_ABSOLUTE + optimize._SWITCH_RELATIVE * abs(first.fun)
+        result.fun = first.fun - times_the_margin * margin
+
+    second_run(monkeypatch, cheaper)
+    values = model.solve(30.0)
+    assert cost(model, values) == pytest.approx(MATRICES[name][int(taken)], abs=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("first_run_s", "checked"),
+    # 30 s limit: the second run needs twice the default run's time left, so up to 10 s.
+    [(0.05, True), (9.9, True), (10.1, False), (25.0, False)],
+)
+def test_the_second_run_starts_only_with_headroom_left_of_the_limit(
+    monkeypatch, first_run_s, checked
+):
+    name = "probe_5_7_run_1"
+    model = load(name, compare=True)
+    runs = []
+    run = optimize._Model._run
+
+    def counted(self, matrix, time_limit_s, **options):
+        runs.append((time_limit_s, options))
+        return run(self, matrix, time_limit_s, **options)
+
+    readings = [100.0, 100.0 + first_run_s]
+    monkeypatch.setattr(optimize._Model, "_run", counted)
+    monkeypatch.setattr(optimize, "perf_counter", lambda: readings.pop(0))
+    values = model.solve(30.0)
+    assert [options for _, options in runs] == (
+        [{}, {"presolve": False}] if checked else [{}]
+    )
+    if checked:
+        # It gets what the default run left.
+        assert runs[1][0] == pytest.approx(30.0 - first_run_s)
+    assert cost(model, values) == pytest.approx(MATRICES[name][int(checked)], abs=1e-5)

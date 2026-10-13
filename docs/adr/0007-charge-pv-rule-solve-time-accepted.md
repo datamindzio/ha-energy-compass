@@ -418,11 +418,14 @@ re-measure this amendment, not to remove the second attempt.
 
 Decision: option (a) of the ticket. `_Model.solve` solves a model with forced-spill binaries (`compare_switches`,
 set where the gated spill row or a flexible load puts `spill_open` into the model) a second time without presolve
-when the default run is proven optimal (status 0), in what is left of the time limit, and takes that plan if it is
-cheaper by more than 1e-6 plus 1e-4 of the cost (the gap the default run stops at) and satisfies every bound, row
-(1e-6) and binary of the matrix (`_Model._satisfies`). A second run that times out, is infeasible, is fractional,
-breaks a row or is not cheaper changes nothing; models with mode rows only are not compared (the existing second
-attempt on an infeasible or fractional answer is unchanged). The certificate stays the gate for publishing.
+when the default run is proven optimal (status 0) and what is left of the time limit is at least twice what the
+default run took (`_SWITCH_HEADROOM`), and takes that plan if it is cheaper by more than 1e-6 plus 1e-4 of the cost
+and satisfies every bound, row (1e-6) and binary of the matrix (`_Model._satisfies`). The margin is the gap the
+default run stops at; a model that asks for gap 0 (`exact_mip_gap`) gets the same margin, which only keeps the
+default plan where the other is cheaper by less. A second run that times out, is infeasible, is fractional, breaks
+a row, is dearer or is not cheaper by the margin changes nothing; models with mode rows only are not compared (the
+existing second attempt on an infeasible or fractional answer is unchanged). The certificate stays the gate for
+publishing.
 
 *Reproduced.* On `origin/main` dd40906 (before T-066) `benchmarks/switch_audit.py probe 5 300` and `probe 22 300`:
 draw 7 matrix 1 default −0.206387, `presolve=False` −0.263997, `mip_rel_gap=0` −0.206387 (the gap is not the cause);
@@ -430,26 +433,64 @@ draw 294 matrix 1 default −1.174629, `presolve=False` −1.226629. Both matric
 (`tests/fixtures/solver/highs_dearer_default_run.json.gz`, built by wrapping `_Model._run` on that tree) and pinned
 by `tests/test_solver_switches.py`: the default run returns the dearer cost, the run without presolve the cheaper
 one (red after a SciPy upgrade means HiGHS no longer does this: re-measure), `solve` returns the cheaper plan, a
-cheaper point that breaks a row is not taken, and a model without the flag is solved once.
+cheaper point that breaks a row is not taken, a run that is dearer, timed out, or cheaper by less than the margin
+is not taken, and a model without the flag is solved once.
 
 *Rate on this head.* `switch_audit.py probe` seeds 5, 11, 22, 33, 44, 91, 300 draws each (3500 matrices) on the
-head with T-066's split row: 0 matrices where the default run is dearer, the same count as T-066's audit. The two
-draws above are not reachable from the generator any more (the matrix changed), so the ticket's premise,
-"reproduce on main", holds for dd40906 only; the check ships because 0 of 3500 does not clear a rate near 2.8e-4
-per matrix (3500 clean matrices happen 37 % of the time), per LESSONS solver-defect-pinned-on-one-switch.
+head with T-066's split row found 0 matrices where the default run is dearer, the same count as T-066's audit; the
+two draws above are not reachable from the generator any more (the matrix changed), so "reproduce on main" holds
+for dd40906 only. The class is reachable on the head all the same: `spill_sweep.py probe 7`, draw 277 (second
+matrix of the draw) has the default run at −0.842105 and the run without presolve at −0.851579 (1.1 % cheaper,
+every row satisfied), found in the review of this ticket and again in the timing sweep below (1 of 1921 checked
+matrices, 5e-4, the order of main's 2.8e-4). That matrix is the third fixture, pinned the same way. A count of 0
+in 3500 would not have cleared a rate near 2.8e-4 (3500 clean matrices happen 37 % of the time), per LESSONS
+solver-defect-pinned-on-one-switch.
 
-*Cost against the time budget.* `_Model.solve` wall time over a sweep, the check off against on (same seed, one
-machine; 16 cores, Docker, runs one after the other):
+*Cost against the time budget.* The budget is ADR-0007's: `solve_time_limit_s` (10 s) for one solve and
+`total_time_limit_s` (60 s) for a plan with its probes, measured with `benchmarks/optimizer.py`. Docker test
+image (SciPy 1.18.1, HiGHS 1.12.0), 16-core machine, one run at a time, `cost_min` and `grid_friendly`, 48 probes,
+the check off (`_Model.compare_switches` forced to False) against on
+(`benchmarks/switch_site.py <slots> <on|off> <strategy> 48 <export_kw>`):
 
-| Sweep | Solves | With the check | Total off | Total on | Longest off | Longest on |
-| --- | --- | --- | --- | --- | --- | --- |
-| `probe` 11 × 300 | 585 | 422 | 19.7 to 22.4 s | 33.6 to 33.8 s | 0.86 s | 1.43 s |
-| `bell` 5 × 300 | 296 | 274 | 24.6 s | 48.9 s | 1.88 s | 2.35 s |
-| `run` 5 × 300 | 291 | 196 | 3.2 s | 6.1 s | 0.28 s | 0.50 s |
+- The shipped site (curtailment allowed, export 8 kW) never takes the check: 0 second runs in the 39 to 49 solves of
+  each run (96 and 192 slots, both strategies, 48 probes; `switch_site.py` with an export of −1). Its numbers are those of the amendments before.
+- A site that cannot curtail with a 1 kW export cap (`allow_curtailment` is off by default; the forced-spill
+  binaries exist once the export cap or the inverter binds):
 
-A model that takes the check costs up to twice its solve (the second run solves the same matrix again); a model without forced-spill binaries is unchanged. Neither run may exceed the limit: the second run gets
-what the first left (`solve_time_limit_s` 10 s per rung, `total_time_limit_s` over the probes), so a first run
-that used the whole limit gets 1 ms and the plan is the one it held. No solve of the sweeps got near 10 s; the
-full suite (4535 tests) is 502 s with the change. The longer solve is the price of not publishing, as
-optimal, a plan dearer than one the model has: nothing downstream can tell. If the owner finds the time too
-dear, the alternative is to pin the class as a limit, which T-066 already did for the draw it knew.
+| Slots | Strategy | Plan off | Plan on | Second run | Probes completed off / on |
+| --- | --- | --- | --- | --- | --- |
+| 96 | `cost_min` | 2.25 s | 6.84 s | 4.6 s | 3 / 3 of 48 |
+| 96 | `grid_friendly` | 3.48 s | 3.46 s | not started (default run over a third of the limit) | 0 / 0 of 48 |
+| 192 | `cost_min` | 10.04 s (time limited) | 10.04 s | none (status 1) | 0 / 0 of 48 |
+| 192 | `grid_friendly` | 10.06 s (time limited) | 10.04 s | none (status 1) | 0 / 0 of 48 |
+
+  The plan is the same (objective 4.2964, 7.3363, 7.3308) with the check on and off. The probes of this site do not
+  finish inside the 60 s either way: those of `cost_min` at 96 slots spend 57.8 s after the 2.25 s plan and 53.2 s
+  after the 6.84 s plan, 3 of 48 done in both. So at 96 slots a proven plan of such a site takes up to three
+  times as long as it did (here 3.0), bounded by the limit and by the rule below.
+- The sweeps (`spill_sweep.py` probe seeds 5, 7, 13, bell 7, run 7, negrun 13, 300 draws each, 1921 checked
+  matrices, `_Model._run` timed per run, `benchmarks/switch_timing.py <kind> <seed> 300 <file>`): the default runs of the checked matrices take
+  168.2 s, the second runs 181.0 s, so a checked solve takes about 2.1 times as long. Per matrix the second run is not bounded by a multiple of the first. By
+  the time of the default run: under 0.05 s (1331 matrices) median 2.15 times, at most 93 times, the second run 0.41
+  s at most; 0.05 to 0.3 s (500) median 1.25 times, at most 8.9 times, the second run 1.37 s at most; 0.3 to 1 s
+  (64) median 0.63 times, at most 3.6; from 1 s (26) median 0.43 times, at most 1.09, the longest default run 3.85
+  s and the longest second run 2.75 s. The review of this ticket measured 5.55 s for the default run at 96 slots
+  on the site above (and 10.04 s with the check on, the second run timing out); on a machine that slow the rule
+  below skips the check and the plan time is unchanged.
+
+*When the second run cannot finish.* Without a bound it would run into the limit: a proven plan that took 4.9 s
+then spends 10 s, and the 5 s are taken out of what the probes have. So the run without presolve starts only when
+what is left of the limit is at least `_SWITCH_HEADROOM` (2) times the time of the default run, i.e. the default run
+took at most a third of it (3.3 s of 10 s; for a probe or a run under a smaller limit, the third of that limit), and
+then it gets all that is left, so a plan never takes more than the limit, as before. A model whose default run
+took longer is not checked: the plan is the one the default run holds, as before T-085. In the 1921 sweep matrices
+4 are skipped (default runs of 3.6 to 3.9 s), none of them a matrix where the other run was cheaper, and no second
+run started under the rule ran out of its time (0 of 1917 over what was left). The rule is measured, not derived:
+the three cheaper plans found (the fixtures) took 0.016 to 0.025 s for the default run and 0.028 to 0.075 s for the
+second. What the rule costs is a matrix this large that has a cheaper plan nobody knows of; on the site above at
+192 slots the plan is time limited (status 1) and never takes the check. Pinned by
+`test_the_second_run_starts_only_with_headroom_left_of_the_limit`.
+
+The longer solve is the price of not publishing, as optimal,
+a plan dearer than one the model has: nothing downstream can tell. If the owner finds the time too dear, the
+alternative is to pin the class as a limit, which T-066 already did for the draw it knew.

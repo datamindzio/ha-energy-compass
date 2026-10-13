@@ -43,9 +43,13 @@ from .settlement import planning_buy, planning_sell
 _TOL = REACH_TOL
 _UTC = UTC
 # A run without presolve replaces the default run only where it is cheaper by more than
-# this (the 1e-4 relative gap the default run stops at, plus a floor).
+# this: the 1e-4 relative gap the default run stops at, plus a floor. A model that asked
+# for gap 0 (`exact_mip_gap`) gets the same margin; a plan cheaper by less is not worth a swap.
 _SWITCH_ABSOLUTE = 1e-6
 _SWITCH_RELATIVE = 1e-4
+# The run without presolve is started only when what is left of the time limit is at least
+# this many times what the default run took, so that it has the time to finish (T-085).
+_SWITCH_HEADROOM = 2.0
 
 
 class _Model:
@@ -128,6 +132,7 @@ class _Model:
         ).tocsc()
         started = perf_counter()
         result = self._run(matrix, time_limit_s)
+        first_s = perf_counter() - started
         if self.second_attempt and (
             result.status == 2 or result.x is not None and self._fractional(result.x)
         ):
@@ -143,11 +148,14 @@ class _Model:
             # plan is accepted by the certificate (`_validate_solution`), its gap is only
             # what HiGHS reports, and an infeasible second run may still have a plan.
             result = self._run(
-                matrix,
-                max(time_limit_s - (perf_counter() - started), 1e-3),
-                presolve=False,
+                matrix, max(time_limit_s - first_s, 1e-3), presolve=False
             )
-        elif self.compare_switches and result.status == 0 and result.x is not None:
+        elif (
+            self.compare_switches
+            and result.status == 0
+            and result.x is not None
+            and time_limit_s - first_s >= _SWITCH_HEADROOM * first_s
+        ):
             # The default run of a model with forced-spill binaries can also come back
             # `Optimal` (status 0, no fractional binary) at a plan dearer than one the
             # same model has: without presolve HiGHS found it on two of about 3500 probe
@@ -155,12 +163,11 @@ class _Model:
             # the model is solved without presolve too, in what is left of the time
             # limit, and the cheaper of the two plans is kept if it satisfies every row
             # (`_satisfies`): that run is wrong in its own way (T-072) and is never taken
-            # on its word, only on a lower cost the rows confirm.
-            other = self._run(
-                matrix,
-                max(time_limit_s - (perf_counter() - started), 1e-3),
-                presolve=False,
-            )
+            # on its word, only on a lower cost the rows confirm. It is started only with
+            # `_SWITCH_HEADROOM` times the default run's time left: a model whose default
+            # run took more than a third of the limit is not checked, since the second
+            # run (twice the first at 96 slots) would only run into the limit.
+            other = self._run(matrix, max(time_limit_s - first_s, 1e-3), presolve=False)
             margin = _SWITCH_ABSOLUTE + _SWITCH_RELATIVE * abs(result.fun)
             if (
                 other.status == 0
