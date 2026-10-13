@@ -44,10 +44,20 @@ T-058 adds `resrun`/`resroll`: an ordinary draw with SELF_CONSUME carried and th
 the reserve (`make_reserve`; almost every draw reaches the safety exception, where `deprun` reaches
 it in about one draw in ten), the generator aimed at the reserve rule. `planned` goes through
 `solve_released`, so a tree with the fallback plans the commitment's HOLD when the release has none.
+
+T-070 adds a carried PV-follow commitment under `preserve_initial` with PV near the load
+(`aimrun`, `aimroll`): the terminal rule asks the pack to bank surplus that an idle interval,
+the last minimum duration of the horizon or a full pack cannot take, which the other kinds
+(random terminal mode, PV well away from the load) do not draw. `aimed_breakdown.py` counts them by
+name on the checkout it runs in: the class on rung 1 (no plan with the commitment, a plan without it
+and one with the terminal value; 213 on main 0778580, 126 on the T-065 head, 123 on main 06f935e),
+the draws planned by rung 3 (222) and the draws with no plan on any rung (62), 1600 first-boundary
+problems of seeds 101, 202, 303 and 404 x 400 (docs/model.md, ADR-0004 follow-up T-070).
+
 T-064 lets a CURTAIL interval charge: a pack whose charge power cannot take the PV above the export cap is
 planned in one interval. `rungs <kind> <seed> <count>` counts which rung of `solve_released` plans each draw
 (`first`, `reserve_hold`, `uncommitted`, or `none`); it is how the draws that moved from rung 2 or 3 to rung 1
-are counted (ADR-0005 amendment T-064).
+are counted (ADR-0005 amendment T-064; `aimrun` is a kind it takes).
 Invoked by path, like the other benchmarks: the repository root must be on PYTHONPATH.
 """
 
@@ -228,6 +238,60 @@ def make_depleted_probe(rng):
     room = power * 0.25 * len(problem.slots)
     energy = round(min(rng.choice((0.25, 0.5, 1, 2, 4)), 0.8 * room), 2)
     return problem, FlexibleLoadRequest(energy, power)
+
+
+def make_aimed(rng):
+    """A carried PV-follow commitment under `preserve_initial`, PV within 0.3 kWh of the load (T-070).
+
+    Any pack from nearly empty to full, a standby loss of 0 to 0.2 kW, an export cap of 0,
+    0.5, 2 or 8 kW and a commitment that has run 0 to 45 minutes of a 60 or 120 minute
+    minimum duration. Where the pack cannot bank the surplus the terminal rule asks for
+    (idle intervals, the last minimum duration of the horizon, a pack at its ceiling) the
+    commitment and the terminal rule cannot both hold: the problem is infeasible with both
+    and has a plan without either. The base draws almost never ask for that.
+    """
+    base = make(rng) if rng.random() < 0.6 else make_full(rng)
+    slots = tuple(
+        replace(
+            s,
+            pv_kwh=round(
+                max(
+                    0.0,
+                    s.load_kwh
+                    + rng.choice((-0.3, -0.1, -0.05, -0.02, 0, 0.02, 0.05, 0.1, 0.3)),
+                ),
+                3,
+            ),
+        )
+        for s in base.slots
+    )
+    b = base.battery
+    low = b.capacity_kwh * b.minimum_soc_fraction
+    cap = b.capacity_kwh
+    initial = rng.choice(
+        (
+            cap,
+            cap - 0.01,
+            cap - 0.02,
+            cap - 0.3,
+            low + 0.05,
+            low + 0.3,
+            round(rng.uniform(low, cap), 3),
+        )
+    )
+    return replace(
+        base,
+        slots=slots,
+        battery=replace(
+            b, initial_kwh=initial, idle_drain_kw=rng.choice((0, 0.02, 0.05, 0.2))
+        ),
+        terminal_mode="preserve_initial",
+        site=replace(base.site, grid_export_kw=rng.choice((0, 0.5, 2, 8))),
+        minimum_mode_minutes=rng.choice((60, 120)),
+        initial_dispatch_mode=rng.choice(("CHARGE_PV", "SELF_CONSUME")),
+        initial_dispatch_mode_since=START
+        - timedelta(minutes=rng.choice((0, 15, 29, 45))),
+    )
 
 
 def make_full(rng):
@@ -527,6 +591,7 @@ def draws(kind, seed, count):
         "deprun": make_depleted,
         "resrun": make_reserve,
         "fullrun": make_full,
+        "aimrun": make_aimed,
     }
     if kind in makers:
         return [run(makers[kind](rng)) for _ in range(count)]
@@ -536,8 +601,29 @@ def draws(kind, seed, count):
         "deproll": make_depleted,
         "resroll": make_reserve,
         "fullroll": make_full,
+        "aimroll": make_aimed,
     }
     return [roll(makers[kind](rng)) for _ in range(count)]
+
+
+def rung_and_mode(problem):
+    """The rung of `solve_released` that plans `problem` (first, reserve_hold, uncommitted or none) and the
+    first mode of that plan (None where there is none)."""
+    try:
+        plan, solved = optimize.solve_released(problem)
+    except SolveError:
+        return "none", None
+    if solved.initial_dispatch_reserve_hold:
+        rung = "reserve_hold"
+    elif problem.initial_dispatch_mode and not solved.initial_dispatch_mode:
+        rung = "uncommitted"
+    else:
+        rung = "first"
+    return rung, plan.flows[0].dispatch_mode
+
+
+def rung_of(problem):
+    return rung_and_mode(problem)[0]
 
 
 def rungs(kind, seed, count):
@@ -548,22 +634,12 @@ def rungs(kind, seed, count):
         "deprun": make_depleted,
         "resrun": make_reserve,
         "fullrun": make_full,
+        "aimrun": make_aimed,
     }
     rng = random.Random(seed)
     counts = {}
     for _ in range(count):
-        problem = makers[kind](rng)
-        try:
-            _, solved = optimize.solve_released(problem)
-        except SolveError:
-            rung = "none"
-        else:
-            if solved.initial_dispatch_reserve_hold:
-                rung = "reserve_hold"
-            elif problem.initial_dispatch_mode and not solved.initial_dispatch_mode:
-                rung = "uncommitted"
-            else:
-                rung = "first"
+        rung = rung_of(makers[kind](rng))
         counts[rung] = counts.get(rung, 0) + 1
     return counts
 
@@ -578,7 +654,14 @@ if __name__ == "__main__":
     else:
         out = draws(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
         Path(sys.argv[4]).write_text(json.dumps(out))
-        if sys.argv[1] in ("roll", "negroll", "deproll", "resroll", "fullroll"):
+        if sys.argv[1] in (
+            "roll",
+            "negroll",
+            "deproll",
+            "resroll",
+            "fullroll",
+            "aimroll",
+        ):
             print(
                 sum(row[0] == "ok" for row in out),
                 "followed to the end, of",
