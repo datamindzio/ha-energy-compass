@@ -21,6 +21,17 @@ MODES = (
     "CURTAIL",
 )
 ACTIVE = frozenset(MODES[:4])
+# The flows (by solver variable) each named mode leaves at zero: the rows
+# `validate_modes` certifies, and the ones `mode_noise` zeroes when the solver leaves
+# noise on them.
+IDLE_FLOWS = {
+    "CHARGE_GRID": ("bd", "curt"),
+    "CHARGE_PV": ("bd", "curt"),
+    "DISCHARGE_GRID": ("bc", "curt"),
+    "SELF_CONSUME": ("bc", "gout", "curt"),
+    "HOLD": ("bc", "bd", "curt"),
+    "CURTAIL": ("bc", "bd"),
+}
 # Import this small is solver noise, not a plan.
 _IMPORT_TOLERANCE = 1e-5
 _EMPTY_TOLERANCE = 1e-4

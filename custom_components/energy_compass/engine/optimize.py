@@ -16,6 +16,7 @@ from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fract
 from .dispatch_policy import MODES, constrain_modes, validate_modes
 from .export_benefit import constrain_export_benefit, validate_export_benefit
 from .idle_drain import cumulative, drain_schedule
+from .mode_noise import settle_mode_noise
 from .models import (
     FlexibleLoadPlan,
     FlexibleLoadRequest,
@@ -897,14 +898,15 @@ def _solve(
     balance_start = _validate_balance(
         problem, vectors, values, balance_choices, balance_miss
     )
+    settled = settle_mode_noise(problem, vectors, values, model.upper)
     flows = tuple(
         Flow(
-            float(values[v["gin"]]),
-            float(values[v["gout"]]),
-            float(values[v["bc"]]) if battery else 0.0,
-            float(values[v["bd"]]) if battery else 0.0,
-            float(values[v["curt"]]),
-            float(values[v["energy"]]) if battery else 0.0,
+            f["gin"],
+            f["gout"],
+            f["bc"],
+            f["bd"],
+            f["curt"],
+            f["energy"],
             ("charge" if values[v["battery_mode"]] > 0.5 else "discharge")
             if battery
             else None,
@@ -917,7 +919,7 @@ def _solve(
                 None,
             ),
         )
-        for v in vectors
+        for v, f in zip(vectors, settled, strict=True)
     )
     # A probe is a load: solver noise below zero (-3e-17) is none. Left in, it would
     # lift a slot that sits exactly at the minimum activity from idle (the base
