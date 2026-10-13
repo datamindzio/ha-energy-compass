@@ -1908,7 +1908,16 @@ gives the no-planner reference. The input is one JSON object (`timezone`, `start
 `initial_soc_percent`, `settings` and `hours[]`) or a CSV, one row per **hour** with `start`, `buy`,
 `sell`, `buy_energy`, `pv_forecast`, `load_forecast`, `pv`, `load` — the same values as above; the
 format is in the tool's docstring, `--rho`, `--fixed` and `--initial-soc` override the file. Hours
-must be consecutive.
+must be consecutive real hours, one row each; a JSON row may carry its own `start`, which must then
+match its position. `--refresh-hours` must not exceed `horizon_hours`. The number of failed plan
+solves is printed on stderr in both output formats.
+
+Timestamps are real instants, so a year across the two clock changes (a 25-hour and a 23-hour local
+day) is read correctly; the local date and month (counter reset, ledger month) come from `timezone`.
+A stamp with an offset (`+02:00`, `Z`) is exact. A naive stamp is local to `timezone`: in the
+repeated autumn hour it is the first occurrence, unless the row before it is that first occurrence
+(then it is the second), so a CSV of consecutive naive local stamps reads right — a naive JSON
+`start` in that hour is the first occurrence; give it an offset to mean the second.
 
 Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
 charge band that depends on the annual import is not modelled (take `fixed` from the no-battery bill

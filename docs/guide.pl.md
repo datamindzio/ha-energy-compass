@@ -1941,7 +1941,17 @@ punkt odniesienia bez planera. Wejście to jeden obiekt JSON (`timezone`, `start
 `initial_soc_percent`, `settings` i `hours[]`) albo CSV, jeden wiersz na **godzinę** z `start`, `buy`,
 `sell`, `buy_energy`, `pv_forecast`, `load_forecast`, `pv`, `load` — te same wartości co wyżej; format
 opisuje docstring narzędzia, a `--rho`, `--fixed` i `--initial-soc` nadpisują plik. Godziny muszą
-następować kolejno.
+następować kolejno, jedna rzeczywista godzina na wiersz; wiersz JSON może mieć własny `start`, który
+musi wtedy zgadzać się z jego pozycją. `--refresh-hours` nie może przekraczać `horizon_hours`. Liczba
+nieudanych rozwiązań planu trafia na stderr w obu formatach wyjścia.
+
+Znaczniki czasu to rzeczywiste chwile, więc rok z obiema zmianami czasu (doba 25-godzinna i
+23-godzinna) jest czytany poprawnie; lokalna data i miesiąc (zerowanie liczników, miesiąc księgi)
+pochodzą z `timezone`. Znacznik z przesunięciem (`+02:00`, `Z`) jest dokładny. Znacznik bez
+przesunięcia jest lokalny dla `timezone`: w powtórzonej jesiennej godzinie to pierwsze wystąpienie,
+chyba że poprzedni wiersz jest tym pierwszym wystąpieniem (wtedy to drugie), więc CSV kolejnych
+lokalnych znaczników bez przesunięcia czyta się poprawnie — `start` w JSON bez przesunięcia w tej
+godzinie to pierwsze wystąpienie; podaj przesunięcie, by oznaczyć drugie.
 
 Ograniczenia: część stała rachunku to jedna liczba z wejścia i nie podąża za przepływem, więc pasmo
 opłaty zależne od rocznego poboru nie jest modelowane (`fixed` weź z rachunku bez magazynu i licz się z

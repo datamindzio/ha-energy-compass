@@ -4,7 +4,8 @@ import csv
 import importlib.util
 import json
 import math
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -121,10 +122,13 @@ _SETTINGS = {
 }
 
 
-def _rows(days, start=_START):
+def _rows(days, start=_START, hours=None):
+    """Hourly series from `start`, advanced in real time (UTC), `hours` or `days` x 24 of them."""
     rows = []
-    for index in range(24 * days):
-        hour = (start + timedelta(hours=index)).astimezone(ZoneInfo(ZONE)).hour
+    first = start.astimezone(UTC)
+    for index in range(24 * days if hours is None else hours):
+        instant = first + timedelta(hours=index)
+        hour = instant.astimezone(ZoneInfo(ZONE)).hour
         peak = 6 <= hour < 10 or 17 <= hour < 20
         buy = 0.3 if hour >= 20 or hour < 2 else 1.2 if peak else 0.8
         pv = (
@@ -135,7 +139,7 @@ def _rows(days, start=_START):
         load = 1.5 if peak else 0.5
         rows.append(
             R.Interval(
-                start + timedelta(hours=index),
+                instant,
                 buy,
                 0.3,
                 0.9 * pv,
@@ -294,10 +298,10 @@ def test_initial_soc_defaults_to_the_operating_floor_and_drift_is_priced():
 # --- input and command line --------------------------------------------------------------------
 
 
-def _document(days=2):
+def _document(days=2, start=_START, hours=None):
     return {
         "timezone": ZONE,
-        "start": _START.isoformat(),
+        "start": start.isoformat(),
         "rho": 0.2,
         "fixed": 3.0,
         "initial_soc_percent": 10,
@@ -312,7 +316,7 @@ def _document(days=2):
                 "pv": r.pv,
                 "load": r.load,
             }
-            for r in _rows(days)
+            for r in _rows(days, start, hours)
         ],
     }
 
@@ -336,8 +340,9 @@ def test_cli_json_and_csv_give_the_same_result(tmp_path, capsys):
         writer = csv.DictWriter(handle, names)
         writer.writeheader()
         for index, row in enumerate(document["hours"]):
+            stamp = _START.astimezone(UTC) + timedelta(hours=index)
             writer.writerow(
-                {"start": (_START + timedelta(hours=index)).isoformat(), **row}
+                {"start": stamp.astimezone(ZoneInfo(ZONE)).isoformat(), **row}
             )
     base = ["--self-use", "--json"]
     for key, value in _SETTINGS.items():
@@ -409,3 +414,226 @@ def test_hours_must_be_consecutive():
     rows = _rows(1)
     with pytest.raises(R.ReplayError, match="consecutive"):
         year._site(ZONE, rows[:5] + rows[6:], {}, 0.0, 0.0, None)
+
+
+def test_json_row_start_is_checked_when_given(tmp_path):
+    document = _document(days=1)
+    document["hours"][4]["start"] = (_START + timedelta(hours=4)).isoformat()
+    path = tmp_path / "ok.json"
+    path.write_text(json.dumps(document))
+    assert len(year.load_json(path).intervals) == 24
+    document["hours"][5]["start"] = (_START + timedelta(hours=6)).isoformat()  # a gap
+    path.write_text(json.dumps(document))
+    with pytest.raises(R.ReplayError, match=r"hours\[5\].*not hour 5"):
+        year.load_json(path)
+
+
+# --- daylight saving time: hours are real instants ------------------------------------------------
+
+_ZONE = ZoneInfo(ZONE)
+# local midnights: 26 Oct 2025 has 25 hours, 29 Mar 2026 has 23
+_FALL = datetime(2025, 10, 25, tzinfo=_ZONE)
+_SPRING = datetime(2026, 3, 28, tzinfo=_ZONE)
+_NAMES = [
+    "start",
+    "buy",
+    "sell",
+    "buy_energy",
+    "pv_forecast",
+    "load_forecast",
+    "pv",
+    "load",
+]
+
+
+def _local_midnights(rows):
+    return [i for i, row in enumerate(rows) if row.start.astimezone(_ZONE).hour == 0]
+
+
+def _write_csv(path, stamps, rows):
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, _NAMES)
+        writer.writeheader()
+        for stamp, row in zip(stamps, rows, strict=True):
+            writer.writerow(
+                {
+                    "start": stamp,
+                    "buy": row.buy,
+                    "sell": row.sell,
+                    "buy_energy": row.buy_energy,
+                    "pv_forecast": row.pv_forecast,
+                    "load_forecast": row.load_forecast,
+                    "pv": row.pv,
+                    "load": row.load,
+                }
+            )
+
+
+@pytest.mark.parametrize(
+    ("start", "text", "midnights"),
+    [
+        (_FALL, "2025-10-25T00:00:00", [0, 24, 49, 73]),
+        (_SPRING, "2026-03-28T00:00:00", [0, 24, 47, 71, 95]),
+    ],
+)
+def test_json_naive_local_start_is_read_in_real_time(tmp_path, start, text, midnights):
+    document = _document(hours=96, start=start)
+    document["start"] = text  # naive: local to the timezone
+    path = tmp_path / "site.json"
+    path.write_text(json.dumps(document))
+    rows = year.load_json(path).intervals
+    assert all(
+        later.start.astimezone(UTC) - earlier.start.astimezone(UTC)
+        == timedelta(hours=1)
+        for earlier, later in pairwise(rows)
+    )
+    assert _local_midnights(rows) == midnights
+
+
+@pytest.mark.parametrize(
+    ("start", "text", "resets"),
+    [
+        (_FALL, "2025-10-25T00:00:00", [24, 49, 73]),
+        (_SPRING, "2026-03-28T00:00:00", [24, 47, 71, 95]),
+    ],
+)
+def test_daily_counters_reset_at_the_local_midnight_across_dst(
+    tmp_path, monkeypatch, start, text, resets
+):
+    document = _document(hours=96, start=start)
+    document["start"] = text
+    path = tmp_path / "site.json"
+    path.write_text(json.dumps(document))
+    site = year.load_json(path)
+    seen = []
+
+    def no_plan(problem, **kwargs):
+        seen.append(problem.pv_generated_today_kwh)
+        raise R.SolveError("recorded")
+
+    monkeypatch.setattr(R, "solve", no_plan)
+    run = year.run_year(site, _values(site), refresh_hours=1)
+    # a problem per hour was built, none rejected
+    assert run["solves"] == 96 == len(seen)
+    assert [i for i in range(1, 96) if seen[i] < seen[i - 1]] == resets
+
+
+@pytest.mark.parametrize("start", [_FALL, _SPRING])
+def test_plan_mode_runs_across_a_dst_change(tmp_path, capsys, start):
+    document = _document(hours=96, start=start)
+    document["start"] = start.strftime("%Y-%m-%dT%H:%M:%S")
+    path = tmp_path / "site.json"
+    path.write_text(json.dumps(document))
+    assert year.main([str(path), "--refresh-hours", "12", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["solves"] == 8 and result["failures"] == 0
+
+
+def test_ledger_month_comes_from_the_local_date(tmp_path, monkeypatch):
+    # 25 Oct 00:00 CEST + 7 d 1 h (the repeated hour) = 1 Nov 00:00 CET, hour 169
+    document = _document(hours=24 * 8, start=_FALL)
+    document["start"] = "2025-10-25T00:00:00"
+    path = tmp_path / "site.json"
+    path.write_text(json.dumps(document))
+    site = year.load_json(path)
+    seen = {}
+    real = year.bill
+
+    def spy(months, *args):
+        seen["months"] = months
+        return real(months, *args)
+
+    monkeypatch.setattr(year, "bill", spy)
+    year.measure(site, _values(site), mode="self")
+    assert seen["months"][168] == 10 and seen["months"][169] == 11
+
+
+@pytest.mark.parametrize("start", [_FALL, _SPRING])
+def test_csv_with_offsets_is_accepted_across_dst(tmp_path, capsys, start):
+    rows = _rows(1, start, 96)
+    stamps = [row.start.astimezone(_ZONE).isoformat() for row in rows]
+    assert len({stamp[-6:] for stamp in stamps}) == 2  # both offsets are in the file
+    path = tmp_path / "site.csv"
+    _write_csv(path, stamps, rows)
+    site = year.load_csv(path, ZONE, 0.0, 0.0, None)
+    assert [row.start for row in site.intervals] == [row.start for row in rows]
+    assert year.main([str(path), "--timezone", ZONE, "--self-use", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["import_kwh"] > 0
+
+
+def test_csv_naive_local_stamps_are_resolved_by_their_order(tmp_path):
+    # the repeated 02:00 of 26 Oct 2025 appears twice: first occurrence, then the second
+    rows = _rows(1, _FALL, 24 * 2 + 1)
+    stamps = [
+        row.start.astimezone(_ZONE).replace(tzinfo=None).isoformat() for row in rows
+    ]
+    assert stamps.count("2025-10-26T02:00:00") == 2
+    path = tmp_path / "site.csv"
+    _write_csv(path, stamps, rows)
+    site = year.load_csv(path, ZONE, 0.0, 0.0, None)
+    assert [row.start for row in site.intervals] == [row.start for row in rows]
+
+
+def test_csv_naive_local_stamps_across_spring_forward(tmp_path):
+    rows = _rows(1, _SPRING, 24 * 3)  # 02:00 of 29 Mar 2026 does not exist
+    stamps = [
+        row.start.astimezone(_ZONE).replace(tzinfo=None).isoformat() for row in rows
+    ]
+    assert "2026-03-29T02:00:00" not in stamps
+    path = tmp_path / "site.csv"
+    _write_csv(path, stamps, rows)
+    site = year.load_csv(path, ZONE, 0.0, 0.0, None)
+    assert [row.start for row in site.intervals] == [row.start for row in rows]
+
+
+def test_csv_naive_stamp_repeated_three_times_is_rejected(tmp_path):
+    rows = _rows(1, _FALL, 24 * 2 + 2)
+    stamps = [
+        row.start.astimezone(_ZONE).replace(tzinfo=None).isoformat() for row in rows
+    ]
+    index = stamps.index("2025-10-26T02:00:00")
+    stamps.insert(index + 2, "2025-10-26T02:00:00")  # a third 02:00
+    path = tmp_path / "site.csv"
+    _write_csv(path, stamps[: len(rows)], rows)
+    with pytest.raises(R.ReplayError, match="consecutive"):
+        year.load_csv(path, ZONE, 0.0, 0.0, None)
+
+
+# --- refusals and the run report -------------------------------------------------------------------
+
+
+def test_refresh_longer_than_the_horizon_is_rejected(tmp_path, capsys):
+    site = _site(days=2)
+    values = _values(site)
+    assert values["horizon_hours"] == 24
+    with pytest.raises(R.ReplayError, match="horizon_hours"):
+        year.run_year(site, values, refresh_hours=25)
+    year.run_year(site, values, refresh_hours=24)  # the horizon itself is fine
+    path = tmp_path / "site.json"
+    path.write_text(json.dumps(_document(days=2)))
+    assert year.main([str(path), "--refresh-hours", "48"]) == 2
+    assert "horizon_hours" in capsys.readouterr().err
+
+
+def test_unknown_mode_is_rejected():
+    site = _site(days=1)
+    with pytest.raises(R.ReplayError, match="mode must be one of"):
+        year.run_year(site, _values(site), mode="plna")
+
+
+@pytest.mark.parametrize("flag", [["--json"], []])
+def test_failed_solves_are_reported_on_stderr_in_both_formats(
+    tmp_path, capsys, monkeypatch, flag
+):
+    def fail(problem, **kwargs):
+        raise R.SolveError("no plan")
+
+    monkeypatch.setattr(R, "solve", fail)
+    path = tmp_path / "site.json"
+    path.write_text(json.dumps(_document(days=1)))
+    assert year.main([str(path), *flag]) == 0
+    captured = capsys.readouterr()
+    assert "4 of 4 plan solves failed" in captured.err
+    assert "plan solves failed" not in captured.out
+    if flag:
+        assert json.loads(captured.out)["failures"] == 4

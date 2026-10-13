@@ -2964,7 +2964,15 @@ gives the no-planner reference. The input is one JSON object (<code>timezone</co
 <code>initial_soc_percent</code>, <code>settings</code> and <code>hours[]</code>) or a CSV, one row per <strong>hour</strong> with <code>start</code>, <code>buy</code>,
 <code>sell</code>, <code>buy_energy</code>, <code>pv_forecast</code>, <code>load_forecast</code>, <code>pv</code>, <code>load</code> — the same values as above; the
 format is in the tool's docstring, <code>--rho</code>, <code>--fixed</code> and <code>--initial-soc</code> override the file. Hours
-must be consecutive.</p>
+must be consecutive real hours, one row each; a JSON row may carry its own <code>start</code>, which must then
+match its position. <code>--refresh-hours</code> must not exceed <code>horizon_hours</code>. The number of failed plan
+solves is printed on stderr in both output formats.</p>
+<p>Timestamps are real instants, so a year across the two clock changes (a 25-hour and a 23-hour local
+day) is read correctly; the local date and month (counter reset, ledger month) come from <code>timezone</code>.
+A stamp with an offset (<code>+02:00</code>, <code>Z</code>) is exact. A naive stamp is local to <code>timezone</code>: in the
+repeated autumn hour it is the first occurrence, unless the row before it is that first occurrence
+(then it is the second), so a CSV of consecutive naive local stamps reads right — a naive JSON
+<code>start</code> in that hour is the first occurrence; give it an offset to mean the second.</p>
 <p>Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
 charge band that depends on the annual import is not modelled (take <code>fixed</code> from the no-battery bill
 and expect a small constant error where the band differs); a stretch shorter than a year is read as

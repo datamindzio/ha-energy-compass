@@ -32,11 +32,18 @@ Input: one JSON object, or a CSV with one row per hour.
                       "load_forecast": .., "pv": .., "load": ..}, ...]}
     CSV   start,buy,sell,buy_energy,pv_forecast,load_forecast,pv,load   (settings from --set)
 
-`hours` are consecutive hours (one row per hour, no gaps, in order); the row's `start` is optional
-in JSON. `buy`/`sell` are currency/kWh, `buy_energy` the part of `buy` the deposit pays (the energy
+`hours` are consecutive hours (one row per hour, no gaps, in order); a JSON row may carry its own
+`start`, which must then be the hour the position implies. `buy`/`sell` are currency/kWh, `buy_energy` the part of `buy` the deposit pays (the energy
 part, with excise and VAT as invoiced; missing = 0), the four energies are kWh per hour as in
 `tools/replay.py`; `pv_forecast`/`load_forecast` are what was known at plan time, `pv`/`load` what
 happened. `--rho`, `--fixed` and `--initial-soc` override the file.
+
+Timestamps are real instants, advanced and compared in UTC, so a year across the DST changes (23 and
+25 hour local days) is read correctly; the local date and month (counter reset, ledger month) come
+from `timezone`. A stamp with an offset (`+02:00`, `Z`) is exact. A naive stamp is local to
+`timezone`: in the repeated autumn hour it is the first occurrence unless the row before is that
+first occurrence (then it is the second), so a CSV of consecutive naive local stamps reads right; a
+naive JSON `start` in that hour is the first occurrence.
 
 Limits: the fixed part of the bill is one number given in the input (taken from the no-battery bill
 of the home); it does not follow the flow, so a charge band that depends on the annual import is
@@ -52,15 +59,17 @@ import json
 import sys
 import time
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import replay as R
 
 DEPOSIT_FACTOR = 1.23
 _HOUR = timedelta(hours=1)
+_MODES = ("plan", "self")
 
 
 @dataclass(frozen=True)
@@ -206,13 +215,20 @@ def run_year(
     Returns the hourly import/export, wear, SOC drift and the solve bookkeeping. A failed solve
     runs its steps as self-consumption (`failures`).
     """
+    if mode not in _MODES:
+        raise R.ReplayError(f"mode must be one of {_MODES}, got {mode!r}")
     if refresh_hours < 1:
         raise R.ReplayError("refresh_hours must be at least 1")
+    horizon = int(values["horizon_hours"])
+    if mode == "plan" and refresh_hours > horizon:
+        raise R.ReplayError(
+            f"refresh_hours ({refresh_hours}) must not exceed horizon_hours ({horizon}): "
+            "the hours past the end of the plan would run unplanned"
+        )
     rows = site.intervals
     count = len(rows)
     zone = R._zone(site.zone_name)
     days = [row.start.astimezone(zone).date() for row in rows]
-    horizon = int(values["horizon_hours"])
     capacity = values["capacity_kwh"]
     initial = (
         values["operating_floor"]
@@ -236,8 +252,8 @@ def run_year(
             window = min(horizon, count - index)
             slots = tuple(
                 R.Slot(
-                    rows[i].start,
-                    rows[i].start + _HOUR,
+                    rows[i].start.astimezone(UTC),
+                    rows[i].start.astimezone(UTC) + _HOUR,
                     rows[i].buy,
                     rows[i].sell,
                     rows[i].pv_forecast,
@@ -354,7 +370,7 @@ def _check_hours(rows: tuple[R.Interval, ...]) -> None:
     if len(rows) < 2:
         raise R.ReplayError("at least two hours are required")
     for number, (earlier, later) in enumerate(pairwise(rows), 1):
-        if later.start - earlier.start != _HOUR:
+        if later.start.astimezone(UTC) - earlier.start.astimezone(UTC) != _HOUR:
             raise R.ReplayError(
                 f"hour {number}: hours must be consecutive, one hour apart"
             )
@@ -370,18 +386,37 @@ def _site(zone_name, rows, settings, rho, fixed, soc) -> Site:
     return Site(zone_name, rows, settings, rho, fixed, soc)
 
 
+def _instant(text, zone: ZoneInfo, where: str, previous: datetime | None = None):
+    """A timestamp as a UTC instant (see the module docstring for the naive stamps)."""
+    value = R._aware(text, zone, where)
+    first = value.astimezone(UTC)
+    if isinstance(value.tzinfo, ZoneInfo):  # naive: local to the zone
+        second = value.replace(fold=1).astimezone(UTC)
+        if second == first + _HOUR and previous == first:
+            return second
+    return first
+
+
 def load_json(path: Path) -> Site:
     document = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
         raise R.ReplayError("the JSON root must be an object")
     zone_name = document.get("timezone", "UTC")
     zone = R._zone(zone_name)
-    start = R._aware(document.get("start"), zone, "file")
+    start = _instant(document.get("start"), zone, "file")
     hours = R._list(document.get("hours", []), "file", "hours")
-    rows = [
-        R._interval(start + _HOUR * i, row, f"hours[{i}]")
-        for i, row in enumerate(hours)
-    ]
+    rows = []
+    for i, row in enumerate(hours):
+        where = f"hours[{i}]"
+        instant = start + _HOUR * i  # UTC: no wall-clock arithmetic across a DST change
+        given = row.get("start") if isinstance(row, dict) else None
+        if given not in (None, "") and (
+            _instant(given, zone, where, instant - _HOUR) != instant
+        ):
+            raise R.ReplayError(
+                f"{where}: start {given!r} is not hour {i} after the first (gap or repeat)"
+            )
+        rows.append(R._interval(instant, row, where))
     soc = document.get("initial_soc_percent")
     return _site(
         zone_name,
@@ -399,8 +434,11 @@ def load_csv(path: Path, zone_name: str, rho: float, fixed: float, soc) -> Site:
     with path.open(newline="", encoding="utf-8") as handle:
         for number, row in enumerate(csv.DictReader(handle), 2):
             where = f"line {number}"
+            previous = rows[-1].start if rows else None
             rows.append(
-                R._interval(R._aware(row.get("start"), zone, where), row, where)
+                R._interval(
+                    _instant(row.get("start"), zone, where, previous), row, where
+                )
             )
     return _site(zone_name, rows, {}, rho, fixed, soc)
 
@@ -427,10 +465,6 @@ def format_result(result: dict, currency: str) -> str:
     out = [f"{label:<14}{value:>12.2f} {currency}" for label, value in lines]
     out.append(f"{'import kWh':<14}{result['import_kwh']:>12.1f}")
     out.append(f"{'export kWh':<14}{result['export_kwh']:>12.1f}")
-    if result["failures"]:
-        out.append(
-            f"{result['failures']} of {result['solves']} plan solves failed (self-consumption)"
-        )
     return "\n".join(out)
 
 
@@ -506,6 +540,12 @@ def main(argv=None) -> int:
     ) as err:
         print(f"error: {err}", file=sys.stderr)
         return 2
+    if result["failures"]:
+        print(
+            f"{result['failures']} of {result['solves']} plan solves failed "
+            "(those hours ran as self-consumption)",
+            file=sys.stderr,
+        )
     if args.json:
         print(json.dumps(result, indent=2))
     else:
