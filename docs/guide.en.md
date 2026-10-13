@@ -1927,6 +1927,49 @@ Compass plan attribute `intervals` (or the Solcast/forecast history) recorded at
 the realized value as the forecast gives an idealised plan with no forecast error.
 Use `interval_minutes: 60` for hourly statistics.
 
+### Annual settlement oracle
+
+`tools/replay_year.py` is the yearly counterpart of the day replay, for the questions a day cannot
+answer: what a [deposit setting](#net-billing-deposit-value) does to the **bill of a year**. It
+replays consecutive hours as the integration runs them: a receding `horizon_hours` (24 h) window,
+re-planned every `--refresh-hours` hours (default 6) on the forecast, the state of charge carried
+over midnight, the daily PV-export counters reset at **local** midnight, every plan executed on the
+realized series, a failed solve run as self-consumption. The hourly import and export it produces
+are valued by two bills:
+
+| Bill | Rule |
+| --- | --- |
+| `annual` | the deposit D = 1.23 × V (V = value of the exported energy at `max(sell, 0)`) pays the energy part E of the imports; the refund is `min(D − min(D, E), ρ × V)` |
+| `ledger` | the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry `min(unused, ρ × V of the month)` comes back and the rest is void. It is the steady state of a repeated year: `D ≤ E` gives the annual result, `D > E` a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year |
+
+```
+python tools/replay_year.py site.json --set deposit_model=manual --set export_value_factor=0.3
+python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
+```
+
+It prints (or, with `--json`, returns) both bills, `wear`, the SOC drift (initial minus final SOC at
+the mean buy price), `K` = annual bill + wear + SOC drift (`KL` with the ledger), `D`, `V`, `E`, and
+the refund and the void of each bill. Compare two runs by the difference of `K` (or `KL`); `--self-use`
+gives the no-planner reference. The input is one JSON object (`timezone`, `start`, `rho`, `fixed`,
+`initial_soc_percent`, `settings` and `hours[]`) or a CSV, one row per **hour** with `start`, `buy`,
+`sell`, `buy_energy`, `pv_forecast`, `load_forecast`, `pv`, `load` — the same values as above; the
+format is in the tool's docstring, `--rho`, `--fixed` and `--initial-soc` override the file. Hours
+must be consecutive real hours, one row each; a JSON row may carry its own `start`, which must then
+match its position. `--refresh-hours` must not exceed `horizon_hours`. The number of failed plan
+solves is printed on stderr in both output formats.
+
+Timestamps are real instants, so a year across the two clock changes (a 25-hour and a 23-hour local
+day) is read correctly; the local date and month (counter reset, ledger month) come from `timezone`.
+A stamp with an offset (`+02:00`, `Z`) is exact. A naive stamp is local to `timezone`: in the
+repeated autumn hour it is the first occurrence, unless the row before it is that first occurrence
+(then it is the second), so a CSV of consecutive naive local stamps reads right — a naive JSON
+`start` in that hour is the first occurrence; give it an offset to mean the second.
+
+Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
+charge band that depends on the annual import is not modelled (take `fixed` from the no-battery bill
+and expect a small constant error where the band differs); a stretch shorter than a year is read as
+a year with empty months; the result is only as good as the forecast series you give it.
+
 ## Reason code reference
 
 ### Coverage / quality reasons (`reason`, `reasons` attributes)
