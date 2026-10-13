@@ -12,6 +12,7 @@ from controller_support import PREFIX, START, register_solarman
 from homeassistant.core import ServiceCall, SupportsResponse
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.energy_compass import controller_profile as profile
@@ -136,6 +137,22 @@ class Inverter:
     def release(self):
         self.gate.set()
         self.gate = None
+
+
+async def install_inverter(hass):
+    """The fake inverter's services, registered after the real ones exist.
+
+    Setting up the entry loads the `select` and `number` platforms, and loading a
+    domain registers its own `select_option` / `set_value` over the fake ones. A run
+    that starts with the entry (a restore left by the previous process) would then
+    race that load and write through the real, entity-less service. Setting the
+    domains up first leaves nothing to overwrite the fake. Only for a test whose run
+    starts during setup: the other tests drive the real `select_option` for the
+    controller's own mode select, which the load of the domain restores.
+    """
+    for domain in ("select", "number"):
+        assert await async_setup_component(hass, domain, {})
+    return Inverter(hass)
 
 
 def register_inverter(hass, device_type=DEVICE_TYPE, protocol="1.4"):
