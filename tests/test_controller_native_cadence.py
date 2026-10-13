@@ -4,10 +4,9 @@ from unittest.mock import patch
 
 import pytest
 from controller_support import controller_of, iso, publication, publish, tick
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.util import dt as dt_util
 from native_site import native_site, refresh_telemetry
-
-from homeassistant.config_entries import ConfigEntryState
 
 pytestmark = pytest.mark.usefixtures("recorder_mock", "enable_custom_integrations")
 
@@ -133,3 +132,101 @@ async def test_pausing_requests_one_run(hass, site):
     await settle(entry)
     assert host.runs == runs + 1
     assert host.history[-1]["trigger"] == "controller"
+
+
+RUNTIME = "sensor.synthetic_deye_controller_runtime"
+
+
+async def test_last_run_reaches_the_sensor_within_seconds_without_a_write_storm(
+    hass, freezer, site
+):
+    from homeassistant.const import EVENT_STATE_CHANGED
+
+    entry, _ = site
+    host = await accepted_plan(hass, entry)
+    await tick(hass, freezer, 70)
+    refresh_telemetry(hass)
+    await run_once(entry)
+    await tick(hass, freezer, 70)
+    refresh_telemetry(hass)
+    await run_once(entry)
+    await tick(hass, freezer, 70)
+    refresh_telemetry(hass)
+    await run_once(entry)
+    await tick(hass, freezer, 4)
+    writes = []
+    runs = host.runs
+    hass.bus.async_listen(
+        EVENT_STATE_CHANGED,
+        lambda event: (
+            writes.append(event) if event.data["entity_id"] == RUNTIME else None
+        ),
+    )
+    refresh_telemetry(hass)
+    await run_once(entry, "first")
+    await tick(hass, freezer, 4)
+    assert hass.states.get(RUNTIME).attributes["last_run"] is host.history[-1]
+    refresh_telemetry(hass)
+    await run_once(entry, "second")
+    await tick(hass, freezer, 4)
+    assert hass.states.get(RUNTIME).attributes["last_run"] is host.history[-1]
+    assert host.history[-1]["trigger"] in ("second", "minute")
+    assert len(writes) <= host.runs - runs
+
+
+async def test_the_sensor_exposes_the_stored_reason_code(hass, site):
+    entry, _ = site
+    await accepted_plan(hass, entry)
+    controller = controller_of(entry)
+    code = controller.state.runtime["reason_code"]
+    assert code
+    assert hass.states.get(RUNTIME).attributes["reason_code"] == code
+
+
+async def test_last_run_carries_the_probe_result_when_one_ran(hass, site):
+    entry, _ = site
+    controller = controller_of(entry)
+    host = controller.host
+    controller.async_set_mode("Simulation")
+    await settle(entry)
+    assert host.history[-1]["probe"] == "passed"
+    await run_once(entry)
+    assert "probe" not in host.history[-1]
+
+
+async def test_a_failed_probe_names_the_entities(hass, site):
+    entry, inverter = site
+    controller = controller_of(entry)
+    inverter.raw = {address + 1: raw for address, raw in inverter.raw.items()}
+    controller.async_set_mode("Simulation")
+    await settle(entry)
+    probe = controller.host.history[-1]["probe"]
+    assert probe.startswith("failed: ") and len(probe) > len("failed: ")
+
+
+async def test_notable_runs_survive_a_flood_of_routine_ones(hass, site):
+    from custom_components.energy_compass.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    entry, _ = site
+    host = await accepted_plan(hass, entry)
+    publish(entry, publication(generated_at=iso(17, 0, 50)))
+    refresh_telemetry(hass)
+    await settle(entry)
+    wrote = [run for run in host.history if any("attempt" in w for w in run["writes"])]
+    assert wrote
+    for number in range(60):
+        await run_once(entry, f"routine-{number}")
+    assert not any(run in wrote for run in host.history)
+    diagnostics = (await async_get_config_entry_diagnostics(hass, entry))[
+        "deye_controller"
+    ]
+    assert len(diagnostics["run_history"]) == 50
+    notable = diagnostics["run_history_notable"]
+    assert len(notable) <= 20
+    assert all(run in notable for run in wrote)
+    assert all(
+        run["outcome"] != "run_finished" or run["code"] != "ok" or run["writes"]
+        for run in notable
+    )

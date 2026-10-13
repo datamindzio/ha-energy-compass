@@ -523,9 +523,7 @@ class DeyeController:
         """
         return (
             runtime is None or core.validate_runtime(runtime) == self.state.runtime
-        ) and (
-            restore_pending is None or restore_pending == self.state.restore_pending
-        )
+        ) and (restore_pending is None or restore_pending == self.state.restore_pending)
 
     def fallback_battery(self) -> dict[str, float]:
         return self._fallback_battery()
@@ -618,6 +616,7 @@ class DeyeController:
             "engine": self.engine,
             "hardware": self.hardware.as_attribute(),
             "run_history": self.host.history if self.host is not None else [],
+            "run_history_notable": self.host.notable if self.host is not None else [],
             "session": self.session,
             "mode": self.state.mode,
             "restore_pending": self.state.restore_pending,

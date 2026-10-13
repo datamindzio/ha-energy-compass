@@ -31,6 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 TRANSACTIONS = 3
 WRITE_ATTEMPTS = 3
 HISTORY_LIMIT = 50
+NOTABLE_LIMIT = 20
 MAX_RECORDED_WRITES = 60
 
 
@@ -74,6 +75,11 @@ class ExecutorPort(Protocol):
         """The holding registers as a mapping, or anything else when unreadable."""
 
 
+def _notable(record: Mapping[str, Any]) -> bool:
+    sent = any(not write.get("blocked") for write in record["writes"])
+    return sent or record["code"] != "ok"
+
+
 @dataclass
 class _Run:
     limits: profile.Limits
@@ -97,6 +103,7 @@ class DeyeExecutor:
         self.language = language
         self._layout_session: Any = None
         self.history: deque[dict[str, Any]] = deque(maxlen=HISTORY_LIMIT)
+        self.notable: deque[dict[str, Any]] = deque(maxlen=NOTABLE_LIMIT)
         self._record: dict[str, Any] | None = None
 
     def _snapshot(self, run: _Run, stage: str) -> profile.Snapshot:
@@ -176,7 +183,8 @@ class DeyeExecutor:
 
         The last 50 passes are kept in `history`, in memory only: what triggered the
         run, the decision, the planned and sent commands with their outcome, and how
-        it ended.
+        it ended. Passes that sent a command or ended with a code other than `ok` are
+        also kept in `notable` (the last 20), so routine passes cannot push them out.
         """
         started = self.port.now()
         record: dict[str, Any] = {
@@ -201,6 +209,8 @@ class DeyeExecutor:
             record["seconds"] = round((self.port.now() - started).total_seconds(), 3)
             self._record = None
             self.history.append(record)
+            if _notable(record):
+                self.notable.append(record)
 
     async def _pass(self) -> str:
         port = self.port
@@ -305,7 +315,11 @@ class DeyeExecutor:
         )
         if not mismatched:
             self._layout_session = key
+            if self._record is not None:
+                self._record["probe"] = "passed"
             return True
+        if self._record is not None:
+            self._record["probe"] = f"failed: {hardware.listed(mismatched)}"
         reason = self._text(
             "layout_mismatch", {"entities": hardware.listed(mismatched)}
         )

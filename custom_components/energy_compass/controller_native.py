@@ -239,6 +239,11 @@ class NativeHost:
         """The last runs, oldest first."""
         return list(self.executor.history)
 
+    @property
+    def notable(self) -> list[dict[str, Any]]:
+        """The last runs that sent a command or ended with a code other than `ok`."""
+        return list(self.executor.notable)
+
     async def async_start(self) -> None:
         runtime = self.controller.state.runtime
         self._logged = (runtime.get("confirmed_mode"), runtime.get("code"))
