@@ -1143,11 +1143,25 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             self._battery_commitment = None
         elif policy.get("safety_exception") or carried_idle:
             return
+        elif (
+            mode == "HOLD"
+            and self._battery_commitment
+            and dwell_group(self._battery_commitment["mode"]) == "PV_FOLLOW"
+            and rows[0].get("start") in policy.get("released_hold_starts", ())
+        ):
+            # A HOLD released from the commitment's depleted pack is not a mode of its
+            # own: the commitment and its clock stay, and the next plan starts from the
+            # release (its HOLD goes on, or goes back to the commitment).
+            self._battery_commitment = {**self._battery_commitment, "released": True}
         elif self._battery_commitment and dwell_group(
             self._battery_commitment["mode"]
         ) == dwell_group(mode):
             # CHARGE_PV <-> SELF_CONSUME keeps the inverter state and its clock.
-            self._battery_commitment = {**self._battery_commitment, "mode": mode}
+            self._battery_commitment = {
+                key: value
+                for key, value in self._battery_commitment.items()
+                if key != "released"
+            } | {"mode": mode}
         elif not self._battery_commitment or self._battery_commitment["mode"] != mode:
             previous = self._battery_commitment
             self._battery_commitment = {"mode": mode, "since": result["generated_at"]}

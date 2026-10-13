@@ -36,8 +36,9 @@ import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
-from custom_components.energy_compass.engine.dispatch_policy import dwell_group
+from custom_components.energy_compass.coordinator import EnergyCompassCoordinator
 from custom_components.energy_compass.engine.models import (
     Battery,
     FlexibleLoadRequest,
@@ -203,16 +204,70 @@ def run(problem, request=None):
     ]
 
 
+def commit(problem, plan):
+    """The commitment the coordinator stores once the first interval is followed.
+
+    `_commit_battery_direction` itself, fed the way `_publish_current` feeds it for a
+    plan whose current interval is the first, so a roll follows what ships. A tree
+    without the release (`released_holds`) stores the older two-key commitment.
+    """
+    first = problem.slots[0].start.isoformat()
+    stored = None
+    if problem.initial_dispatch_mode:
+        stored = {
+            "mode": problem.initial_dispatch_mode,
+            "since": problem.initial_dispatch_mode_since.isoformat(),
+        }
+        if getattr(problem, "initial_dispatch_released", False):
+            stored["released"] = True
+    coordinator = SimpleNamespace(
+        _battery_commitment=stored,
+        _dispatch_store=SimpleNamespace(async_delay_save=lambda *_: None),
+    )
+    EnergyCompassCoordinator._commit_battery_direction(
+        coordinator,
+        {
+            "generated_at": first,
+            "intervals": [{"dispatch_mode": plan.flows[0].dispatch_mode, "start": first}],
+            "dispatch_policy": {
+                "enabled": True,
+                "released_hold_starts": [first]
+                if 0 in getattr(plan, "released_holds", ())
+                else [],
+            },
+        },
+        carried_idle=0 in plan.carried_bridges,
+    )
+    return coordinator._battery_commitment
+
+
+def follow(problem, plan):
+    """The next problem when the first interval is carried out as planned."""
+    commitment = commit(problem, plan)
+    battery = problem.battery
+    low = battery.capacity_kwh * battery.minimum_soc_fraction
+    high = battery.capacity_kwh * battery.maximum_soc_fraction
+    released = (
+        {"initial_dispatch_released": bool(commitment.get("released"))}
+        if "initial_dispatch_released" in Problem.__dataclass_fields__
+        else {}
+    )
+    return replace(
+        problem,
+        slots=problem.slots[1:],
+        battery=replace(
+            battery,
+            initial_kwh=min(max(plan.flows[0].end_soc_kwh, low), high),
+        ),
+        initial_dispatch_mode=commitment["mode"],
+        initial_dispatch_mode_since=datetime.fromisoformat(commitment["since"]),
+        **released,
+    )
+
+
 def roll(problem, steps=8):
     """Plan, follow the first interval, carry the commitment and the pack, plan again."""
-    commitment = None
-    if problem.initial_dispatch_mode:
-        commitment = (
-            problem.initial_dispatch_mode,
-            problem.initial_dispatch_mode_since,
-        )
     trace = []
-    battery = problem.battery
     for step in range(steps):
         if len(problem.slots) < 2:
             break
@@ -220,26 +275,10 @@ def roll(problem, steps=8):
             plan = solve(problem)
         except SolveError as error:
             return ["err", step, str(error)[:40], trace]
-        flow = plan.flows[0]
-        mode = flow.dispatch_mode
-        trace.append(mode + ("*" if 0 in plan.carried_bridges else ""))
-        if 0 in plan.carried_bridges:
-            pass  # a bridge row leaves the commitment and its clock as they are
-        elif commitment and dwell_group(commitment[0]) == dwell_group(mode):
-            commitment = (mode, commitment[1])
-        else:
-            commitment = (mode, problem.slots[0].start)
-        low = battery.capacity_kwh * battery.minimum_soc_fraction
-        high = battery.capacity_kwh * battery.maximum_soc_fraction
-        problem = replace(
-            problem,
-            slots=problem.slots[1:],
-            battery=replace(
-                problem.battery, initial_kwh=min(max(flow.end_soc_kwh, low), high)
-            ),
-            initial_dispatch_mode=commitment[0],
-            initial_dispatch_mode_since=commitment[1],
+        trace.append(
+            plan.flows[0].dispatch_mode + ("*" if 0 in plan.carried_bridges else "")
         )
+        problem = follow(problem, plan)
     return ["ok", len(trace), "", trace]
 
 

@@ -945,7 +945,7 @@ def _solve(
         for i, v in enumerate(vectors)
         if "hold_run" in v and values[v["hold_run"]] < 0.5
     )
-    validate_modes(mode_problem, flows, bridges)
+    released = validate_modes(mode_problem, flows, bridges)
     # A HOLD that goes on with a CURTAIL run is a bridge for the commitment as well; an
     # idle row has both readings, and is listed once.
     bridges = tuple(
@@ -1017,6 +1017,7 @@ def _solve(
             time_limited=model.time_limited,
             mip_gap=model.mip_gap,
             carried_bridges=bridges,
+            released_holds=tuple(sorted(released)),
         ),
         probe,
     )
