@@ -1,7 +1,7 @@
 """Replay recorded days offline: Energy Compass plan vs self-consumption vs hindsight.
 
-No Home Assistant needed; the optimizer in `custom_components/energy_compass/engine`
-is imported directly. For every day in the input file the tool reports, in the
+No Home Assistant needed (SciPy is enough); the optimizer in
+`custom_components/energy_compass/engine` is imported directly. For every day in the input file the tool reports, in the
 installation's currency:
 
     plan         receding horizon: re-solve every `refresh_minutes` on the forecast
@@ -21,15 +21,39 @@ per interval (the energy part of `buy`; the rest of `buy` is the distribution). 
 
 import argparse
 import csv
+import importlib.util
 import json
 import math
 import sys
+import types
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+
+def _bare_integration_package() -> None:
+    """Without Home Assistant, stand in for the integration package.
+
+    The engine imports nothing from Home Assistant, but importing any of its modules
+    first runs the package `__init__.py`, which does. Registering a bare module under
+    the package name (name and `__path__` only) lets the submodules load without it.
+    """
+    if importlib.util.find_spec("homeassistant") is not None:
+        return
+    for name, path in (
+        ("custom_components", ROOT / "custom_components"),
+        ("custom_components.energy_compass", ROOT / "custom_components/energy_compass"),
+    ):
+        package = types.ModuleType(name)
+        package.__path__ = [str(path)]
+        sys.modules.setdefault(name, package)
+
+
+_bare_integration_package()
 
 from custom_components.energy_compass.engine.autonomy import (
     autonomy_targets,
