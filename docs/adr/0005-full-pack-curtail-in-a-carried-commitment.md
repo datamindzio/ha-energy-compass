@@ -840,7 +840,9 @@ charge from PV at the cap, not hold).
 Status: implemented and swept on T-078. Measured on main `bb70c60` (T-080 and T-084 merged over `ef55de2`, which had
 T-070, T-074, T-076, T-079 and T-081 over `06f935e`) against the branch head `2cc08bb`, the merge of that main; its
 engine is that of `ae75c25` (`dispatch_policy.py` is the only engine file that differs from main) and the sweeps ran
-on it; the commits after `2cc08bb` change documents only. The first version of this amendment was measured on
+on it; the commits after `2cc08bb` change documents only, and the merge of main `a5cfb1e` (T-086, T-087 and the shadow
+comparison tool) after them changes nothing in `engine/` or `benchmarks/` (`git diff bb70c60 a5cfb1e` of both is
+empty), so the sweeps stand for it. The first version of this amendment was measured on
 `06f935e` and reviewed there, the second on `ef55de2`. The counts of the kinds the first one measured are the same on
 all three mains, and every count below is the same on `ef55de2` and `bb70c60`: T-080 (the unmoded settle of
 `mode_noise.py`) and T-084 (the guides) moved none. Decision 3 of the T-069 amendment (rung 2 is
