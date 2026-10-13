@@ -849,9 +849,10 @@ def _offer_curtail(
     inverter curtails beside the charging pack whatever the pack held before (T-064), so
     there is nothing to wait for.
 
-    A CURTAIL under way goes on whatever the pack has seen: the run that `beyond_the_pack`
-    opens has its minimum duration, and the interval after it may be one the pack takes
-    whole (T-078).
+    A CURTAIL under way goes on whatever the pack has seen (T-078): the first rule takes
+    `curtailing` as the second does, or the run that `beyond_the_pack` opens could not
+    be continued inside its minimum duration where the next interval is not beyond the
+    pack and the pack was never full.
     """
     if beyond_the_pack is True:
         return
@@ -1473,7 +1474,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                         )
                     held = {v["mode_HOLD"]: -1, **going_on}
                     kept[v["mode_HOLD"]] = 1
-                if seen_full or beyond is not None or curtailing:
+                if seen_full or beyond is not None:
                     _offer_curtail(
                         model,
                         v,

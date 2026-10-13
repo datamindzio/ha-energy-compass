@@ -1141,9 +1141,30 @@ def test_a_curtail_run_that_the_pv_beyond_the_pack_opens_goes_on_through_its_dur
     assert [flow.dispatch_mode for flow in plan.flows] == ["CURTAIL", "CURTAIL"]
     assert plan.flows[0].charge_kwh > 0.5
     validate_modes(problem, plan.flows, plan.carried_bridges)
-    # With the commitment over before the second interval nothing binds it: the same plan.
+    # With the commitment over before the second interval nothing binds that interval: the
+    # first row is the same CURTAIL (this asserts the first row only).
     free = _beyond_then_within(initial=initial, minutes=45)
     assert solve(free).flows[0].dispatch_mode == "CURTAIL"
+
+
+@pytest.mark.parametrize("initial", [1.0, 2.0])
+def test_the_coordinator_stores_the_curtail_run_and_the_next_plan_goes_on_with_it(
+    initial,
+):
+    # `follow` stores the first row as `_commit_battery_direction` does at a boundary
+    # (the CURTAIL run replaces the SELF_CONSUME commitment, from the plan's time) and the
+    # next plan starts from that commitment: it is on the first rung, it is not the
+    # commitment's own HOLD, and its first row is the second row the plan before promised.
+    problem = _beyond_then_within(initial=initial)
+    plan, solved = solve_released(problem)
+    assert solved == problem
+    after = follow(problem, plan)
+    assert after.initial_dispatch_mode == "CURTAIL"
+    assert after.initial_dispatch_mode_since == problem.slots[0].start
+    assert not after.initial_dispatch_reserve_hold
+    again, again_solved = solve_released(after)
+    assert again_solved == after
+    assert again.flows[0].dispatch_mode == plan.flows[1].dispatch_mode == "CURTAIL"
 
 
 def test_the_resrun_draw_the_release_could_not_plan_is_the_first_rung():
