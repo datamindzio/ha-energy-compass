@@ -3255,8 +3255,10 @@ wyprodukowane i zużyte). Sześć wartości musi być skończonych, a cztery ene
 drobne wartości ujemne, które zaokrąglenia w statystykach mogą zostawić, np. w <code>pobór + PV − eksport</code>);
 błąd wskazuje miejsce: <code>days[n][i]</code> (dzień <code>n</code> od 1, interwał <code>i</code> od 0) albo <code>line n</code> w CSV.</p>
 <p>Interwał może mieć też <code>buy_energy</code> (także kolumna CSV): część energetyczna <code>buy</code>, czyli ta, którą może
-pokryć depozyt (reszta <code>buy</code> to dystrybucja), w tych samych jednostkach, nie większa niż <code>buy</code>; puste
-lub brak oznacza 0. Ma znaczenie tylko z
+pokryć depozyt (reszta <code>buy</code> to dystrybucja), w tych samych jednostkach, tak jak na fakturze, więc
+może być ujemna (pobór przy ujemnej cenie energii, oferta dynamiczna bez dolnego progu indeksu); nie
+większa niż <code>max(buy, 0)</code>, a gdy ujemna, nie większa niż <code>buy</code>; puste lub brak oznacza 0. Planer używa
+<code>max(buy_energy, 0)</code> (ograniczonego do <code>max(buy, 0)</code>, jak silnik). Ma znaczenie tylko z
 <a href="#wartość-depozytu-w-net-billingu">modelem depozytu</a>, który włączasz przez <code>--set
 deposit_model=manual --set export_value_factor=0.3</code> (eksperymentalny).
 <code>buy</code> zostaje ceną z faktury, więc <code>buy_distribution_mode</code>, <code>buy_distribution_rate</code> i
@@ -3354,7 +3356,11 @@ zwrot i przepadek każdego rachunku. Dwa przebiegi porównuje różnica <code>K<
 punkt odniesienia bez planera. Wejście to jeden obiekt JSON (<code>timezone</code>, <code>start</code>, <code>rho</code>, <code>fixed</code>,
 <code>initial_soc_percent</code>, <code>settings</code> i <code>hours[]</code>) albo CSV, jeden wiersz na <strong>godzinę</strong> z <code>start</code>, <code>buy</code>,
 <code>sell</code>, <code>buy_energy</code>, <code>pv_forecast</code>, <code>load_forecast</code>, <code>pv</code>, <code>load</code> — te same wartości co wyżej; format
-opisuje docstring narzędzia, a <code>--rho</code>, <code>--fixed</code> i <code>--initial-soc</code> nadpisują plik. Godziny muszą
+opisuje docstring narzędzia, a <code>--rho</code>, <code>--fixed</code> i <code>--initial-soc</code> nadpisują plik. <code>buy_energy</code> to
+część energetyczna tak jak na fakturze, ze znakiem: rachunki sumują ją w miesiącu (pobór przy ujemnej
+cenie energii obniża miesiąc, a miesiąc kończący się poniżej zera zostaje w rachunku w pełnej
+wartości i nie dodaje nic do <code>E_owed</code>), a planer widzi <code>max(buy_energy, 0)</code>, więc plan nie zależy od
+wartości ujemnych. Godziny muszą
 następować kolejno, jedna rzeczywista godzina na wiersz; wiersz JSON może mieć własny <code>start</code>, który
 musi wtedy zgadzać się z jego pozycją. <code>--refresh-hours</code> nie może przekraczać <code>horizon_hours</code>. Liczba
 nieudanych rozwiązań planu trafia na stderr w obu formatach wyjścia.</p>
@@ -3368,9 +3374,9 @@ godzinie to pierwsze wystąpienie; podaj przesunięcie, by oznaczyć drugie.</p>
 <p>Ograniczenia: część stała rachunku to jedna liczba z wejścia i nie podąża za przepływem, więc pasmo
 opłaty zależne od rocznego poboru nie jest modelowane (<code>fixed</code> weź z rachunku bez magazynu i licz się z
 niewielkim stałym błędem tam, gdzie pasmo jest inne); odcinek krótszy niż rok jest czytany jak rok z
-pustymi miesiącami; <code>buy_energy</code> pozostaje nieujemne jak w silniku, więc miesiąc z ujemną częścią
-energetyczną trafia do rachunków tylko jako lista części energetycznych ze znakiem przez API Pythona
-(<code>bill()</code>), nie przez wejście godzinowe; wynik jest tak dobry, jak podany szereg prognoz.</p>
+pustymi miesiącami; okresem rozliczeniowym jest miesiąc kalendarzowy; sprzedawca rozliczający
+dłuższy okres netuje między jego miesiącami, czego narzędzie nie modeluje; energia jest wyceniana godzinowo; wynik jest tak dobry,
+jak podany szereg prognoz.</p>
 <h2 id="słownik-kodów-powodów">Słownik kodów powodów</h2>
 <h3 id="powody-pokrycia--jakości-atrybuty-reason-reasons">Powody pokrycia / jakości (atrybuty <code>reason</code>, <code>reasons</code>)</h3>
 <section class="table-scroll"><table>

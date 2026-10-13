@@ -5,6 +5,7 @@ import importlib.util
 import json
 import math
 import random
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
@@ -803,3 +804,141 @@ def test_failed_solves_are_reported_on_stderr_in_both_formats(
     assert "plan solves failed" not in captured.out
     if flag:
         assert json.loads(captured.out)["failures"] == 4
+
+
+# --- signed buy_energy (ADR-0001 Amendment T-474) ----------------------------------------------
+
+_SIGNED_START = datetime(2026, 3, 30, tzinfo=ZoneInfo(ZONE))
+
+
+def _write_year(tmp_path, name, document):
+    path = tmp_path / name
+    path.write_text(json.dumps(document))
+    return path
+
+
+def test_negative_buy_energy_does_not_change_the_plan():
+    clean = _rows(2)
+    signed = tuple(
+        replace(row, buy_energy=-0.1) if index % 5 == 0 else row
+        for index, row in enumerate(clean)
+    )
+    zeroed = tuple(
+        replace(row, buy_energy=0.0) if index % 5 == 0 else row
+        for index, row in enumerate(clean)
+    )
+    assert any(row.buy_energy < 0 for row in signed)
+    for extra in ({}, {"deposit_model": "manual", "export_value_factor": 0.3}):
+        runs = []
+        for rows in (signed, zeroed):
+            site = year.Site(
+                ZONE,
+                rows,
+                {**_SETTINGS, **extra},
+                rho=0.2,
+                fixed=3.0,
+                initial_soc_percent=10.0,
+            )
+            runs.append(year.run_year(site, _values(site), refresh_hours=6))
+        assert runs[0]["failures"] == runs[1]["failures"] == 0
+        assert runs[0]["imp"] == runs[1]["imp"]
+        assert runs[0]["exp"] == runs[1]["exp"]
+
+
+def _month(row):
+    return row.start.astimezone(ZoneInfo(ZONE)).month
+
+
+def _signed_and_clamped(tmp_path):
+    """Self-use year over Mar 30..Jun 7: April stays above zero, May ends below zero."""
+    document = _document(hours=24 * 70, start=_SIGNED_START)
+    for hour in document["hours"]:
+        hour["sell"] = 1.0  # a deposit above the liability
+    base = year.load_json(_write_year(tmp_path, "base.json", document))
+    values = _values(base)
+    imports = year.run_year(base, values, mode="self")["imp"]
+    rows = base.intervals
+    negative = []
+    for index, (row, kwh) in enumerate(zip(rows, imports, strict=True)):
+        if kwh > 0 and _month(row) == 4 and index % 7 == 0:
+            negative.append((index, -0.05))
+        elif _month(row) == 5:
+            negative.append((index, -0.2))  # all of May: ends below 0
+    signed = json.loads(json.dumps(document))
+    clamped = json.loads(json.dumps(document))
+    for index, value in negative:
+        signed["hours"][index]["buy_energy"] = value
+        clamped["hours"][index]["buy_energy"] = 0.0
+    return (
+        year.load_json(_write_year(tmp_path, "signed.json", signed)),
+        year.load_json(_write_year(tmp_path, "clamped.json", clamped)),
+        values,
+        negative,
+    )
+
+
+def _monthly_energy(site, imp):
+    rows = site.intervals
+    _, energy = year.monthly_totals(
+        [_month(row) for row in rows],
+        [0.0] * len(rows),
+        imp,
+        [row.buy_energy for row in rows],
+    )
+    return energy
+
+
+@pytest.mark.parametrize("rho", [0.0, 0.2])
+def test_the_bill_takes_the_signed_energy_part_from_the_input(tmp_path, rho):
+    signed, clamped, values, negative = _signed_and_clamped(tmp_path)
+    signed = replace(signed, rho=rho)
+    clamped = replace(clamped, rho=rho)
+    own = year.measure(signed, values, mode="self")
+    ref = year.measure(clamped, values, mode="self")
+    imp = year.run_year(signed, values, mode="self")["imp"]
+    assert imp == year.run_year(clamped, values, mode="self")["imp"]
+
+    assert own["gross"] == pytest.approx(ref["gross"])
+    assert own["D"] == pytest.approx(ref["D"])
+    drop = sum(imp[i] * -v for i, v in negative if _month(signed.intervals[i]) == 4)
+    drop_may = sum(imp[i] * -v for i, v in negative if _month(signed.intervals[i]) == 5)
+    assert drop > 0 and drop_may > 0
+    # April stays above zero: E and E_owed fall by exactly the negative draws; May ends below zero
+    # (E falls by its negative draws and nothing more is owed)
+    assert own["E"] == pytest.approx(ref["E"] - drop - drop_may)
+    assert own["E_owed"] == pytest.approx(ref["E_owed"] - drop)
+    april, may = (_monthly_energy(signed, imp)[m] for m in (4, 5))
+    assert april > 0
+    assert may < 0
+    assert _monthly_energy(clamped, imp)[5] == 0.0
+
+    # the deposit exceeds the liability of the signed file
+    assert own["D"] > own["E_owed"]
+    assert own["applied"] == pytest.approx(own["E_owed"])
+    shift = min(ref["D"], ref["E_owed"]) - own["E_owed"]
+    assert shift > 0
+    assert ref["applied"] - own["applied"] == pytest.approx(shift)
+    assert own["annual"] == pytest.approx(own["gross"] - own["applied"] - own["refund"])
+    if rho == 0.0:
+        assert own["annual"] - ref["annual"] == pytest.approx(shift)
+
+
+def test_a_file_without_negative_buy_energy_measures_as_before(tmp_path):
+    document = _document(days=2)
+    site = year.load_json(_write_year(tmp_path, "plain.json", document))
+    values = _values(site)
+    out = year.measure(site, values, mode="self")
+    rows = site.intervals
+    imp = year.run_year(site, values, mode="self")["imp"]
+    expected = year.bill(
+        [_month(row) for row in rows],
+        [row.buy for row in rows],
+        [row.sell for row in rows],
+        [row.buy_energy for row in rows],
+        imp,
+        year.run_year(site, values, mode="self")["exp"],
+        site.rho,
+        site.fixed,
+    )
+    for key, value in expected.items():
+        assert out[key] == value

@@ -5,6 +5,8 @@ import importlib.util
 import json
 import subprocess
 import sys
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -230,8 +232,12 @@ def _bad_interval(index, **row):
         (_bad_interval(6, sell=None), "days[2][6]: sell must be a number"),
         (_bad_interval(7, pv="x"), "days[2][7]: pv must be a number"),
         (
-            _bad_interval(8, buy_energy=-0.1),
-            "days[2][8]: buy_energy must not be negative",
+            _bad_interval(8, buy=-0.5, buy_energy=-0.1),
+            "days[2][8]: buy_energy below zero must not exceed buy, got -0.1",
+        ),
+        (
+            _bad_interval(8, buy=0.5, buy_energy="nan"),
+            "days[2][8]: buy_energy must be finite",
         ),
         (
             _bad_interval(9, buy_energy=9.0),
@@ -571,6 +577,56 @@ def test_buy_energy_is_read_from_csv(tmp_path, capsys):
 
     assert code == 2
     assert "line 4: buy_energy must not exceed buy" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("buy", "energy"), [(0.2, -0.1), (-0.5, -0.7), (-0.5, 0.0), (0.0, -0.1)]
+)
+def test_negative_buy_energy_is_read_with_its_sign(tmp_path, buy, energy):
+    document = _document()
+    document["days"][1]["intervals"][8].update(buy=buy, buy_energy=energy)
+    days, _, _ = replay.load_json(_write(tmp_path, document))
+    assert days[1].intervals[8].buy_energy == energy
+
+    path = tmp_path / "days.csv"
+    path.write_text(
+        "start,buy,sell,pv_forecast,load_forecast,pv,load,buy_energy\n"
+        + "".join(
+            f"2026-09-20T{hour:02d}:00:00+02:00,{buy},0.2,0,0.4,0,0.4,{energy}\n"
+            for hour in range(3)
+        )
+    )
+    days, _, _ = replay.load_csv(path, "Europe/Warsaw", 50.0)
+    assert [i.buy_energy for i in days[0].intervals] == [energy] * 3
+
+
+def test_buy_energy_above_buy_keeps_its_old_message(tmp_path, capsys):
+    path = _write(tmp_path, _bad_interval(9, buy=0.5, buy_energy=9.0))
+    assert replay.main([str(path)]) == 2
+    err = capsys.readouterr().err
+    assert "days[2][9]: buy_energy must not exceed buy, got 9.0" in err
+    assert "below zero" not in err
+
+
+@pytest.mark.parametrize(
+    ("buy", "energy", "planned"),
+    [
+        (0.5, 0.3, 0.3),
+        (0.5, -0.1, 0.0),
+        (-0.5, -0.7, 0.0),
+        (-0.5, 0.0, 0.0),
+        (0.5, 0.0, 0.0),
+    ],
+)
+def test_the_planner_sees_the_energy_part_clamped_at_zero(buy, energy, planned):
+    start = datetime(2026, 9, 20, tzinfo=UTC)
+    interval = replay.Interval(start, buy, 0.2, 0.0, 0.4, 0.0, 0.4, energy)
+    later = replace(interval, start=start + timedelta(hours=1))
+    day = replay.Day("2026-09-20", 50.0, (interval, later))
+
+    assert replay.planner_energy(interval) == planned
+    (slot, _) = replay._slots(day, 0, 2, realized=False)
+    assert slot.buy_energy_per_kwh == planned
 
 
 def test_ignored_distribution_settings_warn(capsys):

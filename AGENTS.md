@@ -68,7 +68,7 @@ hand-written and must only validate and substitute tokens — never re-implement
 CI runs all four builders with
 `--check` and fails on any difference (`tools/build_guides.py --check` compares the guide HTML and the
 diagram SVG names, which are hashes of the Mermaid source; it does not render Mermaid, so edit a diagram
-and rebuild locally with Node). `tools/build_guides.py` needs `markdown`, so CI runs it in its own `guides` job, not in the test image. `tests/test_deye_controller_docs.py` fails when a Deye
+and rebuild locally with Node). `tools/build_guides.py` needs `markdown`, pinned to 3.8 in two places that must agree (the `docs` extra in `pyproject.toml` and `Dockerfile.test`, whose venv shadows the image's own copy); CI runs `--check` in the `test` job next to the other builders, and `tests/test_build_guides_check.py` runs there too. `tests/test_deye_controller_docs.py` fails when a Deye
 controller input, controller entity key or attribute, service, `plan_reason` or runtime code, a notification blueprint input, a cost-card config
 key or an export value counter input is missing from either guide (card keys and counter inputs also
 from `docs/cost-card.md`), or a dashboard example is not linked from `docs/installation.md` — fix the
