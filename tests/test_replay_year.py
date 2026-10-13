@@ -145,6 +145,20 @@ def test_year_without_a_negative_month_keeps_its_ledger_tuple():
     )
 
 
+def test_year_with_a_deposit_above_the_liability_keeps_its_ledger_tuple():
+    # the regime `bill` sends to the ledger (D 430.5 > E 300), no negative month; pinned on the
+    # code before T-473
+    deposit = [0.0] * 13
+    deposit[3], deposit[6], deposit[9] = 123.0, 246.0, 61.5
+    energy = [0.0] + [10.0, 30, 20, 40, 5, 60, 25, 0, 30, 15, 40, 25]
+    assert year.ledger_year(deposit, energy, 0.3, full=True) == pytest.approx(
+        [(300.0, 96.5, 114.0), (300.0, 66.5, 64.0)]
+    )
+    assert year.ledger_year(deposit, energy, 0.3, full=False) == pytest.approx(
+        [(240.0, 0.0, 0.0), (300.0, 0.0, 0.0)]
+    )
+
+
 def test_bill_keeps_the_signed_energy_part_and_pays_the_liability_only():
     # March V = 10 (D 12.3); January imports E = +20, April E = -8 (en = 0.5, imp = -16 is
     # not a flow, so the negative month is a negative energy price instead).
@@ -162,10 +176,13 @@ def test_bill_keeps_the_signed_energy_part_and_pays_the_liability_only():
 
 def test_negative_months_on_random_years_keep_the_invariants():
     rng = random.Random(473)
+    regime = 0  # years in the ledger regime (D > E+)
     for _ in range(300):
         rho = rng.choice([0.0, 0.2, 0.3, 1.0])
         deposit = [0.0] + [rng.choice([0.0, rng.uniform(0, 400)]) for _ in range(12)]
-        energy = [0.0] + [rng.uniform(-150, 500) for _ in range(12)]
+        # about half the years carry a deposit above the liability (the ledger regime of `bill`)
+        scale = rng.choice([1.0, 0.2])
+        energy = [0.0] + [rng.uniform(-150, 500) * scale for _ in range(12)]
         owed = sum(max(e, 0.0) for e in energy)
         total = sum(deposit)
         value = sum(deposit) / year.DEPOSIT_FACTOR
@@ -183,8 +200,15 @@ def test_negative_months_on_random_years_keep_the_invariants():
         assert out["applied_ledger"] + out["refund_ledger"] + out[
             "void_ledger"
         ] == pytest.approx(total)
-        assert out["applied_ledger"] <= min(total, owed) + 1e-9
-        assert -1e-9 <= out["refund_ledger"] <= rho * value + 1e-9
+        # the steady state pays the whole liability whenever the deposit covers it
+        assert out["applied_ledger"] == pytest.approx(min(total, owed))
+        assert out["void_ledger"] >= -1e-9
+        assert (
+            -1e-9
+            <= out["refund_ledger"]
+            <= min(total - out["applied_ledger"], rho * value) + 1e-9
+        )
+        regime += total > owed
         # a negative month made more negative by x lowers both bills by exactly x
         negative = [m for m in months if energy[m] < 0]
         if negative:
@@ -198,6 +222,7 @@ def test_negative_months_on_random_years_keep_the_invariants():
             assert more["ledger"] == pytest.approx(out["ledger"] - x)
             for key in ("applied", "refund", "applied_ledger", "refund_ledger"):
                 assert more[key] == pytest.approx(out[key])
+    assert regime >= 100  # the ledger regime is exercised, not an edge case
 
 
 # --- the year replay ---------------------------------------------------------------------------
@@ -481,6 +506,30 @@ def test_table_prints_both_bills(tmp_path, capsys):
     assert year.main([str(path), "--self-use", "--currency", "PLN"]) == 0
     out = capsys.readouterr().out
     assert "bill annual" in out and "bill ledger" in out and "PLN" in out
+
+
+def test_table_prints_the_liability_next_to_a_negative_energy_part():
+    # a negative month (the hourly input forbids a negative `buy_energy`, so it comes from `bill`
+    # directly): E is signed, the liability E+ the deposit pays is only the positive month
+    result = year.bill(
+        [1, 3, 4],
+        [1.0, 1.0, 1.0],
+        [1.0] * 3,
+        [0.5, 0.5, -0.5],
+        [40.0, 0.0, 16.0],
+        [0.0, 10.0, 0.0],
+        0.3,
+        5.0,
+    )
+    result.update(
+        wear=0.0, soc_drift=0.0, K=0.0, KL=0.0, import_kwh=56.0, export_kwh=10.0
+    )
+    printed = {
+        line[:14].strip(): float(line[14:].split()[0])
+        for line in year.format_result(result, "PLN").splitlines()
+    }
+    assert printed["E energy part"] == pytest.approx(12.0)
+    assert printed["E+ liability"] == pytest.approx(20.0)
 
 
 @pytest.mark.parametrize(

@@ -2113,7 +2113,7 @@ are valued by two bills:
 
 | Bill | Rule |
 | --- | --- |
-| `annual` | the deposit D = 1.23 × V (V = value of the exported energy at `max(sell, 0)`) pays the liability E⁺ = Σ max(E<sub>t</sub>, 0) of the monthly energy parts E<sub>t</sub> of the imports; the refund is `min(D − min(D, E⁺), ρ × V)`. A month with a negative energy part (dynamic price without an index floor, charging in negative-price hours) owes nothing and never feeds the deposit: it stays on the bill at full value, never refunded, capped or voided (ADR-0031 Amendment T-471). So bill = fixed + Σ E<sub>t</sub> − applied − refund, with Σ E<sub>t</sub> signed |
+| `annual` | the deposit D = 1.23 × V (V = value of the exported energy at `max(sell, 0)`) pays the liability E⁺ = Σ max(E<sub>t</sub>, 0) of the monthly energy parts E<sub>t</sub> of the imports; the refund is `min(D − min(D, E⁺), ρ × V)`. A month with a negative energy part (dynamic price without an index floor, charging in negative-price hours) owes nothing and never feeds the deposit: it stays on the bill at full value, never refunded, capped or voided (ADR-0031 Amendment T-471). So bill = fixed + Σ import × buy − applied − refund, and the signed energy part (a negative month included) is inside Σ import × buy |
 | `ledger` | the deposit of every month is a vintage booked the following month, paid out oldest first, usable for 12 months; at expiry `min(unused, ρ × V of the month)` comes back and the rest is void. It is the steady state of a repeated year: `D ≤ E⁺` gives the annual result, `D > E⁺` a warm-up year from a full account (every live vintage at its whole deposit) and then the measured year |
 
 ```
@@ -2122,7 +2122,7 @@ python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 
 ```
 
 It prints (or, with `--json`, returns) both bills, `wear`, the SOC drift (initial minus final SOC at
-the mean buy price), `K` = annual bill + wear + SOC drift (`KL` with the ledger), `D`, `V`, `E` (signed), `E_owed` (E⁺), and
+the mean buy price), `K` = annual bill + wear + SOC drift (`KL` with the ledger), `D`, `V`, `E` (signed), `E_owed` (E⁺; the text output labels it `E+ liability`), and
 the refund and the void of each bill. Compare two runs by the difference of `K` (or `KL`); `--self-use`
 gives the no-planner reference. The input is one JSON object (`timezone`, `start`, `rho`, `fixed`,
 `initial_soc_percent`, `settings` and `hours[]`) or a CSV, one row per **hour** with `start`, `buy`,
@@ -2142,7 +2142,9 @@ repeated autumn hour it is the first occurrence, unless the row before it is tha
 Limits: the fixed part of the bill is one number from the input and does not follow the flow, so a
 charge band that depends on the annual import is not modelled (take `fixed` from the no-battery bill
 and expect a small constant error where the band differs); a stretch shorter than a year is read as
-a year with empty months; the result is only as good as the forecast series you give it.
+a year with empty months; `buy_energy` stays non-negative as in the engine, so a month with a
+negative energy part reaches the bills only as a signed energy list through the Python API (`bill()`),
+not through the hourly input; the result is only as good as the forecast series you give it.
 
 ## Reason code reference
 

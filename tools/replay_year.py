@@ -15,8 +15,9 @@ PV-export counters reset at local midnight, every plan executed on the realized 
              live vintage at its whole deposit), then the measured year
 
 Per run: both bills, wear, the SOC drift (initial minus final SOC at the mean buy price),
-K = annual bill + wear + SOC drift (KL the same with the ledger), D, V, E, the refund and the void
-(deposit that neither pays energy nor comes back) of each bill.
+K = annual bill + wear + SOC drift (KL the same with the ledger), D, V, E (signed), E+ (the liability
+the deposit pays), the refund and the void (deposit that neither pays energy nor comes back) of each
+bill.
 
     python tools/replay_year.py site.json --set capacity_kwh=10 --refresh-hours 6
     python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 310 --self-use
@@ -48,7 +49,9 @@ naive JSON `start` in that hour is the first occurrence.
 
 Limits: the fixed part of the bill is one number given in the input (taken from the no-battery bill
 of the home); it does not follow the flow, so a charge band that depends on the annual import is
-not modelled. The ledger bins hours by the local month, so a partial first and last month are one
+not modelled. `buy_energy` is non-negative as in the engine (`normalize.py`), so a month with a
+negative energy part reaches `bill()` only as a signed `energy` list through the Python API, not
+through this input. The ledger bins hours by the local month, so a partial first and last month are one
 month of the cycle, and a stretch shorter than a year is read as a year with empty months. Energy
 is valued per hour: intervals other than one hour are rejected. No household data belongs in the
 repository; `tests/test_replay_year.py` uses a synthetic series.
@@ -174,8 +177,9 @@ def bill(
     """Both yearly bills of an hourly import/export flow (see the module docstring).
 
     `E` is the signed energy part, `E_owed` the liability E+ = sum of max(E_t, 0) the deposit pays.
-    bill = fixed + sum(E_t) - applied - refund: the negative part of a month is never refunded,
-    capped or voided (ADR-0031 Amendment T-471).
+    bill = gross - applied - refund with gross = fixed + sum(import x buy): the energy part of a
+    month (its negative part too) is inside gross, so a negative month stays on the bill at full
+    value, never refunded, capped or voided (ADR-0031 Amendment T-471).
     """
     gross = fixed + sum(i * b for i, b in zip(imp, buy, strict=True))
     deposit_m, energy_m = monthly_totals(
@@ -468,6 +472,7 @@ def format_result(result: dict, currency: str) -> str:
         ("D deposit", result["D"]),
         ("V value", result["V"]),
         ("E energy part", result["E"]),
+        ("E+ liability", result["E_owed"]),
         ("refund annual", result["refund"]),
         ("refund ledger", result["refund_ledger"]),
         ("void annual", result["void"]),
