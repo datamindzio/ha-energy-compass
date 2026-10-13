@@ -7,6 +7,16 @@ from .models import Flow, MachineState, Slot
 _TOL = 1e-6
 
 
+def noise_bound(upper: float) -> float:
+    """The most a flow bounded by `upper` carries on indicators the solver left at noise.
+
+    A `flow <= M * binary` row accepts the binary within 1e-6 of 0 and itself within
+    1e-6, so a flow gated by two unselected indicators can carry 1e-6 * (M1 + M2 + 1),
+    and no M exceeds the variable's own bound.
+    """
+    return _TOL * (2 * upper + 1)
+
+
 def activity_tolerance(activity: float) -> float:
     """How far below its minimum activity a solved flow may sit and still count."""
     return min(_TOL, activity * 1e-4)

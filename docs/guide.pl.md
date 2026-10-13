@@ -739,10 +739,14 @@ Zasady (domyślnie 60 min, 0,1 kW):
   instalacja nie przepuści nadwyżki (powyżej limitu eksportu lub mocy falownika), tak jak robi to
   falownik przy pełnej baterii. Zwolniony `HOLD` nie ma własnego zegara — jedynym zegarem jest
   termin zobowiązania — więc może przejść w `CURTAIL` (który startuje własny zegar) przed tym
-  terminem. `HOLD` zwolniony przy pełnej baterii nie wraca do `CHARGE_PV`/`SELF_CONSUME`; zwolniony
-  przy rozładowanej baterii wraca, w każdym późniejszym przedziale zobowiązania, dopóki bateria jest
-  rozładowana: bateria przyjmuje nadwyżkę, a `HOLD` nie przepuściłby PV powyżej limitu eksportu (przy
-  `grid_export_kw = 0` tak jest każdego wschodu słońca). Powrót to dalszy ciąg zobowiązania, a nie nowy
+  terminem. Zwolniony `HOLD` wraca do `CHARGE_PV`/`SELF_CONSUME` w każdym
+  późniejszym przedziale zobowiązania, dopóki bateria jest rozładowana: bateria przyjmuje nadwyżkę,
+  a `HOLD` nie przepuściłby PV powyżej limitu eksportu (przy `grid_export_kw = 0` tak jest każdego
+  wschodu słońca). `HOLD` zwolniony przy rozładowanej baterii wraca też w przedziale z PV, którego
+  instalacja nie przepuści, bo `HOLD` nie ma tam legalnego przepływu: plan wykonany przez jeden
+  przedział dotarłby inaczej do następnej granicy z przeniesionym zobowiązaniem i bez planu. `HOLD`
+  zwolniony przy pełnej baterii tam nie wraca: przez granicę zachowuje własny zegar, a tam, gdzie
+  instalacja nie przepuści PV, jest `CURTAIL` (wyżej). Powrót to dalszy ciąg zobowiązania, a nie nowy
   przebieg: jedynym zegarem pozostaje termin zobowiązania. Bateria, która opróżni się ponownie w
   tym samym zobowiązaniu, jest znowu zwalniana i znowu wraca, tyle razy, ile trwa zobowiązanie.
   Zwolnienie przechodzi przez granicę przedziału: plan oznacza wiersze takiego `HOLD`
@@ -2143,8 +2147,8 @@ tego wychodzi, wyceniają dwa rachunki:
 
 | Rachunek | Reguła |
 | --- | --- |
-| `annual` | depozyt D = 1,23 × V (V = wartość oddanej energii po `max(sell, 0)`) płaci część energetyczną E poboru; zwrot to `min(D − min(D, E), ρ × V)` |
-| `ledger` | depozyt każdego miesiąca to rocznik księgowany w miesiącu następnym, wykorzystywany od najstarszego, ważny 12 miesięcy; po wygaśnięciu wraca `min(niewykorzystane, ρ × V miesiąca)`, reszta przepada. To stan okresowy powtarzanego roku: `D ≤ E` daje wynik roczny, `D > E` rok rozbiegowy od pełnego konta (każdy żywy rocznik z całym depozytem), potem rok mierzony |
+| `annual` | depozyt D = 1,23 × V (V = wartość oddanej energii po `max(sell, 0)`) płaci zobowiązanie E⁺ = Σ max(E<sub>t</sub>, 0) z miesięcznych części energetycznych E<sub>t</sub> poboru; zwrot to `min(D − min(D, E⁺), ρ × V)`. Miesiąc z ujemną częścią energetyczną (cena dynamiczna bez podłogi indeksu, ładowanie w godzinach z ujemną ceną) nie tworzy zobowiązania i nigdy nie zasila depozytu: zostaje na rachunku w pełnej wartości, bez zwrotu, limitu i umorzenia (ADR-0031 Amendment T-471). Rachunek = opłaty stałe + Σ pobór × cena zakupu − zaliczone − zwrot, a część energetyczna ze znakiem (także ujemny miesiąc) jest w Σ pobór × cena zakupu |
+| `ledger` | depozyt każdego miesiąca to rocznik księgowany w miesiącu następnym, wykorzystywany od najstarszego, ważny 12 miesięcy; po wygaśnięciu wraca `min(niewykorzystane, ρ × V miesiąca)`, reszta przepada. To stan okresowy powtarzanego roku: `D ≤ E⁺` daje wynik roczny, `D > E⁺` rok rozbiegowy od pełnego konta (każdy żywy rocznik z całym depozytem), potem rok mierzony |
 
 ```
 python tools/replay_year.py site.json --set deposit_model=manual --set export_value_factor=0.3
@@ -2152,7 +2156,7 @@ python tools/replay_year.py site.csv --timezone Europe/Warsaw --rho 0.2 --fixed 
 ```
 
 Wypisuje (albo z `--json` zwraca) oba rachunki, `wear`, dryf SOC (początkowy minus końcowy SOC po
-średniej cenie zakupu), `K` = rachunek roczny + zużycie + dryf SOC (`KL` z księgą), `D`, `V`, `E` oraz
+średniej cenie zakupu), `K` = rachunek roczny + zużycie + dryf SOC (`KL` z księgą), `D`, `V`, `E` (ze znakiem), `E_owed` (E⁺; w wyniku tekstowym podpis `E+ liability`) oraz
 zwrot i przepadek każdego rachunku. Dwa przebiegi porównuje różnica `K` (albo `KL`); `--self-use` daje
 punkt odniesienia bez planera. Wejście to jeden obiekt JSON (`timezone`, `start`, `rho`, `fixed`,
 `initial_soc_percent`, `settings` i `hours[]`) albo CSV, jeden wiersz na **godzinę** z `start`, `buy`,
@@ -2173,7 +2177,9 @@ godzinie to pierwsze wystąpienie; podaj przesunięcie, by oznaczyć drugie.
 Ograniczenia: część stała rachunku to jedna liczba z wejścia i nie podąża za przepływem, więc pasmo
 opłaty zależne od rocznego poboru nie jest modelowane (`fixed` weź z rachunku bez magazynu i licz się z
 niewielkim stałym błędem tam, gdzie pasmo jest inne); odcinek krótszy niż rok jest czytany jak rok z
-pustymi miesiącami; wynik jest tak dobry, jak podany szereg prognoz.
+pustymi miesiącami; `buy_energy` pozostaje nieujemne jak w silniku, więc miesiąc z ujemną częścią
+energetyczną trafia do rachunków tylko jako lista części energetycznych ze znakiem przez API Pythona
+(`bill()`), nie przez wejście godzinowe; wynik jest tak dobry, jak podany szereg prognoz.
 
 ## Słownik kodów powodów
 
