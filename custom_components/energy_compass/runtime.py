@@ -39,7 +39,7 @@ from .engine.consumption import (
     serialize_opportunity,
 )
 from .engine.daily_energy import daily_export_rows
-from .engine.dispatch_policy import MODES, safety_exception
+from .engine.dispatch_policy import MODES, dwell_group, safety_exception
 from .engine.models import (
     Battery,
     CompassSettings,
@@ -111,6 +111,9 @@ def restore_commitment(raw, now):
     if since > now:
         return None
     result = {"mode": raw["mode"], "since": since.isoformat()}
+    # A HOLD released from this PV-follow commitment's depleted pack is under way.
+    if raw.get("released") is True and dwell_group(raw["mode"]) == "PV_FOLLOW":
+        result["released"] = True
     legacy = raw.get("legacy_direction")
     if isinstance(legacy, dict) and legacy.get("mode") in ("charge", "discharge"):
         restored = restore_commitment(legacy, now)
@@ -847,6 +850,7 @@ def build_problem(
         minimum_mode_power_kw=values["minimum_mode_power_kw"],
         initial_dispatch_mode=named["mode"] if named else None,
         initial_dispatch_mode_since=parse_timestamp(named["since"]) if named else None,
+        initial_dispatch_released=bool(named and named.get("released")),
         initial_battery_mode=legacy.get("mode"),
         initial_battery_mode_since=parse_timestamp(legacy["since"]) if legacy else None,
         strategy=values["strategy"],
@@ -1338,6 +1342,9 @@ def compute(
             "safety_exception": safety_exception(problem),
             "carried_idle_starts": [
                 detailed[index]["start"] for index in plan.carried_bridges
+            ],
+            "released_hold_starts": [
+                detailed[index]["start"] for index in plan.released_holds
             ],
             "limit_export_to_pv": values["limit_export_to_pv"],
             "export_limit_scope": values["export_limit_scope"],

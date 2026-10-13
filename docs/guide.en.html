@@ -1209,8 +1209,19 @@ directly by any other available mode.</p>
   rest of the commitment is <code>HOLD</code> with the surplus exported, or <code>CURTAIL</code> where the site cannot
   pass the surplus (above the export cap or the inverter rating), as the inverter does with a full
   pack. The released <code>HOLD</code> starts no clock of its own — the commitment's deadline stays the only
-  one — so it may turn to <code>CURTAIL</code> (which starts its own clock) before then; it does not go back
-  to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>. The first committed interval is judged the same way against the
+  one — so it may turn to <code>CURTAIL</code> (which starts its own clock) before then. A <code>HOLD</code> released
+  from a full pack does not go back to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code>; one released from a depleted
+  pack does, in any later interval of the commitment while the pack is still depleted: the pack
+  takes the surplus, and a <code>HOLD</code> could not pass the PV above the export cap (on a site with
+  <code>grid_export_kw = 0</code> that is every sunrise). The return is the commitment going on, not a new
+  run: the commitment's deadline stays the only clock. A pack that empties again inside the same
+  commitment is released again and goes back again, as often as the commitment lasts. The release
+  survives the interval boundary: the plan marks the rows of such a <code>HOLD</code>
+  (<code>dispatch_policy.released_hold_starts</code>) and the coordinator keeps the commitment and its start,
+  flagged as released, instead of recording a <code>HOLD</code> with a clock of its own, so the next plan
+  goes back to <code>CHARGE_PV</code> as the first one published. That <code>HOLD</code> may go on past the
+  commitment's deadline without a clock; a return to <code>CHARGE_PV</code>/<code>SELF_CONSUME</code> after the
+  deadline is a run of its own and gets a fresh start. The first committed interval is judged the same way against the
   observed state of charge: a pack already within the lowered ceiling of that interval (for
   example after the interval that filled it was carried out) may be <code>HOLD</code> or <code>CURTAIL</code> at once,
   in either member mode. An observed state of charge at the upper bound is the safety exception
