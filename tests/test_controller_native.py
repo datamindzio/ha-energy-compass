@@ -40,6 +40,35 @@ async def site(hass, freezer):
         await hass.config_entries.async_unload(entry.entry_id)
 
 
+def describe_runs(host):
+    """Every recorded run, short enough for an assertion message."""
+    runs = []
+    for run in host.history:
+        runs.append(
+            {
+                "trigger": run.get("trigger"),
+                "at": run.get("at"),
+                "outcome": run.get("outcome"),
+                "code": run.get("code"),
+                "decision": (run.get("decision") or {}).get("reason_code"),
+                "transactions": [
+                    (t["attempt"], t["cleanup"], len(t["commands"]))
+                    for t in run.get("transactions", [])
+                ],
+                "writes": [
+                    (
+                        w["entity"].rsplit(".", 1)[-1],
+                        w["value"],
+                        w.get("confirmed"),
+                        w.get("blocked"),
+                    )
+                    for w in run.get("writes", [])
+                ][:12],
+            }
+        )
+    return json.dumps(runs)
+
+
 async def run_once(entry, trigger="test"):
     host = controller_of(entry).host
     host.request(trigger)
@@ -129,8 +158,9 @@ async def test_a_new_session_restores_the_base_before_anything_is_forced(
     controller = controller_of(entry)
     await controller.host.async_wait_idle()
     # No plan was accepted in this session, so the only profile is the base.
-    assert controller.state.restore_pending is False
-    assert controller.state.runtime["code"] == "restored"
+    last_run = describe_runs(controller.host)
+    assert controller.state.restore_pending is False, last_run
+    assert controller.state.runtime["code"] == "restored", last_run
     assert dict(inverter.writes)[PROGRAM_4] == "Disabled"
     assert dict(inverter.writes)[CHARGE] > 5
     base_writes = len(inverter.writes)

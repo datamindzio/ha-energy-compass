@@ -9,7 +9,8 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 from controller_support import PREFIX, START, register_solarman
-from homeassistant.core import ServiceCall, SupportsResponse
+from homeassistant.const import EVENT_SERVICE_REGISTERED
+from homeassistant.core import Event, ServiceCall, SupportsResponse, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -93,8 +94,19 @@ class Inverter:
             self.raw[register.address] = self._to_raw(
                 entity, hass.states.get(entity).state
             )
-        hass.services.async_register("number", "set_value", self._set_value)
-        hass.services.async_register("select", "select_option", self._select)
+        self.services = {
+            ("number", "set_value"): self._set_value,
+            ("select", "select_option"): self._select,
+        }
+        self.entity_services = {}
+        for (domain, service), handler in self.services.items():
+            hass.services.async_register(domain, service, handler)
+        # The real number and select components register their own entity services
+        # when the first entry sets them up, replacing these. The controller's first
+        # run races that setup, so a select write could silently reach no entity;
+        # take the services back the moment they are replaced, and pass the calls
+        # for entities that are not the inverter's on to the real service.
+        hass.bus.async_listen(EVENT_SERVICE_REGISTERED, self._reclaim)
         hass.services.async_register(
             "solarman",
             "read_holding_registers",
@@ -115,12 +127,43 @@ class Inverter:
         if entity not in self.dropped:
             self.raw[self.registers[entity].address] = self._to_raw(entity, str(value))
 
+    @callback
+    def _reclaim(self, event: Event) -> None:
+        key = (event.data["domain"], event.data["service"])
+        handler = self.services.get(key)
+        if handler is None:
+            return
+        current = self.hass.services.async_services_internal()[key[0]][key[1]]
+        if current.job.target is not handler:
+            self.entity_services[key] = current
+            self.hass.services.async_register(*key, handler)
+
+    async def _delegated(self, call: ServiceCall) -> bool:
+        """Pass a call that is not for the inverter on to the real entity service."""
+        entity = call.data.get("entity_id")
+        if entity in self.registers:
+            return False
+        real = self.entity_services.get((call.domain, call.service))
+        if real is None:
+            raise AssertionError(f"{call.domain}.{call.service} for {entity}")
+        data = dict(call.data)
+        if real.schema:
+            data = real.schema(data)
+        await real.job.target(
+            ServiceCall(self.hass, call.domain, call.service, data, call.context)
+        )
+        return True
+
     async def _set_value(self, call: ServiceCall):
+        if await self._delegated(call):
+            return
         if self.gate is not None:
             await self.gate.wait()
         self._apply(call.data["entity_id"], call.data["value"])
 
     async def _select(self, call: ServiceCall):
+        if await self._delegated(call):
+            return
         if self.gate is not None:
             await self.gate.wait()
         self._apply(call.data["entity_id"], call.data["option"])
