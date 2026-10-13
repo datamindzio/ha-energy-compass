@@ -826,3 +826,52 @@ def test_both_solver_switches_find_the_certified_cost_of_the_probe_day(monkeypat
     unprocessed = run(model, matrix, 30.0, presolve=False)
     assert unprocessed.status == 0
     assert unprocessed.fun <= -0.396053 + 1e-4
+
+
+# (buy, sell, pv, load) of a draw of `benchmarks/spill_sweep.py probe` (seed 44, index 143).
+CARRIED_DWELL_DAY = (
+    (0.78, -0.25, 1.26, 0.10),
+    (0.57, 0.07, 1.15, 0.05),
+    (1.45, 0.35, 0.10, 0.02),
+    (0.80, 0.01, 0.10, 0.10),
+    (0.59, 0.30, 0.02, 0.05),
+    (0.65, -0.40, 0.00, 0.40),
+    (1.41, -0.18, 1.33, 0.02),
+)
+
+
+def carried_dwell_day() -> Problem:
+    start = datetime(2026, 12, 18, 11, tzinfo=UTC)
+    return Problem(
+        tuple(
+            Slot(start + i * QUARTER, start + (i + 1) * QUARTER, *row)
+            for i, row in enumerate(CARRIED_DWELL_DAY)
+        ),
+        SiteLimits(8, 8, 1, False),
+        Battery(5, 0, 1, 4, 3, 3, 0.95, 0.95, 0.01, False, True, 0),
+        "value",
+        0.3,
+        (),
+        "UTC",
+        minimum_mode_minutes=60,
+        minimum_mode_power_kw=0.1,
+        minimum_export_episode_benefit=0.0,
+        initial_dispatch_mode="SELF_CONSUME",
+        initial_dispatch_mode_since=datetime(2026, 12, 18, 10, 44, tzinfo=UTC),
+    )
+
+
+def test_release_of_a_filled_run_does_not_end_a_run_that_began_after_it():
+    # T-083: the pack is full after the second interval and the carried SELF_CONSUME ends
+    # in the HOLD of the third (a release the run that filled the pack is given). The model
+    # let that release also end a SELF_CONSUME that begins at 11:45 for the probe's load,
+    # with a HOLD at 12:00, inside that run's hour: the plan failed its own certificate
+    # ("invalid solver result: minimum mode duration").
+    plan = solve_flexible_load(carried_dwell_day(), FlexibleLoadRequest(1, 4)).plan
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    for index, mode in enumerate(modes):
+        if dwell_group(mode) == "PV_FOLLOW" and index and modes[index - 1] == "HOLD":
+            assert all(
+                dwell_group(later) == "PV_FOLLOW" for later in modes[index : index + 4]
+            ), modes
+    assert plan.objective <= -1.222037 + 1e-4
