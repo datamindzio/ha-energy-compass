@@ -32,7 +32,7 @@ def _tool(*args):
 
 def test_a_roll_is_compared_and_summarised_by_the_tools_the_docs_name(tmp_path):
     path = tmp_path / "roll.json"
-    _tool("roll", 11, 4, path)
+    _tool("roll", 22, 10, path)
     rows = json.loads(path.read_text())
 
     # The draw has a roll followed to the end, one that stops and one whose next
@@ -57,3 +57,25 @@ def test_a_roll_is_compared_and_summarised_by_the_tools_the_docs_name(tmp_path):
     assert summary.count("minimum_mode_minutes") == len({row[-1] for row in rows})
     # The stops by reason, e.g. `stops {'off only': 1, 'start': 2}`.
     assert sum(map(int, re.findall(r"'[^']+': (\d+)", summary))) == stopped
+
+
+def test_the_switch_audit_counts_the_matrices_of_a_draw_by_the_command_the_docs_name():
+    # T-066: `benchmarks/switch_audit.py` solves each matrix with the solver switches both
+    # ways; the line it prints is what `docs/model.md` quotes.
+    done = subprocess.run(
+        [sys.executable, "benchmarks/switch_audit.py", "run", "11", "6"],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT / 'benchmarks'}"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    found = re.search(
+        r"run 11: (\d+) draws, (\d+) matrices, default dearer than another run on (\d+)",
+        done.stdout,
+    )
+    assert found, done.stdout
+    draws, matrices, dearer = map(int, found.groups())
+    assert (draws, dearer) == (6, 0)
+    assert matrices >= 1

@@ -972,11 +972,12 @@ def test_a_release_the_charge_power_cannot_take_is_planned_by_charging_and_curta
     assert set(modes[1:]) == {"CURTAIL"}
     assert safety_exception(problem) is None
     validate_modes(problem, plan.flows, plan.carried_bridges)
-    # Without curtailment there is no plan: the surplus has nowhere to go.
-    stuck = replace(problem, site=replace(problem.site, allow_curtailment=False))
-    with pytest.raises(SolveError) as error:
-        solve(stuck)
-    assert error.value.reason == "infeasible"
+    # Without curtailment the inverter throttles the PV beyond the pack's charge power by
+    # itself, whatever room the pack has: that is a forced spill and the same plan (T-066).
+    forced = replace(problem, site=replace(problem.site, allow_curtailment=False))
+    plan = solve(forced)
+    assert [flow.dispatch_mode for flow in plan.flows] == modes
+    validate_modes(forced, plan.flows, plan.carried_bridges)
 
 
 def test_the_commitments_own_hold_is_a_plan_for_the_release():
@@ -1580,12 +1581,20 @@ def test_a_plan_that_charges_and_curtails_can_be_followed_to_every_boundary():
     assert row[:2] == ["ok", len(problem.slots) - 1]
 
 
-def test_without_curtailment_the_surplus_beyond_the_pack_has_no_plan():
+def test_without_curtailment_the_surplus_beyond_the_pack_is_a_forced_spill():
+    # The pack has room, so no spill is forced for what it could take; the inverter still
+    # throttles what is beyond its charge power, whatever the room (T-066, was no plan).
     problem = _surplus_beyond_the_pack()
-    stuck = replace(problem, site=replace(problem.site, allow_curtailment=False))
-    with pytest.raises(SolveError) as error:
-        solve(stuck)
-    assert error.value.reason == "infeasible"
+    forced = replace(problem, site=replace(problem.site, allow_curtailment=False))
+    plan = solve(forced)
+    validate_modes(forced, plan.flows, plan.carried_bridges)
+    sun = plan.flows[:4]
+    assert [flow.dispatch_mode for flow in sun] == ["CURTAIL"] * 4
+    # The evenings ask for 0.8 kWh: the pack takes that much, at most its power a quarter hour.
+    assert sum(flow.charge_kwh for flow in sun) == pytest.approx(0.8, abs=1e-5)
+    for flow in sun:
+        assert flow.charge_kwh <= 0.25 + 1e-5
+        assert flow.charge_kwh + flow.curtail_kwh == pytest.approx(0.8, abs=1e-5)
 
 
 def test_the_rungs_command_counts_each_draw_once():
