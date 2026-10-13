@@ -14,8 +14,15 @@ planned all the way before and are infeasible at some boundary now: a plan that 
 there at the first boundary and gone at the next is no plan to the user.
 
 `compare` prints the problems that were planned before and are infeasible now
-(`NEWLY INFEASIBLE`), the ones that got worse (objective up by more than 1e-6) and a
-count of each outcome. T-037 ran seeds 11, 22 and 33 with 300 problems each.
+(`NEWLY INFEASIBLE`), the ones that got worse (objective up by more than 1e-6), the
+ones where the solver result is rejected that were not before (`NEW SOLVER FAILURE`)
+and a count of each outcome. T-037 ran seeds 11, 22 and 33 with 300 problems each.
+
+T-047 adds the same problems with a sell price that may fall below zero (`negrun`,
+`negroll`) and with a flexible-load probe on top (`probe`, which plans through
+`solve_flexible_load`: its plan is certified against the probe's load). The base seeds
+draw sell prices from 0 to 0.8 and never plan a probe, so they cannot show a rule that
+reads a slot's load.
 Invoked by path, like the other benchmarks: the repository root must be on PYTHONPATH.
 """
 
@@ -29,12 +36,13 @@ from pathlib import Path
 from custom_components.energy_compass.engine.dispatch_policy import dwell_group
 from custom_components.energy_compass.engine.models import (
     Battery,
+    FlexibleLoadRequest,
     Problem,
     SiteLimits,
     Slot,
     SolveError,
 )
-from custom_components.energy_compass.engine.optimize import solve
+from custom_components.energy_compass.engine.optimize import solve, solve_flexible_load
 
 START = datetime(2026, 12, 18, 11, tzinfo=UTC)
 Q = timedelta(minutes=15)
@@ -116,9 +124,32 @@ def make(rng):
     )
 
 
-def run(problem):
+def make_negative(rng):
+    """The same problem with sell prices from below zero to 0.8 (the base draw never is)."""
+    problem = make(rng)
+    slots = tuple(
+        replace(slot, sell_per_kwh=round(rng.uniform(-0.6, 0.8), 2))
+        for slot in problem.slots
+    )
+    return replace(problem, slots=slots)
+
+
+def make_probe(rng):
+    """A problem with negative sell prices and a flexible load that fits the horizon."""
+    problem = make_negative(rng)
+    power = rng.choice((0.5, 1, 2, 4))
+    room = power * 0.25 * len(problem.slots)
+    energy = round(min(rng.choice((0.25, 0.5, 1, 2, 4)), 0.8 * room), 2)
+    return problem, FlexibleLoadRequest(energy, power)
+
+
+def run(problem, request=None):
     try:
-        plan = solve(problem)
+        plan = (
+            solve(problem)
+            if request is None
+            else solve_flexible_load(problem, request).plan
+        )
     except SolveError as error:
         return ["err", str(error)[:40]]
     return [
@@ -182,18 +213,27 @@ def roll_compare(before_path, after_path):
     print(counts)
 
 
+def rejected(row):
+    return row[0] == "err" and "invalid solver result" in row[1]
+
+
 def compare(before_path, after_path):
     before = json.loads(Path(before_path).read_text())
     after = json.loads(Path(after_path).read_text())
     counts = {
         "newly_infeasible": 0,
         "newly_planned": 0,
+        "new_solver_failure": 0,
         "worse": 0,
         "better": 0,
         "same": 0,
     }
     for index, (a, b) in enumerate(zip(before, after, strict=True)):
-        if a[0] == "ok" and b[0] != "ok":
+        if rejected(b) and not rejected(a):
+            # A plan the solver found and the certificate refused: not "infeasible".
+            counts["new_solver_failure"] += 1
+            print("NEW SOLVER FAILURE", index, a[:2], b)
+        elif a[0] == "ok" and b[0] != "ok":
             counts["newly_infeasible"] += 1
             print("NEWLY INFEASIBLE", index, b)
         elif a[0] != "ok" and b[0] == "ok":
@@ -210,24 +250,32 @@ def compare(before_path, after_path):
     print(counts)
 
 
+def draws(kind, seed, count):
+    rng = random.Random(seed)
+    if kind == "probe":
+        return [run(*make_probe(rng)) for _ in range(count)]
+    makers = {"run": make, "negrun": make_negative}
+    if kind in makers:
+        return [run(makers[kind](rng)) for _ in range(count)]
+    makers = {"roll": make, "negroll": make_negative}
+    return [roll(makers[kind](rng)) for _ in range(count)]
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "compare":
         compare(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "rollcompare":
         roll_compare(sys.argv[2], sys.argv[3])
-    elif sys.argv[1] == "roll":
-        rng = random.Random(int(sys.argv[2]))
-        out = [roll(make(rng)) for _ in range(int(sys.argv[3]))]
-        Path(sys.argv[4]).write_text(json.dumps(out))
-        print(
-            sum(row[0] == "ok" for row in out),
-            "followed to the end, of",
-            len(out),
-            "; infeasible at the first boundary:",
-            sum(row[0] == "err" and row[1] == 0 for row in out),
-        )
     else:
-        rng = random.Random(int(sys.argv[2]))
-        out = [run(make(rng)) for _ in range(int(sys.argv[3]))]
+        out = draws(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
         Path(sys.argv[4]).write_text(json.dumps(out))
-        print(sum(row[0] == "ok" for row in out), "ok of", len(out))
+        if sys.argv[1] in ("roll", "negroll"):
+            print(
+                sum(row[0] == "ok" for row in out),
+                "followed to the end, of",
+                len(out),
+                "; infeasible at the first boundary:",
+                sum(row[0] == "err" and row[1] == 0 for row in out),
+            )
+        else:
+            print(sum(row[0] == "ok" for row in out), "ok of", len(out))

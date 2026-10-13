@@ -709,6 +709,19 @@ Rules (defaults: 60 min, 0.1 kW):
   mode and start there. It holds inside a carried `CHARGE_PV`/`SELF_CONSUME` commitment as well (a
   `CURTAIL` released from it goes on through a PV gap within the commitment's own duration), and for
   an interval with a load below the minimum activity.
+- **`CURTAIL` takes over a `HOLD` that cannot pass the PV.** `HOLD` takes no curtailment, so a
+  `HOLD` that has to last (a carried `HOLD`, the `HOLD` that the safety exception below puts in
+  place of a `CHARGE_PV` at the maximum state of charge, or a `HOLD` that began earlier in the plan,
+  for example after a `CURTAIL` run that ended in a PV gap) has no legal mode in an interval whose
+  PV, after the house, is above the export cap (`grid_export_kw`) or above the inverter rating.
+  There the inverter curtails by itself and the interval is `CURTAIL`: it takes the `HOLD` over and
+  from then on is an ordinary `CURTAIL` run with its own minimum duration (which outlasts the
+  `HOLD`'s remainder; a PV gap inside it is bridged as above). Only where the site cannot pass the
+  PV: anywhere else `CURTAIL` inside a `HOLD`'s duration would be a label to leave it with, and is
+  not offered. The `HOLD` after the run starts its own clock. A `HOLD` released from a carried
+  `CHARGE_PV`/`SELF_CONSUME` commitment has no clock of its own and is not taken over. A
+  flexible-load probe counts: its load is part of what the site passes, so the takeover is offered
+  only for the probe loads that leave PV above the cap.
 - **PV-follow group:** `CHARGE_PV` and `SELF_CONSUME` share one clock — in both the inverter
   charges from surplus and covers a deficit from the battery, so flipping between them is not a
   mode change.
@@ -721,7 +734,7 @@ Rules (defaults: 60 min, 0.1 kW):
   `observed_soc_maximum`) or at/below the reserve (discharge modes — `observed_soc_minimum`), or
   when a carried `CHARGE_GRID` meets a price above the ceiling before its deadline
   (`grid_charge_price_limit`). The interrupted mode and deadline stay stored; no other mode may
-  start before that deadline. Exposed in `dispatch_policy.safety_exception`.
+  start before that deadline, except the `CURTAIL` that takes the `HOLD` over where the site cannot pass the PV (above). Exposed in `dispatch_policy.safety_exception`.
 - **Strategy change (reset):** writing a new strategy drops the carried commitment for the next
   plan, which starts unlocked (see [strategy-switch release](#strategy-switch-release)).
 - Setting `minimum_mode_minutes = 0` disables duration and minimum-power rules; the

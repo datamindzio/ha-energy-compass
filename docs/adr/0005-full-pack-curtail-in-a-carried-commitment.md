@@ -1,7 +1,7 @@
 # ADR-0005: A full pack ends a carried PV-follow commitment in HOLD or CURTAIL, a released HOLD has no clock, and a CURTAIL run goes on through a PV gap
 
 Status: accepted
-Date: 2026-10-12 (amended 2026-10-13, T-037)
+Date: 2026-10-12 (amended 2026-10-13, T-037, T-047)
 Amends: [ADR-0004](0004-carried-lock-release-for-standby-loss.md) (the released `HOLD` clock)
 
 ## Context
@@ -126,8 +126,75 @@ gaps and carried modes; the merged branch against origin/main with T-038, the sa
 
 Still `infeasible`, found by the rolling sweep and out of scope here:
 
-- A `HOLD` inside its minimum duration cannot pass PV above the export cap: the carried `HOLD`, the
-  safety-exception `HOLD` at the maximum state of charge, and a `HOLD` after a finished `CURTAIL` run (T-047).
+- (T-047, below: planned.) A `HOLD` inside its minimum duration cannot pass PV above the export cap: the
+  carried `HOLD`, the safety-exception `HOLD` at the maximum state of charge, and a `HOLD` after a finished
+  `CURTAIL` run.
 - A free plan whose horizon ends before the minimum duration of the run it needs; `preserve_initial` and a
   standby loss that make the terminal state of charge unreachable; `allow_curtailment = false` with PV above
   the cap; a case where charging and curtailing in one interval would be needed to keep the state of charge.
+
+## Amendment (T-047): CURTAIL takes over a HOLD that cannot pass the PV
+
+Status: written by the developer on a ticket that asked for a decision in this ADR's terms.
+
+A `HOLD` takes no curtailment, so a `HOLD` that must last had no legal mode once PV above the house
+exceeded `grid_export_kw` (or PV the inverter rating) inside its minimum duration, and the plan was
+`infeasible` until the duration was over. Three entrances: a carried `HOLD`; the `HOLD` that the safety
+exception puts in place of a carried `CHARGE_PV` at the maximum state of charge (and, after T-037's release of
+the first interval, the `HOLD` that a re-plan carries from a pack filled in the interval just carried out); a
+`HOLD` that starts after a `CURTAIL` run that ended in a PV gap (the run's bridge ends with the run, the `HOLD`
+starts in the gap, PV returns inside its hour). Repros: `tests/test_curtail_dwell.py`
+(`test_curtail_takes_over_a_hold_that_cannot_pass_the_pv`).
+
+Decision:
+
+10. **A `CURTAIL` where the site cannot pass the PV takes a `HOLD` over.** In an interval with
+    `_curtail_need > 0` (PV above the house and the export cap, or above the inverter rating) the inverter
+    curtails whatever the mode, so a `HOLD` run inside its minimum duration goes on as a `CURTAIL` run (a
+    *takeover*), for a carried `HOLD`, a `HOLD` released by the safety exception and a `HOLD` that began
+    earlier in the plan alike. The `CURTAIL` run has its own minimum duration (point 5 applies: its dry
+    intervals are bridges), which always outlasts the `HOLD`'s remainder because it starts inside it, so the
+    `HOLD`'s duration is satisfied by it. A `HOLD` after the run starts its own clock. Nothing else changes
+    clocks: no new duration.
+11. **Only where the site cannot pass the PV.** Anywhere else a `CURTAIL` inside a `HOLD`'s duration would be
+    a label to leave it with (point 1, point 9), so it is not offered and `validate_modes` rejects it.
+    Not a release of a PV-follow commitment (those follow points 1 to 4): a `HOLD` released from one has no
+    clock of its own to take over, and `validate_modes` accepts a takeover only from a `HOLD` that has one.
+12. **The need is the one as realised.** A flexible-load probe's load is part of what the site passes, and the
+    plan is certified against it (`validate_modes` reads the slots with the probe's load in them). The model
+    offers the takeover in an interval only for the probe loads that leave `_curtail_need` positive there
+    (`flex_load ≤ need − margin` for the export-cap term, `_takeover_room`; the inverter term does not depend
+    on the load), so model and validator agree for every probe value. Without it a sell price below zero made
+    the solver prefer a takeover in an interval where the probe had made a `HOLD` legal, and
+    `solve_flexible_load` raised `solver_failure` ("minimum mode duration") for problems planned before.
+
+Rejected: offering `CURTAIL` inside a `HOLD` in every interval with curtailable PV (a label to leave the
+duration); shortening the `HOLD` to its first interval (a second, arbitrary duration).
+
+Measured with `benchmarks/curtail_sweep.py` (seeds 11, 22, 33 × 300 random export-capped problems, then seeds
+44, 55, 66, 77 × 300; this branch merged with origin/main `bf5d517`, the merge of T-045, against that `main`,
+the same seeds; the sweep script is the same on both sides):
+
+- `run`: seeds 11–33, planned 802 of 900 (main: 662); 0 newly infeasible, 140 newly planned, 57 cheaper, 0
+  worse. Seeds 44–77: 0 newly infeasible, 189 newly planned, 79 cheaper, 0 worse.
+- `roll` (each plan followed one interval and planned again, as the coordinator does, up to 8 boundaries):
+  0 newly infeasible while followed in all seven seeds; followed to the end 800 of 900 (main: 640), infeasible at the first boundary 98 (main: 238).
+- Sell prices from −0.6 to 0.8 (`negrun`, `negroll`; seeds 101, 202, 303, 404 × 300): planned 1076 of 1200
+  (main: 886), 0 newly infeasible, 0 worse; followed to the end 1066 (main: 847), 0 newly infeasible while
+  followed. These are the draws the base seeds do not make.
+- Flexible-load probes on those problems (`probe`, through `solve_flexible_load`, so the plan is certified
+  against the probe's load; same seeds): planned 1073 of 1200 (main: 915), 0 newly infeasible, 0 newly
+  rejected by the solver-result check (`NEW SOLVER FAILURE`), 158 newly planned, 42 cheaper, 1 dearer by
+  1e-6 with the same modes (solver tolerance). The first version of this amendment offered the takeover
+  without regard to the probe and the review found `solver_failure` on problems planned on `main`; these
+  rows are what shows it, and the base seeds never plan a probe.
+- A plan can be cheaper because the `HOLD` no longer has to be avoided (a plan that grid-charged to keep a
+  `HOLD` clear of a forced interval now holds and curtails the little that the cap forces); one existing test's
+  expected bridges changed for it (`test_curtail_bridge_follows_the_run_not_any_forced_interval_before_it`).
+
+Still `infeasible`, found by the same sweep and out of scope here (98 of 900): `allow_curtailment = false` with
+PV above the cap, `preserve_initial` whose terminal state of charge is out of reach, a carried
+`CHARGE_PV`/`SELF_CONSUME` with a pack that cannot take the PV above the cap by its charge power (charging and
+curtailing in one interval would be needed), and the `HOLD` released from a carried PV-follow commitment whose
+pack is depleted (no clock of its own, so nothing for a `CURTAIL` to take over): PV above the cap inside the
+commitment's duration is infeasible for it, which is every sunrise on a zero-export site (T-050).
