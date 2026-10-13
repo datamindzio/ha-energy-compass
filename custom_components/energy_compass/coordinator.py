@@ -794,9 +794,10 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             self._invalidate("invalid_input", "expired_inputs")
             return
         policy = dict(result.get("dispatch_policy", {}))
-        # A HOLD row with nothing for the carried PV-follow commitment to follow is
-        # not a new mode: the commitment and its clock stay as they are, and a HOLD
-        # run that follows such a row starts its clock after it.
+        # A HOLD row with nothing for the carried PV-follow commitment to follow, or
+        # with too little PV for a CURTAIL run to go on, is not a new mode: the
+        # commitment and its clock stay as they are, and a HOLD run that follows such a
+        # row starts its clock after it.
         bridges = policy.get("carried_idle_starts", ())
         mode_start = mode_run_start(rows, current, bridges)
         exception = policy.get("safety_exception")

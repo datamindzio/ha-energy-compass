@@ -357,16 +357,46 @@ def _lock_floor(problem, drains, owed, index) -> float:
     return keep + drains[index] + discharge / battery.eta_discharge
 
 
-def _lock_ceiling(problem, drains, index) -> float:
-    """Energy above which the battery cannot keep CHARGE_PV active in a slot."""
+def _curtail_need(problem, slot, extra_load=0.0) -> float:
+    """Energy a slot must send to the pack or curtail, because the site cannot pass it.
+
+    PV above the house, a flexible load of at most `extra_load` and the export cap
+    leaves `surplus - export cap`, and PV above the inverter rating needs the same
+    from the pack or the curtailment. HOLD takes none of it, CHARGE_PV all of it.
+    """
+    hours = _hours(slot)
+    return max(
+        slot.pv_kwh - slot.load_kwh - extra_load - problem.site.grid_export_kw * hours,
+        slot.pv_kwh - problem.site.inverter_kw * hours,
+        0.0,
+    )
+
+
+def _lock_ceiling(problem, drains, index, extra_load=0.0) -> float:
+    """Energy above which the battery cannot keep CHARGE_PV active in a slot.
+
+    CHARGE_PV is kept by its minimum activity, or by what the site cannot pass
+    (`_curtail_need`) when that is more: a pack with less room cannot charge the
+    interval and stay below the export cap or the inverter rating.
+    """
     battery = problem.battery
-    hours = _hours(problem.slots[index])
+    slot = problem.slots[index]
+    hours = _hours(slot)
+    absorbed = max(
+        problem.minimum_mode_power_kw * hours, _curtail_need(problem, slot, extra_load)
+    )
     return (
         battery.capacity_kwh
         * (1 if index in problem.balance_lift_slots else battery.maximum_soc_fraction)
         + drains[index]
-        - problem.minimum_mode_power_kw * hours * battery.eta_charge
+        - absorbed * battery.eta_charge
     )
+
+
+def _curtail_dry(problem, slot) -> bool:
+    """Tell whether a slot has too little PV to curtail the minimum activity."""
+    activity = problem.minimum_mode_power_kw * _hours(slot)
+    return activity > 2e-6 and slot.pv_kwh < activity
 
 
 def _follow_load_unmoded(model, problem, vectors, *, flexible_load) -> None:
@@ -582,6 +612,54 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
         problem,
         [model.upper[v["flex_load"]] if flexible_load else 0.0 for v in vectors],
     )
+    # A CURTAIL run needs PV to curtail, and PV may drop inside its minimum duration.
+    # A HOLD in an interval with too little PV for the minimum activity, inside the
+    # duration of a CURTAIL run, is that run going on: the inverter has nothing to
+    # curtail and the pack and the grid do what HOLD does. It counts for the CURTAIL
+    # clock, starts no HOLD clock, and lasts only until the run's own duration is up.
+    bridge = {}
+    held_curtail = previous is not None and dwell_group(previous) == "CURTAIL"
+    curtail_until = since.astimezone(UTC) + dwell if held_curtail else None
+
+    def curtail_terms(j):
+        terms = {vectors[j]["mode_CURTAIL"]: 1}
+        if j in bridge:
+            terms[bridge[j]] = 1
+        return terms
+
+    for i, (slot, v) in enumerate(zip(problem.slots, vectors, strict=True)):
+        if i in idle or not _curtail_dry(problem, slot):
+            continue
+        # Only where a CURTAIL run can be under way: carried in, or begun by an
+        # interval whose PV the cap or the inverter cannot pass, within its minimum
+        # duration (a CURTAIL chosen for its price can always be left out).
+        carried_run = held_curtail and starts[i] < curtail_until
+        if not carried_run and not any(
+            starts[i] < starts[j] + dwell
+            and _curtail_need(problem, problem.slots[j]) > 0
+            for j in range(i)
+        ):
+            continue
+        run = bridge[i] = v["curtail_bridge"] = model.variable(binary=True)
+        model.constrain({run: 1, v["mode_HOLD"]: -1}, -np.inf, 0)
+        if i:
+            model.constrain(
+                {run: 1, **{key: -1 for key in curtail_terms(i - 1)}}, -np.inf, 0
+            )
+        if held_curtail and starts[i] < curtail_until:
+            continue
+        # Only while the run that this continues began inside its duration: one of the
+        # intervals that precede that start must not be CURTAIL or a bridge.
+        window = [j for j in range(-1, i) if starts[i] < starts[j + 1] + dwell]
+        terms = {}
+        for j in window:
+            for key in curtail_terms(j) if j >= 0 else {}:
+                terms[key] = terms.get(key, 0) + 1
+        model.constrain(
+            {run: 1, **terms},
+            -np.inf,
+            len(window) - int(held_curtail and -1 in window),
+        )
     # Per idle committed interval, the binary that tells a real HOLD run from a bridge.
     runs = {}
     # Intervals whose HOLD started from a carried PV-follow commitment: no clock of its own.
@@ -644,6 +722,8 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 # HOLD starts only on a release, and not on a PV surplus the pack
                 # could take, but a run that began earlier goes on through it.
                 kept = {v[f"mode_{mode}"]: 1 for mode in members}
+                if i in bridge and "CURTAIL" in members:
+                    kept[bridge[i]] = 1
                 if known or held or releases:
                     if not known:
                         model.constrain(
@@ -695,10 +775,17 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 depleted[empty] = -1
             if "CHARGE_PV" in members and i + 1 < len(vectors):
                 filled = v["lock_full"] = model.variable(binary=True)
-                slack = _lock_ceiling(problem, drains, i + 1) - model.lower[v["energy"]]
+                extra = (
+                    model.upper[vectors[i + 1]["flex_load"]] if flexible_load else 0.0
+                )
+                slack = (
+                    _lock_ceiling(problem, drains, i + 1, extra)
+                    - model.lower[v["energy"]]
+                )
                 if slack > 0:
                     # `filled` may only be set once the pack reaches the next slot's
-                    # ceiling less what its minimum activity would still add.
+                    # ceiling less what its minimum activity, or the PV the site
+                    # cannot pass, would still add.
                     model.constrain(
                         {v["energy"]: 1, filled: -slack},
                         model.lower[v["energy"]],
@@ -720,10 +807,11 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     else ({}, 0)
                 )
             else:
-                indicators[group].append(
-                    # Modes are one-hot, so a group's member sum is its binary indicator.
-                    ({v[f"mode_{mode}"]: 1 for mode in _members(group)}, 0)
-                )
+                indicator = {v[f"mode_{mode}"]: 1 for mode in _members(group)}
+                if i in bridge and group in ("HOLD", "CURTAIL"):
+                    indicator[bridge[i]] = -1 if group == "HOLD" else 1
+                # Modes are one-hot, so a group's member sum is its binary indicator.
+                indicators[group].append((indicator, 0))
     for group in GROUPS:
         members = _members(group)
         # A group's start is a continuous flag: it is at least the rise of the
@@ -810,7 +898,9 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
 
     `bridges` lists the committed idle rows the plan reads as a bridge, the rest
     of the HOLD rows start or continue a HOLD run (the solver says which, since
-    both have the same flows). None reads every idle HOLD row as a bridge.
+    both have the same flows). None reads every idle HOLD row as a bridge. A HOLD
+    row that goes on with a CURTAIL run for lack of PV needs no listing: inside the
+    run's duration it can be nothing else.
     """
     if not problem.battery:
         return
@@ -883,6 +973,15 @@ def validate_modes(problem: Problem, flows, bridges=None) -> None:
                     "solver_failure", "invalid solver result: minimum mode duration"
                 )
             # Nothing to follow: HOLD by classification, the commitment goes on.
+            left = flow.end_soc_kwh
+            continue
+        if (
+            mode == "HOLD"
+            and previous == "CURTAIL"
+            and _curtail_dry(problem, slot)
+            and start < since.astimezone(UTC) + dwell
+        ):
+            # Too little PV to curtail: the CURTAIL run goes on and its clock with it.
             left = flow.end_soc_kwh
             continue
         ends = False

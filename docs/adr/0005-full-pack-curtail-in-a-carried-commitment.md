@@ -1,7 +1,7 @@
-# ADR-0005: A full pack ends a carried PV-follow commitment in HOLD or CURTAIL, and a released HOLD has no clock
+# ADR-0005: A full pack ends a carried PV-follow commitment in HOLD or CURTAIL, a released HOLD has no clock, and a CURTAIL run goes on through a PV gap
 
 Status: accepted
-Date: 2026-10-12
+Date: 2026-10-12 (amended 2026-10-13, T-037)
 Amends: [ADR-0004](0004-carried-lock-release-for-standby-loss.md) (the released `HOLD` clock)
 
 ## Context
@@ -57,13 +57,43 @@ the inverter).
 - `benchmarks/optimizer.py` (96 slots, all strategies) unchanged within noise: the rows exist only inside a
   carried commitment.
 - The empty-battery `HOLD` also loses its own clock; its plans can only get cheaper.
-- Not changed, one decision for both (T-037): `CHARGE_PV` cannot fill the pack and curtail in the same
-  interval, and `CURTAIL` cannot last its minimum duration when PV drops.
-  - A **carried** commitment, a committed interval in which the pack fills while the rest of the surplus is
-    still above the export cap or the inverter rating, stays `infeasible` until the commitment ends. Repro:
-    `pv = (0.5, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9)`, load 0.1, `grid_export_kw = 2`, `initial_kwh = 9.5`,
-    carried `CHARGE_PV` since 15 min before the first slot. Slot 1 has 0.1 kWh of room (above the minimum
-    activity, so `lock_full` is not set) and 0.8 kWh of surplus: `CHARGE_PV` fills the pack, 0.7 kWh stays
-    above the 0.5 kWh cap, and neither `HOLD` nor `CURTAIL` is open yet. It was `ok` before T-010.
-  - A **free** plan (no carried lock) with PV dropping inside a `CURTAIL`'s minimum duration on an
-    export-capped site can still be `infeasible`.
+- T-037 (below): the two cases this ADR left `infeasible` are planned, the sweep shows 0 newly infeasible.
+
+## Amendment (T-037): CURTAIL dwell and the carried fill-and-curtail interval
+
+Two cases stayed `infeasible` with one cause each. A `CURTAIL` run needs `curt ≥ minimum activity` in
+every interval of its minimum duration, which fails when PV drops (a **free** plan on an export-capped site,
+no carried lock needed). And a carried `CHARGE_PV` interval that fills the pack while the rest of the
+surplus is still above the export cap or the inverter rating had no legal mode: `CHARGE_PV` fills and
+cannot curtail (the classifier gives `CURTAIL` only with charge and discharge at zero), `HOLD` and
+`CURTAIL` are not open until the pack is at the ceiling.
+
+Repro of the second: `pv = (0.5, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9)`, load 0.1, `grid_export_kw = 2`,
+`initial_kwh = 9.5`, carried `CHARGE_PV` since 15 min before the first slot. Slot 1 has 0.1 kWh of room and
+0.8 kWh of surplus. It was `ok` before T-010.
+
+Decision:
+
+5. **Dwell semantics.** A `HOLD` in an interval whose PV is below the minimum activity, inside the minimum
+   duration of a `CURTAIL` run, is that run going on (a *CURTAIL bridge*; `curtail_bridge`, in
+   `Plan.carried_bridges`). The inverter has nothing to curtail and the pack and the grid do what `HOLD`
+   does. A bridge counts for the `CURTAIL` clock, starts no `HOLD` clock and lasts only until the run's own
+   duration is up; a `HOLD` after it starts its own clock. A bridge needs a `CURTAIL` (or bridge) in the
+   interval before, and a run begun by PV that the cap or the inverter cannot pass, or carried in; a
+   `CURTAIL` chosen for its price can always be left out, so it needs none (and the cost_min golden model
+   of the standard fixtures is unchanged). `validate_modes` reads the same `HOLD` as the run going on.
+6. **Fill and curtail.** Not a mode: `CHARGE_PV` and `CURTAIL` stay exclusive. The ceiling that sets
+   `lock_full` (the pack cannot take the surplus any more) drops by the larger of the minimum activity and the *curtail need* of the next
+   interval, the PV that must go to the pack or be curtailed (`pv − load − export cap`, `pv − inverter
+   rating`; times the charge efficiency). The pack that fills in the committed interval is then "full" for
+   the next one, whose `HOLD` or `CURTAIL` is open. Carried `CHARGE_PV` for the repro now gives
+   `CHARGE_PV`, then `CURTAIL` with 0.3 kWh curtailed per interval.
+7. Rejected: letting `HOLD` or `CHARGE_PV` cover the curtailing interval without a bridge. It lets any
+   `HOLD` leave the dwell of a `CURTAIL`, which is the label-to-leave-the-duration this ADR refuses in 1.
+
+Measured with `benchmarks/curtail_sweep.py` (seeds 11, 22, 33 × 300 random export-capped problems with PV
+gaps and carried modes), the branch against the code before this change: 0 newly infeasible, 105 newly
+feasible, 4 cheaper, 0 worse. Two further ad-hoc corpora (900 and 2100 problems, other families) gave 0
+newly infeasible as well. Still `infeasible`, other known limits: a mode conflict in the first interval
+that has no clock, `preserve_initial` with standby loss, `allow_curtailment = false` with PV above the cap,
+and a case where charge and curtail in one interval would be needed to keep the state of charge.
