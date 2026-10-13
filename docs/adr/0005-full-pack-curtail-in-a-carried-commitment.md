@@ -386,8 +386,8 @@ below), and 22/42 a carried `HOLD` with `allow_curtailment = false` (out of scop
 
 ## Amendment (T-058, decided in T-060): a PV-follow commitment with the pack at the reserve is the depleted release
 
-Status: decided in this amendment, implemented and swept on T-058 (reviewed once: the sweeps below are against
-the merged main). It narrows the T-050 amendment's "above the reserve, so no safety exception".
+Status: decided in this amendment, implemented and swept on T-058 (reviewed twice: the sweeps below are against
+the merged main, T-057 included). It narrows the T-050 amendment's "above the reserve, so no safety exception".
 
 A carried `SELF_CONSUME` whose observed pack is exactly at the reserve (`initial_kwh <= capacity ×
 minimum_soc_fraction + 1e-9`) inside its minimum duration raised the safety exception `observed_soc_minimum`,
@@ -437,29 +437,46 @@ plan drains the pack to exactly the reserve), so a followed T-050 plan landed he
 
 Measured with `benchmarks/curtail_sweep.py` (its `run`/`roll` solve through `solve_released` where the tree has
 it; `resrun`/`resroll` draw the pack exactly at the reserve with a `SELF_CONSUME` commitment carried 0 to 45
-minutes, the state the exception reads), seeds 11, 22, 33, 44 × 300 = 1200 draws per kind. Head is this branch
-merged with main; main is `8c15491` (origin/main at the time of the merge), solved the old way (once, no rungs):
+minutes, the state the exception reads; `fullrun`/`fullroll` are T-057's full-pack release), seeds 11, 22, 33,
+44 × 300 = 1200 draws per kind. Head is this branch merged with main; main is origin/main `0778580` (T-052 and
+T-057 merged), solved the old way (once, no rungs):
 
 | Kind | Planned, main → head | Newly infeasible | Newly planned |
 | --- | --- | --- | --- |
 | `run` (plan at the first boundary) | 1076 → 1117 | 0 | 41 |
 | `negrun` (negative prices) | 1057 → 1102 | 0 | 45 |
-| `deprun` (`make_depleted`: sunrise, pack at the reserve) | 707 → 1121 | 0 | 414 |
+| `deprun` (`make_depleted`: sunrise, pack at the reserve) | 716 → 1121 | 0 | 405 |
 | `resrun` (`make_reserve`) | 1111 → 1145 | 0 | 34 |
+| `fullrun` (`make_full`: full-pack release, T-057) | 624 → 625 | 0 | 1 |
 | `probe` (flexible load on `run`) | 1049 → 1099 | 0 | 50 |
-| `deprobe` (flexible load on `deprun`) | 677 → 1115 | 1 | 439 |
+| `deprobe` (flexible load on `deprun`) | 684 → 1115 | 1 | 432 |
 | `roll` (followed one interval at a time, up to 8) | 1072 → 1117 | 0 | 45 |
 | `negroll` | 1046 → 1101 | 0 | 55 |
-| `deproll` | 699 → 1121 | 0 | 422 |
+| `deproll` | 709 → 1121 | 0 | 412 |
 | `resroll` | 1109 → 1145 | 0 | 36 |
+| `fullroll` | 597 → 597 | 0 | 0 |
 
-The rolled kinds are the criterion: no draw that main follows to the end is lost while followed. Before rung 3
-`resroll` lost 42 of them (all in the class of rung 3; with T-057 and T-065 merged into a trial tree 17 of the 42
-remained, all `preserve_initial` with a carried `CHARGE_PV` in its duration, and every one of them has a plan
-without the commitment). The one newly infeasible `deprobe` draw (seed 44, draw 10) is the base plan solving on
+The rolled kinds are the criterion: no draw that main follows to the end is lost while followed, and no first
+failing boundary moves earlier (`fullroll`: one moves later). Without rung 3 (the same head with
+`uncommitted_fallback` switched off) `resroll` loses 42 draws that main `0778580`, T-057 included, follows to the
+end; all are in the class of rung 3 and every one has a plan without the commitment (T-065 closes the
+`preserve_initial` part of the cause). The one newly infeasible `deprobe` draw (seed 44, draw 10) is the base plan solving on
 rung 1 while the 0.25 kWh probe on that same problem has no solution (it has one on rungs 2 and 3): one consumption
 level reports `infeasible`, the plan is untouched; it is T-067. Every draw with no plan on any rung (79 of 1200
-`deprun`, 55 `resrun`, 83 `run`) has `allow_curtailment` false: T-041, T-064 and T-066, which main has as well.
+`deprun`, 55 `resrun`, 83 `run`) has `allow_curtailment` false: T-041, T-064 and T-066, which main has as well;
+the 575 `fullrun` draws without a plan have none on main either.
+
+`rollcompare` also counts T-057's metric, the plan contradicted at the next boundary: a row where the first
+interval of a plan is not what the plan before promised as its second, on the boundaries both trees planned,
+counted only where one tree changes and the other does not. `roll`, `negroll` and `fullroll`: 0 newly
+contradicted (`roll` 1 no longer). `deproll`: 15 draws newly contradicted, 102 no longer. `resroll`: 122 newly,
+214 no longer. The new ones are the ladder being decided afresh at every boundary: of the 127 newly contradicted
+boundaries of `resroll`, 29 are a rung-3 row (the plan before kept the commitment the next boundary cannot) and
+98 a rung-1 row, 41 of them directly after a rung-2 row (seed 11, draw 15: `CURTAIL`, `CURTAIL` on rung 2, then
+`CHARGE_PV`, then `CURTAIL`): the rung-2 plan publishes the commitment's `HOLD`/`CURTAIL` to its deadline and the
+next boundary can release after all, so the pack takes the PV where the plan before said `CURTAIL`. More plans
+hold up than before (the "no longer" counts), but a rung-2 plan is not a promise for its later intervals, and the
+mode can change inside the minimum duration there. Whether to carry rung 2 across the boundary is T-069.
 
 On draws that main also plans, a plan's cost is not comparable between the readings (`deprun` 21 higher, 20 lower;
 `resrun` 287 higher, 250 lower): the commitment now binds, so the pack takes the surplus where main idled in a
@@ -468,10 +485,13 @@ On draws that main also plans, a plan's cost is not comparable between the readi
 objective of a more constrained problem.
 
 What the followed plans execute (rows of the first interval over the draws followed to the end on both trees, main
-→ head). `deproll` (699 draws): `CHARGE_PV` 1023 → 1329, `CURTAIL` 2070 → 1818, `HOLD` 1360 → 1275,
-`SELF_CONSUME` 333 → 368, `CHARGE_GRID` 18 → 14. `resroll` (1109 draws): `CHARGE_PV` 398 → 1832, `CURTAIL`
-3245 → 2579, `HOLD` 3571 → 2440, `SELF_CONSUME` 206 → 583. The pack at the reserve takes the surplus instead of
-`CURTAIL` beside it. Rung use over all 1200 `deproll` draws (7701 rows): rung 2 228 rows (179 `CURTAIL`, 49
-`HOLD`), rung 3 417 rows (269 `HOLD`, 146 `CURTAIL`, 2 `CHARGE_GRID`), the rest rung 1; over `resroll` (7791 rows) rung 2
-1225 rows (the reserve-aimed draws sit in the charge-power class) and rung 3 45 rows. `roll` and `negroll`
-use rung 3 for 45 and 55 rows and rung 2 never.
+→ head). `deproll` (709 draws): `CHARGE_PV` 1030 → 1350, `CURTAIL` 2104 → 1839, `HOLD` 1375 → 1288,
+`SELF_CONSUME` 341 → 377, `CHARGE_GRID` 18 → 14. `resroll` (1109 draws): `CHARGE_PV` 398 → 1832, `CURTAIL`
+3245 → 2579, `HOLD` 3571 → 2440, `SELF_CONSUME` 206 → 583, `CHARGE_GRID` 130 → 112, `DISCHARGE_GRID` 0 → 4. The
+pack at the reserve takes the surplus instead of `CURTAIL` beside it. `roll`, `negroll` and `fullroll` execute the
+same rows on both trees but one (`roll`: one `CHARGE_GRID` is a `CHARGE_PV`). Rung use over all 1200 `deproll`
+draws (7701 rows): rung 2 228 rows (179 `CURTAIL`, 49 `HOLD`), rung 3 406 rows (260 `HOLD`, 146 `CURTAIL`), the
+rest rung 1; over `resroll` (7791 rows) rung 2 1225 rows (1091 `CURTAIL`, 134 `HOLD`: the reserve-aimed draws sit
+in the charge-power class) and rung 3 45 rows (41 `HOLD`, 3 `CURTAIL`, 1 `CHARGE_GRID`). `roll` and `negroll` use
+rung 3 for 45 and 55 rows, `fullroll` for one, and rung 2 never. The rolls carry the commitment the coordinator
+holds (that of the problem as built, also after rung 3), so the traces are what ships.
