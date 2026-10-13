@@ -204,12 +204,13 @@ ani profilu, a pokazywane koszty (`expected_net_cost`, `consumption_cost`, karta
 Pomiar na 40 symulowanych domach (G11 i G12, współczynnik 0,8, bateria 10 kWh, rok z przeliczaniem co
 godzinę, względem tej samej baterii w czystej autokonsumpcji, wycena rocznym rachunkiem,
 [ADR-0008](adr/0008-net-metering-plain-self-consumption.md)): plan domyślny (`cost_min`, jak w profilu)
-daje roczny zysk względem autokonsumpcji −93…+70 PLN (średnio −1; + = taniej, − = drożej), nigdy nie obniża rachunku o więcej niż 10 PLN, a roczny
-import rośnie o +33…+704 kWh. Wyceniony godzinowo, tak jak raportuje go Home Assistant, ten sam plan na
-G12 pokazuje zysk +343 PLN rocznie, którego rozliczenie nie wypłaca. Z włączonym **Ładowaniem z sieci**
-(13 domów) roczny zysk względem autokonsumpcji wynosi −209…+139 PLN (ten sam znak), a import rośnie o +897 kWh
-(mediana). Ograniczenia: domy symulowane, jeden rozmiar baterii (10 kWh), jeden rok cen, interwały
-godzinowe, strefy G12 netowane jako jedna średnia stawka.
+daje roczny zysk względem autokonsumpcji, rachunek plus zużycie baterii, −93…+70 PLN (średnio −1; + = taniej,
+− = drożej), nigdy nie obniża rachunku o więcej niż 10 PLN, a roczny import rośnie o +33…+704 kWh.
+Wyceniony godzinowo, tak jak raportuje go Home Assistant, ten sam plan na G12 pokazuje zysk +343 PLN
+rocznie, którego rozliczenie nie wypłaca. Z włączonym **Ładowaniem z sieci** (13 domów) roczny zysk
+względem autokonsumpcji, rachunek plus zużycie baterii, wynosi −209…+139 PLN (ta sama konwencja znaku),
+a import rośnie o +897 kWh (mediana). Ograniczenia: domy symulowane, jeden rozmiar baterii (10 kWh),
+jeden rok cen, interwały godzinowe, strefy G12 netowane jako jedna średnia stawka.
 
 Podgląd pokazuje pochodzenie profili startowych dla profilowanej nowej instalacji: które klucze
 wypełniła każda oś, źródło zakupu wstępnie wybrane przez profil `buy_tariff`, każdą wartość
@@ -218,7 +219,8 @@ uwagi dotyczące rozliczenia — Sell only PV wyłączone, źródło sprzedaży 
 mnożnik rozliczeniowy, surowe ceny RCE bez progu 0 (z poprawką w postaci skrótu „Cena rynkowa RCE”)
 albo z progiem, ale bez mnożnika 1,23, lub sprzedaż w systemie opustów, która przestała śledzić
 zakup — widoczne tylko dla instalacji, które użyły profilu startowego.
-Dla profilu opustu Podgląd zawsze dodaje jeszcze jedną uwagę, a drugą, gdy włączona jest flaga (tylko po angielsku):
+Dla profilu opustu Podgląd zawsze dodaje jeszcze jedną uwagę, a drugą, gdy włączone jest Ładowanie z sieci
+lub Eksport energii z baterii (tylko po angielsku):
 
 - „Note: net-metering is settled on yearly kWh (an exported kWh takes back 0.8 kWh within 12 months),
   not on hourly prices: price-driven dispatch does not lower the yearly bill and the costs shown are an
