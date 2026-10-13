@@ -899,7 +899,7 @@ Zasady (domyślnie 60 min, 0,1 kW):
   niżej): PV ponad to, co przepuści limit i
   falownik (potrzeba przycięcia; przy minimalnym czasie trwania co najmniej minimalna aktywność),
   jest tracone w przedziale, w którym bateria nie może go przyjąć, i ma etykietę `CURTAIL`
-  (falownik przycina sam; sterownik Deye wykonuje wtedy profil `HOLD`). Bramką jest wolne miejsce
+  (falownik przycina sam; sterownik Deye wykonuje profil ładowania z PV z planowanym prądem w wierszu, który ładuje, a profil `HOLD` w takim, który nie ładuje). Bramką jest wolne miejsce
   w baterii: przedział zaczyna się na poziomie górnej granicy pomniejszonej o to, co bateria
   musiałaby przyjąć, więc bateria z niewielkim wolnym miejscem, która nie przyjmie nadwyżki, też
   ją traci, a bateria, która ją przyjmie, nigdy, bez względu na cenę sprzedaży. Część, której bateria
