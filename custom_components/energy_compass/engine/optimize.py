@@ -16,6 +16,7 @@ from .daily_energy import cumulative_export_bounds, daily_export_rows, day_fract
 from .dispatch_policy import MODES, constrain_modes, validate_modes
 from .export_benefit import constrain_export_benefit, validate_export_benefit
 from .idle_drain import cumulative, drain_schedule
+from .mode_noise import settle_mode_noise
 from .models import (
     FlexibleLoadPlan,
     FlexibleLoadRequest,
@@ -897,14 +898,15 @@ def _solve(
     balance_start = _validate_balance(
         problem, vectors, values, balance_choices, balance_miss
     )
+    settled = settle_mode_noise(problem, vectors, values, model.upper)
     flows = tuple(
         Flow(
-            float(values[v["gin"]]),
-            float(values[v["gout"]]),
-            float(values[v["bc"]]) if battery else 0.0,
-            float(values[v["bd"]]) if battery else 0.0,
-            float(values[v["curt"]]),
-            float(values[v["energy"]]) if battery else 0.0,
+            f["gin"],
+            f["gout"],
+            f["bc"],
+            f["bd"],
+            f["curt"],
+            f["energy"],
             ("charge" if values[v["battery_mode"]] > 0.5 else "discharge")
             if battery
             else None,
@@ -917,14 +919,22 @@ def _solve(
                 None,
             ),
         )
-        for v in vectors
+        for v, f in zip(vectors, settled, strict=True)
+    )
+    # A probe is a load: solver noise below zero (-3e-17) is none. Left in, it would
+    # lift a slot that sits exactly at the minimum activity from idle (the base
+    # reading) to open as realised, and the mode certificate would fail.
+    probe = (
+        tuple(max(float(values[v["flex_load"]]), 0.0) for v in vectors)
+        if flexible_load
+        else ()
     )
     mode_problem = (
         replace(
             problem,
             slots=tuple(
-                replace(slot, load_kwh=slot.load_kwh + float(values[v["flex_load"]]))
-                for slot, v in zip(problem.slots, vectors, strict=True)
+                replace(slot, load_kwh=slot.load_kwh + extra)
+                for slot, extra in zip(problem.slots, probe, strict=True)
             ),
         )
         if flexible_load
@@ -935,7 +945,26 @@ def _solve(
         for i, v in enumerate(vectors)
         if "hold_run" in v and values[v["hold_run"]] < 0.5
     )
-    validate_modes(mode_problem, flows, bridges)
+    validate_modes(
+        mode_problem,
+        flows,
+        bridges,
+        tuple(model.upper[v["flex_load"]] for v in vectors) if flexible_load else (),
+    )
+    # A HOLD that goes on with a CURTAIL run is a bridge for the commitment as well; an
+    # idle row has both readings, and is listed once.
+    bridges = tuple(
+        sorted(
+            {
+                *bridges,
+                *(
+                    i
+                    for i, v in enumerate(vectors)
+                    if "curtail_bridge" in v and values[v["curtail_bridge"]] > 0.5
+                ),
+            }
+        )
+    )
     grid_cost = sum(
         slot.buy_per_kwh * flow.grid_import_kwh
         - slot.sell_per_kwh * flow.grid_export_kwh
@@ -994,5 +1023,5 @@ def _solve(
             mip_gap=model.mip_gap,
             carried_bridges=bridges,
         ),
-        tuple(float(values[v["flex_load"]]) for v in vectors) if flexible_load else (),
+        probe,
     )

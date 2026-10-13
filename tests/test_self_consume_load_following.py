@@ -164,6 +164,82 @@ def test_validator_rejects_partial_discharge_with_import():
     )
 
 
+@pytest.mark.parametrize("limit", [10, 25, 40])
+def test_validator_accepts_the_discharge_a_follow_row_leaves_short_by_its_noise(limit):
+    """T-049: `bd >= M * (x_SELF_CONSUME - empty)` is met within 1e-6 * (2M + 1), M the limit.
+
+    The shortfall is the most that row allows, above the fixed 1e-5 kWh the check used before.
+    """
+    problem = dispatch(((1, 0, 0, 99),), minutes=60, minimum_mode_minutes=60)
+    problem = replace(
+        problem,
+        site=replace(problem.site, inverter_kw=4 * limit, grid_import_kw=4 * limit),
+        battery=replace(
+            problem.battery,
+            capacity_kwh=10 * limit,
+            initial_kwh=10 * limit,
+            charge_kw=limit,
+            discharge_kw=limit,
+        ),
+    )
+    short = 0.99e-6 * (2 * limit + 1)
+    assert short > 1e-5
+    discharge = limit - short
+    flow = Flow(
+        99 - discharge,
+        0,
+        0,
+        discharge,
+        0,
+        10 * limit - discharge,
+        "discharge",
+        "SELF_CONSUME",
+    )
+
+    validate_modes(problem, (flow,))
+
+    # Twice the noise a row of this M leaves is a real partial discharge.
+    short = 1e-6 * (2 * 99 + 1) * 2
+    flow = replace(
+        flow, grid_import_kwh=99 - (limit - short), discharge_kwh=limit - short
+    )
+    with pytest.raises(SolveError, match="self-consume imports"):
+        validate_modes(problem, (flow,))
+
+
+def test_validator_widens_the_discharge_noise_to_the_flexible_rows():
+    """T-054: the flexible row's M is `load - PV + flex_max`, with three binaries.
+
+    Load 1 kWh, PV 0, a flexible load of at most 26 kWh that drew nothing, limit 25 kWh:
+    the row (M = 27) leaves up to 1e-6 * (3 * 27 + 1) = 8.2e-5 kWh of the realised load
+    uncovered, above the 5.1e-5 kWh (2M + 1 with M the limit) the realised load alone gives.
+    """
+    problem = dispatch(((1, 0, 0, 1),), minutes=60, minimum_mode_minutes=60)
+    problem = replace(
+        problem,
+        site=replace(problem.site, inverter_kw=100, grid_import_kw=100),
+        battery=replace(
+            problem.battery,
+            capacity_kwh=250,
+            initial_kwh=250,
+            charge_kw=25,
+            discharge_kw=25,
+        ),
+    )
+    short = 0.99e-6 * (3 * 27 + 1)
+    assert short > 1e-6 * (2 * 25 + 1)
+
+    def flow(short):
+        return Flow(short, 0, 0, 1 - short, 0, 249 + short, "discharge", "SELF_CONSUME")
+
+    validate_modes(problem, (flow(short),), flex_max=(26.0,))
+    with pytest.raises(SolveError, match="self-consume imports"):
+        validate_modes(problem, (flow(short),))
+    # Twice the noise of the three binaries is a real partial discharge.
+    with pytest.raises(SolveError, match="self-consume imports"):
+        validate_modes(problem, (flow(2 * 1e-6 * (3 * 27 + 1)),), flex_max=(26.0,))
+
+
 def test_flexible_load_probe_stays_feasible_in_self_consume():
     problem = flat_night(slots=12)
     plan = solve_flexible_load(problem, FlexibleLoadRequest(1.0, 2.0))
@@ -726,11 +802,11 @@ def spent_pack_problem(rows, battery, *, site=None, mode="CHARGE_PV", **changes)
     return replace(problem, **changes)
 
 
-def test_a_spent_pack_in_an_idle_first_interval_starts_its_hold_run_there():
-    # The pack ends the commitment in the idle interval: HOLD starts there and its
-    # 30 minutes end before the CURTAIL interval. A bridge would leave the next
-    # interval to start a HOLD run that runs into it, and a zero-export site could
-    # not hold through a surplus.
+def test_a_spent_pack_in_an_idle_first_interval_ends_the_commitment_before_the_surplus():
+    # The pack ends the commitment in HOLD and the CURTAIL interval follows at the
+    # deadline, on a zero-export site that could not hold through the surplus. The
+    # released HOLD starts no clock of its own (ADR-0005), so the idle interval may
+    # be the HOLD run or a bridge before it: both read the same flows as valid.
     problem = spent_pack_problem(
         [(0.024, 0.025), (0.0, 0.2), (0.1, 0.05)],
         Battery(5, 0, 1, 0.02, 0.5, 3, 0.95, 0.95, 0, False, True, 0.0),
@@ -738,12 +814,9 @@ def test_a_spent_pack_in_an_idle_first_interval_starts_its_hold_run_there():
     )
     plan = solve(problem)
     assert modes(plan) == ["HOLD", "HOLD", "CURTAIL"]
-    assert plan.carried_bridges == ()
     validate_modes(problem, plan.flows, plan.carried_bridges)
-    # Read as a bridge the same rows would need a HOLD run in the second interval
-    # that is longer than the commitment.
-    with pytest.raises(SolveError, match="minimum mode duration"):
-        validate_modes(problem, plan.flows, {0})
+    validate_modes(problem, plan.flows, ())
+    validate_modes(problem, plan.flows, {0})
 
 
 def test_a_spent_pack_in_an_idle_first_interval_keeps_a_terminal_rule_feasible():
@@ -793,8 +866,8 @@ def test_an_idle_interval_after_a_depleting_one_may_start_the_hold_run():
 
 
 def test_a_flexible_load_probe_agrees_with_its_own_validator():
-    # The model's idle set uses the largest probe, the validator sees the realised
-    # one; the rows the model reads as bridges are the ones it hands over.
+    # The model reads a row as a bridge only when it is idle as realised, which is
+    # what the validator sees; the rows it reads as bridges are the ones it hands over.
     rows = [(0.01, 0.0), (0.5, 0.1), (0.02, 0.02), (0.03, 0.01), (0.02, 0.05)]
     problem = spent_pack_problem(
         rows,
@@ -804,7 +877,15 @@ def test_a_flexible_load_probe_agrees_with_its_own_validator():
         initial_dispatch_mode_since=DUSK,
     )
     result = solve_flexible_load(problem, FlexibleLoadRequest(0.3, 0.5))
-    assert modes(result.plan) == ["HOLD"] * 5
+    # The first row is a bridge, so the commitment goes on into the surplus after it.
+    assert modes(result.plan) == [
+        "HOLD",
+        "CHARGE_PV",
+        "SELF_CONSUME",
+        "HOLD",
+        "SELF_CONSUME",
+    ]
+    assert result.plan.carried_bridges == (0, 3)
     validate_modes(
         replace(
             problem,
@@ -834,7 +915,7 @@ def test_validator_takes_only_hold_as_a_bridge():
         validate_modes(problem, (quiet, quiet, follow, *(hold,) * 5), {0, 1})
 
 
-def test_a_hold_run_after_a_bridge_starts_its_own_clock():
+def test_a_hold_release_after_a_bridge_needs_a_release():
     problem = committed([(0.0, 0.02), (0.0, 0.2), (0.0, 0.2), (0.0, 0.2), (0.0, 0.2)])
     problem = replace(
         problem,

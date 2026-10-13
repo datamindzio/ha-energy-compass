@@ -54,7 +54,8 @@ W **Planowaniu** opcja **Sell only PV** („sprzedawaj tylko PV”) jest domyśl
 **Okresowe balansowanie LFP** (`lfp_balance`), w **Baterii**, jest domyślnie wyłączone. Pakiety LFP potrzebują okresowego pełnego naładowania i krótkiego przetrzymania na górze, aby BMS mógł zbalansować cele i ponownie wyzerować odczyt SOC; przy włączonym ustawieniu Energy Compass śledzi ostatnio zakończony balans i planuje następny, proponując optymalizatorowi jedno okno trzymania wyrównane do pełnej godziny (CHARGE_PV lub CHARGE_GRID; okna w fazie `due` tylko w ciągu następnych 24 h) zamiast osobnego trybu; opcjonalne pesymistyczne źródło PV (dla Solcast `pv_estimate10`) ogranicza okna CHARGE_PV do takich, które bateria jeszcze osiągnie na tej niższej serii, w przeciwnym razie proponowane są tylko okna CHARGE_GRID. Diagnostyczny sensor **Balansowanie baterii** oraz ustawienia `balance_interval_days`, `balance_hold_minutes`, `balance_soc_threshold` i `balance_value` opisuje [przewodnik po stanach i strategiach](docs/guide.pl.md#balansowanie-lfp) oraz [kontrakt matematyczny](docs/model.md#lfp-balance) (EN).
 
 **Energy Atlas** (opcjonalnie, domyślnie wyłączone) wysyła telemetrię i rozwiązania do usługi Energy
-Atlas firmy Datamindz do badań międzyinstalacyjnych, po włączeniu w **Konfiguruj → Energy Atlas**.
+Atlas firmy Datamindz do badań międzyinstalacyjnych (w tym gminę, w której leży dom, znajdowaną
+wewnątrz Home Assistant, nigdy jego współrzędne), po włączeniu w **Konfiguruj → Energy Atlas**.
 Nie trzeba wpisywać sekretu: to wydanie rejestruje się współdzielonym publicznym poświadczeniem
 wbudowanym w integrację, więc witryna jest niezweryfikowana, dopóki nie wyślesz **Energy Atlas:
 pokaż dowód własności** do bota Energy Atlas; zapisywany jest tylko wynikowy klucz witryny,

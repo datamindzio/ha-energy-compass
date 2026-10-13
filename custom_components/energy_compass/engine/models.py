@@ -167,7 +167,8 @@ class Plan:
     peak_reserve_shortfall_kwh: float = 0.0
     time_limited: bool = False
     mip_gap: float | None = 0.0
-    # Rows of a carried PV-follow commitment that are HOLD with nothing to follow.
+    # HOLD rows that carry a commitment: nothing for a PV-follow commitment to follow,
+    # or too little PV for a CURTAIL run to go on. The commitment and its clock stay.
     carried_bridges: tuple[int, ...] = ()
 
 

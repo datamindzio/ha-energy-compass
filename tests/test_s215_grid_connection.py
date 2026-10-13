@@ -74,9 +74,8 @@ def _config() -> dict:
 # --- attribute builder + contract --------------------------------------------------------
 
 
-def test_S215_vendored_contract_is_1_3_0_hexmap2():
+def test_S215_vendored_contract_carries_the_field():
     doc = yaml.safe_load(CONTRACT.read_text())
-    assert doc["info"]["version"] == "1.3.0-hexmap2"
     assert FIELD in doc["components"]["schemas"]["AttrsV1"]["properties"]
 
 
@@ -88,9 +87,9 @@ def test_S215_snapshot_carries_the_saved_value_and_is_valid_attrs_v1(value):
 
 
 def test_S215_snapshot_with_location_and_grid_connection_is_valid_attrs_v1():
-    attrs = build_attrs(_config(), {"pv_kwp": 6.5, FIELD: 11.0}, "861f8d947ffffff")
+    attrs = build_attrs(_config(), {"pv_kwp": 6.5, FIELD: 11.0}, "2264011")
     assert attrs[FIELD] == 11.0
-    assert attrs["location"] == {"h3_res6": "861f8d947ffffff"}
+    assert attrs["location"] == {"municipality": "2264011"}
     assert attrs_errors(attrs) == []
 
 

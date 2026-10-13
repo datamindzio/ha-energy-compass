@@ -1,0 +1,412 @@
+{
+ "cases": [
+  {
+   "name": "voivodeship 02: Bolesławiec",
+   "lat": 51.26266,
+   "lng": 15.56768,
+   "municipality": "0201011"
+  },
+  {
+   "name": "voivodeship 04: Aleksandrów Kujawski",
+   "lat": 52.88292,
+   "lng": 18.69686,
+   "municipality": "0401011"
+  },
+  {
+   "name": "voivodeship 06: Międzyrzec Podlaski",
+   "lat": 51.9813,
+   "lng": 22.79281,
+   "municipality": "0601011"
+  },
+  {
+   "name": "voivodeship 08: Kostrzyn nad Odrą",
+   "lat": 52.62461,
+   "lng": 14.62842,
+   "municipality": "0801011"
+  },
+  {
+   "name": "voivodeship 10: Bełchatów",
+   "lat": 51.36334,
+   "lng": 19.37168,
+   "municipality": "1001011"
+  },
+  {
+   "name": "voivodeship 12: Bochnia",
+   "lat": 49.97019,
+   "lng": 20.42549,
+   "municipality": "1201011"
+  },
+  {
+   "name": "voivodeship 14: Białobrzegi",
+   "lat": 51.62126,
+   "lng": 20.95885,
+   "municipality": "1401013"
+  },
+  {
+   "name": "voivodeship 16: Brzeg",
+   "lat": 50.85854,
+   "lng": 17.46096,
+   "municipality": "1601011"
+  },
+  {
+   "name": "voivodeship 18: Czarna",
+   "lat": 49.32189,
+   "lng": 22.59929,
+   "municipality": "1801032"
+  },
+  {
+   "name": "voivodeship 20: Augustów",
+   "lat": 53.8378,
+   "lng": 22.97538,
+   "municipality": "2001011"
+  },
+  {
+   "name": "voivodeship 22: Borzytuchom",
+   "lat": 54.20145,
+   "lng": 17.35815,
+   "municipality": "2201012"
+  },
+  {
+   "name": "voivodeship 24: Będzin",
+   "lat": 50.33837,
+   "lng": 19.12615,
+   "municipality": "2401011"
+  },
+  {
+   "name": "voivodeship 26: Busko-Zdrój",
+   "lat": 50.48308,
+   "lng": 20.73561,
+   "municipality": "2601013"
+  },
+  {
+   "name": "voivodeship 28: Bartoszyce",
+   "lat": 54.252,
+   "lng": 20.80341,
+   "municipality": "2801011"
+  },
+  {
+   "name": "voivodeship 30: Chodzież",
+   "lat": 52.98677,
+   "lng": 16.91829,
+   "municipality": "3001011"
+  },
+  {
+   "name": "voivodeship 32: Białogard",
+   "lat": 54.00242,
+   "lng": 15.98411,
+   "municipality": "3201011"
+  },
+  {
+   "name": "Sopot",
+   "lat": 54.44489,
+   "lng": 18.56982,
+   "municipality": "2264011"
+  },
+  {
+   "name": "enclosed town 0201011: Bolesławiec",
+   "lat": 51.26266,
+   "lng": 15.56768,
+   "municipality": "0201011"
+  },
+  {
+   "name": "enclosing municipality 0201022: Bolesławiec",
+   "lat": 51.33583,
+   "lng": 15.58315,
+   "municipality": "0201022"
+  },
+  {
+   "name": "island part of 0619062: Włodawa",
+   "lat": 51.59792,
+   "lng": 23.49428,
+   "municipality": "0619062"
+  },
+  {
+   "name": "inside the offshore unit",
+   "lat": 55.04863,
+   "lng": 17.6585,
+   "municipality": null
+  },
+  {
+   "name": "Berlin, abroad",
+   "lat": 52.52,
+   "lng": 13.405,
+   "municipality": null
+  },
+  {
+   "name": "Prague, abroad",
+   "lat": 50.0755,
+   "lng": 14.4378,
+   "municipality": null
+  },
+  {
+   "name": "Vilnius, abroad",
+   "lat": 54.687,
+   "lng": 25.2797,
+   "municipality": null
+  },
+  {
+   "name": "Open Baltic Sea, at sea",
+   "lat": 55.8,
+   "lng": 18.9,
+   "municipality": null
+  },
+  {
+   "name": "Gulf of Gdansk, at sea",
+   "lat": 54.75,
+   "lng": 19.2,
+   "municipality": null
+  },
+  {
+   "name": "municipality 0201011: Bolesławiec",
+   "lat": 51.26266,
+   "lng": 15.56768,
+   "municipality": "0201011"
+  },
+  {
+   "name": "municipality 0209052: Legnickie Pole",
+   "lat": 51.15191,
+   "lng": 16.24623,
+   "municipality": "0209052"
+  },
+  {
+   "name": "municipality 0220023: Prusice",
+   "lat": 51.37231,
+   "lng": 16.95993,
+   "municipality": "0220023"
+  },
+  {
+   "name": "municipality 0402032: Brodnica",
+   "lat": 53.20964,
+   "lng": 19.42136,
+   "municipality": "0402032"
+  },
+  {
+   "name": "municipality 0410042: Sadki",
+   "lat": 53.17741,
+   "lng": 17.43781,
+   "municipality": "0410042"
+  },
+  {
+   "name": "municipality 0418113: Lubień Kujawski",
+   "lat": 52.4075,
+   "lng": 19.17765,
+   "municipality": "0418113"
+  },
+  {
+   "name": "municipality 0603153: Rejowiec",
+   "lat": 51.08739,
+   "lng": 23.3083,
+   "municipality": "0603153"
+  },
+  {
+   "name": "municipality 0609122: Strzyżewice",
+   "lat": 51.0513,
+   "lng": 22.4441,
+   "municipality": "0609122"
+  },
+  {
+   "name": "municipality 0616062: Ułęż",
+   "lat": 51.59594,
+   "lng": 22.13544,
+   "municipality": "0616062"
+  },
+  {
+   "name": "municipality 0803012: Bledzew",
+   "lat": 52.53669,
+   "lng": 15.39839,
+   "municipality": "0803012"
+  },
+  {
+   "name": "municipality 0811082: Trzebiel",
+   "lat": 51.5835,
+   "lng": 14.82988,
+   "municipality": "0811082"
+  },
+  {
+   "name": "municipality 1007052: Paradyż",
+   "lat": 51.30916,
+   "lng": 20.10384,
+   "municipality": "1007052"
+  },
+  {
+   "name": "municipality 1014052: Burzenin",
+   "lat": 51.46149,
+   "lng": 18.77649,
+   "municipality": "1014052"
+  },
+  {
+   "name": "municipality 1021043: Jeżów",
+   "lat": 51.79462,
+   "lng": 19.95121,
+   "municipality": "1021043"
+  },
+  {
+   "name": "municipality 1207011: Limanowa",
+   "lat": 49.70845,
+   "lng": 20.42597,
+   "municipality": "1207011"
+  },
+  {
+   "name": "municipality 1212032: Bolesław",
+   "lat": 50.30138,
+   "lng": 19.49218,
+   "municipality": "1212032"
+  },
+  {
+   "name": "municipality 1219012: Biskupice",
+   "lat": 49.96609,
+   "lng": 20.13955,
+   "municipality": "1219012"
+  },
+  {
+   "name": "municipality 1407032: Gniewoszów",
+   "lat": 51.46403,
+   "lng": 21.80105,
+   "municipality": "1407032"
+  },
+  {
+   "name": "municipality 1414063: Zakroczym",
+   "lat": 52.48932,
+   "lng": 20.61747,
+   "municipality": "1414063"
+  },
+  {
+   "name": "municipality 1420092: Płońsk",
+   "lat": 52.59206,
+   "lng": 20.41631,
+   "municipality": "1420092"
+  },
+  {
+   "name": "municipality 1427032: Mochowo",
+   "lat": 52.77982,
+   "lng": 19.55982,
+   "municipality": "1427032"
+  },
+  {
+   "name": "municipality 1435062: Zabrodzie",
+   "lat": 52.49828,
+   "lng": 21.42175,
+   "municipality": "1435062"
+  },
+  {
+   "name": "municipality 1607092: Skoroszyce",
+   "lat": 50.59277,
+   "lng": 17.36812,
+   "municipality": "1607092"
+  },
+  {
+   "name": "municipality 1805011: Jasło",
+   "lat": 49.73884,
+   "lng": 21.47581,
+   "municipality": "1805011"
+  },
+  {
+   "name": "municipality 1812053: Nisko",
+   "lat": 50.49944,
+   "lng": 22.128,
+   "municipality": "1812053"
+  },
+  {
+   "name": "municipality 1820013: Baranów Sandomierski",
+   "lat": 50.46942,
+   "lng": 21.59078,
+   "municipality": "1820013"
+  },
+  {
+   "name": "municipality 2006022: Grabowo",
+   "lat": 53.47686,
+   "lng": 22.16765,
+   "municipality": "2006022"
+  },
+  {
+   "name": "municipality 2013072: Nowe Piekuty",
+   "lat": 52.86387,
+   "lng": 22.69258,
+   "municipality": "2013072"
+  },
+  {
+   "name": "municipality 2207032: Kwidzyn",
+   "lat": 53.74706,
+   "lng": 19.02672,
+   "municipality": "2207032"
+  },
+  {
+   "name": "municipality 2215052: Gniewino",
+   "lat": 54.69511,
+   "lng": 18.02969,
+   "municipality": "2215052"
+  },
+  {
+   "name": "municipality 2404162: Starcza",
+   "lat": 50.6769,
+   "lng": 19.06888,
+   "municipality": "2404162"
+  },
+  {
+   "name": "municipality 2413062: Ożarowice",
+   "lat": 50.47025,
+   "lng": 19.0544,
+   "municipality": "2413062"
+  },
+  {
+   "name": "municipality 2478011: Zabrze",
+   "lat": 50.31516,
+   "lng": 18.7847,
+   "municipality": "2478011"
+  },
+  {
+   "name": "municipality 2607022: Bałtów",
+   "lat": 51.01831,
+   "lng": 21.58781,
+   "municipality": "2607022"
+  },
+  {
+   "name": "municipality 2803043: Lidzbark",
+   "lat": 53.25906,
+   "lng": 19.82359,
+   "municipality": "2803043"
+  },
+  {
+   "name": "municipality 2814023: Biskupiec",
+   "lat": 53.84403,
+   "lng": 20.96606,
+   "municipality": "2814023"
+  },
+  {
+   "name": "municipality 3003082: Niechanowo",
+   "lat": 52.46072,
+   "lng": 17.65725,
+   "municipality": "3003082"
+  },
+  {
+   "name": "municipality 3010132: Wierzbinek",
+   "lat": 52.43721,
+   "lng": 18.45027,
+   "municipality": "3010132"
+  },
+  {
+   "name": "municipality 3020042: Gizałki",
+   "lat": 52.05382,
+   "lng": 17.80922,
+   "municipality": "3020042"
+  },
+  {
+   "name": "municipality 3028022: Damasławek",
+   "lat": 52.83848,
+   "lng": 17.44651,
+   "municipality": "3028022"
+  },
+  {
+   "name": "municipality 3206083: Trzcińsko-Zdrój",
+   "lat": 52.93774,
+   "lng": 14.62911,
+   "municipality": "3206083"
+  },
+  {
+   "name": "municipality 3216011: Świdwin",
+   "lat": 53.78679,
+   "lng": 15.79821,
+   "municipality": "3216011"
+  }
+ ]
+}

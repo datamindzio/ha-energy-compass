@@ -34,6 +34,10 @@ QUARTER = timedelta(minutes=15)
 ENERGIES = (0, 0, 0.01, 0.02, 0.024, 0.025, 0.03, 0.05, 0.1, 0.2, 0.5)
 CAPACITY = 5
 
+# Each sweep takes ~8 s alone; a busy host (load average ~10 on 16 cpus) took it past the
+# suite's 45 s thread timeout, which kills the xdist worker without a traceback (T-051).
+pytestmark = pytest.mark.timeout(180)
+
 
 def corpus_problem(rng: random.Random) -> Problem:
     """One committed problem; every rule the commitment meets can be on or off."""
@@ -107,7 +111,8 @@ def starts_hold_on_a_surplus(problem: Problem, plan) -> list[int]:
     """List the committed intervals where HOLD starts although CHARGE_PV is open.
 
     Written from the rows alone: a row that continues the carried commitment (a
-    bridge) counts as PV-follow, and a full pack has nothing left to take.
+    bridge) counts as PV-follow, a full pack has nothing left to take (the observed
+    pack included, T-037), and a direction the legacy guard blocks is not open.
     """
     if safety_exception(problem):
         return []
@@ -116,6 +121,12 @@ def starts_hold_on_a_surplus(problem: Problem, plan) -> list[int]:
     )
     battery = problem.battery
     ceiling = battery.capacity_kwh * battery.maximum_soc_fraction
+    guard_until = (
+        problem.initial_battery_mode_since
+        + timedelta(minutes=problem.minimum_mode_minutes)
+        if problem.initial_battery_mode
+        else None
+    )
     hits = []
     holding = False
     left = battery.initial_kwh
@@ -125,8 +136,11 @@ def starts_hold_on_a_surplus(problem: Problem, plan) -> list[int]:
         bridge = i in plan.carried_bridges
         if flow.dispatch_mode == "HOLD" and not bridge:
             surplus = slot.pv_kwh - slot.load_kwh
-            full = i and left >= ceiling - activity(problem) - 1e-3
+            full = left >= ceiling - activity(problem) - 1e-3
             open_surplus = min(battery.charge_kw * 0.25, surplus) >= activity(problem)
+            # A direction the legacy guard blocks is not open.
+            if problem.initial_battery_mode == "discharge" and slot.start < guard_until:
+                open_surplus = False
             if not holding and open_surplus and not full:
                 hits.append(i)
             holding = True
@@ -169,7 +183,15 @@ def test_flexible_load_probes_are_planned_or_infeasible_never_rejected():
             assert error.reason == "infeasible", (index, str(error))
             continue
         planned += 1
-        assert starts_hold_on_a_surplus(problem, result.plan) == [], index
+        # The plan is certified against the load as realised, probe included.
+        realised = replace(
+            problem,
+            slots=tuple(
+                replace(slot, load_kwh=slot.load_kwh + extra)
+                for slot, extra in zip(problem.slots, result.schedule_kwh, strict=True)
+            ),
+        )
+        assert starts_hold_on_a_surplus(realised, result.plan) == [], index
     assert planned > 30
 
 
