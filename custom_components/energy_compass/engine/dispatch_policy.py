@@ -556,13 +556,14 @@ def _released_start(problem: Problem) -> bool:
     )
 
 
-def _resume(model, v, members, released, depleted) -> None:
+def _resume(model, v, members, released, depleted, unpassable=False) -> None:
     """Let a HOLD released from a depleted pack go back to the commitment (`back`).
 
     A released HOLD does not go back to the commitment, except where the pack it
-    was released for is still depleted: the surplus is then what the pack takes, and
-    a HOLD cannot pass the PV above the export cap. The return is the commitment
-    going on, not a PV-follow run of its own: its deadline is the only one.
+    was released for is still depleted, or the interval has PV the site cannot pass
+    (`unpassable`, `_curtail_need` above zero): the surplus is then what the pack
+    takes, and a HOLD cannot pass the PV above the export cap. The return is the
+    commitment going on, not a PV-follow run of its own: its deadline is the only one.
     """
     back = v["back"] = model.variable(binary=True)
     followed = {v[f"mode_{mode}"]: 1 for mode in members}
@@ -573,7 +574,8 @@ def _resume(model, v, members, released, depleted) -> None:
     model.constrain(
         {back: 1, **{key: -value for key, value in released.items()}}, -np.inf, 0
     )
-    model.constrain({back: 1, **depleted}, -np.inf, 0)
+    if not unpassable:
+        model.constrain({back: 1, **depleted}, -np.inf, 0)
 
 
 def _offer_curtail(model, v, seen_full, full, curtailing, released) -> None:
@@ -927,6 +929,17 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             if start >= held_until:
                 break
             chargeable = _takes_surplus(problem, slot)
+            # PV the site cannot pass whatever the probe adds: a released HOLD has no
+            # legal flow there, so it may go back to the commitment (`_resume`).
+            unpassable = (
+                _curtail_need(
+                    problem,
+                    slot,
+                    model.upper[v["flex_load"]] if flexible_load else 0.0,
+                )
+                - margin
+                > 0
+            )
             # The pack is known to be spent: HOLD starts, with nothing to test.
             known = spent and not i
             releases = {**full, **({} if chargeable else depleted)}
@@ -997,7 +1010,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     # to the commitment (unless the pack is depleted) and starts no
                     # clock of its own.
                     if released:
-                        _resume(model, v, members, released, depleted)
+                        _resume(model, v, members, released, depleted, unpassable)
                     free_hold.add(i)
                     released = {real: 1}
                 curtailing = {v["mode_CURTAIL"]: -1} if curtails else {}
@@ -1062,7 +1075,7 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                     # starts no clock of its own: the commitment's deadline is the only
                     # one, so it may end in CURTAIL at once.
                     if released:
-                        _resume(model, v, members, released, depleted)
+                        _resume(model, v, members, released, depleted, unpassable)
                     free_hold.add(i)
                     released = {v["mode_HOLD"]: 1}
             depleted = {}
@@ -1463,13 +1476,17 @@ def _certify_modes(
                 )
                 # A HOLD released from a depleted pack goes back to the commitment: the
                 # HOLD has no legal flow for PV the site cannot pass, and the pack is
-                # what takes it. A HOLD released from a full pack does not.
+                # what takes it, while it is depleted or in an interval whose PV the
+                # site cannot pass. A HOLD released from a full pack goes back on the
+                # same terms.
                 resumes = (
                     released
                     and dwell_group(mode) == "PV_FOLLOW"
                     and (
                         left
                         <= _lock_floor(problem, drains, owed, index) + _EMPTY_TOLERANCE
+                        # Or PV the site cannot pass: the HOLD has no legal flow.
+                        or _curtail_need(problem, slot) > 0
                         # The release the coordinator carried: its pack was depleted.
                         or resumed
                         and not index

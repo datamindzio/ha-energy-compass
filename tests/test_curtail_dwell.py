@@ -22,6 +22,7 @@ from custom_components.energy_compass.engine.models import (
     FlexibleLoadRequest,
     Flow,
     InputError,
+    SiteLimits,
     SolveError,
 )
 from custom_components.energy_compass.engine.normalize import validate_problem
@@ -893,3 +894,86 @@ def test_a_depleted_release_is_planned_through_a_flexible_load_probe():
     ]
     assert plan.released_holds == (0, 1, 2)
     validate_modes(problem, plan.flows, plan.carried_bridges)
+
+
+# Draw 278 of seed 22 of `benchmarks/curtail_sweep.py deproll` (T-057): a carried
+# SELF_CONSUME on a pack just above the reserve, the PV rising from nothing, an export cap
+# of 0.5 kW (0.125 kWh an interval) and a standby loss. (buy, sell, PV, load) per interval.
+SUNRISE_278 = (
+    (0.27, 0.47, 0.1, 0.02),
+    (0.36, 0.75, 0.2, 0.4),
+    (1.43, 0.01, 0.18, 0.05),
+    (0.26, 0.15, 0.3, 0.4),
+    (1.15, 0.29, 0.3, 0.4),
+    (0.75, 0.37, 0.3, 0.1),
+    (0.22, 0.31, 0.3, 0.02),
+    (0.55, 0.74, 0.3, 0.05),
+)
+
+
+def sunrise_278(**changes):
+    problem = dispatch(
+        SUNRISE_278,
+        minimum_mode_minutes=120,
+        minimum_mode_power_kw=0.1,
+        terminal_mode="preserve_initial",
+    )
+    problem = carried(problem, mode="SELF_CONSUME")
+    problem = replace(
+        problem,
+        site=SiteLimits(3, 8, 0.5, True),
+        battery=replace(
+            problem.battery,
+            capacity_kwh=5,
+            initial_kwh=0.02,
+            charge_kw=3,
+            discharge_kw=1,
+            eta_charge=0.95,
+            eta_discharge=0.95,
+            wear_per_kwh=0,
+            allow_grid_charge=False,
+            allow_battery_export=False,
+            idle_drain_kw=0.05,
+        ),
+    )
+    return replace(problem, **changes)
+
+
+def test_a_plan_followed_one_interval_leaves_the_commitment_a_plan_at_the_next_boundary():
+    # Followed one interval, the plan's suffix is the next problem. Its pack is the
+    # planned 0.083 kWh and pays more standby loss than the plan assumed (the loss is
+    # capped by the trajectory from the observed pack), so a deficit it could cover
+    # before it empties or releases a HOLD, and that HOLD meets a surplus the cap
+    # cannot pass with the pack above its lock floor (T-057: infeasible at the first
+    # boundary on main).
+    problem = sunrise_278()
+    for _ in range(3):
+        plan = solve(problem)
+        validate_modes(problem, plan.flows, plan.carried_bridges)
+        problem = follow(problem, plan)
+
+
+def test_a_released_hold_goes_back_to_the_commitment_in_an_interval_the_site_cannot_pass():
+    # The boundary problem of the test above, planned directly. The HOLD released for
+    # a deficit the pack could not cover goes on until the surplus of 0.2 kWh against
+    # an export cap of 0.125 kWh, where the pack (0.086 kWh, above its lock floor of
+    # 0.039 kWh) is no longer depleted: only the PV the site cannot pass takes the HOLD
+    # back to CHARGE_PV (CURTAIL is offered only after a full pack).
+    first = sunrise_278()
+    problem = replace(
+        first,
+        slots=first.slots[1:],
+        battery=replace(first.battery, initial_kwh=0.0835),
+        initial_dispatch_mode="CHARGE_PV",
+    )
+    plan = solve(problem)
+    validate_modes(problem, plan.flows, plan.carried_bridges)
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    assert modes[:5] == [
+        "SELF_CONSUME",
+        "CHARGE_PV",
+        "HOLD",
+        "HOLD",
+        "CHARGE_PV",
+    ]
+    assert plan.released_holds == (2, 3)
