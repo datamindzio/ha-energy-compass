@@ -1157,7 +1157,7 @@ przechowuje własną kopię zaakceptowanego planu przez przeładowanie wpisu, al
 <td><code>CURTAIL</code></td>
 <td>Ograniczanie PV</td>
 <td>Ograniczenie produkcji ≥ activity, bateria nieaktywna.</td>
-<td><code>allow_curtailment</code> włączone.</td>
+<td><code>allow_curtailment</code> włączone; bez niego tylko PV, którego nie przyjmie pełna bateria i nie przepuści limit eksportu ani moc falownika (wymuszone przycięcie, niżej).</td>
 </tr>
 </tbody>
 </table></section>
@@ -1236,12 +1236,14 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
   nie dalej niż potrzeba przycięcia tego przedziału (PV, które musi trafić do baterii albo zostać
   przycięte, co najmniej minimalna aktywność).
   Przy <code>minimum_mode_minutes = 0</code> reguła kosztuje czas obliczeń (tabela w
-  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN) i jeden
-  przypadek więcej nie ma planu: gdy eksport do sieci jest ograniczony (albo falownik ma moc
-  poniżej PV), a ograniczanie produkcji PV (<code>allow_curtailment</code>) jest wyłączone, bateria
-  zapełniona przed ostatnią nadwyżką zostawia tę nadwyżkę bez miejsca. Model z trybami ma to samo
-  ograniczenie; plan powstaje po włączeniu ograniczania produkcji PV albo przy wyższym limicie
-  eksportu lub mocy falownika.</li>
+  <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#operating-mode-duration-and-pv-export-budget">model i ograniczenia</a>, EN). Instalacja,
+  która nie może ograniczać produkcji PV (<code>allow_curtailment</code> wyłączone), z limitem eksportu do
+  sieci albo falownikiem o mocy poniżej PV zostałaby z PV bez miejsca, gdy bateria jest pełna.
+  Plan i tak powstaje: PV ponad to, co przepuści limit i falownik, jest tracone w przedziale, który
+  zaczyna się z pełną baterią, ma etykietę <code>CURTAIL</code> (falownik przycina sam; sterownik Deye
+  wykonuje wtedy profil <code>HOLD</code>) i tylko wtedy. Bateria z wolnym miejscem nigdy nie traci PV, bez
+  względu na cenę sprzedaży, a instalacja, która przepuści swoje PV, działa jak dotąd. Model z
+  trybami ma tę samą regułę.</li>
 <li><strong><code>CURTAIL</code> trwa mimo przerwy w PV.</strong> Przebieg <code>CURTAIL</code> trwa minimalny czas, a PV może w tym
   czasie spaść. <code>HOLD</code> w przedziale z PV poniżej minimalnej aktywności (<code>minimum_mode_power_kw × h</code>)
   w trakcie tego czasu to ten sam przebieg, a nie nowy <code>HOLD</code>: falownik nie ma czego przycinać,

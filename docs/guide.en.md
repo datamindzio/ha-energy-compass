@@ -642,7 +642,7 @@ hours: `activity = minimum_mode_power_kw × h` (default 0.1 kW) and
 | `DISCHARGE_GRID` | Discharge with export | Discharge ≥ activity **and** grid export ≥ activity — the battery sells energy. | `allow_battery_export` on; grid export capacity > 0; Sell only PV budget and export-benefit hurdle allow it. |
 | `SELF_CONSUME` | Self-consumption | Discharge ≥ activity, no charge, no export, no curtailment — the battery covers the house. Load-following: grid import only while the discharge is at its power limit or the battery is emptied to its reserve. | SOC above operating reserve. |
 | `HOLD` | Hold | No charge, no discharge, no curtailment — the battery idles; the grid/PV cover load. | Always available. |
-| `CURTAIL` | Curtail PV | Curtailment ≥ activity, no battery activity. | `allow_curtailment` on. |
+| `CURTAIL` | Curtail PV | Curtailment ≥ activity, no battery activity. | `allow_curtailment` on; without it, only the PV a full pack cannot take and the export cap or inverter rating cannot pass (a forced spill, below). |
 
 When mode duration is disabled (`minimum_mode_minutes = 0`), the display state is derived from flows
 by precedence: CURTAIL → CHARGE_GRID → CHARGE_PV → DISCHARGE_GRID → SELF_CONSUME → HOLD.
@@ -734,11 +734,13 @@ Rules (defaults: 60 min, 0.1 kW):
   `HOLD` or `CURTAIL`, once it is within that interval's curtail need of the ceiling (the PV that
   must go to the pack or be curtailed, at least the minimum activity).
   With `minimum_mode_minutes = 0` the rule costs solve time (see the table in
-  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget)), and one more
-  case has no plan: with grid export capped (or the inverter rated below the PV) and curtailment
-  (`allow_curtailment`) off, a pack that fills before the last surplus leaves that surplus nowhere
-  to go. The mode model has the same limit; curtailment on, or a higher export cap or inverter
-  rating, gives a plan.
+  [model and limitations](model.md#operating-mode-duration-and-pv-export-budget)). A site that
+  cannot curtail (`allow_curtailment` off) with grid export capped, or the inverter rated below
+  the PV, would be left with PV that has nowhere to go once the pack is full. It is planned
+  anyway: the PV above what the cap and the inverter can pass is spilled in an interval that
+  starts with a full pack, labelled `CURTAIL` (the inverter throttles by itself; the Deye
+  controller runs its `HOLD` profile), and only then. A pack with room never spills, whatever the
+  sell price, and a site that can pass its PV is unchanged. The mode model takes the same rule.
 - **`CURTAIL` goes on through a PV gap.** A `CURTAIL` run lasts the minimum duration, and PV can
   drop inside it. A `HOLD` in an interval with PV below the minimum activity (`minimum_mode_power_kw × h`)
   inside that duration is the run going on, not a new `HOLD`: the inverter has nothing to curtail

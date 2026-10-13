@@ -651,7 +651,7 @@ Sensor **Kompas energii** pokazuje tryb pracy bieżącego przedziału; każdy wi
 | `DISCHARGE_GRID` | Rozładowanie z eksportem | Rozładowanie ≥ activity **i** eksport do sieci ≥ activity — bateria sprzedaje energię. | `allow_battery_export` włączone; moc eksportu > 0; pozwala na to budżet Sell only PV i próg korzyści eksportu. |
 | `SELF_CONSUME` | Autokonsumpcja | Rozładowanie ≥ activity, bez ładowania, eksportu i ograniczania — bateria zasila dom. Podąża za obciążeniem: import z sieci tylko przy rozładowaniu na limicie mocy albo gdy bateria jest opróżniona do rezerwy. | SOC powyżej rezerwy operacyjnej. |
 | `HOLD` | Wstrzymanie | Brak ładowania, rozładowania i ograniczania — bateria stoi; dom zasila sieć/PV. | Zawsze dostępny. |
-| `CURTAIL` | Ograniczanie PV | Ograniczenie produkcji ≥ activity, bateria nieaktywna. | `allow_curtailment` włączone. |
+| `CURTAIL` | Ograniczanie PV | Ograniczenie produkcji ≥ activity, bateria nieaktywna. | `allow_curtailment` włączone; bez niego tylko PV, którego nie przyjmie pełna bateria i nie przepuści limit eksportu ani moc falownika (wymuszone przycięcie, niżej). |
 
 Przy wyłączonym minimalnym czasie trybu (`minimum_mode_minutes = 0`) stan wyświetlany wynika z
 przepływów wg pierwszeństwa: CURTAIL → CHARGE_GRID → CHARGE_PV → DISCHARGE_GRID → SELF_CONSUME →
@@ -750,12 +750,14 @@ Zasady (domyślnie 60 min, 0,1 kW):
   nie dalej niż potrzeba przycięcia tego przedziału (PV, które musi trafić do baterii albo zostać
   przycięte, co najmniej minimalna aktywność).
   Przy `minimum_mode_minutes = 0` reguła kosztuje czas obliczeń (tabela w
-  [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget), EN) i jeden
-  przypadek więcej nie ma planu: gdy eksport do sieci jest ograniczony (albo falownik ma moc
-  poniżej PV), a ograniczanie produkcji PV (`allow_curtailment`) jest wyłączone, bateria
-  zapełniona przed ostatnią nadwyżką zostawia tę nadwyżkę bez miejsca. Model z trybami ma to samo
-  ograniczenie; plan powstaje po włączeniu ograniczania produkcji PV albo przy wyższym limicie
-  eksportu lub mocy falownika.
+  [model i ograniczenia](model.md#operating-mode-duration-and-pv-export-budget), EN). Instalacja,
+  która nie może ograniczać produkcji PV (`allow_curtailment` wyłączone), z limitem eksportu do
+  sieci albo falownikiem o mocy poniżej PV zostałaby z PV bez miejsca, gdy bateria jest pełna.
+  Plan i tak powstaje: PV ponad to, co przepuści limit i falownik, jest tracone w przedziale, który
+  zaczyna się z pełną baterią, ma etykietę `CURTAIL` (falownik przycina sam; sterownik Deye
+  wykonuje wtedy profil `HOLD`) i tylko wtedy. Bateria z wolnym miejscem nigdy nie traci PV, bez
+  względu na cenę sprzedaży, a instalacja, która przepuści swoje PV, działa jak dotąd. Model z
+  trybami ma tę samą regułę.
 - **`CURTAIL` trwa mimo przerwy w PV.** Przebieg `CURTAIL` trwa minimalny czas, a PV może w tym
   czasie spaść. `HOLD` w przedziale z PV poniżej minimalnej aktywności (`minimum_mode_power_kw × h`)
   w trakcie tego czasu to ten sam przebieg, a nie nowy `HOLD`: falownik nie ma czego przycinać,

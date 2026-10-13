@@ -114,8 +114,8 @@ forecast.
    that 1 problem in 300 of the seeded sweep loses its plan (export cap or inverter below the PV, curtailment
    off, pack full before the last surplus; the mode model has no plan there either). Re-checked at `main`
    5c11c2e with the rule merged: the same picture, objectives equal where both prove. Fewer consumption probes
-   finish at duration 0 as well (`docs/runtime-validation.md` § Consumption probe limits). T-041 keeps the
-   no-plan class.
+   finish at duration 0 as well (`docs/runtime-validation.md` § Consumption probe limits). T-041 first kept the
+   no-plan class; the owner then decided otherwise (T-062, answer B, 2026-10-13), see Amendment.
 
 Revisit when the solver interface offers lazy constraints inside one solve or a warm start (the loop above
 then stops paying for cold solves), when a reformulation proves the 192-slot benchmark base plan of
@@ -154,10 +154,30 @@ corpus median for any strategy, or when the owner asks for consumption levels on
 - No engine change. ADR-0006 no longer leaves the regression open; its consequence line points here.
 - The reference point of T-042 (default-mode solve time) is an accepted state, not an open regression, and T-042
   itself is decided (decision 6): the rule ships with `minimum_mode_minutes = 0` in T-034.
-- T-041 keeps its first problem (no plan on a capped site when the pack fills early); lazy rows are not a
-  remedy for it (decision 4) and are not a measured remedy for its solve time.
+- T-041's first problem (no plan on a capped site when the pack fills early) is solved by the forced spill
+  of the Amendment, not by lazy rows (decision 4), which are not a measured remedy for it.
 - Consumption levels on a 48 h horizon do not depend on this rule alone: on the irregular corpus the rule-free
   model needs 4.7-8.1 s (median) for five of the six strategies against a 2 s probe limit. Removing the rule
   would not bring them back there; it did on the regular benchmark shape.
 - The shipped benchmark is one regular shape and overstates the rule's share. Solve-time claims about these
   rows need the corpus beside it (decision 5).
+
+## Amendment (T-041, owner decision T-062 B)
+
+The no-plan class of decision 6 is closed by building the exception the rule needed. A site that cannot
+curtail (`allow_curtailment` off) and whose export cap or inverter rating is below the PV spills the PV that
+a full pack cannot take: the inverter throttles by itself, so the plan carries it as `CURTAIL` at cost 0
+(the Deye controller runs its `HOLD` profile) instead of ending `infeasible`.
+
+- The spill is the need `max(PV − load − flexible load − grid_export_kw × h, PV − inverter_kw × h, 0)` and no
+  more, only on a site with a battery, only in an interval that starts with a full pack (`previous energy ≥
+  ceiling − standby loss`), and never because the sell price is negative: a pack with room charges.
+  `engine.optimize._gate_forced_spill` writes it (one binary per interval with a need); the solution
+  validator re-checks both limits independently. The mode model takes the same bound.
+- Seeded sweep of `tests/test_unmoded_charge_pv_sweep.py`: 241 of 300 problems planned against 227 on main
+  before the change; no problem planned on main became infeasible, none ended in a solver failure.
+  `benchmarks/spill_sweep.py` extends the comparison to the mode model, probes and rolling
+  solve → follow → solve horizons, with the export-episode hurdle at zero so that a "worse" plan is not a
+  hurdle artefact: no newly infeasible problem anywhere.
+- Solve time: the benchmark site can pass its PV, so the rows and variables are identical to main f6eb8f2 and
+  the per-strategy table of `docs/model.md` shows only measurement noise.
