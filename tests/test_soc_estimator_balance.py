@@ -25,10 +25,13 @@ T0 = dt.datetime(2026, 10, 14, 11, tzinfo=dt.UTC)
 SETTINGS = EstimatorSettings(
     capacity_kwh=24.0,
     empty_voltage_v=496.0,
+    full_min_voltage_v=530.0,
     eta_charge=0.9,
     max_charge_current_a=14.0,
     export_limit_w=0.0,
+    full_hold_seconds=600.0,
 )
+HOUR = replace(SETTINGS, full_hold_seconds=3600.0)
 BALANCE = ControllerFacts(
     charge_limit_a=14.0,
     grid_charge_a=14.0,
@@ -109,11 +112,11 @@ def test_a_candidate_in_the_candidates_only_window_is_not_applied_but_qualifies(
     assert not step(state, SETTINGS, _inputs(11, current=-8.0)).full_qualified
 
 
-def test_a_rejected_candidate_does_not_qualify():
+def test_a_candidate_on_low_counters_qualifies_too():
     state = EstimatorState(Anchor("initial", T0, 10.0, 1000.0, 500.0), T0)
     estimate = _run(state, SETTINGS, 12)
-    assert state.candidates[0]["outcome"] == "rejected_low_energy"
-    assert not estimate.full_qualified
+    assert state.candidates[0]["outcome"] == "candidate"
+    assert estimate.full_qualified
 
 
 def test_a_qualified_full_confirms_the_balance_reading():
@@ -143,3 +146,47 @@ def test_one_balance_window_in_the_candidates_only_window_completes_the_balance(
     report = status(tracker, tomorrow, settings)
     assert report["phase"] == "ok"
     assert report["due_phase"] == "ok"
+
+
+def _balance_run(minutes, row_minutes, *, hold_minutes=60):
+    """Tracker state after `minutes`, the balance row lasting `row_minutes`."""
+    settings = balance_settings({"balance_hold_minutes": hold_minutes})
+    state, tracker = _state(), empty_state()
+    for minute in range(minutes):
+        facts = replace(BALANCE, balance_hold=minute < row_minutes)
+        estimate = step(state, HOUR, _inputs(minute, facts=facts, grid=-1500.0))
+        tracker = observe(
+            tracker,
+            confirmed_percent(
+                estimate.soc_fraction * 100,
+                estimate.top_confirmed,
+                estimate.full_qualified,
+            ),
+            T0 + dt.timedelta(minutes=minute),
+            settings,
+        )
+    return tracker, settings
+
+
+def test_the_tracker_starts_its_hold_only_after_the_one_hour_full_hold():
+    tracker, settings = _balance_run(90, 125)
+    assert tracker["hold_started_at"] == (T0 + dt.timedelta(minutes=60)).isoformat()
+    report = status(tracker, T0 + dt.timedelta(minutes=89), settings)
+    assert report["phase"] == "holding"
+    assert report["hold_remaining_minutes"] == pytest.approx(31.0)
+    assert tracker["last_completed_at"] is None
+
+
+def test_a_balance_window_of_hold_plus_full_hold_completes():
+    tracker, settings = _balance_run(125, 125)
+    assert tracker["last_completed_at"] == (T0 + dt.timedelta(minutes=120)).isoformat()
+    report = status(tracker, T0 + dt.timedelta(days=1), settings)
+    assert report["phase"] == "ok"
+
+
+def test_a_window_of_the_balance_hold_alone_cannot_complete():
+    # The row ends before the full hold has qualified: the planner must ask
+    # for the hold plus the full hold, which `balance_lead_minutes` adds.
+    tracker, _ = _balance_run(180, 60)
+    assert tracker["last_completed_at"] is None
+    assert tracker["hold_started_at"] is None

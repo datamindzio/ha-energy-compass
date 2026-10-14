@@ -23,6 +23,7 @@ T0 = dt.datetime(2026, 10, 1, 12, tzinfo=dt.UTC)
 SETTINGS = EstimatorSettings(
     capacity_kwh=24.0,
     empty_voltage_v=496.0,
+    full_min_voltage_v=530.0,
     eta_charge=0.9,
     anchor_on_candidates=True,
     export_limit_w=0.0,

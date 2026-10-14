@@ -62,7 +62,7 @@ from .engine.peak_reserve import (
 from .engine.strategy import resolve_flags, strategy_weights
 from .settings import validate_configuration
 from .settlement import resolve_settlement
-from .soc_estimator_config import ESTIMATE_KEY
+from .soc_estimator_config import ESTIMATE_KEY, balance_lead_minutes
 from .sources.battery import SocSettings, validate_soc
 from .sources.bindings import (
     field,
@@ -944,7 +944,7 @@ def build_problem(
             slots,
             phase=window_phase,
             now=now,
-            hold_minutes=tracker.hold_minutes,
+            hold_minutes=tracker.hold_minutes + balance_lead_minutes(config),
             remaining_minutes=report["hold_remaining_minutes"],
             grid_charge_ok=tuple(
                 battery.allow_grid_charge and price_allows_grid_charge(problem, slot)

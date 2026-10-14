@@ -190,8 +190,8 @@ def set_counter_estimator(draft: dict, bindings: dict[str, EntityBinding]) -> No
     """Make the counter SOC estimator the SOC source, bound to the given roles.
 
     The SOC entity binding is dropped; a bound BMS SOC moves to the estimator as
-    a comparison-only reading. Capacity and the pack voltage that is 0 % are
-    asked for in the estimator's own settings step.
+    a comparison-only reading. Capacity, the pack voltage that is 0 % and the
+    lowest pack voltage of a full pack are asked for in the estimator's own settings step.
     """
     block = draft.setdefault("soc_estimator", {})
     stored = block.setdefault("bindings", {})

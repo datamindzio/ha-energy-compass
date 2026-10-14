@@ -16,7 +16,9 @@ from custom_components.energy_compass.soc_estimator import (
 )
 
 T0 = dt.datetime(2026, 10, 1, 12, tzinfo=dt.UTC)
-SETTINGS = EstimatorSettings(capacity_kwh=24.0, empty_voltage_v=496.0, eta_charge=0.9)
+SETTINGS = EstimatorSettings(
+    capacity_kwh=24.0, empty_voltage_v=496.0, full_min_voltage_v=530.0, eta_charge=0.9
+)
 ALLOWED = ControllerFacts(charge_limit_a=14.0, discharge_limit_a=14.0, state="BASE")
 
 

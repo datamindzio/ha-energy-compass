@@ -15,7 +15,8 @@ current energy, and a rise faster than any battery delivers is ignored as a
 glitch, as the calibration counters are treated.
 
 Anchors come from physical evidence only: a full anchor when charging stops
-although it could continue and the cause is not lack of sun, an empty anchor
+although it could continue and the cause is not lack of sun, at a pack voltage
+no lower than the site's full voltage and held for the full hold, an empty anchor
 at the pack voltage that defines 0 %. `state_to_dict` and `state_from_dict`
 are the versioned form the Store keeps; `seed_from_template` starts from the
 attributes of the template estimator this replaces.
@@ -65,9 +66,6 @@ EXPORT_CAP_FRACTION = 0.95
 # below it (as a fraction) counts as having reached it.
 TARGET_VOLTAGE_MARGIN = 0.01
 MAX_CANDIDATES = 20
-# A full anchor needs the counters to put the pack at least this far up: a BMS
-# charge-current limit in the cold, or inverter derating, looks like a full pack.
-MIN_PLAUSIBLE_FRACTION = 0.7
 
 # Empty anchor evidence (DD-4).
 MIN_DISCHARGE_A = 0.5
@@ -94,6 +92,10 @@ class EstimatorSettings:
     capacity_kwh: float
     # Pack voltage that is 0 %; the site must state it, there is no default.
     empty_voltage_v: float
+    # A full candidate starts and continues only at or above this pack voltage;
+    # the site must state it, there is no default. Counters that drifted low
+    # must not be able to keep a full pack from correcting them.
+    full_min_voltage_v: float
     eta_charge: float = 0.95
     # Largest charge current the pack takes; 0 when unknown (the taper
     # threshold is then the 1 A floor). Rated PV power likewise.
@@ -101,7 +103,7 @@ class EstimatorSettings:
     rated_pv_w: float = 0.0
     # Largest grid export the site allows in W; 0 is zero-export, None unknown.
     export_limit_w: float | None = None
-    full_hold_seconds: float = 600.0
+    full_hold_seconds: float = 3600.0
     empty_hold_seconds: float = 60.0
     # E1: a full candidate only anchors after this many days since the
     # estimator started, unless the switch is on from day one.
@@ -115,6 +117,8 @@ class EstimatorSettings:
             raise InputError("invalid estimator efficiency")
         if not (isfinite(self.empty_voltage_v) and self.empty_voltage_v > 0):
             raise InputError("invalid estimator empty voltage")
+        if not (isfinite(self.full_min_voltage_v) and self.full_min_voltage_v > 0):
+            raise InputError("invalid estimator full voltage")
         for value in (
             self.max_charge_current_a,
             self.rated_pv_w,
@@ -363,8 +367,20 @@ def _full_anchor(
     discharge: float,
 ) -> str | None:
     """Track the full-anchor evidence (DD-3); the anchor kind when the step anchored."""
-    evidence = _full_evidence(settings, inputs) if inputs.anchor_inputs_fresh else None
+    evidence = (
+        _full_evidence(settings, inputs, state.full_candidate_since is not None)
+        if inputs.anchor_inputs_fresh
+        else None
+    )
     if evidence is None:
+        if state.full_candidate_since is not None and _below_full_voltage(
+            settings, inputs
+        ):
+            _LOGGER.info(
+                "SOC estimator: full hold broken, below_full_voltage (%s V < %s V)",
+                inputs.voltage_v,
+                settings.full_min_voltage_v,
+            )
         _break_full_candidate(state)
         return None
     at = inputs.at
@@ -381,23 +397,15 @@ def _full_anchor(
         counter_energy(state, settings, charge, discharge) + state.pending_kwh,
         settings,
     )
-    plausible = before >= MIN_PLAUSIBLE_FRACTION * settings.capacity_kwh
-    anchored = plausible and (
-        settings.anchor_on_candidates
-        or at - state.started_at >= timedelta(days=settings.candidates_only_days)
+    anchored = settings.anchor_on_candidates or at - state.started_at >= timedelta(
+        days=settings.candidates_only_days
     )
     state.candidates.append(
         {
             "started_at": state.full_candidate_since.isoformat(),
             "qualified_at": at.isoformat(),
             "anchored": anchored,
-            "outcome": (
-                "anchored"
-                if anchored
-                else "candidate"
-                if plausible
-                else "rejected_low_energy"
-            ),
+            "outcome": "anchored" if anchored else "candidate",
             "energy_before_kwh": round(before, 3),
             **evidence,
         }
@@ -413,11 +421,12 @@ def _full_anchor(
 
 
 def _qualified(state: EstimatorState) -> bool:
-    return (
-        state.full_candidate_since is not None
-        and state.full_candidate_logged
-        and state.candidates[-1]["outcome"] != "rejected_low_energy"
-    )
+    return state.full_candidate_since is not None and state.full_candidate_logged
+
+
+def _below_full_voltage(settings: EstimatorSettings, inputs: Inputs) -> bool:
+    voltage = _number(inputs.voltage_v)
+    return voltage is not None and voltage < settings.full_min_voltage_v
 
 
 def _break_full_candidate(state: EstimatorState) -> None:
@@ -535,9 +544,12 @@ def _empty_evidence(settings: EstimatorSettings, inputs: Inputs) -> str | None:
     return None
 
 
-def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
+def _full_evidence(
+    settings: EstimatorSettings, inputs: Inputs, continuing: bool = False
+) -> dict | None:
     """The values behind a full candidate, or None while any condition fails.
 
+    0. the pack voltage is at least `full_min_voltage_v`;
     1. the battery takes (almost) no charge and gives none;
     2. charging was possible: a charge limit of at least 2 A, no controller
        target that explains the stop, and a dispatch state that charges (not
@@ -551,11 +563,19 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
 
     In a balance row the plan asked for a full pack: charging that stops at the
     Grid program's voltage is itself the evidence (path "balance").
+
+    HOLD ends a candidate that did not start in it, unless `continuing`: the
+    controller keeps the charge path open for a running candidate, so the
+    charge limit in force (at least 2 A, as above) shows it did. HOLD's Grid
+    program only holds the SOC, so its voltage is no target and requested grid
+    charging is no evidence there; only the export and surplus paths count.
     """
     facts = inputs.facts
     current, voltage = _number(inputs.current_a), _number(inputs.voltage_v)
     pv, load = _number(inputs.pv_w), _number(inputs.load_w)
     if facts is None or current is None or voltage is None:
+        return None
+    if voltage < settings.full_min_voltage_v:
         return None
     taper = max(
         MIN_TAPER_CURRENT_A, TAPER_CURRENT_FRACTION * settings.max_charge_current_a
@@ -565,12 +585,14 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
     charge_limit = _number(facts.charge_limit_a)
     if charge_limit is None or charge_limit < MIN_CHARGE_LIMIT_A:
         return None
-    if facts.state in NON_CHARGING_STATES:
+    held_open = continuing and facts.state == "HOLD"
+    if facts.state in NON_CHARGING_STATES and not held_open:
         return None
     grid_charging = facts.program_direction == "Grid"
     target = _number(facts.program_voltage_v)
     at_target = (
-        grid_charging
+        not held_open
+        and grid_charging
         and target is not None
         and voltage >= target * (1 - TARGET_VOLTAGE_MARGIN)
     )
@@ -612,6 +634,7 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
             path = "surplus"
         elif (
             grid_charging
+            and not held_open
             and facts.state is not None
             and facts.grid_charge_a >= MIN_CHARGE_LIMIT_A
         ):

@@ -102,6 +102,7 @@ async def test_choosing_the_estimator_replaces_the_soc_binding_and_seeds_it(hass
             "soc_source": "counter_estimator",
             **SOURCES,
             "empty_voltage": 480,
+            "full_min_voltage": 540,
             "anchor_on_candidates": False,
             "shadow": False,
             "seed_from_template": True,
@@ -160,6 +161,7 @@ async def test_shadow_runs_beside_the_bound_entity(hass):
             "soc_source": "entity",
             **SOURCES,
             "empty_voltage": 480,
+            "full_min_voltage": 540,
             "anchor_on_candidates": False,
             "shadow": True,
             "seed_from_template": True,
@@ -192,7 +194,7 @@ async def test_the_efficiency_is_suggested_from_the_round_trip_else_the_default(
     _, form = await _open(hass, entry)
     schema = {str(key): key for key in form["data_schema"].schema}
     assert schema["eta_charge"].description["suggested_value"] == 0.95
-    assert schema["full_hold_seconds"].description["suggested_value"] == 600
+    assert schema["full_hold_seconds"].description["suggested_value"] == 3600
     assert schema["drift_warn_cycles"].description["suggested_value"] == 3
     assert "empty_voltage" in schema
     assert schema["empty_voltage"].description["suggested_value"] is None
@@ -222,6 +224,7 @@ async def test_the_estimator_is_refused_while_the_inverter_is_in_capacity_mode(
         "soc_source": "counter_estimator",
         **SOURCES,
         "empty_voltage": 480,
+        "full_min_voltage": 540,
         "anchor_on_candidates": False,
         "shadow": False,
     }
@@ -257,3 +260,45 @@ def test_the_step_warns_that_targets_are_invisible_without_the_native_controller
     folder = Path(__file__).parents[1] / "custom_components" / "energy_compass"
     texts = json.loads((folder / "translations" / f"{language}.json").read_text())
     assert phrase in texts[flow]["step"]["soc_estimator"]["description"]
+
+
+async def test_the_lowest_full_pack_voltage_is_required(hass):
+    entry = _entry(hass)
+    flow, _ = await _open(hass, entry)
+    result = await hass.config_entries.options.async_configure(
+        flow,
+        {
+            "soc_source": "counter_estimator",
+            **SOURCES,
+            "empty_voltage": 480,
+            "anchor_on_candidates": False,
+            "shadow": False,
+        },
+    )
+    assert result["step_id"] == "soc_estimator"
+    assert result["errors"] == {"base": "invalid_input"}
+    assert "full pack" in result["description_placeholders"]["detail"]
+
+
+async def test_a_full_voltage_not_above_the_empty_one_is_refused(hass):
+    entry = _entry(hass)
+    flow, _ = await _open(hass, entry)
+    base = {
+        "soc_source": "counter_estimator",
+        **SOURCES,
+        "empty_voltage": 480,
+        "anchor_on_candidates": False,
+        "shadow": False,
+    }
+    result = await hass.config_entries.options.async_configure(
+        flow, {**base, "full_min_voltage": 480}
+    )
+    assert result["step_id"] == "soc_estimator"
+    assert result["errors"] == {"base": "invalid_input"}
+
+
+async def test_the_form_offers_the_full_voltage_and_the_one_hour_hold(hass):
+    entry = _entry(hass)
+    _, form = await _open(hass, entry)
+    schema = {str(key): key for key in form["data_schema"].schema}
+    assert schema["full_min_voltage"].description["suggested_value"] is None

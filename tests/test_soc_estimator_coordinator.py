@@ -37,6 +37,7 @@ def _config(**estimator):
             role: {"entity_id": entity} for role, (entity, _) in SOURCES.items()
         },
         "empty_voltage": 480,
+        "full_min_voltage": 540,
         "eta_charge": 0.9,
         "initial_soc_percent": 50,
         **estimator,
@@ -263,7 +264,7 @@ async def test_a_physical_full_anchor_starts_the_balance_hold(
     coordinator = entry.runtime_data
     estimator = coordinator.soc_estimator
     assert coordinator._balance["hold_started_at"] is None
-    for _ in range(12):
+    for _ in range(62):
         freezer.tick(timedelta(minutes=1))
         _anchoring_sources(hass)
         await hass.async_block_till_done(wait_background_tasks=True)
@@ -331,7 +332,7 @@ async def test_a_logged_full_candidate_confirms_the_balance_without_an_anchor(
     entry = await _setup(hass, config)
     coordinator = entry.runtime_data
     estimator = coordinator.soc_estimator
-    for _ in range(12):
+    for _ in range(62):
         freezer.tick(timedelta(minutes=1))
         _anchoring_sources(hass)
         await hass.async_block_till_done(wait_background_tasks=True)
@@ -356,7 +357,7 @@ async def test_charging_at_a_confirmed_top_adds_no_phantom_energy_or_history(
     _anchoring_sources(hass)
     entry = await _setup(hass, config)
     estimator = entry.runtime_data.soc_estimator
-    for _ in range(12):
+    for _ in range(62):
         freezer.tick(timedelta(minutes=1))
         _anchoring_sources(hass)
         await hass.async_block_till_done(wait_background_tasks=True)
@@ -431,13 +432,13 @@ async def test_a_stale_anchor_input_keeps_a_full_candidate_from_starting(
     _anchoring_sources(hass)
     entry = await _setup(hass, config)
     estimator = entry.runtime_data.soc_estimator
-    for _ in range(14):
+    for _ in range(62):
         freezer.tick(timedelta(minutes=1))
         _touch(hass, "sensor.grid", "-2500", "W")
         _touch(hass, "number.charge_limit", "14", "A")
         _set_sources(hass, voltage=545)
         await hass.async_block_till_done(wait_background_tasks=True)
-    # The PV sensor reported once, 14 minutes ago.
+    # The PV sensor reported once, 62 minutes ago.
     assert estimator.state.candidates == []
     assert estimator.state.full_candidate_since is None
     assert estimator.estimate.anchor_kind == "initial"

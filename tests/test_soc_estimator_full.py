@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 from soc_estimator_support import Recording, at
 
+from custom_components.energy_compass.engine.models import InputError
 from custom_components.energy_compass.soc_estimator import (
     Anchor,
     ControllerFacts,
@@ -19,11 +20,13 @@ T0 = dt.datetime(2026, 10, 1, 12, tzinfo=dt.UTC)
 SETTINGS = EstimatorSettings(
     capacity_kwh=24.0,
     empty_voltage_v=480.0,
+    full_min_voltage_v=530.0,
     eta_charge=0.9,
     max_charge_current_a=14.0,
     rated_pv_w=8000.0,
     anchor_on_candidates=True,
     export_limit_w=0.0,
+    full_hold_seconds=600.0,
 )
 EXPORTING = replace(SETTINGS, export_limit_w=5000.0)
 TAPER = ControllerFacts(charge_limit_a=14.0, state="CHARGE_PV")
@@ -389,32 +392,151 @@ def test_a_stale_anchor_input_breaks_the_hold_and_cannot_start_one():
     assert state.full_candidate_since is None
 
 
-def test_a_pack_the_counters_put_below_70_percent_is_not_anchored_full():
-    # A BMS charge-current limit in the cold, or inverter derating, looks like a
-    # full pack; the counters say the pack is far from it.
-    state = EstimatorState(Anchor("initial", T0, 12.0, 1000.0, 500.0), T0)
+def test_the_counters_far_below_full_do_not_keep_a_full_pack_from_anchoring():
+    # The counters may have drifted low; the pack voltage is the evidence, so
+    # an anchor must be able to correct them.
+    state = EstimatorState(Anchor("initial", T0, 4.0, 1000.0, 500.0), T0)
     estimate = _hold(state)
-    assert estimate.events == ()
-    assert estimate.anchor_kind == "initial"
+    assert estimate.events == ("full",)
+    assert estimate.energy_kwh == 24.0
     [candidate] = state.candidates
-    assert candidate["outcome"] == "rejected_low_energy"
-    assert candidate["anchored"] is False
-    assert candidate["energy_before_kwh"] == pytest.approx(12.0, abs=0.1)
+    assert candidate["outcome"] == "anchored"
+    assert candidate["energy_before_kwh"] == pytest.approx(4.0, abs=0.1)
+    assert "rejected_low_energy" not in repr(state.candidates)
 
 
-def test_the_plausibility_gate_opens_at_70_percent_of_the_capacity():
-    state = EstimatorState(Anchor("initial", T0, 16.8, 1000.0, 500.0), T0)
-    assert _hold(state).events == ("full",)
-    assert state.candidates[0]["outcome"] == "anchored"
-    state = EstimatorState(Anchor("initial", T0, 16.7, 1000.0, 500.0), T0)
-    assert _hold(state).events == ()
-    assert state.candidates[0]["outcome"] == "rejected_low_energy"
+def test_a_low_counter_candidate_still_qualifies_the_balance():
+    state = EstimatorState(Anchor("initial", T0, 4.0, 1000.0, 500.0), T0)
+    estimate = _hold(state, replace(SETTINGS, anchor_on_candidates=False))
+    assert estimate.full_qualified
+    assert state.candidates[0]["outcome"] == "candidate"
 
 
-def test_a_rejected_candidate_is_logged_once():
-    state = EstimatorState(Anchor("initial", T0, 12.0, 1000.0, 500.0), T0)
-    _hold(state, seconds=1200)
-    assert len(state.candidates) == 1
+def test_the_minimum_full_voltage_gates_the_start():
+    gated = replace(SETTINGS, full_min_voltage_v=550.0)
+    state = _state()
+    estimate = _hold(state, gated, voltage=549.9)
+    assert not estimate.full_candidate
+    assert state.candidates == []
+    state = _state()
+    assert _hold(state, gated, voltage=550.0).events == ("full",)
+
+
+def test_the_minimum_full_voltage_is_required_and_positive():
+    with pytest.raises(InputError):
+        EstimatorSettings(
+            capacity_kwh=24.0, empty_voltage_v=480.0, full_min_voltage_v=0
+        )
+    with pytest.raises(TypeError):
+        EstimatorSettings(capacity_kwh=24.0, empty_voltage_v=480.0)
+
+
+def test_the_default_full_hold_is_one_hour():
+    site = EstimatorSettings(
+        capacity_kwh=24.0, empty_voltage_v=480.0, full_min_voltage_v=530.0
+    )
+    assert site.full_hold_seconds == 3600.0
+    state = _state()
+    hour = replace(
+        site, anchor_on_candidates=True, export_limit_w=0.0, rated_pv_w=8000.0
+    )
+    almost = _hold(state, hour, seconds=3540)
+    assert almost.full_candidate
+    assert state.candidates == []
+    assert almost.anchor_kind == "initial"
+    estimate = step(state, hour, _inputs(3600))
+    assert estimate.events == ("full",)
+    [candidate] = state.candidates
+    assert candidate["started_at"] == T0.isoformat()
+    assert candidate["qualified_at"] == (T0 + dt.timedelta(hours=1)).isoformat()
+
+
+def test_a_dip_below_the_full_voltage_breaks_the_hold_and_is_logged(caplog):
+    gated = replace(SETTINGS, full_min_voltage_v=540.0, full_hold_seconds=3600.0)
+    state = _state()
+    _hold(state, gated, seconds=3300)
+    assert state.full_candidate_since == T0
+    with caplog.at_level("INFO", logger="custom_components.energy_compass"):
+        step(state, gated, _inputs(3360, voltage=539.9))
+    assert state.full_candidate_since is None
+    assert "below_full_voltage" in caplog.text
+    # The hold restarts from the first reading back at the gate.
+    for second in range(3420, 3420 + 3600, 60):
+        estimate = step(state, gated, _inputs(second))
+    assert estimate.events == ()
+    assert estimate.full_candidate
+    assert step(state, gated, _inputs(3420 + 3600)).events == ("full",)
+
+
+def test_a_qualified_candidate_ends_when_the_voltage_drops():
+    state = _state()
+    estimate = _hold(state, replace(SETTINGS, anchor_on_candidates=False))
+    assert estimate.full_qualified
+    after = step(state, SETTINGS, _inputs(660, voltage=520.0))
+    assert not after.full_qualified
+    assert not after.full_candidate
+
+
+def test_a_low_voltage_alone_is_not_logged_as_a_broken_hold(caplog):
+    state = _state()
+    with caplog.at_level("INFO", logger="custom_components.energy_compass"):
+        _hold(state, voltage=500.0)
+    assert "below_full_voltage" not in caplog.text
+
+
+HOLDING = ControllerFacts(charge_limit_a=14.0, state="HOLD", program_direction="Grid")
+
+
+def test_a_candidate_continues_in_hold_while_the_charge_path_is_open():
+    state = _state()
+    _hold(state, EXPORTING, grid=-1500.0, seconds=300)
+    assert state.full_candidate_since == T0
+    for second in range(360, 601, 60):
+        estimate = step(state, EXPORTING, _inputs(second, facts=HOLDING, grid=-1500.0))
+    assert estimate.events == ("full",)
+    assert state.candidates[0]["path"] == "export"
+    assert state.candidates[0]["controller_state"] == "HOLD"
+
+
+def test_hold_never_starts_a_candidate():
+    state = _state()
+    _hold(state, EXPORTING, facts=HOLDING, grid=-1500.0)
+    assert state.candidates == []
+    assert state.full_candidate_since is None
+
+
+def test_a_candidate_in_hold_ends_when_the_charge_path_closes():
+    state = _state()
+    _hold(state, EXPORTING, grid=-1500.0, seconds=300)
+    closed = replace(HOLDING, charge_limit_a=1.0)
+    step(state, EXPORTING, _inputs(360, facts=closed, grid=-1500.0))
+    assert state.full_candidate_since is None
+
+
+def test_hold_does_not_turn_its_grid_program_into_evidence():
+    # In HOLD the Grid program only holds the SOC: neither its voltage target
+    # nor requested grid charging says anything about a full pack.
+    state = _state()
+    _hold(state, EXPORTING, grid=-1500.0, seconds=300)
+    facts = replace(HOLDING, grid_charge_a=14.0, program_voltage_v=552.0)
+    estimate = step(state, EXPORTING, _inputs(360, facts=facts, grid=-1500.0))
+    assert estimate.full_candidate
+    assert state.full_candidate_since == T0
+    weak = step(state, EXPORTING, _inputs(420, facts=facts, grid=300.0, pv=0.0))
+    assert not weak.full_candidate
+
+
+@pytest.mark.parametrize("state_name", ["CURTAIL", "BASE", "DISCHARGE_GRID"])
+def test_the_other_excluded_states_still_end_a_running_candidate(state_name):
+    state = _state()
+    _hold(state, EXPORTING, grid=-1500.0, seconds=300)
+    facts = ControllerFacts(charge_limit_a=14.0, state=state_name)
+    step(state, EXPORTING, _inputs(360, facts=facts, grid=-1500.0))
+    assert state.full_candidate_since is None
+
+
+# The recording keeps real voltages: this site's full voltage and the one-hour hold.
+SITE = replace(SETTINGS, full_min_voltage_v=552.0, full_hold_seconds=3600.0)
 
 
 @pytest.fixture(scope="module")
@@ -446,7 +568,7 @@ def _replay(recording, settings, start, end):
 def test_the_recorded_false_anchor_of_10_11_does_not_anchor(recording):
     start = dt.datetime(2026, 10, 11, 19, tzinfo=dt.UTC).timestamp()
     end = dt.datetime(2026, 10, 11, 22, tzinfo=dt.UTC).timestamp()
-    state, events = _replay(recording, SETTINGS, start, end)
+    state, events = _replay(recording, SITE, start, end)
     assert events == []
     assert state.candidates == []
     assert state.anchor.kind == "full"
@@ -456,7 +578,7 @@ def test_the_recorded_false_anchor_of_10_11_does_not_anchor(recording):
 @pytest.mark.parametrize("export_limit_w", [None, 0.0, 5000.0])
 def test_the_week_holds_no_full_candidate(recording, export_limit_w):
     site = replace(
-        SETTINGS,
+        SITE,
         max_charge_current_a=14.0,
         rated_pv_w=8600.0,
         anchor_on_candidates=False,
@@ -487,7 +609,7 @@ def test_the_near_miss_of_10_12_fails_both_surplus_rules(recording):
     assert max(margins) < 0
     for limit in (None, 0.0, 5000.0):
         site = replace(
-            SETTINGS,
+            SITE,
             max_charge_current_a=14.0,
             rated_pv_w=8600.0,
             anchor_on_candidates=False,

@@ -78,6 +78,7 @@ async def test_the_detected_offer_opens_the_estimator_settings_before_the_previe
             "voltage": "sensor.fx_pack_voltage",
             "current": "sensor.fx_pack_current",
             "empty_voltage": 480,
+            "full_min_voltage": 540,
             "anchor_on_candidates": False,
             "shadow": False,
         },

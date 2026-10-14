@@ -1470,7 +1470,7 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
                     self._draft["settings"]["sell_multiplier"] = 1
                 self._reresolve_profiles()
                 if any(option.kind == "counter_estimator" for option in chosen):
-                    # The pack voltage that is 0 % has no default: ask for it now.
+                    # The pack voltages have no default: ask for them now.
                     self._estimator_next = "preview"
                     return await self.async_step_soc_estimator()
                 return await self.async_step_preview()

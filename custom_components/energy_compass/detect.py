@@ -1094,7 +1094,7 @@ _TEXT = {
         "estimator_note": "The counter estimator computes the SOC from the battery "
         "energy counters and re-anchors only on physical evidence. It replaces the "
         "SOC and BMS SOC sources; choosing it opens its settings next, where the "
-        "pack voltage that is 0 % is required.",
+        "pack voltage that is 0 % and the lowest pack voltage of a full pack are required.",
     },
     "pl": {
         "forecast": "{provider} — {names}: {n} wartości godzinowych naprzód",
@@ -1123,7 +1123,7 @@ _TEXT = {
         "estimator_note": "Estymator z liczników wylicza SOC z liczników energii "
         "baterii i kotwiczy go tylko na fizycznych dowodach. Zastępuje źródła SOC "
         "i SOC z BMS; po wybraniu otworzą się jego ustawienia, gdzie wymagane jest "
-        "napięcie pakietu odpowiadające 0 %.",
+        "napięcie pakietu odpowiadające 0 % i najniższe napięcie pakietu pełnego.",
     },
 }
 

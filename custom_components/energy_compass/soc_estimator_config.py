@@ -34,7 +34,8 @@ ROLES = (*REQUIRED_ROLES, *OPTIONAL_ROLES)
 MEASUREMENT_FALLBACK = {"power": "battery_power", "pv_power": "pv_power"}
 
 DEFAULT_ETA_CHARGE = 0.95
-DEFAULT_FULL_HOLD_SECONDS = 600
+DEFAULT_FULL_HOLD_SECONDS = 3600
+MIN_FULL_HOLD_SECONDS = 3600
 DEFAULT_DRIFT_WARN_CYCLES = 3
 DEFAULT_INITIAL_SOC_PERCENT = 50.0
 
@@ -104,12 +105,19 @@ def settings(
     empty = values.get("empty_voltage")
     if not _number(empty) or empty <= 0:
         raise InputError("the SOC estimator needs the pack voltage that is 0 %")
+    full = values.get("full_min_voltage")
+    if not _number(full) or full <= empty:
+        raise InputError(
+            "the SOC estimator needs the lowest pack voltage of a full pack,"
+            " above the voltage that is 0 %"
+        )
     configured_rated = values.get("rated_pv_w")
     configured_current = values.get("max_charge_current")
     export_kw = (config.get("settings") or {}).get("grid_export_kw")
     return EstimatorSettings(
         capacity_kwh=float(capacity),
         empty_voltage_v=float(empty),
+        full_min_voltage_v=float(full),
         eta_charge=eta_charge(config),
         max_charge_current_a=float(
             configured_current if _number(configured_current) else max_charge_current_a
@@ -121,6 +129,17 @@ def settings(
         ),
         anchor_on_candidates=values.get("anchor_on_candidates") is True,
     )
+
+
+def balance_lead_minutes(config: Mapping) -> float:
+    """Minutes of full evidence a balance needs before its own hold starts.
+
+    The balance tracker counts a full pack only once the estimator's full hold
+    has passed, so the planner's window must cover that hold as well.
+    """
+    if not counter_mode(config):
+        return 0.0
+    return float(block(config).get("full_hold_seconds", DEFAULT_FULL_HOLD_SECONDS)) / 60
 
 
 def drift_cycles(config: Mapping) -> float:
@@ -146,7 +165,7 @@ def validate(config: Mapping) -> None:
     values = block(config)
     for key, low, high in (
         ("eta_charge", 0.01, 1.0),
-        ("full_hold_seconds", 60, 86400),
+        ("full_hold_seconds", MIN_FULL_HOLD_SECONDS, 86400),
         ("drift_warn_cycles", 0.5, 100),
     ):
         value = values.get(key)

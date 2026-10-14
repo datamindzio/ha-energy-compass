@@ -131,6 +131,7 @@ class SocEstimatorFlow:
                 bindings.pop(role, None)
         for key in (
             "empty_voltage",
+            "full_min_voltage",
             "initial_soc_percent",
             "eta_charge",
             "full_hold_seconds",
@@ -227,6 +228,9 @@ class SocEstimatorFlow:
                         "empty_voltage", suggested("empty_voltage"), 1, 10000, "V"
                     ),
                     _number_field(
+                        "full_min_voltage", suggested("full_min_voltage"), 1, 10000, "V"
+                    ),
+                    _number_field(
                         "initial_soc_percent",
                         suggested(
                             "initial_soc_percent", cfg.DEFAULT_INITIAL_SOC_PERCENT
@@ -249,7 +253,7 @@ class SocEstimatorFlow:
                     _number_field(
                         "full_hold_seconds",
                         suggested("full_hold_seconds", cfg.DEFAULT_FULL_HOLD_SECONDS),
-                        60,
+                        cfg.MIN_FULL_HOLD_SECONDS,
                         86400,
                         "s",
                     ),
@@ -334,6 +338,7 @@ class SocEstimatorFlow:
 
 CORE_NUMBERS = (
     "empty_voltage",
+    "full_min_voltage",
     "initial_soc_percent",
     "eta_charge",
     "full_hold_seconds",
