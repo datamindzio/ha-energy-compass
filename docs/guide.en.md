@@ -1022,7 +1022,7 @@ Rules (defaults: 60 min, 0.1 kW):
 | **HOLD forecast-miss charge** (built in, not a setting) | 0.5 of the forecast load | Planning-only charge on `HOLD` and `CURTAIL` in an interval with PV above its load, where the buy price exceeds what a stored kWh can still earn or save later: the plan stores the surplus (`CHARGE_PV`) instead of holding the pack through a peak for a few watts of export. Not a ban: a `HOLD` worth more is still planned. Never in a published cost. See [HOLD and CURTAIL at a peak price](model.md#hold-and-curtail-at-a-peak-price). |
 | **Deposit model** (`deposit_model`) | `off` | `off` is the setting for every site. `manual` (experimental) values exported energy and the deposit-payable part of imports by a factor you state; measured on a one-year replay it did not lower the bill. Needs the distribution part of the buy price. See [Net-billing deposit value](#net-billing-deposit-value). |
 | **Inverter standby loss** (`idle_drain_kw`) | 0 (off) | Constant battery drain modelled per interval. |
-| **Battery buffer for expensive periods** (`peak_reserve_margin_kwh`) | 0 (off) | Energy kept above the forecast need when an expensive period starts. See [Peak-period reserve](#peak-period-reserve). |
+| **Battery buffer for expensive periods** (`peak_reserve_margin_kwh`) | 0 (off) | Energy kept above the forecast need when an expensive period starts and after each battery export inside it. See [Peak-period reserve](#peak-period-reserve). |
 | **Terminal rule** (`terminal_mode`) | `preserve_initial` | End SOC ≥ start SOC, or `value`: stored energy at the end is credited at `terminal_value_per_kwh`. |
 
 Setup profiles can pre-fill the import penalty, standby loss and terminal rule for new installations;
@@ -1142,9 +1142,23 @@ reason a run that is already in progress when the plan is calculated gets no tar
 where PV covers the house. The target is **soft**: a shortfall is billed at the median expensive price
 minus the ceiling and reported as `peak_reserve_shortfall_kwh`; reported costs never include it. Inside
 the run the buffer is ordinary stored energy, so the plan may still export it when selling pays more
-than the later purchase. It works in every strategy, next to the autonomy floor. Warnings:
+than the later purchase — down to the forecast need plus the same buffer, not below (next paragraph).
+It works in every strategy, next to the autonomy floor. Warnings:
 `peak_reserve_requires_grid_charge_ceiling` (setting above 0 while the ceiling is off) and
 `peak_reserve_inactive` (no upcoming expensive run with a deficit in the horizon).
+
+**Buffer under an export.** With battery export on, the same setting also applies inside the run, but
+only to an interval in which the plan exports from the battery: there the battery must keep
+`reserve + peak_reserve_margin_kwh + deficit until the next cheap interval / η_discharge` after the
+interval. An interval without an export has no target, so a recalculation during the run never buys at
+the expensive price to rebuild the buffer; the plan simply stops exporting. The target is soft, billed
+at the median buy price of those intervals (what a missing kWh of buffer costs when the load runs above
+the forecast) and counted in `peak_reserve_shortfall_kwh`. The plan therefore keeps the buffer as long
+as the export earns less than that purchase would cost: the cheapest export interval shrinks first. Only
+intervals where `sell price × η_discharge` is above the grid-charging ceiling carry a target, and a run
+that no cheap interval follows in the horizon has none. Cost: a 1 kWh buffer can give up part of the
+evening export and lengthens the solve several times (details and measurements in
+[model.md](model.md#reserve-under-a-battery-export)); at 0 nothing changes.
 
 Sizing: 0.25–0.75 kWh is a reasonable start. In a backtest on one household with a two-zone tariff,
 0.5 kWh halved the mornings that ran out before PV (42 % → 21 %) at roughly neutral cost: the buffer

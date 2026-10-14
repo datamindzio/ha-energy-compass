@@ -51,6 +51,10 @@ from custom_components.energy_compass.engine.models import (
     Strategy,
 )
 from custom_components.energy_compass.engine.optimize import solve
+from custom_components.energy_compass.engine.peak_reserve import (
+    export_reserve_targets,
+    export_reserve_weight,
+)
 from custom_components.energy_compass.engine.strategy import (
     resolve_flags,
     strategy_weights,
@@ -63,6 +67,9 @@ _TIMEZONE = "Europe/Warsaw"
 # shipped serial-solve budget the acceptance rule below is checked against.
 _TOTAL_TIME_LIMIT_S = 60.0
 
+
+# The benchmark day's night price is 0.09 and its cheapest daytime price 0.32.
+_EXPORT_RESERVE_CHEAP_PRICE = 0.10
 
 # strategy_weights() and the autonomy floor read these shipped settings.py
 # defaults; runtime.build_problem gets the same values from validated
@@ -324,12 +331,33 @@ def run_one(
     accept_incumbent: bool = False,
     proof_limit_s: float | None = None,
     hold_miss_share: float = 0.0,
+    export_reserve_margin_kwh: float = 0.0,
 ) -> dict:
     problem = make_problem(
         slots, strategy=strategy, allow_battery_export=battery_export
     )
     if hold_miss_share:
         problem = replace(problem, hold_miss_share=hold_miss_share)
+    if export_reserve_margin_kwh > 0 and problem.battery:
+        buy = tuple(slot.buy_per_kwh for slot in problem.slots)
+        battery = problem.battery
+        reserve = export_reserve_targets(
+            buy,
+            tuple(slot.sell_per_kwh for slot in problem.slots),
+            tuple(slot.load_kwh for slot in problem.slots),
+            tuple(slot.pv_kwh for slot in problem.slots),
+            cheap_price=_EXPORT_RESERVE_CHEAP_PRICE,
+            reserve_kwh=battery.capacity_kwh * battery.minimum_soc_fraction,
+            usable_capacity_kwh=battery.capacity_kwh * battery.maximum_soc_fraction,
+            eta_discharge=battery.eta_discharge,
+            margin_kwh=export_reserve_margin_kwh,
+        )
+        problem = replace(
+            problem,
+            export_reserve_kwh=reserve.targets_kwh,
+            export_reserve_window=reserve.window_ids,
+            export_reserve_weight=export_reserve_weight(buy, reserve.window_ids),
+        )
     if minimum_mode_minutes is not None:
         problem = replace(problem, minimum_mode_minutes=minimum_mode_minutes)
     if balance and problem.battery:
@@ -380,6 +408,7 @@ def run_one(
             "strategy": strategy,
             "battery_export": battery_export,
             "balance": balance,
+            "export_reserve_margin_kwh": export_reserve_margin_kwh,
             "slots": slots,
             "time_limit_s": time_limit_s,
             "accept_incumbent": accept_incumbent,
@@ -433,6 +462,15 @@ def main() -> None:
         help="price a HOLD or CURTAIL interval at this share of its load's miss (the "
         "runtime sets 0.5, `hold_exposure.HOLD_FORECAST_MISS`; 0 is the unpriced model)",
     )
+    parser.add_argument(
+        "--export-reserve-margin",
+        type=float,
+        default=0.0,
+        metavar="KWH",
+        help="peak_reserve_margin_kwh kept after a battery-export slot until the next "
+        f"slot at or below {_EXPORT_RESERVE_CHEAP_PRICE} (needs --battery-export; 0 is "
+        "the plan without the floor)",
+    )
     args = parser.parse_args()
 
     strategies = STRATEGIES if args.strategy == "all" else (args.strategy,)
@@ -448,6 +486,7 @@ def main() -> None:
             accept_incumbent=args.accept_incumbent,
             proof_limit_s=args.compare_proven,
             hold_miss_share=args.hold_miss_share,
+            export_reserve_margin_kwh=args.export_reserve_margin,
         )
         for strategy in strategies
     ]

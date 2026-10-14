@@ -1573,7 +1573,7 @@ directly by any other available mode.</p>
 <tr>
 <td><strong>Battery buffer for expensive periods</strong> (<code>peak_reserve_margin_kwh</code>)</td>
 <td>0 (off)</td>
-<td>Energy kept above the forecast need when an expensive period starts. See <a href="#peak-period-reserve">Peak-period reserve</a>.</td>
+<td>Energy kept above the forecast need when an expensive period starts and after each battery export inside it. See <a href="#peak-period-reserve">Peak-period reserve</a>.</td>
 </tr>
 <tr>
 <td><strong>Terminal rule</strong> (<code>terminal_mode</code>)</td>
@@ -1738,9 +1738,22 @@ reason a run that is already in progress when the plan is calculated gets no tar
 where PV covers the house. The target is <strong>soft</strong>: a shortfall is billed at the median expensive price
 minus the ceiling and reported as <code>peak_reserve_shortfall_kwh</code>; reported costs never include it. Inside
 the run the buffer is ordinary stored energy, so the plan may still export it when selling pays more
-than the later purchase. It works in every strategy, next to the autonomy floor. Warnings:
+than the later purchase — down to the forecast need plus the same buffer, not below (next paragraph).
+It works in every strategy, next to the autonomy floor. Warnings:
 <code>peak_reserve_requires_grid_charge_ceiling</code> (setting above 0 while the ceiling is off) and
 <code>peak_reserve_inactive</code> (no upcoming expensive run with a deficit in the horizon).</p>
+<p><strong>Buffer under an export.</strong> With battery export on, the same setting also applies inside the run, but
+only to an interval in which the plan exports from the battery: there the battery must keep
+<code>reserve + peak_reserve_margin_kwh + deficit until the next cheap interval / η_discharge</code> after the
+interval. An interval without an export has no target, so a recalculation during the run never buys at
+the expensive price to rebuild the buffer; the plan simply stops exporting. The target is soft, billed
+at the median buy price of those intervals (what a missing kWh of buffer costs when the load runs above
+the forecast) and counted in <code>peak_reserve_shortfall_kwh</code>. The plan therefore keeps the buffer as long
+as the export earns less than that purchase would cost: the cheapest export interval shrinks first. Only
+intervals where <code>sell price × η_discharge</code> is above the grid-charging ceiling carry a target, and a run
+that no cheap interval follows in the horizon has none. Cost: a 1 kWh buffer can give up part of the
+evening export and lengthens the solve several times (details and measurements in
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#reserve-under-a-battery-export">model.md</a>); at 0 nothing changes.</p>
 <p>Sizing: 0.25–0.75 kWh is a reasonable start. In a backtest on one household with a two-zone tariff,
 0.5 kWh halved the mornings that ran out before PV (42 % → 21 %) at roughly neutral cost: the buffer
 is not lost, it is used later or valued at the end of the horizon.</p>

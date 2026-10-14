@@ -1051,7 +1051,7 @@ Zasady (domyślnie 60 min, 0,1 kW):
 | **Opłata za błąd prognozy w HOLD** (wbudowana, nie jest ustawieniem) | 0,5 prognozowanego zużycia | Planistyczna opłata za `HOLD` i `CURTAIL` w przedziale, w którym PV jest większe niż zużycie, a cena zakupu przekracza to, co zmagazynowana kWh może jeszcze zarobić lub zaoszczędzić później: plan magazynuje nadwyżkę (`CHARGE_PV`) zamiast trzymać baterię przez szczyt dla kilku watów eksportu. To nie zakaz: `HOLD` wart więcej nadal jest planowany. Nigdy nie wchodzi do publikowanego kosztu. Zob. [HOLD i CURTAIL w cenie szczytowej](model.md#hold-and-curtail-at-a-peak-price) (EN). |
 | **Model depozytu** (`deposit_model`) | `off` | `off` jest ustawieniem dla każdej instalacji. `manual` (eksperymentalny) wycenia eksport i część energetyczną importu podanym przez Ciebie współczynnikiem; w rocznym odtworzeniu nie obniżył rachunku. Wymaga części dystrybucyjnej ceny zakupu. Zob. [Wartość depozytu w net-billingu](#wartość-depozytu-w-net-billingu). |
 | **Pobór czuwania falownika** (`idle_drain_kw`) | 0 (wył.) | Stały ubytek energii baterii modelowany w każdym przedziale. |
-| **Zapas baterii na drogie okresy** (`peak_reserve_margin_kwh`) | 0 (wył.) | Energia ponad prognozowaną potrzebę na start drogiego okresu. Zob. [Zapas na drogie okresy](#zapas-na-drogie-okresy). |
+| **Zapas baterii na drogie okresy** (`peak_reserve_margin_kwh`) | 0 (wył.) | Energia ponad prognozowaną potrzebę na start drogiego okresu i po każdym eksporcie z baterii w jego trakcie. Zob. [Zapas na drogie okresy](#zapas-na-drogie-okresy). |
 | **Reguła końcowa** (`terminal_mode`) | `preserve_initial` | SOC na końcu ≥ SOC na starcie, albo `value`: energia na końcu wyceniana po `terminal_value_per_kwh`. |
 
 Profile startowe mogą wstępnie wypełnić karę za import, pobór czuwania i regułę końcową dla nowych
@@ -1172,10 +1172,24 @@ zapas, gdy dom już go zużył — odwrotnie niż ma działać zapas. Z tego sam
 trwa w chwili liczenia planu, nie dostaje celu, tak jak ciąg, w którym PV pokrywa dom. Cel jest
 **miękki**: niedobór wyceniany jest po medianie drogiej ceny minus sufit i raportowany jako
 `peak_reserve_shortfall_kwh`; nie wchodzi do raportowanych kosztów. Wewnątrz ciągu zapas jest zwykłą
-energią w baterii, więc plan może go sprzedać, gdy sprzedaż daje więcej niż późniejszy zakup. Działa w
-każdej strategii, obok progu autonomii. Ostrzeżenia: `peak_reserve_requires_grid_charge_ceiling`
-(ustawienie powyżej 0 przy wyłączonym limicie ceny) i `peak_reserve_inactive` (w horyzoncie brak
-nadchodzącego drogiego ciągu z deficytem).
+energią w baterii, więc plan może go sprzedać, gdy sprzedaż daje więcej niż późniejszy zakup — ale do
+prognozowanej potrzeby plus tego samego zapasu, nie głębiej (następny akapit). Działa w każdej
+strategii, obok progu autonomii. Ostrzeżenia: `peak_reserve_requires_grid_charge_ceiling` (ustawienie
+powyżej 0 przy wyłączonym limicie ceny) i `peak_reserve_inactive` (w horyzoncie brak nadchodzącego
+drogiego ciągu z deficytem).
+
+**Zapas pod eksportem.** Przy włączonym eksporcie z baterii to samo ustawienie działa także wewnątrz
+ciągu, ale tylko w przedziale, w którym plan eksportuje z baterii: po takim przedziale bateria musi
+zachować `rezerwa + peak_reserve_margin_kwh + deficyt do następnego taniego przedziału / η_rozładowania`.
+Przedział bez eksportu nie ma celu, więc przeliczenie w trakcie ciągu nigdy nie kupuje po drogiej cenie,
+żeby odbudować zapas; plan po prostu przestaje eksportować. Cel jest miękki, wyceniany po medianie ceny
+zakupu tych przedziałów (tyle kosztuje brakująca kWh zapasu, gdy zużycie wyjdzie ponad prognozę) i
+wlicza się do `peak_reserve_shortfall_kwh`. Plan zachowuje więc zapas, dopóki eksport zarabia mniej,
+niż kosztowałby taki zakup: najtańszy przedział eksportu kurczy się pierwszy. Cel mają tylko przedziały,
+w których `cena sprzedaży × η_rozładowania` jest powyżej sufitu ładowania z sieci, a ciąg, po którym w
+horyzoncie nie ma taniego przedziału, go nie ma. Koszt: zapas 1 kWh może oddać część wieczornego
+eksportu i wydłuża liczenie kilkukrotnie (szczegóły i pomiary w
+[model.md](model.md#reserve-under-a-battery-export)); przy 0 nic się nie zmienia.
 
 Dobór: rozsądny start to 0,25–0,75 kWh. W backteście jednego domu z taryfą dwustrefową 0,5 kWh
 zmniejszyło o połowę liczbę poranków, w których bateria kończyła się przed PV (42 % → 21 %), przy

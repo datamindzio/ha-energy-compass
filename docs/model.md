@@ -435,7 +435,7 @@ after overconsumption is deepest at slot 0, and importing there instead of disch
 billed slack by `weight / eta` per kWh at a cost of about `weight` — so the solver would buy at the
 expensive price to rebuild the buffer the house had just used. For the same reason a run already in
 progress at slot 0 gets no floor. Inside the run the buffer is ordinary stored energy that the plan may
-still export when that pays.
+still export when that pays — but not down to the forecast need: see the next section.
 
 Why a separate floor: the autonomy floor's windows run until PV recovers — evening, night and the next
 morning form one window with one slack — so an evening export that already paid for the window's
@@ -444,6 +444,66 @@ upcoming run with a deficit, or a zero weight, the floor is skipped with `peak_r
 slack total is `Plan.peak_reserve_shortfall_kwh`, exposed as the plan attribute
 `peak_reserve_shortfall_kwh`; it is planning-only and never part of `plan_monetary_cost`, reported costs
 or consumption probes.
+
+### Reserve under a battery export
+
+The entry floor does not cover an export inside the run: a `DISCHARGE_GRID` slot of an evening run
+may take the pack down to `reserve + forecast deficit until the next cheap slot` and no further,
+which leaves nothing for a load above the forecast, bought at the run's price. With
+`peak_reserve_margin_kwh` above 0, battery export on (`allow_battery_export`) and the grid-charge
+ceiling on, `engine/peak_reserve.export_reserve_targets` adds a second, **conditional** soft floor:
+
+```
+export_target[t] = min(usable_capacity, reserve + peak_reserve_margin_kwh +
+                       (1/eta_discharge) * sum(max(0, load[tau] - pv[tau]) for tau in t+1 .. end of run))
+energy[t] + slack_run >= export_target[t] * export_active[t]
+```
+
+for every slot `t` of a run (as above: buy price above `maximum_grid_charge_price`, followed by a
+cheap slot) that has a deficit after it and can pay for an export, `sell[t] * eta_discharge >
+maximum_grid_charge_price` (an export below what the energy is rebuilt at loses to holding it, and
+the row would only cost solve time). `export_active` is the physical export indicator of
+`engine/export_benefit.py` (the DISCHARGE_GRID mode when the dispatch policy is on, else its own binary): a slot that does not
+export carries no floor, so a re-solve inside the run is never forced to buy at the peak to rebuild it
+— the plan just stops exporting. The run shares one slack variable, billed at
+`export_reserve_weight` = median buy price of the slots that carry a target (what a kWh of the missing
+margin is bought at); `engine/export_reserve.py` builds the rows and certifies them in
+`_validate_solution`. The slack joins `Plan.peak_reserve_shortfall_kwh`; like the entry floor it is
+model-only, never in a published cost. The plan keeps the margin until `sell x eta_discharge` is below
+the miss price, so the lowest-priced export slot shrinks first. `peak_reserve_margin_kwh = 0` builds
+none of it (the model is the one without the floor).
+
+Limits:
+
+- The target is on **every** export slot of the run, not only on the last one of an episode. A row
+  on the last slot only is cheaper to write but the solver then lifts it with a token export (the
+  activity floor, 0.1 kWh) in a later slot of the run, which is why the row is not written that way.
+- The weight is the miss price alone, the floor also holds the forecast deficit, which the model
+  already prices as an import. Only when `sell x eta_discharge` exceeds the buy price (arbitrage inside
+  the run) does that double count change a plan: the floor then holds back some of the arbitrage.
+  It is soft: a much dearer export still goes below it and shows in `peak_reserve_shortfall_kwh`.
+- The row needs a physical export indicator: `export_active` (`minimum_export_episode_benefit` above 0,
+  the default) or the DISCHARGE_GRID mode of the dispatch policy. With neither no row is built.
+- A run that no cheap slot follows inside the horizon gets nothing (nothing to measure the exposure
+  against; the terminal rule decides there), and a re-solve in the middle of an export
+  episode is soft too: the plan may end the episode at once or pay the slack.
+- It adds rows on the export indicators, and the solve is slower where it binds. Measured with
+  `benchmarks/export_reserve_sweep.py --draws 40 --slots N --margins 0.5 1.0` (seed 93, G12-like days,
+  battery export on, `accept_incumbent` as the runtime), main 6f67bbd and this branch:
+
+  | slots | margin | plan cost, mean / worst vs no floor | exported kWh | solve s, median / max | draws at the 10 s limit |
+  | --- | --- | --- | --- | --- | --- |
+  | 96 | 0.5 | +0.000 / +0.000 | 7.14 -> 7.14 | 0.19 -> 0.20 / 2.86 -> 3.42 | 0 -> 0 |
+  | 96 | 1.0 | +0.171 / +1.117 | 7.14 -> 6.67 | 0.19 -> 1.75 / 2.88 -> 8.71 | 0 -> 0 |
+  | 192 | 0.5 | +0.000 / +0.000 | 13.93 -> 13.93 | 0.50 -> 0.51 / 8.26 -> 5.93 | 0 -> 0 |
+  | 192 | 1.0 | +0.345 / +2.183 | 13.93 -> 12.92 | 0.50 -> 3.93 / 8.26 -> 10.07 | 0 -> 4 |
+
+  The plan cost is the premium of the margin when the forecast is right; costs are in the sweep's
+  currency, evening buy price 1.1-1.3. A 0.5 kWh margin was met by the pack in these draws without
+  changing a plan; a 1.0 kWh margin costs part of the evening export and 4 to 9 times the solve time at
+  its median (4 of 40 draws at 192 slots reach the limit and return the incumbent). The site of
+  `benchmarks/optimizer.py` has no profitable battery export, so its plans and times do not change.
+  The setting defaults to 0.
 
 ### Soft caps
 

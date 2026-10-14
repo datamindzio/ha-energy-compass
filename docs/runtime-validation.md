@@ -48,6 +48,8 @@ The wide ranges of the quick cases (`cost_min` at 192 slots 2.3-8.2 s) are the b
 
 The table is the benchmark's default, `--hold-miss-share 0`: the engine without the HOLD/CURTAIL forecast-miss charge. The runtime plans with `--hold-miss-share 0.5` ([model.md](model.md#hold-and-curtail-at-a-peak-price), [ADR-0009](adr/0009-hold-miss-price.md)). At 96 slots the two give the same plan cost and solve time; at 192 slots the charge turns the cases above that were `Optimal` inside the 10 s limit into `Time limited` ones (`cost_min` 0.84 s to the limit, plan cost +0.4 %), so the 192-slot rows are optimistic for the runtime. The default horizon is not 192 slots.
 
+The table also leaves out the reserve under a battery export (`peak_reserve_margin_kwh` above 0, [model.md](model.md#reserve-under-a-battery-export)): the benchmark's site has no profitable battery export, so `--export-reserve-margin` changes neither its plans nor its times. The cost of that floor is measured by `benchmarks/export_reserve_sweep.py` (table in model.md): median solve time 4 to 9 times at a 1 kWh margin, 4 of 40 draws at 192 slots reaching the limit; a 0.5 kWh margin did not change them.
+
 ### How far the time limit leaves the plan from the proof
 
 `--compare-proven 300` re-solves every time-limited plan strictly with a 300 s limit and reports the proof's `cpu_s`, its objectives and how the two plans differ:

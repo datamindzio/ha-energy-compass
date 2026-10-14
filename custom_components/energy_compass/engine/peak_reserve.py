@@ -98,6 +98,7 @@ def peak_reserve_weight(buy_per_kwh: tuple[float, ...], *, cheap_price: float) -
 
 def export_reserve_targets(
     buy_per_kwh: tuple[float, ...],
+    sell_per_kwh: tuple[float, ...],
     load_kwh: tuple[float, ...],
     pv_kwh: tuple[float, ...],
     *,
@@ -107,20 +108,25 @@ def export_reserve_targets(
     eta_discharge: float,
     margin_kwh: float,
 ) -> PeakReserveResult:
-    """Floor after an export slot: `reserve + margin + deficit to the next cheap slot`.
+    """Floor under an export slot: `reserve + margin + deficit to the next cheap slot`.
 
     For every slot of an expensive run that a cheap slot follows, the energy at the end
     of the slot must cover the deficits (`max(0, load - pv)`) of the slots after it in
     the run, plus `margin_kwh`, if the plan exports from the pack in that slot. The
     solver reads the target only where the slot is a physical export (a conditional
-    row): a slot that does not export carries no floor, so a re-solve inside the run
-    is never forced to buy at the peak to rebuild it. A slot with no deficit after it,
-    a run that no cheap slot follows (no recharge to measure the exposure against) and a
-    non-positive margin get no floor. One window id per run, so the run shares a slack.
+    row, `export_reserve.py`): a slot that does not export carries no floor, so a
+    re-solve inside the run is never forced to buy at the peak to rebuild it.
+
+    Only a slot that can pay for an export carries a target: `sell x eta_discharge`
+    above `cheap_price`, what the energy is rebuilt at (an export below it loses to
+    holding the energy for the cheap slot, and the row would only cost solve time). A
+    slot with no deficit after it in the run, a run that no cheap slot follows (no
+    recharge to measure the exposure against) and a non-positive margin get no floor.
+    One window id per run, so the run shares a slack.
     """
     count = len(buy_per_kwh)
-    if not (len(load_kwh) == len(pv_kwh) == count):
-        raise ValueError("buy_per_kwh, load_kwh and pv_kwh must have equal length")
+    if not (len(sell_per_kwh) == len(load_kwh) == len(pv_kwh) == count):
+        raise ValueError("buy, sell, load and pv must have equal length")
     if eta_discharge <= 0:
         raise ValueError("eta_discharge must be strictly positive")
     targets = [0.0] * count
@@ -135,7 +141,8 @@ def export_reserve_targets(
         deficit = 0.0
         marked = False
         for index in range(last, first - 1, -1):
-            if deficit > _EPSILON:
+            pays = sell_per_kwh[index] * eta_discharge > cheap_price + _EPSILON
+            if deficit > _EPSILON and pays:
                 targets[index] = min(
                     usable_capacity_kwh,
                     reserve_kwh + margin_kwh + deficit / eta_discharge,

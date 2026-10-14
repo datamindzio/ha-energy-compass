@@ -753,7 +753,7 @@ def test_export_reserve_follows_the_peak_reserve_margin_and_ceiling(monkeypatch)
 
     seen = {}
 
-    def fake_targets(buy, load, pv, **kwargs):
+    def fake_targets(buy, sell, load, pv, **kwargs):
         seen.update(kwargs)
         return PeakReserveResult(tuple(7.0 for _ in buy), tuple(0 for _ in buy))
 

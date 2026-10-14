@@ -829,6 +829,7 @@ def build_problem(
         if battery.allow_battery_export:
             export_reserve = export_reserve_targets(
                 buy,
+                tuple(slot.sell_per_kwh for slot in slots),
                 tuple(loads),
                 tuple(pv),
                 cheap_price=cheap_price,
