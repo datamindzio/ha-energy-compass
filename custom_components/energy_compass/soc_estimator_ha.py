@@ -429,3 +429,34 @@ class SocEstimator:
     @callback
     def _minute(self, now: datetime) -> None:
         self.tick(now)
+
+
+class _PreviewEntry:
+    entry_id = "preview"
+
+    def __init__(self) -> None:
+        self.options: dict = {}
+
+
+def preview_view(hass: HomeAssistant, candidate: dict, now: datetime) -> dict | None:
+    """The planner's SOC view for a configuration still being edited.
+
+    A throwaway estimator reads the sources once and starts from the seed or the
+    stated SOC; nothing is stored or subscribed, because the running estimator
+    adopts the configuration only when it is saved.
+    """
+    estimator = SocEstimator(hass, _PreviewEntry(), None)
+    estimator.config = candidate
+    try:
+        estimator.settings = cfg.settings(
+            candidate, max_charge_current_a=estimator._max_charge_current(candidate)
+        )
+    except InputError:
+        return None
+    inputs = estimator._inputs(now)
+    estimator.state = estimator._initial_state(inputs, now)
+    if estimator.state is None:
+        return None
+    estimator._active = True
+    estimator.estimate = core.step(estimator.state, estimator.settings, inputs)
+    return estimator.view()

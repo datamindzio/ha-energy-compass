@@ -19,6 +19,7 @@ from .source_builders import (
     measurement_setting,
     rce_sell_binding,
     rce_unit_error,
+    set_counter_estimator,
     set_forecast_sell,
     set_load_statistic,
     set_pv_group,
@@ -52,6 +53,14 @@ ROWS: tuple[str, ...] = (
     "pv_energy_today",
     "grid_export_energy_today",
 )
+# The counter estimator is a group of sources rather than one row of the
+# catalogue; it is offered right after the BMS row.
+ESTIMATOR_ROW = "soc_estimator"
+OFFER_ROWS: tuple[str, ...] = (
+    *ROWS[: ROWS.index("bms_soc") + 1],
+    ESTIMATOR_ROW,
+    *ROWS[ROWS.index("bms_soc") + 1 :],
+)
 NEVER_DETECTED: frozenset[str] = frozenset(
     {
         "buy",
@@ -75,6 +84,15 @@ MAX_AGE: Mapping[str, float] = {
     "pv_energy_today": 86400,
     "grid_export_energy_today": 86400,
 }
+# The Solarman entities the counter SOC estimator reads, in the order of its
+# roles (the optional battery power last); a device offers it only with all four.
+ESTIMATOR_KEYS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("charge_counter", "total_battery_charge", ("kWh", "Wh")),
+    ("discharge_counter", "total_battery_discharge", ("kWh", "Wh")),
+    ("voltage", "battery_voltage", ("V",)),
+    ("current", "battery_current", ("A",)),
+    ("power", "battery_power", ("W", "kW")),
+)
 POWER_UNITS = ("W", "kW")
 ENERGY_UNITS = ("kWh", "Wh")
 BMS_ATTRIBUTE = "BMS SOC"
@@ -262,6 +280,8 @@ SIGNALS: tuple[Signal, ...] = (
     ),
 )
 
+ESTIMATOR_SIGNAL = Signal("solarman", ESTIMATOR_ROW, 1, "counter_estimator")
+
 
 @dataclass(frozen=True)
 class EntityFacts:
@@ -345,6 +365,7 @@ class Option:
         "statistic",
         "soc",
         "measurement",
+        "counter_estimator",
     ]
     tier: int
     targets: tuple[Target, ...] = ()
@@ -503,6 +524,8 @@ def _proposals(
     result: list[_Proposal] = []
     deye = _deye_entries(snapshot)
     packs = []
+    counters: dict[str, dict[str, list[EntityFacts]]] = {}
+    estimator_keys = {key for _, key, _ in ESTIMATOR_KEYS}
     for facts in _sorted_entities(snapshot):
         if not _usable(facts):
             continue
@@ -542,9 +565,30 @@ def _proposals(
             if key and _PACK.fullmatch(key):
                 packs.append(facts)
                 continue
+            if key in estimator_keys:
+                counters.setdefault(facts.config_entry_id or "", {}).setdefault(
+                    key, []
+                ).append(facts)
             for signal in SIGNALS:
                 if signal.provider == "solarman" and signal.translation_key == key:
                     result.append(_Proposal(signal, (facts.entity_id,)))
+    for found in counters.values():
+        required = [key for _, key, _ in ESTIMATOR_KEYS[:4]]
+        if all(len(found.get(key, ())) == 1 for key in required):
+            optional = (
+                [found[ESTIMATOR_KEYS[4][1]][0]]
+                if (len(found.get(ESTIMATOR_KEYS[4][1], ())) == 1)
+                else []
+            )
+            result.append(
+                _Proposal(
+                    ESTIMATOR_SIGNAL,
+                    (
+                        *(found[key][0].entity_id for key in required),
+                        *(facts.entity_id for facts in optional),
+                    ),
+                )
+            )
     if len(packs) == 1:
         result.append(
             _Proposal(_signals("bms_soc", "solarman")[1], (packs[0].entity_id,))
@@ -593,7 +637,7 @@ def _gated(row: str, context: DetectionContext) -> bool:
         return context.currency != "PLN"
     if row in ("pv", "pv_power", "pv_energy"):
         return not context.pv_enabled
-    if row in ("soc", "bms_soc", "battery_power"):
+    if row in ("soc", "bms_soc", ESTIMATOR_ROW, "battery_power"):
         return not context.battery_enabled
     return False
 
@@ -754,6 +798,26 @@ def _soc_option(
     )
 
 
+def _estimator_option(proposal: _Proposal, snapshot: DetectionSnapshot) -> Option:
+    targets = []
+    for entity_id, (_, _, units) in zip(
+        proposal.entity_ids, ESTIMATOR_KEYS, strict=False
+    ):
+        item = snapshot.entities[entity_id]
+        unit = item.attributes.get("unit_of_measurement")
+        if unit not in units:
+            raise InputError(f"unsupported unit {unit}")
+        try:
+            value = float(item.state)
+        except TypeError, ValueError:
+            raise InputError("estimator source has no numeric reading") from None
+        if not math.isfinite(value):
+            raise InputError("estimator source has no numeric reading")
+        targets.append(_target(item))
+    signal = proposal.signal
+    return Option(signal.row, signal.provider, signal.kind, signal.tier, tuple(targets))
+
+
 def _measurement_option(
     proposal: _Proposal,
     snapshot: DetectionSnapshot,
@@ -809,6 +873,8 @@ def _validate(
         return _statistic_option(proposal, snapshot)
     if kind == "soc":
         return _soc_option(proposal, snapshot, states)
+    if kind == "counter_estimator":
+        return _estimator_option(proposal, snapshot)
     return _measurement_option(proposal, snapshot, context, states)
 
 
@@ -845,8 +911,8 @@ def detect(snapshot: DetectionSnapshot, context: DetectionContext) -> Detection:
         for entry_id, facts in snapshot.solar_forecasts.items()
         if facts.wh_hours is not None
     }
-    usable: dict[str, dict[tuple, Option]] = {row: {} for row in ROWS}
-    unusable: dict[str, dict[tuple, Unusable]] = {row: {} for row in ROWS}
+    usable: dict[str, dict[tuple, Option]] = {row: {} for row in OFFER_ROWS}
+    unusable: dict[str, dict[tuple, Unusable]] = {row: {} for row in OFFER_ROWS}
     for proposal in _proposals(snapshot, context):
         row = proposal.signal.row
         if _gated(row, context):
@@ -874,7 +940,7 @@ def detect(snapshot: DetectionSnapshot, context: DetectionContext) -> Detection:
             usable[row][identity] = option
     offers = []
     notes = []
-    for row in ROWS:
+    for row in OFFER_ROWS:
         options = tuple(sorted(usable[row].values(), key=_order))
         shown = {
             tuple(target.entity_id for target in option.targets) for option in options
@@ -887,7 +953,7 @@ def detect(snapshot: DetectionSnapshot, context: DetectionContext) -> Detection:
         first = options[0].tier
         group = [index for index, o in enumerate(options) if o.tier == first]
         default = None
-        if row != "bms_soc":
+        if row not in ("bms_soc", ESTIMATOR_ROW):
             if len(group) == 1:
                 default = group[0]
             elif anchor is not None:
@@ -911,7 +977,7 @@ def apply_detection(draft: Mapping[str, Any], chosen: Iterable[Option]) -> dict:
     result = deepcopy(dict(draft))
     timezone = result["timezone"]
     for option in chosen:
-        if option.row not in ROWS:
+        if option.row not in OFFER_ROWS:
             raise ValueError(f"row {option.row} is never detected")
 
         if option.kind == "solar_forecast":
@@ -938,6 +1004,15 @@ def apply_detection(draft: Mapping[str, Any], chosen: Iterable[Option]) -> dict:
         elif option.kind == "statistic":
             set_load_statistic(
                 result, option.targets[0].entity_id, option.source_unit or "kWh", 1
+            )
+        elif option.kind == "counter_estimator":
+            set_counter_estimator(
+                result,
+                {
+                    role: _entity(option, index)
+                    for index, (role, _, _) in enumerate(ESTIMATOR_KEYS)
+                    if index < len(option.targets)
+                },
             )
         elif option.kind == "soc":
             set_soc(
@@ -979,6 +1054,7 @@ _ROW_LABELS = {
         "load": "Household load history",
         "soc": "Battery SOC",
         "bms_soc": "BMS SOC (agreement check)",
+        "soc_estimator": "Counter estimator (recommended when the BMS SOC is unreliable)",
     },
     "pl": {
         "pv": "Prognoza PV",
@@ -986,6 +1062,7 @@ _ROW_LABELS = {
         "load": "Historia zużycia domu",
         "soc": "SOC baterii",
         "bms_soc": "SOC z BMS (kontrola zgodności)",
+        "soc_estimator": "Estymator z liczników (zalecany, gdy SOC z BMS jest niewiarygodny)",
     },
 }
 SKIP = {"en": "Do not bind", "pl": "Nie wiąż"}
@@ -1012,6 +1089,12 @@ _TEXT = {
         "Tick it only if both agree over a full day.",
         "unusable": "{label}: {provider} {ids} is not usable now ({detail}); "
         "set it in Sources if needed.",
+        "estimator": "{provider} — charge and discharge counters {first} and "
+        "{second}, voltage {voltage}, current {current}",
+        "estimator_note": "The counter estimator computes the SOC from the battery "
+        "energy counters and re-anchors only on physical evidence. It replaces the "
+        "SOC and BMS SOC sources; choosing it opens its settings next, where the "
+        "pack voltage that is 0 % is required.",
     },
     "pl": {
         "forecast": "{provider} — {names}: {n} wartości godzinowych naprzód",
@@ -1035,6 +1118,12 @@ _TEXT = {
         "całą dobę.",
         "unusable": "{label}: {provider} {ids} jest teraz nieużywalne "
         "({detail}); w razie potrzeby ustaw w Źródłach danych.",
+        "estimator": "{provider} — liczniki ładowania i rozładowania {first} i "
+        "{second}, napięcie {voltage}, prąd {current}",
+        "estimator_note": "Estymator z liczników wylicza SOC z liczników energii "
+        "baterii i kotwiczy go tylko na fizycznych dowodach. Zastępuje źródła SOC "
+        "i SOC z BMS; po wybraniu otworzą się jego ustawienia, gdzie wymagane jest "
+        "napięcie pakietu odpowiadające 0 %.",
     },
 }
 
@@ -1083,6 +1172,15 @@ def option_label(option: Option, language: str | None) -> str:
         return text["statistic"].format(
             provider=provider, id=option.targets[0].entity_id, unit=option.source_unit
         )
+    if option.kind == "counter_estimator":
+        first, second, voltage, current = (t.entity_id for t in option.targets[:4])
+        return text["estimator"].format(
+            provider=provider,
+            first=first,
+            second=second,
+            voltage=voltage,
+            current=current,
+        )
     label = f"{provider} — {option.targets[0].entity_id}"
     if option.attribute:
         label += text["attribute"].format(attribute=option.attribute)
@@ -1118,6 +1216,8 @@ def detection_text(detection: Detection, language: str | None) -> tuple[str, str
             lines.append(text["none"].format(label=label, others="; ".join(details)))
     if any(offer.row == "bms_soc" for offer in detection.offers):
         notes.append(text["bms"])
+    if any(offer.row == "soc_estimator" for offer in detection.offers):
+        notes.append(text["estimator_note"])
     for item in detection.unusable:
         notes.append(
             text["unusable"].format(

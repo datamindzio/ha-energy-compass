@@ -321,7 +321,8 @@
           "helpers": "Pomocniki liczbowe",
           "preview": "Podgląd i zapis",
           "show_expert": "Pokaż ustawienia eksperckie",
-          "hide_expert": "Ukryj ustawienia eksperckie"
+          "hide_expert": "Ukryj ustawienia eksperckie",
+          "soc_estimator": "Źródło SOC baterii"
         }
       },
       "currency_review": {
@@ -494,7 +495,41 @@
           "grid_import_energy": "Energia importu z sieci",
           "grid_export_energy": "Energia eksportu do sieci",
           "pv_energy_today": "Dzienna energia PV",
-          "grid_export_energy_today": "Dzienna energia eksportu do sieci"
+          "grid_export_energy_today": "Dzienna energia eksportu do sieci",
+          "soc_estimator": "Estymator z liczników (zalecany, gdy SOC z BMS jest niewiarygodny)"
+        }
+      },
+      "soc_estimator": {
+        "title": "Źródło SOC baterii",
+        "description": "Wybierz, skąd pochodzi SOC baterii. „Encja” używa źródła SOC wskazanego w Źródłach danych. „Estymator z liczników” wylicza go z całkowitych liczników energii ładowania i rozładowania baterii: nie skacze sam z siebie i kotwiczy się tylko na fizycznych dowodach (kotwica pełna, gdy ładowanie ustaje, choć mogłoby trwać, a przyczyną nie jest brak słońca; kotwica pusta przy napięciu pakietu odpowiadającym 0 %). Zastępuje wtedy źródła SOC i SOC z BMS dla planera, balansowania LFP i natywnego sterownika Deye. Wymagane są pojemność pakietu (ustawienia Baterii) i napięcie pakietu odpowiadające 0 %; to wartość Twojego pakietu i nie ma wartości domyślnej. Propozycja sprawności pochodzi z zmierzonego obiegu baterii, gdy jest ({round_trip}); inaczej 0,95. Uruchomienie cieniowe: przy nadal podpiętej encji SOC estymator działa tylko diagnostycznie, by porównać go z tą encją przed przełączeniem. Przez pierwsze 14 dni po starcie kandydaci na kotwicę pełną są tylko zapisywani, chyba że włączono „Kotwicz na kandydatach”. Ustawienia eksperckie dodają opcjonalne źródła, znaki i nadpisania. Pod natywnym sterownikiem Deye falownik nie może być w trybie Capacity, gdy wybierasz estymator.\n\n{seed}\n\n{detail}",
+        "data": {
+          "soc_source": "Źródło SOC",
+          "charge_counter": "Licznik energii ładowania baterii (całkowity)",
+          "discharge_counter": "Licznik energii rozładowania baterii (całkowity)",
+          "voltage": "Napięcie pakietu",
+          "current": "Prąd pakietu (dodatni przy rozładowaniu)",
+          "empty_voltage": "Napięcie pakietu odpowiadające 0 % (V)",
+          "initial_soc_percent": "SOC na starcie (%)",
+          "eta_charge": "Sprawność ładowania liczników",
+          "full_hold_seconds": "Wytrzymanie przed kotwicą pełną (s)",
+          "drift_warn_cycles": "Ostrzegaj po tylu pojemnościach bez kotwicy",
+          "anchor_on_candidates": "Kotwicz na kandydatach od pierwszego dnia",
+          "shadow": "Uruchomienie cieniowe (tylko diagnostyka)",
+          "seed_from_template": "Start od kotwicy istniejącego szablonu SOC",
+          "capacity_kwh": "Nadpisanie pojemności estymatora (kWh)",
+          "max_charge_current": "Maksymalny prąd ładowania (A)",
+          "rated_pv_w": "Moc znamionowa PV (W)",
+          "power": "Moc baterii (dodatnia przy rozładowaniu)",
+          "pv_power": "Moc PV",
+          "grid_power": "Moc sieci (dodatnia przy poborze)",
+          "load_power": "Moc zużycia domu",
+          "charge_limit": "Limit prądu ładowania",
+          "discharge_limit": "Limit prądu rozładowania",
+          "grid_charge_current": "Prąd ładowania z sieci",
+          "bms_soc": "SOC z BMS (tylko porównanie)",
+          "power_sign": "Znak mocy baterii",
+          "current_sign": "Znak prądu pakietu",
+          "grid_sign": "Znak mocy sieci"
         }
       }
     },
@@ -832,7 +867,8 @@
           "preview": "Podgląd i zapis",
           "show_expert": "Pokaż ustawienia eksperckie",
           "hide_expert": "Ukryj ustawienia eksperckie",
-          "deye_controller": "Sterownik Deye"
+          "deye_controller": "Sterownik Deye",
+          "soc_estimator": "Źródło SOC baterii"
         }
       },
       "currency_review": {
@@ -1034,6 +1070,39 @@
           "operation_entity": "Encja trybu pracy baterii",
           "soc_entity": "Encja SOC baterii",
           "voltage_entity": "Encja napięcia baterii"
+        }
+      },
+      "soc_estimator": {
+        "title": "Źródło SOC baterii",
+        "description": "Wybierz, skąd pochodzi SOC baterii. „Encja” używa źródła SOC wskazanego w Źródłach danych. „Estymator z liczników” wylicza go z całkowitych liczników energii ładowania i rozładowania baterii: nie skacze sam z siebie i kotwiczy się tylko na fizycznych dowodach (kotwica pełna, gdy ładowanie ustaje, choć mogłoby trwać, a przyczyną nie jest brak słońca; kotwica pusta przy napięciu pakietu odpowiadającym 0 %). Zastępuje wtedy źródła SOC i SOC z BMS dla planera, balansowania LFP i natywnego sterownika Deye. Wymagane są pojemność pakietu (ustawienia Baterii) i napięcie pakietu odpowiadające 0 %; to wartość Twojego pakietu i nie ma wartości domyślnej. Propozycja sprawności pochodzi z zmierzonego obiegu baterii, gdy jest ({round_trip}); inaczej 0,95. Uruchomienie cieniowe: przy nadal podpiętej encji SOC estymator działa tylko diagnostycznie, by porównać go z tą encją przed przełączeniem. Przez pierwsze 14 dni po starcie kandydaci na kotwicę pełną są tylko zapisywani, chyba że włączono „Kotwicz na kandydatach”. Ustawienia eksperckie dodają opcjonalne źródła, znaki i nadpisania. Pod natywnym sterownikiem Deye falownik nie może być w trybie Capacity, gdy wybierasz estymator.\n\n{seed}\n\n{detail}",
+        "data": {
+          "soc_source": "Źródło SOC",
+          "charge_counter": "Licznik energii ładowania baterii (całkowity)",
+          "discharge_counter": "Licznik energii rozładowania baterii (całkowity)",
+          "voltage": "Napięcie pakietu",
+          "current": "Prąd pakietu (dodatni przy rozładowaniu)",
+          "empty_voltage": "Napięcie pakietu odpowiadające 0 % (V)",
+          "initial_soc_percent": "SOC na starcie (%)",
+          "eta_charge": "Sprawność ładowania liczników",
+          "full_hold_seconds": "Wytrzymanie przed kotwicą pełną (s)",
+          "drift_warn_cycles": "Ostrzegaj po tylu pojemnościach bez kotwicy",
+          "anchor_on_candidates": "Kotwicz na kandydatach od pierwszego dnia",
+          "shadow": "Uruchomienie cieniowe (tylko diagnostyka)",
+          "seed_from_template": "Start od kotwicy istniejącego szablonu SOC",
+          "capacity_kwh": "Nadpisanie pojemności estymatora (kWh)",
+          "max_charge_current": "Maksymalny prąd ładowania (A)",
+          "rated_pv_w": "Moc znamionowa PV (W)",
+          "power": "Moc baterii (dodatnia przy rozładowaniu)",
+          "pv_power": "Moc PV",
+          "grid_power": "Moc sieci (dodatnia przy poborze)",
+          "load_power": "Moc zużycia domu",
+          "charge_limit": "Limit prądu ładowania",
+          "discharge_limit": "Limit prądu rozładowania",
+          "grid_charge_current": "Prąd ładowania z sieci",
+          "bms_soc": "SOC z BMS (tylko porównanie)",
+          "power_sign": "Znak mocy baterii",
+          "current_sign": "Znak prądu pakietu",
+          "grid_sign": "Znak mocy sieci"
         }
       }
     },
@@ -1547,6 +1616,12 @@
       "options": {
         "native": "Natywny (Energy Compass zapisuje przez Solarman)",
         "blueprint": "Blueprint (przestarzały)"
+      }
+    },
+    "soc_source": {
+      "options": {
+        "entity": "Encja (wskazana w Źródłach danych)",
+        "counter_estimator": "Estymator z liczników"
       }
     }
   }

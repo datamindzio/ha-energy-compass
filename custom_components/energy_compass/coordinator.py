@@ -222,6 +222,12 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         stays retained until its replacement arrives.
         """
         rebind_configuration(self.hass, deepcopy(config))
+        if counter_mode(config) != counter_mode(self.configuration):
+            # Another source is another series: the old reading is no reference
+            # for the jump check of the new one.
+            self._previous_soc = None
+            self._soc_reference = None
+            self._soc_recovery = self._soc_recovery_last = None
         self.hass.config_entries.async_update_entry(
             self.entry, options={**self.entry.options, "configuration": config}
         )

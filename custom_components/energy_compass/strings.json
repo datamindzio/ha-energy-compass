@@ -321,7 +321,8 @@
           "helpers": "Numeric helper bindings",
           "preview": "Preview and save",
           "show_expert": "Show expert settings",
-          "hide_expert": "Hide expert settings"
+          "hide_expert": "Hide expert settings",
+          "soc_estimator": "Battery SOC source"
         }
       },
       "currency_review": {
@@ -494,7 +495,41 @@
           "grid_import_energy": "Grid import energy",
           "grid_export_energy": "Grid export energy",
           "pv_energy_today": "PV energy today",
-          "grid_export_energy_today": "Grid export energy today"
+          "grid_export_energy_today": "Grid export energy today",
+          "soc_estimator": "Counter estimator (recommended when the BMS SOC is unreliable)"
+        }
+      },
+      "soc_estimator": {
+        "title": "Battery SOC source",
+        "description": "Choose where the battery SOC comes from. “Entity” uses the SOC source bound in Sources. “Counter estimator” computes it from the battery’s lifetime charge and discharge energy counters: it never jumps on its own and re-anchors only on physical evidence (a full anchor when charging stops although it could continue and the cause is not lack of sun; an empty anchor at the pack voltage that is 0 %). It then replaces the SOC and BMS SOC sources for the planner, the LFP balance and the native Deye controller. Capacity of the pack (Battery settings) and the pack voltage that is 0 % are required; that voltage is your pack’s own value and has no default. The efficiency suggestion comes from the measured battery round trip when there is one ({round_trip}); otherwise 0.95. Shadow run: with an SOC entity still bound, the estimator runs as diagnostics only, to compare it with that entity before switching. For the first 14 days after it starts, full-anchor candidates are only logged unless “Anchor on candidates” is on. Expert settings add optional sources, signs and overrides. The inverter cannot be in Capacity mode when you choose the estimator under a native Deye controller.\n\n{seed}\n\n{detail}",
+        "data": {
+          "soc_source": "SOC source",
+          "charge_counter": "Battery charge energy counter (lifetime)",
+          "discharge_counter": "Battery discharge energy counter (lifetime)",
+          "voltage": "Pack voltage",
+          "current": "Pack current (positive while discharging)",
+          "empty_voltage": "Pack voltage that is 0 % (V)",
+          "initial_soc_percent": "SOC at the start (%)",
+          "eta_charge": "Charge efficiency of the counters",
+          "full_hold_seconds": "Hold before a full anchor (s)",
+          "drift_warn_cycles": "Warn after this many capacities without an anchor",
+          "anchor_on_candidates": "Anchor on candidates from day one",
+          "shadow": "Shadow run (diagnostics only)",
+          "seed_from_template": "Start from the anchor of the existing SOC template",
+          "capacity_kwh": "Estimator capacity override (kWh)",
+          "max_charge_current": "Maximum charge current (A)",
+          "rated_pv_w": "Rated PV power (W)",
+          "power": "Battery power (positive while discharging)",
+          "pv_power": "PV power",
+          "grid_power": "Grid power (positive while importing)",
+          "load_power": "House load power",
+          "charge_limit": "Charge current limit",
+          "discharge_limit": "Discharge current limit",
+          "grid_charge_current": "Grid charge current",
+          "bms_soc": "BMS SOC (comparison only)",
+          "power_sign": "Battery power sign",
+          "current_sign": "Pack current sign",
+          "grid_sign": "Grid power sign"
         }
       }
     },
@@ -832,7 +867,8 @@
           "preview": "Preview and save",
           "show_expert": "Show expert settings",
           "hide_expert": "Hide expert settings",
-          "deye_controller": "Deye controller"
+          "deye_controller": "Deye controller",
+          "soc_estimator": "Battery SOC source"
         }
       },
       "currency_review": {
@@ -1034,6 +1070,39 @@
           "operation_entity": "Battery operation mode entity",
           "soc_entity": "Battery SOC entity",
           "voltage_entity": "Battery voltage entity"
+        }
+      },
+      "soc_estimator": {
+        "title": "Battery SOC source",
+        "description": "Choose where the battery SOC comes from. “Entity” uses the SOC source bound in Sources. “Counter estimator” computes it from the battery’s lifetime charge and discharge energy counters: it never jumps on its own and re-anchors only on physical evidence (a full anchor when charging stops although it could continue and the cause is not lack of sun; an empty anchor at the pack voltage that is 0 %). It then replaces the SOC and BMS SOC sources for the planner, the LFP balance and the native Deye controller. Capacity of the pack (Battery settings) and the pack voltage that is 0 % are required; that voltage is your pack’s own value and has no default. The efficiency suggestion comes from the measured battery round trip when there is one ({round_trip}); otherwise 0.95. Shadow run: with an SOC entity still bound, the estimator runs as diagnostics only, to compare it with that entity before switching. For the first 14 days after it starts, full-anchor candidates are only logged unless “Anchor on candidates” is on. Expert settings add optional sources, signs and overrides. The inverter cannot be in Capacity mode when you choose the estimator under a native Deye controller.\n\n{seed}\n\n{detail}",
+        "data": {
+          "soc_source": "SOC source",
+          "charge_counter": "Battery charge energy counter (lifetime)",
+          "discharge_counter": "Battery discharge energy counter (lifetime)",
+          "voltage": "Pack voltage",
+          "current": "Pack current (positive while discharging)",
+          "empty_voltage": "Pack voltage that is 0 % (V)",
+          "initial_soc_percent": "SOC at the start (%)",
+          "eta_charge": "Charge efficiency of the counters",
+          "full_hold_seconds": "Hold before a full anchor (s)",
+          "drift_warn_cycles": "Warn after this many capacities without an anchor",
+          "anchor_on_candidates": "Anchor on candidates from day one",
+          "shadow": "Shadow run (diagnostics only)",
+          "seed_from_template": "Start from the anchor of the existing SOC template",
+          "capacity_kwh": "Estimator capacity override (kWh)",
+          "max_charge_current": "Maximum charge current (A)",
+          "rated_pv_w": "Rated PV power (W)",
+          "power": "Battery power (positive while discharging)",
+          "pv_power": "PV power",
+          "grid_power": "Grid power (positive while importing)",
+          "load_power": "House load power",
+          "charge_limit": "Charge current limit",
+          "discharge_limit": "Discharge current limit",
+          "grid_charge_current": "Grid charge current",
+          "bms_soc": "BMS SOC (comparison only)",
+          "power_sign": "Battery power sign",
+          "current_sign": "Pack current sign",
+          "grid_sign": "Grid power sign"
         }
       }
     },
@@ -1547,6 +1616,12 @@
       "options": {
         "native": "Native (Energy Compass writes through Solarman)",
         "blueprint": "Blueprint (deprecated)"
+      }
+    },
+    "soc_source": {
+      "options": {
+        "entity": "Entity (bound in Sources)",
+        "counter_estimator": "Counter estimator"
       }
     }
   }
