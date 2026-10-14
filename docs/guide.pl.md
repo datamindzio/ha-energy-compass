@@ -95,8 +95,8 @@ kreator; nic nie jest zapisywane przed jego ostatnim krokiem.
      dobowego szacunku, który tu wpisujesz (**Dobowe zużycie domu**, domyślnie 10 kWh/dobę). Historia
      rekordera jest używana, gdy powiązane jest źródło zużycia domu: zostaw wiersz **Historia zużycia
      domu** w **Wykrytych źródłach** albo użyj **Źródła danych → Dodaj źródło → Zużycie**. **Prognoza
-     zużycia** dostraja wtedy okno historii (**Długość historii**, **Minimalna liczba próbek**) i
-     rozwiązanie zapasowe.
+     zużycia** dostraja wtedy okno historii (**Długość historii**, **Minimalna liczba próbek**,
+     **Okres połowicznego zaniku wagi próbek, dni**) i rozwiązanie zapasowe.
    - **Źródła danych** — przegląd i edycja wszystkich powiązanych źródeł, także PV; **Bateria** i
      **Możliwości sprzętu** zawierają limity baterii i limit importu z sieci. Grupy planowania,
      prognozy kosztu zużycia, wydajności i prezentacji pojawiają się po **Pokaż ustawienia eksperckie**
@@ -215,6 +215,43 @@ flowchart TD
   (zużyte wiersze znikają, zegary trybów biegną) bez uruchamiania solvera.
 - **Ważność planu:** nowy plan jest ważny do `generated_at + 2 × refresh_minutes`, nie dłużej niż
   pokrycie prognozy.
+
+### Prognoza zużycia
+
+Prognoza z historii to średnia godzinowa z pełnych godzin ostatnich `lookback_days`, w lokalnej
+strefie czasowej, grupowana na dni robocze i weekendy (`group_weekends`), z wymaganymi
+`minimum_samples` godzinami w koszyku. Zwykła średnia nadąża za zmianą poziomu tylko tak szybko, jak
+wymienia się okno: przy 28 dniach historii dom, który w tym tygodniu zaczął ogrzewać, nadal jest
+prognozowany głównie poziomem z poprzedniego miesiąca, a najwcześniej widać to rano.
+
+`forecast_half_life_days` (**Okres połowicznego zaniku wagi próbek, dni**, domyślnie **0** =
+wyłączone, zakres 0-60) waży każdą próbkę przez `0.5^(wiek / okres)`, a wiek liczy się od początku
+prognozy. Wynik nadal jest średnią, więc zapasy zostają w logice rezerwy
+([Rezerwa na okres szczytu](#zapas-na-drogie-okresy)). `minimum_samples` liczy próbki, nie wagę.
+Przy 0 prognoza to zwykła średnia, jak dotąd.
+
+`benchmarks/load_forecast_backtest.py` prognozuje każdy dzień o lokalnej północy z godzin
+sprzed niego i podaje MAE oraz błąd systematyczny (prognoza − pomiar, kWh na godzinę) dla poranka
+(06-13) i wieczoru (15-22). Przyjmuje rejestrator Home Assistanta (`--recorder-db`,
+`--statistic-id`), plik CSV z godzinami albo scenariusz syntetyczny. Pomiar na scenariuszach
+syntetycznych (70 dni, historia 28 dni, ocena przez 20 dni po skoku poziomu porannego; **nie** na
+historii konkretnego domu):
+
+| Metoda | Zmiana poziomu: MAE poranka / błąd sys. | Zmiana poziomu: MAE wieczoru | Stabilny dom: MAE wieczoru |
+| --- | --- | --- | --- |
+| zwykła średnia | 0,390 / −0,387 | 0,180 | 0,151 |
+| okres 3 dni | 0,214 / −0,148 | −0,4 % | **+7,8 %** |
+| okres 5 dni | 0,250 / −0,212 | −3,8 % | +2,8 % |
+| okres 7 dni | 0,278 / −0,253 | −3,8 % | +1,2 % |
+| zwykła × średnia z 3 dni / okno | 0,233 / −0,197 | **+43 %** | +8,8 % |
+| zwykła × średnia z 7 dni / okno | 0,259 / −0,229 | **+17 %** | −0,0 % |
+
+Kolumny wieczorne poza pierwszym wierszem to zmiana względem zwykłej średniej. Okres 5 dni jest
+najkrótszy, przy którym wieczór mieści się w 5 % w obu scenariuszach, a ważenie świeżością
+zmniejsza błąd poranny o jedną trzecią; jeden współczynnik poziomu na całą dobę (ostatnie N dni /
+okno) przesuwa wieczór w złą stronę i nie został zbudowany. Domyślnie opcja jest wyłączona, dopóki
+liczby nie zostaną odtworzone na rejestratorze konkretnego domu powyższym poleceniem; ustaw 5, aby
+ją włączyć.
 
 ### Profile startowe (nowe instalacje)
 
