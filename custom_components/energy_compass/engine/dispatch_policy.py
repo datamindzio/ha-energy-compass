@@ -1026,25 +1026,30 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 model.upper[v[key]] = 0
         x = {mode: v[f"mode_{mode}"] for mode in MODES}
         model.constrain({index: 1 for index in x.values()}, 1, 1)
+        # Above this energy the pack cannot take even the minimum PV-follow charge:
+        # CHARGE_PV is closed and a HOLD is no choice. Below it CHARGE_PV may fill the
+        # room and end on the ceiling, so a HOLD is a choice even with less room than the
+        # full step (T-095). A surplus under the activity keeps the point T-094 set.
         step = battery.eta_charge * surplus
+        full_at = max(ceiling - step, _ceiling_less(problem, drains, at, activity))
         # Only where the pack can reach the point (`highest` is the most it can hold at
         # the start of this interval): elsewhere the rows would have no feasible use.
-        if exposure > 0 and highest >= ceiling - step - _ROW_TOLERANCE:
+        if exposure > 0 and highest >= full_at - _ROW_TOLERANCE:
             # The charge is for a HOLD that could have been a charge. At the start of an
-            # interval the pack has less room than the PV-follow charge would store
-            # (`hold_full`), a HOLD is no choice and a priced one is a constant the solver
-            # cannot avoid: the relaxation dodges it with a fraction of a charge and the
-            # gap it leaves made every 192-interval plan time_limited (T-094). `relief`
-            # gives the charge back there; it is paid only against an idle mode.
+            # interval the pack has no room for the PV-follow charge (`hold_full`), a HOLD
+            # is no choice and a priced one is a constant the solver cannot avoid: the
+            # relaxation dodges it with a fraction of a charge and the gap it leaves made
+            # every 192-interval plan time_limited (T-094). `relief` gives the charge back
+            # there; it is paid only against an idle mode.
             packed = v["hold_full"] = model.variable(binary=True)
             relief = v["hold_relief"] = model.variable(upper=1.0, cost=-exposure)
             model.constrain({relief: 1, packed: -1}, -np.inf, 0)
             model.constrain({relief: 1, x["HOLD"]: -1, x["CURTAIL"]: -1}, -np.inf, 0)
             if at:
                 model.constrain(
-                    {vectors[at - 1]["energy"]: 1, packed: -(ceiling - step)}, 0, np.inf
+                    {vectors[at - 1]["energy"]: 1, packed: -full_at}, 0, np.inf
                 )
-            elif battery.initial_kwh < ceiling - step:
+            elif battery.initial_kwh < full_at:
                 model.upper[packed] = 0
 
         # Named modes already determine flow direction. Tie the auxiliary flags

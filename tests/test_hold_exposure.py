@@ -217,3 +217,28 @@ def test_the_charge_stays_on_a_pack_with_room_to_take_it():
     with_share, _ = _weighted_objective(room)
     without, _ = _weighted_objective(replace(room, hold_miss_share=0.0))
     assert with_share > without + 0.01
+
+
+def test_a_pack_with_room_for_the_minimum_charge_keeps_the_charge():
+    """Between the minimum activity and the full PV-follow step the pack still takes a
+    CHARGE_PV (it ends on the ceiling), so a HOLD there is a choice and the charge stays
+    in the objective (T-095)."""
+    # 0.05 kWh of room at 08:15, a surplus of 0.09 kWh: its step is 0.085, the minimum
+    # activity (0.1 kW for 15 minutes) stores 0.0236.
+    band = _problem(
+        _live_day(), _battery(initial_kwh=23.95), hold_miss_share=HOLD_FORECAST_MISS
+    )
+    with_share, _ = _weighted_objective(band)
+    without, _ = _weighted_objective(replace(band, hold_miss_share=0.0))
+    assert with_share > without + 0.01
+
+
+def test_a_pack_with_less_room_than_the_minimum_charge_is_not_charged():
+    """The minimum PV-follow charge no longer fits: CHARGE_PV is closed, so the HOLD is
+    no choice and the charge is given back, as for a full pack."""
+    tight = _problem(
+        _live_day(), _battery(initial_kwh=23.99), hold_miss_share=HOLD_FORECAST_MISS
+    )
+    with_share, _ = _weighted_objective(tight)
+    without, _ = _weighted_objective(replace(tight, hold_miss_share=0.0))
+    assert with_share == pytest.approx(without, abs=1e-6)
