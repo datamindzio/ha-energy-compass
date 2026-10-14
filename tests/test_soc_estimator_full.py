@@ -164,6 +164,7 @@ def test_measured_export_is_the_primary_evidence():
     [candidate] = state.candidates
     assert candidate["path"] == "export"
     assert candidate["export_w"] == 1500.0
+    assert candidate["charge_limit_a"] == 14.0
 
 
 def test_an_apparent_surplus_is_no_evidence_while_export_is_possible():

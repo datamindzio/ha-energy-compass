@@ -192,6 +192,7 @@ class SocEstimator:
             # Read like any source state for the published input ages.
             "last_updated": self.reported_at.isoformat(),
             "top_confirmed": estimate.top_confirmed,
+            "full_qualified": estimate.full_qualified,
         }
 
     def attributes(self) -> dict[str, Any]:
@@ -383,10 +384,10 @@ class SocEstimator:
             pv,
             load,
             grid,
-            self._facts(reads),
+            self._facts(reads, now),
         )
 
-    def _facts(self, reads) -> core.ControllerFacts:
+    def _facts(self, reads, now: datetime | None = None) -> core.ControllerFacts:
         native = self._native()
         charge = reads["charge_limit"]
         discharge = reads["discharge_limit"]
@@ -413,7 +414,25 @@ class SocEstimator:
             program_direction=direction,
             program_voltage_v=program,
             discharge_limit_a=None if discharge is None else discharge[0],
+            balance_hold=self._balance_hold(now or dt_util.utcnow()),
         )
+
+    def _balance_hold(self, now: datetime) -> bool:
+        """Whether the published plan's row in force is an LFP balance hold."""
+        data = getattr(self.coordinator, "data", None)
+        if not isinstance(data, dict) or not data.get("valid"):
+            return False
+        for row in data.get("intervals") or ():
+            if row.get("balance_hold") is not True:
+                continue
+            try:
+                start = datetime.fromisoformat(row["start"])
+                end = datetime.fromisoformat(row["end"])
+            except KeyError, TypeError, ValueError:
+                continue
+            if start <= now < end:
+                return True
+        return False
 
     def _native(self):
         controller = getattr(self.coordinator, "controller", None)

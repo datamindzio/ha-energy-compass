@@ -567,8 +567,9 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             )
             percent = energy / values["capacity_kwh"] * 100
             if counter_mode(config):
+                view = states[ESTIMATE_KEY]
                 percent = confirmed_percent(
-                    percent, states[ESTIMATE_KEY]["top_confirmed"]
+                    percent, view["top_confirmed"], view.get("full_qualified", False)
                 )
             self._observe_balance(values, percent, stamp)
         deadline = freshness_deadline(config, states, values, now)

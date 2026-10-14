@@ -5,6 +5,7 @@ import datetime as dt
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.util import dt as dt_util
 from native_site import native_site
 
 from custom_components.energy_compass.soc_estimator import (
@@ -80,6 +81,31 @@ async def test_a_blocked_controller_gives_no_state(hass, site):
     _program(hass, 3, "Grid", "55.2")
     _runtime(site, code="blocked", state="CHARGE_GRID", active_tou=3)
     assert _facts(site).state is None
+
+
+def _plan(entry, *rows):
+    entry.runtime_data.data = {"valid": True, "intervals": list(rows)}
+
+
+def _row(start, end, **values):
+    return {"start": start, "end": end, **values}
+
+
+async def test_a_balance_row_in_force_is_a_fact(hass, site):
+    _program(hass, 3, "Grid", "55.2")
+    _runtime(site, code="ok", state="CHARGE_GRID", active_tou=3)
+    now = dt_util.utcnow()
+    before = (now - dt.timedelta(minutes=30)).isoformat()
+    after = (now + dt.timedelta(minutes=30)).isoformat()
+    later = (now + dt.timedelta(hours=2)).isoformat()
+    _plan(site, _row(before, after, state="CHARGE_GRID", balance_hold=True))
+    assert _facts(site).balance_hold is True
+    _plan(site, _row(after, later, state="CHARGE_GRID", balance_hold=True))
+    assert _facts(site).balance_hold is False
+    _plan(site, _row(before, after, state="CHARGE_GRID"))
+    assert _facts(site).balance_hold is False
+    site.runtime_data.data = {"valid": False, "intervals": []}
+    assert _facts(site).balance_hold is False
 
 
 async def test_the_full_rule_follows_the_program_read_from_the_states(hass, site):

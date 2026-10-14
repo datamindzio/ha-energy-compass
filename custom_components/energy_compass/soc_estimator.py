@@ -40,7 +40,7 @@ UNANCHORED_TOP_FRACTION = 0.999
 TOP_LEAVE_KWH = 0.1
 
 STATE_VERSION = 1
-ANCHOR_KINDS = ("initial", "seed", "full", "empty", "reset")
+ANCHOR_KINDS = ("initial", "seed", "full", "full_balance", "empty", "reset")
 
 # Dispatch states in which the inverter is not trying to fill the pack, so a
 # stopped charge proves nothing.
@@ -144,6 +144,8 @@ class ControllerFacts:
     program_voltage_v: float | None = None
     # Discharge current limit in force; None unknown.
     discharge_limit_a: float | None = None
+    # The plan row in force is an LFP balance hold: it asked for a full pack.
+    balance_hold: bool = False
 
 
 @dataclass(frozen=True)
@@ -211,6 +213,9 @@ class Estimate:
     excess_kwh: float = 0.0
     # A full anchor confirmed the top and the pack has not left it since.
     top_confirmed: bool = False
+    # Full evidence is standing right now (a logged, plausible full candidate or
+    # balance stop), whether or not it was applied as an anchor.
+    full_qualified: bool = False
     events: tuple[str, ...] = ()
 
 
@@ -325,8 +330,8 @@ def step(
         state.pending_kwh = min(
             MAX_PENDING_KWH, max(-MAX_PENDING_KWH, state.pending_kwh + moved)
         )
-    if _full_anchor(state, settings, inputs, charge, discharge):
-        events.append("full")
+    if kind := _full_anchor(state, settings, inputs, charge, discharge):
+        events.append(kind)
     if _empty_anchor(state, settings, inputs, charge, discharge):
         events.append("empty")
     return _estimate(state, settings, tuple(events))
@@ -338,12 +343,12 @@ def _full_anchor(
     inputs: Inputs,
     charge: float,
     discharge: float,
-) -> bool:
-    """Track the full-anchor evidence (DD-3); True when the step anchored."""
+) -> str | None:
+    """Track the full-anchor evidence (DD-3); the anchor kind when the step anchored."""
     evidence = _full_evidence(settings, inputs)
     if evidence is None:
         _break_full_candidate(state)
-        return False
+        return None
     at = inputs.at
     if state.full_candidate_since is None:
         state.full_candidate_since = at
@@ -352,7 +357,7 @@ def _full_anchor(
         or (at - state.full_candidate_since).total_seconds()
         < settings.full_hold_seconds
     ):
-        return False
+        return None
     state.full_candidate_logged = True
     before = _clamp(
         counter_energy(state, settings, charge, discharge) + state.pending_kwh,
@@ -381,11 +386,20 @@ def _full_anchor(
     )
     del state.candidates[:-MAX_CANDIDATES]
     if not anchored:
-        return False
-    anchor = Anchor("full", at, settings.capacity_kwh, charge, discharge)
+        return None
+    kind = "full_balance" if evidence["path"] == "balance" else "full"
+    anchor = Anchor(kind, at, settings.capacity_kwh, charge, discharge)
     set_anchor(state, anchor, top_confirmed=True)
     state.last_full = anchor
-    return True
+    return kind
+
+
+def _qualified(state: EstimatorState) -> bool:
+    return (
+        state.full_candidate_since is not None
+        and state.full_candidate_logged
+        and state.candidates[-1]["outcome"] != "rejected_low_energy"
+    )
 
 
 def _break_full_candidate(state: EstimatorState) -> None:
@@ -482,6 +496,9 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
        export is impossible or capped, the derived surplus (PV less load and the
        charge still taken) at least 300 W plus 10 % of the PV power; or grid
        charging requested and still short of its voltage.
+
+    In a balance row the plan asked for a full pack: charging that stops at the
+    Grid program's voltage is itself the evidence (path "balance").
     """
     facts = inputs.facts
     current, voltage = _number(inputs.current_a), _number(inputs.voltage_v)
@@ -493,26 +510,18 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
     )
     if not -taper <= current <= taper:
         return None
-    limit = _number(facts.charge_limit_a)
-    if limit is None or limit < MIN_CHARGE_LIMIT_A:
+    charge_limit = _number(facts.charge_limit_a)
+    if charge_limit is None or charge_limit < MIN_CHARGE_LIMIT_A:
         return None
-    if facts.target_reached or facts.state in NON_CHARGING_STATES:
+    if facts.state in NON_CHARGING_STATES:
         return None
     grid_charging = facts.program_direction == "Grid"
     target = _number(facts.program_voltage_v)
-    if (
+    at_target = (
         grid_charging
         and target is not None
         and voltage >= target * (1 - TARGET_VOLTAGE_MARGIN)
-    ):
-        return None
-    if facts.state == "CHARGE_GRID" and not (
-        grid_charging
-        and target is not None
-        and facts.grid_charge_a >= MIN_CHARGE_LIMIT_A
-    ):
-        return None
-    threshold = max(MIN_SURPLUS_W, SURPLUS_RATED_FRACTION * settings.rated_pv_w)
+    )
     grid = _number(inputs.grid_w)
     export = None if grid is None else max(-grid, 0.0)
     # What the battery already takes is not surplus: only PV that goes to
@@ -520,34 +529,50 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
     surplus = (
         None if pv is None or load is None else pv - load - max(-current, 0.0) * voltage
     )
-    limit = settings.export_limit_w
-    capped = limit is not None and (
-        limit <= 0 or (export is not None and export >= EXPORT_CAP_FRACTION * limit)
-    )
-    if export is not None and export >= threshold:
-        path = "export"
+    if facts.balance_hold and at_target and facts.state is not None:
+        path = "balance"
     elif (
-        capped
-        and surplus is not None
-        and pv is not None
-        and surplus >= MIN_SURPLUS_W + DERIVED_SURPLUS_PV_FRACTION * pv
+        facts.target_reached
+        or at_target
+        or facts.state == "CHARGE_GRID"
+        and not (
+            grid_charging
+            and target is not None
+            and facts.grid_charge_a >= MIN_CHARGE_LIMIT_A
+        )
     ):
-        path = "surplus"
-    elif (
-        grid_charging
-        and facts.state is not None
-        and facts.grid_charge_a >= MIN_CHARGE_LIMIT_A
-    ):
-        path = "grid"
-    else:
         return None
+    else:
+        threshold = max(MIN_SURPLUS_W, SURPLUS_RATED_FRACTION * settings.rated_pv_w)
+        export_limit = settings.export_limit_w
+        capped = export_limit is not None and (
+            export_limit <= 0
+            or (export is not None and export >= EXPORT_CAP_FRACTION * export_limit)
+        )
+        if export is not None and export >= threshold:
+            path = "export"
+        elif (
+            capped
+            and surplus is not None
+            and pv is not None
+            and surplus >= MIN_SURPLUS_W + DERIVED_SURPLUS_PV_FRACTION * pv
+        ):
+            path = "surplus"
+        elif (
+            grid_charging
+            and facts.state is not None
+            and facts.grid_charge_a >= MIN_CHARGE_LIMIT_A
+        ):
+            path = "grid"
+        else:
+            return None
     return {
         "path": path,
         "voltage_v": voltage,
         "current_a": current,
         "surplus_w": surplus,
         "export_w": export,
-        "charge_limit_a": limit,
+        "charge_limit_a": charge_limit,
         "grid_charge_a": facts.grid_charge_a,
         "controller_state": facts.state,
     }
@@ -625,6 +650,7 @@ def _estimate(
         measured_capacity_kwh=state.measured_capacity_kwh,
         excess_kwh=max(0.0, total - capacity),
         top_confirmed=state.top_confirmed,
+        full_qualified=_qualified(state),
         events=events,
     )
 
