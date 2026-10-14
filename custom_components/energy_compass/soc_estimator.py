@@ -165,6 +165,9 @@ class Inputs:
     # Grid power in W, positive while importing.
     grid_w: float | None = None
     facts: ControllerFacts | None = None
+    # Every source an anchor reads (current, voltage, PV, load, grid) reported
+    # recently; a stale one breaks the hold rather than extend it.
+    anchor_inputs_fresh: bool = True
 
 
 @dataclass
@@ -345,7 +348,7 @@ def _full_anchor(
     discharge: float,
 ) -> str | None:
     """Track the full-anchor evidence (DD-3); the anchor kind when the step anchored."""
-    evidence = _full_evidence(settings, inputs)
+    evidence = _full_evidence(settings, inputs) if inputs.anchor_inputs_fresh else None
     if evidence is None:
         _break_full_candidate(state)
         return None
@@ -415,7 +418,7 @@ def _empty_anchor(
     discharge: float,
 ) -> bool:
     """Track the empty-anchor evidence (DD-4); True when the step anchored."""
-    if _empty_evidence(settings, inputs) is None:
+    if not inputs.anchor_inputs_fresh or _empty_evidence(settings, inputs) is None:
         _break_empty_candidate(state)
         return False
     at = inputs.at

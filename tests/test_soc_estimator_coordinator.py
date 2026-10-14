@@ -371,3 +371,74 @@ async def test_charging_at_a_confirmed_top_adds_no_phantom_energy_or_history(
     assert estimator.estimate.soc_fraction == pytest.approx(1.0)
     assert len(estimator.history) == anchors
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def _touch(hass, entity_id, state, unit):
+    hass.states.async_set(
+        entity_id, state, {"unit_of_measurement": unit}, force_update=True
+    )
+
+
+async def test_the_estimate_is_stale_when_the_counters_stopped_reporting(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    _set_sources(hass)
+    entry = await _setup(hass)
+    estimator = entry.runtime_data.soc_estimator
+    counters = hass.states.get("sensor.charged").last_reported
+    freezer.tick(timedelta(minutes=10))
+    _touch(hass, "sensor.pack_v", "521", "V")
+    await hass.async_block_till_done()
+    assert estimator.reported_at == hass.states.get("sensor.pack_v").last_reported
+    freezer.tick(timedelta(minutes=10))
+    _touch(hass, "sensor.pack_v", "521", "V")
+    await hass.async_block_till_done()
+    assert estimator.reported_at == counters
+    assert estimator.view()["reported_at"] == counters
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_the_counter_tolerance_follows_their_observed_step(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    _set_sources(hass)
+    entry = await _setup(hass)
+    estimator = entry.runtime_data.soc_estimator
+    for _ in range(3):
+        freezer.tick(timedelta(seconds=60))
+        _set_sources(hass)
+        await hass.async_block_till_done()
+    counters = hass.states.get("sensor.charged").last_reported
+    freezer.tick(timedelta(seconds=150))
+    _touch(hass, "sensor.pack_v", "521", "V")
+    await hass.async_block_till_done()
+    assert estimator.reported_at == counters
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_a_stale_anchor_input_keeps_a_full_candidate_from_starting(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    config = _config(initial_soc_percent=90, anchor_on_candidates=True)
+    config["soc_estimator"]["bindings"].update(
+        pv_power={"entity_id": "sensor.pv"},
+        grid_power={"entity_id": "sensor.grid"},
+        charge_limit={"entity_id": "number.charge_limit"},
+    )
+    _anchoring_sources(hass)
+    entry = await _setup(hass, config)
+    estimator = entry.runtime_data.soc_estimator
+    for _ in range(14):
+        freezer.tick(timedelta(minutes=1))
+        _touch(hass, "sensor.grid", "-2500", "W")
+        _touch(hass, "number.charge_limit", "14", "A")
+        _set_sources(hass, voltage=545)
+        await hass.async_block_till_done(wait_background_tasks=True)
+    # The PV sensor reported once, 14 minutes ago.
+    assert estimator.state.candidates == []
+    assert estimator.state.full_candidate_since is None
+    assert estimator.estimate.anchor_kind == "initial"
+    assert await hass.config_entries.async_unload(entry.entry_id)

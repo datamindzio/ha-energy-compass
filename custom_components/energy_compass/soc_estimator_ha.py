@@ -7,6 +7,7 @@ between the estimator and the planner.
 """
 
 import logging
+from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from math import isfinite
@@ -37,6 +38,12 @@ SAVE_INTERVAL = timedelta(seconds=60)
 NOTIFY_INTERVAL = timedelta(seconds=20)
 NOTIFY_FRACTION = 0.0005
 TICK = timedelta(seconds=60)
+# An anchor reads only sources that reported within this long.
+ANCHOR_INPUT_MAX_AGE = timedelta(seconds=60)
+# The counters may lag their usual step by no more than this, whatever that is.
+COUNTER_STEP_MIN = timedelta(seconds=60)
+COUNTER_STEP_MAX = timedelta(minutes=15)
+COUNTER_STEPS_KEPT = 5
 # The sensor is rewritten when the SOC moved this much (percentage points), on an
 # anchor, and at least once a minute.
 SENSOR_STEP = 0.1
@@ -97,6 +104,8 @@ class SocEstimator:
         self._quiet = True
         self._listeners_ha: list[Callable[[], None]] = []
         self._last_sensor: tuple[datetime, float | None] | None = None
+        self._counters_stamp: datetime | None = None
+        self._counter_steps: deque[timedelta] = deque(maxlen=COUNTER_STEPS_KEPT)
 
     @property
     def active(self) -> bool:
@@ -370,7 +379,15 @@ class SocEstimator:
             for role in ("voltage", "current", "power")
             if reads[role] is not None
         ]
-        self.reported_at = min(max(stamps), now) if stamps else None
+        self.reported_at = self._reported_at(stamps, reads, now)
+        fresh_roles = ["voltage", "current", "pv_power", "grid_power", "load_power"]
+        if reads["load_power"] is None:
+            fresh_roles.append("power")
+        anchor_fresh = all(
+            now - reads[role][1] <= ANCHOR_INPUT_MAX_AGE
+            for role in fresh_roles
+            if reads[role] is not None
+        )
         self.bms_percent = self._bms_percent()
         return core.Inputs(
             now,
@@ -385,7 +402,36 @@ class SocEstimator:
             load,
             grid,
             self._facts(reads, now),
+            anchor_inputs_fresh=anchor_fresh,
         )
+
+    def _reported_at(self, stamps, reads, now: datetime) -> datetime | None:
+        """Newest input report, but never fresher than the counters allow.
+
+        The counters report in coarse steps; power alone cannot vouch for an
+        estimate whose counters stopped. The tolerance is their observed step
+        (at least a minute, at most 15), 15 minutes until one was observed.
+        """
+        if not stamps:
+            return None
+        reported = min(max(stamps), now)
+        counters = [
+            reads[role][1]
+            for role in ("charge_counter", "discharge_counter")
+            if reads[role] is not None
+        ]
+        if not counters:
+            return reported
+        oldest = min(counters)
+        if self._counters_stamp is not None and oldest > self._counters_stamp:
+            self._counter_steps.append(oldest - self._counters_stamp)
+        self._counters_stamp = oldest
+        tolerance = (
+            COUNTER_STEP_MAX
+            if not self._counter_steps
+            else min(COUNTER_STEP_MAX, max(COUNTER_STEP_MIN, max(self._counter_steps)))
+        )
+        return min(reported, oldest) if now - oldest > tolerance else reported
 
     def _facts(self, reads, now: datetime | None = None) -> core.ControllerFacts:
         native = self._native()

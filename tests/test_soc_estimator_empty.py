@@ -34,6 +34,7 @@ def _inputs(
     facts=None,
     charge=1000.0,
     discharge=500.0,
+    fresh=True,
 ):
     return Inputs(
         T0 + dt.timedelta(seconds=seconds),
@@ -46,6 +47,7 @@ def _inputs(
         1500.0,
         grid,
         facts,
+        anchor_inputs_fresh=fresh,
     )
 
 
@@ -68,6 +70,15 @@ def test_light_load_at_the_zero_voltage_anchors_empty_after_the_hold():
     assert state.anchor.charge_kwh == 1000.0
     again = step(state, SETTINGS, _inputs(90))
     assert again.events == ()
+
+
+def test_a_stale_anchor_input_breaks_the_empty_hold():
+    state = _state()
+    step(state, SETTINGS, _inputs(0))
+    step(state, SETTINGS, _inputs(30, fresh=False))
+    assert state.empty_candidate_since is None
+    assert not step(state, SETTINGS, _inputs(60)).events
+    assert state.anchor.kind == "initial"
 
 
 def test_voltage_sag_under_heavy_load_is_not_empty():

@@ -41,6 +41,7 @@ def _inputs(
     pv=4000.0,
     load=800.0,
     grid=None,
+    fresh=True,
     facts=TAPER,
     charge=1000.0,
     discharge=500.0,
@@ -56,6 +57,7 @@ def _inputs(
         load,
         grid,
         facts=facts,
+        anchor_inputs_fresh=fresh,
     )
 
 
@@ -370,6 +372,21 @@ def test_without_the_native_controller_only_export_evidence_counts():
     _hold(state, EXPORTING, facts=ControllerFacts(14.0), grid=-1500.0)
     [candidate] = state.candidates
     assert candidate["path"] == "export"
+
+
+def test_a_stale_anchor_input_breaks_the_hold_and_cannot_start_one():
+    state = _state()
+    _hold(state, seconds=540)
+    assert state.full_candidate_since is not None
+    step(state, SETTINGS, _inputs(570, fresh=False))
+    assert state.full_candidate_since is None
+    assert not step(state, SETTINGS, _inputs(600)).events
+    assert state.candidates == []
+    state = _state()
+    for second in range(0, 1200, 60):
+        step(state, SETTINGS, _inputs(second, fresh=False))
+    assert state.candidates == []
+    assert state.full_candidate_since is None
 
 
 def test_a_pack_the_counters_put_below_70_percent_is_not_anchored_full():
