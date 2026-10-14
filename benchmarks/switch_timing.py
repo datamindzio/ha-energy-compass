@@ -7,6 +7,9 @@ cost of the first and the second run and whether the second satisfies every row,
 matrices where the second plan is taken (cheaper by the margin and satisfying every row) in the
 format of `tests/fixtures/solver`. `kind` and `seed` are those of `spill_sweep.py`. Invoked by
 path with the repository root on PYTHONPATH.
+
+The `draw` of a record is the 0-based index of the draw in the list `spill_sweep.py` writes (the
+one the ADR, `docs/model.md` and the fixtures name: seed 7, draw 277), not a count from 1.
 """
 
 import json
@@ -44,7 +47,7 @@ def measure(kind, seed, count):
     records = []
     dumps = []
     current = {}
-    draw = [0]
+    draw = [-1]
     run = optimize._Model._run
     plain = sweep.run
 
