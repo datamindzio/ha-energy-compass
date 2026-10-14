@@ -461,6 +461,8 @@ the check off (`_Model.compare_switches` forced to False) against on
 
 | Slots | Strategy | Plan off | Plan on | Second run | Probes completed off / on |
 | --- | --- | --- | --- | --- | --- |
+| 48 | `cost_min` | 1.36 s | 4.41 s | about 3.1 s (plan on minus off) | 44 / 42 of 48 |
+| 64 | `cost_min` | 1.92 s | 4.71 s | about 2.8 s (plan on minus off) | 27 / 25 of 48 |
 | 96 | `cost_min` | 2.25 s | 6.84 s | 4.6 s | 3 / 3 of 48 |
 | 96 | `grid_friendly` | 3.48 s | 3.46 s | not started (default run over a third of the limit) | 0 / 0 of 48 |
 | 192 | `cost_min` | 10.04 s (time limited) | 10.04 s | none (status 1) | 0 / 0 of 48 |
@@ -469,7 +471,10 @@ the check off (`_Model.compare_switches` forced to False) against on
   The plan is the same (objective 4.2964, 7.3363, 7.3308) with the check on and off. The probes of this site do not
   finish inside the 60 s either way: those of `cost_min` at 96 slots spend 57.8 s after the 2.25 s plan and 53.2 s
   after the 6.84 s plan, 3 of 48 done in both. So at 96 slots a proven plan of such a site takes up to three
-  times as long as it did (here 3.0), bounded by the limit and by the rule below.
+  times as long as it did (here 3.0), bounded by the limit and by the rule below. At 48 and 64 slots the plan is
+  the same too (objective 1.0677, 0.9825) and the probes are budget-bound, not starved: where they are bound by
+  the budget the second run of the plan costs 2 to 3 probes of 48 (44 to 42 at 48 slots, 27 to 25 at 64 in this run,
+  one run each; an earlier run of the same commands gave 45 to 42 and 20 to 18, and the plan takes 3 s longer).
 - The sweeps (`spill_sweep.py` probe seeds 5, 7, 13, bell 7, run 7, negrun 13, 300 draws each, 1921 checked
   matrices, `_Model._run` timed per run, `benchmarks/switch_timing.py <kind> <seed> 300 <file>`): the default runs of the checked matrices take
   168.2 s, the second runs 181.0 s, so a checked solve takes about 2.1 times as long. Per matrix the second run is not bounded by a multiple of the first. By

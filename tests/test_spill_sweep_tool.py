@@ -79,3 +79,51 @@ def test_the_switch_audit_counts_the_matrices_of_a_draw_by_the_command_the_docs_
     draws, matrices, dearer = map(int, found.groups())
     assert (draws, dearer) == (6, 0)
     assert matrices >= 1
+
+
+def _benchmark(script, *args):
+    done = subprocess.run(
+        [sys.executable, f"benchmarks/{script}", *map(str, args)],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT / 'benchmarks'}"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    return done.stdout
+
+
+def test_the_switch_check_site_is_solved_both_ways_by_the_command_the_adr_names():
+    # T-089: `benchmarks/switch_site.py <slots> <on|off> <strategy> <probes> <export_kw>` is the
+    # command behind the ADR-0007 table of the plan time with the check on and off.
+    for check in ("off", "on"):
+        out = _benchmark("switch_site.py", 12, check, "cost_min", 0, 1.0)
+        found = re.search(
+            rf"^{check} 12 cost_min export 1\.0 (\{{.*\}}) second runs (\d+) of (\d+)$",
+            out,
+            re.MULTILINE,
+        )
+        assert found, out
+        plan = json.loads(found.group(1))
+        assert plan["result"] == "optimal"
+        assert plan["probe_requested"] == 0
+        second, runs = int(found.group(2)), int(found.group(3))
+        assert runs >= 1
+        if check == "off":
+            assert second == 0
+
+
+def test_the_switch_timing_names_the_draw_by_the_index_spill_sweep_writes(tmp_path):
+    # T-089: the ADR and the fixtures name draw 277 of seed 7 by its place in the list of
+    # `spill_sweep.py probe 7`; `switch_timing.py` records the same 0-based index.
+    path = tmp_path / "timing.json"
+    out = _benchmark("switch_timing.py", "probe", 7, 3, path)
+    assert re.search(r"^probe 7 3: checked \d+, default runs ", out, re.MULTILINE), out
+    data = json.loads(path.read_text())
+    assert set(data) == {"records", "dumps", "wall_s"}
+    draws = {row["draw"] for row in data["records"]}
+    assert draws <= {0, 1, 2}
+    assert 0 in draws  # counted from 1 it would have no draw 0
+    for row in data["records"]:
+        assert {"first_s", "second_s", "taken"} <= set(row)
