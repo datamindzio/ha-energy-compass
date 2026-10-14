@@ -631,13 +631,15 @@ sterownik sam uciął, kończyłby dowód i wytrzymanie nigdy by się nie skońc
 plan przechodzi do `HOLD` (kandydat nigdy nie *startuje* w `HOLD`): obowiązujący limit ładowania, co
 najmniej 2 A, pokazuje, że sterownik trzyma tor otwarty, a w `HOLD` liczą się tylko ścieżki `export` i
 `surplus`, bo jego program `Grid` jedynie utrzymuje SOC. Przejście do `CURTAIL`, `BASE` lub
-`DISCHARGE_GRID`, limit ładowania poniżej 2 A albo napięcie poniżej napięcia pełnego kończy kandydata,
-a profil wraca do własnych wartości. **Silnik blueprint** nie jest zmieniany i zamyka tor ładowania
+`DISCHARGE_GRID`, limit ładowania poniżej 2 A dłużej niż 120 s (sterownik sam na chwilę zapisuje 0 A
+przy zmianie kierunku programu, co trwający kandydat przeżywa; limit nigdy go nie startuje) albo napięcie
+poniżej napięcia pełnego kończy kandydata, a profil wraca do własnych wartości. **Silnik blueprint** nie jest zmieniany i zamyka tor ładowania
 tam, gdzie mówi jego profil, więc wytrzymanie może tam zostać przerwane.
 
 **Nieaktualność.** Estymata dostaje znacznik najnowszego raportu źródeł napięcia, prądu i mocy, ale nigdy
-świeższy, niż pozwalają jej liczniki: gdy liczniki są starsze niż ich zaobserwowany krok odświeżania
-(co najmniej minuta, najwyżej 15; do zaobserwowania kroku 15 minut), estymata jest tak stara jak liczniki,
+świeższy, niż pozwalają jej liczniki: gdy liczniki są starsze niż ich zaobserwowany krok odświeżania,
+liczony jako 1,5 największego z ostatnich pięciu (co najmniej minuta, najwyżej 15; do zaobserwowania kroku
+15 minut), estymata jest tak stara jak liczniki,
 nawet przy świeżej mocy. Po restarcie pierwszy krok nie całkuje mocy zapisanej przed przestojem.
 
 **Nigdy 100 % na zgadnięcie.** Obcięcie na górze nigdy nie tworzy kotwicy. Wyliczenie, które dochodzi do

@@ -44,6 +44,7 @@ ANCHOR_INPUT_MAX_AGE = timedelta(seconds=60)
 COUNTER_STEP_MIN = timedelta(seconds=60)
 COUNTER_STEP_MAX = timedelta(minutes=15)
 COUNTER_STEPS_KEPT = 5
+COUNTER_STEP_MARGIN = 1.5
 # The sensor is rewritten when the SOC moved this much (percentage points), on an
 # anchor, and at least once a minute.
 SENSOR_STEP = 0.1
@@ -415,8 +416,9 @@ class SocEstimator:
         """Newest input report, but never fresher than the counters allow.
 
         The counters report in coarse steps; power alone cannot vouch for an
-        estimate whose counters stopped. The tolerance is their observed step
-        (at least a minute, at most 15), 15 minutes until one was observed.
+        estimate whose counters stopped. The tolerance is 1.5 times their
+        largest recent step (at least a minute, at most 15), 15 minutes until
+        one was observed.
         """
         if not stamps:
             return None
@@ -435,7 +437,10 @@ class SocEstimator:
         tolerance = (
             COUNTER_STEP_MAX
             if not self._counter_steps
-            else min(COUNTER_STEP_MAX, max(COUNTER_STEP_MIN, max(self._counter_steps)))
+            else min(
+                COUNTER_STEP_MAX,
+                max(COUNTER_STEP_MIN, COUNTER_STEP_MARGIN * max(self._counter_steps)),
+            )
         )
         return min(reported, oldest) if now - oldest > tolerance else reported
 

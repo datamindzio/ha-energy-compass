@@ -443,6 +443,24 @@ async def test_the_counter_tolerance_follows_their_observed_step(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_a_counter_step_slightly_longer_than_the_last_ones_is_not_stale(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    _set_sources(hass)
+    entry = await _setup(hass)
+    estimator = entry.runtime_data.soc_estimator
+    for _ in range(3):
+        freezer.tick(timedelta(seconds=60))
+        _set_sources(hass)
+        await hass.async_block_till_done()
+    freezer.tick(timedelta(seconds=85))
+    _touch(hass, "sensor.pack_v", "521", "V")
+    await hass.async_block_till_done()
+    assert estimator.reported_at == hass.states.get("sensor.pack_v").last_reported
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_a_stale_anchor_input_keeps_a_full_candidate_from_starting(
     recorder_mock, hass, enable_custom_integrations, freezer
 ):

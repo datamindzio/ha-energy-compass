@@ -988,12 +988,14 @@ sterownik sam uciął, kończyłby dowód i wytrzymanie nigdy by się nie skońc
 plan przechodzi do <code>HOLD</code> (kandydat nigdy nie <em>startuje</em> w <code>HOLD</code>): obowiązujący limit ładowania, co
 najmniej 2 A, pokazuje, że sterownik trzyma tor otwarty, a w <code>HOLD</code> liczą się tylko ścieżki <code>export</code> i
 <code>surplus</code>, bo jego program <code>Grid</code> jedynie utrzymuje SOC. Przejście do <code>CURTAIL</code>, <code>BASE</code> lub
-<code>DISCHARGE_GRID</code>, limit ładowania poniżej 2 A albo napięcie poniżej napięcia pełnego kończy kandydata,
-a profil wraca do własnych wartości. <strong>Silnik blueprint</strong> nie jest zmieniany i zamyka tor ładowania
+<code>DISCHARGE_GRID</code>, limit ładowania poniżej 2 A dłużej niż 120 s (sterownik sam na chwilę zapisuje 0 A
+przy zmianie kierunku programu, co trwający kandydat przeżywa; limit nigdy go nie startuje) albo napięcie
+poniżej napięcia pełnego kończy kandydata, a profil wraca do własnych wartości. <strong>Silnik blueprint</strong> nie jest zmieniany i zamyka tor ładowania
 tam, gdzie mówi jego profil, więc wytrzymanie może tam zostać przerwane.</p>
 <p><strong>Nieaktualność.</strong> Estymata dostaje znacznik najnowszego raportu źródeł napięcia, prądu i mocy, ale nigdy
-świeższy, niż pozwalają jej liczniki: gdy liczniki są starsze niż ich zaobserwowany krok odświeżania
-(co najmniej minuta, najwyżej 15; do zaobserwowania kroku 15 minut), estymata jest tak stara jak liczniki,
+świeższy, niż pozwalają jej liczniki: gdy liczniki są starsze niż ich zaobserwowany krok odświeżania,
+liczony jako 1,5 największego z ostatnich pięciu (co najmniej minuta, najwyżej 15; do zaobserwowania kroku
+15 minut), estymata jest tak stara jak liczniki,
 nawet przy świeżej mocy. Po restarcie pierwszy krok nie całkuje mocy zapisanej przed przestojem.</p>
 <p><strong>Nigdy 100 % na zgadnięcie.</strong> Obcięcie na górze nigdy nie tworzy kotwicy. Wyliczenie, które dochodzi do
 pojemności bez kotwicy pełnej, pokazuje <strong>99,9 %</strong> z <code>unanchored_top: true</code>; energia powyżej pojemności

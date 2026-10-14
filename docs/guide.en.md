@@ -621,13 +621,16 @@ taper that the controller itself cut would end the evidence and the hold would n
 candidate also continues while the plan moves to `HOLD` (a candidate never *starts* in `HOLD`): the
 charge limit in force, at least 2 A, shows that the controller is holding the path open, and in
 `HOLD` only the export and surplus paths count, since its `Grid` program only holds the SOC. Leaving
-for `CURTAIL`, `BASE` or `DISCHARGE_GRID`, a charge limit under 2 A, or a voltage under the full
-voltage ends the candidate, and the profile goes back to its own values. The **blueprint engine** is
+for `CURTAIL`, `BASE` or `DISCHARGE_GRID`, a charge limit under 2 A for more than 120 s (the
+controller itself writes 0 A for a moment when the program direction changes, which a running
+candidate lives through; the limit never starts one), or a voltage under the full voltage ends the
+candidate, and the profile goes back to its own values. The **blueprint engine** is
 unchanged and closes the charge path where its profile says so, so the hold may break there.
 
 **Staleness.** The estimate is stamped with the newest report of the voltage, current and power
 sources, but never fresher than its counters allow: once the counters are older than their observed
-update step (at least one minute, at most 15; 15 minutes until a step was seen), the estimate is as
+update step, taken as 1.5 times the largest of the last five (at least one minute, at most 15; 15
+minutes until a step was seen), the estimate is as
 old as the counters even while power is fresh. After a restart the first step does not integrate the
 power stored before the downtime.
 
