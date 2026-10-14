@@ -184,6 +184,11 @@ class SocEstimator:
             return {"enabled": False, **({"error": self.error} if self.error else {})}
         return {"enabled": True, **self.attributes()}
 
+    @property
+    def full_candidate(self) -> bool:
+        """A full-pack candidate is running: its hold has started and not broken."""
+        return self._active and _candidate(self.estimate)
+
     def view(self) -> dict | None:
         """What the planner reads: the fraction and when its inputs last reported."""
         estimate = self.estimate
@@ -271,6 +276,7 @@ class SocEstimator:
         last = self._last_notice
         due = (
             anchored
+            or _candidate(estimate) != _candidate(previous)
             or (fraction is None) != (was is None)
             or last is None
             or (
@@ -565,6 +571,10 @@ class SocEstimator:
     @callback
     def _minute(self, now: datetime) -> None:
         self.tick(now)
+
+
+def _candidate(estimate: core.Estimate | None) -> bool:
+    return estimate is not None and estimate.available and estimate.full_candidate
 
 
 class _PreviewEntry:

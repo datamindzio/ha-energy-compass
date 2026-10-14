@@ -168,7 +168,14 @@ class HassPort:
             controller=view if view and setup is not None else None,
             paused=self.controller.state.paused,
             blueprint_active=tuple(active_blueprint_automations(self.hass)),
+            full_candidate=self._full_candidate(setup),
         )
+
+    def _full_candidate(self, setup: NativeSetup | None) -> bool:
+        """The estimator holds a full-pack candidate: charging must stay allowed."""
+        if setup is None or not estimator_in_charge(self.controller):
+            return False
+        return self.controller.coordinator.soc_estimator.full_candidate
 
     def _estimator_fact(self) -> profile.Fact:
         """The estimator in place of the BMS SOC entity: gate, full-pack rule, targets."""
@@ -489,6 +496,8 @@ class NativeHost:
             controller.state.mode,
             controller.state.paused,
             controller.entry.options.get("controller"),
+            estimator_in_charge(controller)
+            and controller.coordinator.soc_estimator.full_candidate,
         )
 
     def _sync_watch(self) -> None:
