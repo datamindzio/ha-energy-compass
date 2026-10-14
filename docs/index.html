@@ -261,6 +261,7 @@
             <tr><th scope="row"><a href="#expected_wear_cost">Expected wear cost</a></th><td>Currency</td><td>What battery wear does the plan assign?</td></tr>
             <tr><th scope="row"><a href="#optimizer_status">Optimizer status</a></th><td>Runtime status</td><td>Did the baseline calculation succeed?</td></tr>
             <tr><th scope="row"><a href="#battery_balance">Battery balance</a></th><td>ok / eligible / scheduled / holding / overdue</td><td>Is a periodic LFP balance hold due, planned or in progress?</td></tr>
+            <tr><th scope="row"><a href="#soc_estimator">SOC estimator</a></th><td>Percent</td><td>What SOC do the battery energy counters give, and when was it last anchored?</td></tr>
             <tr><th scope="row"><a href="#forecast_valid">Forecast valid</a></th><td>on / off</td><td>Does a published plan still cover now?</td></tr>
             <tr><th scope="row"><a href="#alert">Alert</a></th><td>on / off</td><td>Why did the latest input check or calculation fail?</td></tr>
             <tr><th scope="row"><a href="#strategy">Strategy</a></th><td>One of six strategies</td><td>Which objective bundle does the optimizer solve?</td></tr>
@@ -465,6 +466,23 @@
         window candidates; see the optional pessimistic PV source), <code>hold_progress_minutes</code>, <code>hold_required_minutes</code> and
         <code>threshold_percent</code>.</p>
         <p><strong>Unavailable:</strong> only before the balance tracker has loaded from storage.</p>
+      </article>
+
+      <article id="soc_estimator">
+        <h3>SOC estimator</h3>
+        <p class="entity-meta"><code>soc_estimator</code> · <span lang="pl">Estymator SOC</span> · Diagnostic sensor</p>
+        <p>The battery SOC computed from the lifetime charge and discharge energy counters when <strong>Battery SOC source</strong>
+        is <em>Counter estimator</em> (or while its <em>Shadow run</em> compares it with a bound SOC entity). Created only then;
+        turning it on or off reloads the entry. The state is a percentage and is recorded; of the attributes only
+        <code>anchor_kind</code> is recorded.</p>
+        <p>Attributes: <code>energy_kwh</code>, <code>anchor_kind</code> (<code>initial</code>, <code>seed</code>, <code>full</code>,
+        <code>empty</code>, <code>reset</code>), <code>anchor_at</code>, <code>anchor_age_h</code>, <code>throughput_since_anchor_kwh</code>,
+        <code>pending_kwh</code>, <code>unanchored_top</code> (the count reached the capacity without a full anchor, so the state is 99.9 %),
+        <code>excess_kwh</code> (the energy above the capacity, kept), <code>full_candidate</code>, <code>measured_capacity_kwh</code>,
+        <code>eta_charge</code>, <code>capacity_kwh</code>, <code>mode</code> (<code>counter_estimator</code> or <code>shadow</code>),
+        <code>bms_soc</code> (comparison only), <code>full_candidates</code> and <code>anchors</code> (the last 20 of each). See the
+        <a href="guide.en.html#counter-soc-estimator">guide</a>.</p>
+        <p><strong>Unavailable:</strong> while the counters cannot be read.</p>
       </article>
 
       <article id="alert">

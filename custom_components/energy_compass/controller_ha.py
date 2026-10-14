@@ -216,6 +216,31 @@ def native_problem(
     return None
 
 
+def estimator_capacity_conflict(
+    hass: HomeAssistant, controller: Mapping[str, Any] | None
+) -> bool:
+    """Whether the inverter is in Capacity mode under a running native controller.
+
+    The counter SOC estimator cannot be chosen then: in Capacity mode the inverter
+    compares its program SOC thresholds with the BMS SOC, so a plan target in the
+    estimator's scale would be acted on in the wrong one. Voltage mode, or no
+    native controller, is unaffected. While the estimator is the SOC source the
+    controller also treats Capacity as not commissioned, so a later switch of the
+    inverter to Capacity parks it in BASE instead of writing SOC thresholds.
+    """
+    controller = controller or {}
+    if not controller.get("enabled") or core.controller_engine(controller) != "native":
+        return False
+    device_id = controller.get("device_id")
+    if not device_id:
+        return False
+    entity = resolve_device(hass, device_id, controller.get("entities")).entities.get(
+        "operation"
+    )
+    state = hass.states.get(entity) if entity else None
+    return state is not None and state.state == "Capacity"
+
+
 def limits_underivable(
     hass: HomeAssistant,
     device_id: str,

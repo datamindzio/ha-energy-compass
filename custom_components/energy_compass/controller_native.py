@@ -9,7 +9,7 @@ dropped), which is the blueprint's `mode: queued, max: 2, max_exceeded: silent`.
 import asyncio
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -35,6 +35,7 @@ from .controller_ha import active_blueprint_automations
 from .controller_run import ControllerUnavailable, DeyeExecutor
 from .controller_setup import READ_SERVICE, derive_limits, entities_of, resolve
 from .settings import DOMAIN
+from .soc_estimator_config import counter_mode
 
 if TYPE_CHECKING:
     from .controller_ha import DeyeController
@@ -53,6 +54,12 @@ class NativeSetup:
     entities: profile.Entities
     limits: profile.Limits
     tracked: tuple[str, ...]
+
+
+def estimator_in_charge(controller: DeyeController) -> bool:
+    """Whether the planner's SOC is the counter estimator, not an entity."""
+    configuration = getattr(controller.coordinator, "configuration", None)
+    return bool(configuration) and counter_mode(configuration)
 
 
 def native_setup(hass: HomeAssistant, controller: DeyeController) -> NativeSetup | str:
@@ -92,6 +99,16 @@ def native_setup(hass: HomeAssistant, controller: DeyeController) -> NativeSetup
         grid_max=attribute(entities.grid, "max"),
         resolved=resolved,
     )
+    if estimator_in_charge(controller):
+        # The inverter compares its program SOC thresholds with its own BMS SOC,
+        # which the estimator does not replace: Capacity mode would act on a
+        # SOC target in the wrong scale. Voltage mode has voltage thresholds only.
+        limits = replace(
+            limits,
+            commissioned_battery_modes=tuple(
+                mode for mode in limits.commissioned_battery_modes if mode != "Capacity"
+            ),
+        )
     tracked = dict.fromkeys(
         [
             *resolved.entities.values(),
@@ -140,6 +157,8 @@ class HassPort:
                         ),
                         state.last_reported.timestamp(),
                     )
+        if setup is not None and estimator_in_charge(self.controller):
+            facts[setup.entities.soc] = self._estimator_fact()
         view = self.controller.view()[1]
         return profile.Snapshot(
             now=self.now(),
@@ -149,6 +168,24 @@ class HassPort:
             controller=view if view and setup is not None else None,
             paused=self.controller.state.paused,
             blueprint_active=tuple(active_blueprint_automations(self.hass)),
+            full_candidate=self._full_candidate(setup),
+        )
+
+    def _full_candidate(self, setup: NativeSetup | None) -> bool:
+        """The estimator holds a full-pack candidate: charging must stay allowed."""
+        if setup is None or not estimator_in_charge(self.controller):
+            return False
+        return self.controller.coordinator.soc_estimator.full_candidate
+
+    def _estimator_fact(self) -> profile.Fact:
+        """The estimator in place of the BMS SOC entity: gate, full-pack rule, targets."""
+        estimate = self.controller.coordinator.soc_estimator.view()
+        if estimate is None:
+            return profile.Fact(STATE_UNAVAILABLE)
+        return profile.Fact(
+            f"{estimate['fraction'] * 100:.4f}",
+            NO_ATTRIBUTES,
+            estimate["reported_at"].timestamp(),
         )
 
     async def persist(
@@ -459,6 +496,8 @@ class NativeHost:
             controller.state.mode,
             controller.state.paused,
             controller.entry.options.get("controller"),
+            estimator_in_charge(controller)
+            and controller.coordinator.soc_estimator.full_candidate,
         )
 
     def _sync_watch(self) -> None:

@@ -184,3 +184,18 @@ def measurement_setting(
         maximum=None,
         max_age_seconds=max_age_seconds,
     ).to_dict()
+
+
+def set_counter_estimator(draft: dict, bindings: dict[str, EntityBinding]) -> None:
+    """Make the counter SOC estimator the SOC source, bound to the given roles.
+
+    The SOC entity binding is dropped; a bound BMS SOC moves to the estimator as
+    a comparison-only reading. Capacity, the pack voltage that is 0 % and the
+    lowest pack voltage of a full pack are asked for in the estimator's own settings step.
+    """
+    block = draft.setdefault("soc_estimator", {})
+    stored = block.setdefault("bindings", {})
+    stored.update({role: binding.to_dict() for role, binding in bindings.items()})
+    if draft["sources"].get("bms_soc"):
+        stored["bms_soc"] = draft["sources"]["bms_soc"]
+    draft["sources"].update(soc=None, bms_soc=None, soc_mode="counter_estimator")

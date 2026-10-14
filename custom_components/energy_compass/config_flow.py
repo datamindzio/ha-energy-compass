@@ -72,6 +72,9 @@ from .setup_profiles import (
     selection_record,
     settlement_notes,
 )
+from .soc_estimator_config import ESTIMATE_KEY, counter_mode
+from .soc_estimator_flow import SocEstimatorFlow
+from .soc_estimator_ha import preview_view
 from .source_flow import SourceEditor
 from .source_management import (
     SourceRef,
@@ -357,7 +360,7 @@ def _solver_failure_detail(problem, values, error):
     return detail
 
 
-class Editor(SourceEditor):
+class Editor(SocEstimatorFlow, SourceEditor):
     """Keep unfinished edits separate until a validated preview is accepted."""
 
     _existing_installation = False
@@ -395,6 +398,8 @@ class Editor(SourceEditor):
             group for group in GROUPS if self._show_expert or group not in EXPERT_GROUPS
         ]
         menu_options = ["installation", "sources", *groups]
+        if self._draft["sources"]["battery_enabled"]:
+            menu_options.insert(menu_options.index("tariffs"), "soc_estimator")
         if self._show_expert:
             menu_options.append("helpers")
         if isinstance(self, config_entries.OptionsFlow):
@@ -1180,6 +1185,10 @@ class Editor(SourceEditor):
             candidate = rebind_configuration(self.hass, self._draft)
             now = dt_util.utcnow()
             states = snapshot(self.hass, candidate)
+            if counter_mode(candidate) and (
+                view := preview_view(self.hass, candidate, now)
+            ):
+                states[ESTIMATE_KEY] = view
             history, _ = await async_history(self.hass, candidate, states, now)
             problem, values, quality = await self.hass.async_add_executor_job(
                 lambda: build_problem(candidate, states, now, **history)
@@ -1460,6 +1469,10 @@ class EnergyCompassConfigFlow(Editor, config_entries.ConfigFlow, domain=DOMAIN):
                 if any(option.kind == "template_sell" for option in chosen):
                     self._draft["settings"]["sell_multiplier"] = 1
                 self._reresolve_profiles()
+                if any(option.kind == "counter_estimator" for option in chosen):
+                    # The pack voltages have no default: ask for them now.
+                    self._estimator_next = "preview"
+                    return await self.async_step_soc_estimator()
                 return await self.async_step_preview()
         detected, notes = detection_text(detection, language)
         return self.async_show_form(

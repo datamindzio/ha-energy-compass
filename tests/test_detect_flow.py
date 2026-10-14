@@ -19,7 +19,7 @@ from test_detect_ha import (  # noqa: F401
 
 from custom_components.energy_compass import config_flow
 from custom_components.energy_compass.detect import (
-    ROWS,
+    OFFER_ROWS,
     SKIP,
     option_label,
     row_label,
@@ -506,7 +506,7 @@ def test_detected_sources_strings_are_exact():
             if language == "en"
             else "Energy Compass znalazł te źródła po tożsamości integracji"
         )
-        assert step["data"] == {row: row_label(row, language) for row in ROWS}
+        assert step["data"] == {row: row_label(row, language) for row in OFFER_ROWS}
         for flow in ("config", "options"):
             assert data[flow]["step"]["preview"]["data"]["back_to_menu"] == (
                 "Back to the main menu (nothing is saved)"

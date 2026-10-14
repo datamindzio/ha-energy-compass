@@ -69,13 +69,31 @@ When **Planning → Sell only PV** is enabled and grid export capacity is above 
 
 To compare the configured battery round trip with reality, add **Sources → Add source → Battery charge energy (lifetime)** and **Battery discharge energy (lifetime)** (measurement roles `battery_charge_energy` and `battery_discharge_energy`). Select cumulative kWh or Wh entities that count the energy charged into and discharged out of the battery at its terminals over its lifetime, never decreasing except on a counter reset. They need the battery enabled, accept measurements only (no recorder statistic) and default to a maximum age of 86400 seconds. Both are needed; the measured round trip is discharge ÷ charge over the last 30 days. To compare the PV forecast with real production, bind the existing `pv_energy` lifetime counter (PV enabled, an entity, not a recorder statistic); the report is real ÷ forecast over the last 14 days. These counters never affect a plan. A reset or glitch is detected as a decrease (or a rise faster than 100 kW) and the hours around it are skipped, a counter that writes only on change is read as idle until its maximum age passes, and binding a role to another entity starts that counter over; see [Measured calibration](guide.en.md#measured-calibration-optional) for the fields and the method.
 
+## Counter SOC estimator sources
+
+With **Battery SOC source → Counter estimator** the SOC comes from these sources instead of an SOC entity (see [Counter SOC estimator](guide.en.md#counter-soc-estimator)). Each is an entity, or an entity attribute, read in the base unit it declares; a unit that is not listed is refused.
+
+| Role | Required | Shape and unit | Meaning |
+| --- | --- | --- | --- |
+| `charge_counter`, `discharge_counter` | yes | Lifetime, never decreasing except on a reset; kWh, Wh or MWh | Energy charged into and out of the battery at its terminals. A counter that goes down re-anchors the estimate; a rise faster than 100 kW is ignored as a glitch |
+| `voltage` | yes | V | Pack voltage; its report time, with the current's and the power's, stamps the estimate that the planner age-checks (never fresher than the counters allow) |
+| `current` | yes | A, positive while discharging (`current_sign` flips it) | Pack current; decides the taper for a full anchor and the light load for an empty one |
+| `empty_voltage` (a number, not an entity) | yes | V, in the scale of `voltage` | The pack voltage that is 0 %. No default |
+| `full_min_voltage` (a number, not an entity) | yes | V, in the scale of `voltage` | The lowest pack voltage of a full pack; above `empty_voltage`. No default |
+| `power` | no, falls back to the `battery_power` measurement | W or kW, positive while discharging | Interpolates between counter steps |
+| `pv_power`, `grid_power`, `load_power` | no for the estimate; `grid_power` is needed for a full anchor on the sun path | W or kW; grid positive while importing | Show that the cause of a stopped charge is not lack of sun: measured export is the primary evidence, PV and load only where export is capped. The load is computed from PV, grid and battery power when absent. Each must have reported within 60 s for a full or empty hold to continue |
+| `charge_limit`, `discharge_limit`, `grid_charge_current` | the charge limit is needed for any full anchor | A | The inverter's current limits; the native Deye controller's entities are used when it runs |
+| `bms_soc` | no | % | Shown as an attribute for comparison; never an input |
+
+The estimator reads these from the state machine directly. They are not part of the planner's input fingerprint, so a changing voltage never triggers a recalculation; only the estimated SOC does, by the same SOC trigger as an SOC entity.
+
 ## Automatic detection
 
 A new installation opens **Detected sources** after the first form (see [Detected sources](guide.en.md#detected-sources-new-installations)). It never runs in Configure or Reconfigure.
 
 **Identity rule.** A candidate is identified only by the integration platform and the entity's translation key (and, for Solarman, a Deye device in the same config entry), by the Energy Compass template identities (a `template` sensor whose unique id starts with `energy_compass_` and whose `settlement` attribute names a multiplier; a `template` sensor with device class battery and unit %), or by a reference in the Energy dashboard preferences. Entity ids and names are never matched. Disabled entities, domains other than `sensor`, Energy Compass's own entities and external statistic ids are excluded before ranking.
 
-**Providers.** Energy dashboard preferences (`energy_prefs`), Solcast (`solcast_solar`), RCE PSE (`rce_pse`), ha-solarman (`solarman`, Deye config entries only) and `template` sensors. Dashboard sources rank first, integration signals are the fallback, and a row with several candidates offers all of them with **Do not bind** last. `buy`, `throughput_today`, `battery_energy`, `battery_charge_power`, `battery_discharge_power`, `battery_charge_energy`, `battery_discharge_energy` and helpers are never detected.
+**Providers.** Energy dashboard preferences (`energy_prefs`), Solcast (`solcast_solar`), RCE PSE (`rce_pse`), ha-solarman (`solarman`, Deye config entries only) and `template` sensors. Dashboard sources rank first, integration signals are the fallback, and a row with several candidates offers all of them with **Do not bind** last. `buy`, `throughput_today`, `battery_energy`, `battery_charge_power`, `battery_discharge_power`, `battery_charge_energy`, `battery_discharge_energy` and helpers are never detected. The counter SOC estimator is offered, unticked, as one group (`soc_estimator`) when one Solarman Deye config entry has `total_battery_charge`, `total_battery_discharge`, `battery_voltage` and `battery_current`, each with a numeric state in a supported unit.
 
 **Stored measurement age limits.**
 

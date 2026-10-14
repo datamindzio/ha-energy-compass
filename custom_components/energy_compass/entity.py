@@ -62,7 +62,7 @@ class EnergyCompassEntity(CoordinatorEntity):
         self._attr_unique_id = f"{coordinator.entry.entry_id}_{key}"
         self._attr_translation_key = key
         self._attr_device_info = entry_device_info(coordinator.entry)
-        if key in ("optimizer_status", "alert", "battery_balance"):
+        if key in ("optimizer_status", "alert", "battery_balance", "soc_estimator"):
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def _publication_data(self):

@@ -18,6 +18,8 @@ from .config_models import (
 from .engine.models import STRATEGIES, InputError
 from .engine.normalize import finite
 from .engine.strategy import STRATEGY_OWNED_KEYS
+from .soc_estimator_config import estimator_active
+from .soc_estimator_config import validate as validate_estimator
 
 DOMAIN = "energy_compass"
 
@@ -242,6 +244,8 @@ def options_require_reload(previous: Mapping, new: Mapping) -> bool:
     """True when saving `new` over `previous` changes the entity set, not just planning."""
     if any(previous.get(key) != new.get(key) for key in ENTITY_SET_TOP_LEVEL):
         return True
+    if estimator_active(previous) != estimator_active(new):
+        return True
     old_settings, new_settings = previous["settings"], new["settings"]
     return any(
         old_settings.get(key, _default_of(key))
@@ -371,4 +375,5 @@ def validate_configuration(
         raise InputError("total compute budget must exceed base solve budget")
     if sources:
         validate_sources(SourceConfig.from_dict(config["sources"]), set())
+        validate_estimator(config)
     return values

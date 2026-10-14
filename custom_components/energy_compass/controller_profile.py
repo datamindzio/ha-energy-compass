@@ -137,7 +137,8 @@ class Snapshot:
     `session`, `plan_reason`, `retained`) or None when it is missing. `mode` is the
     requested controller mode; `paused` is the pause-writes switch;
     `blueprint_active` lists switched-on automations of the retired blueprint, whose
-    writes would collide with ours.
+    writes would collide with ours. `full_candidate` is set while the SOC estimator
+    holds a full-pack candidate: the decision then keeps the charge path open.
     """
 
     now: datetime
@@ -148,6 +149,7 @@ class Snapshot:
     runtime: Mapping[str, Any] = MappingProxyType({})
     paused: bool = False
     blueprint_active: tuple[str, ...] = ()
+    full_candidate: bool = False
 
     def state(self, entity: str) -> str:
         fact = self.states.get(entity)
@@ -528,7 +530,11 @@ def decide(
             "floor",
         )
         target_voltage = _knot_voltage(target_soc, DISCHARGE_KNOTS, "floor")
-        charge = limits.hold_grid_current
+        charge = (
+            charge_cap
+            if snapshot.full_candidate and state == "HOLD"
+            else limits.hold_grid_current
+        )
         discharge = 0
         grid = limits.hold_grid_current
         direction = "Grid"
@@ -574,7 +580,7 @@ def decide(
         and soc >= 100
         and not balance
     ):
-        charge = 0
+        charge = charge_cap if snapshot.full_candidate else 0
 
     reason_args = {}
     if operation == "Voltage" and not (

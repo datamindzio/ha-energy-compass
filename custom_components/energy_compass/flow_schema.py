@@ -157,7 +157,9 @@ def entity_ids(config: dict) -> set[str]:
             for child in value:
                 visit(child)
 
-    visit(config)
+    # The estimator's own inputs (voltage, current, counters) change every few
+    # seconds and are read by the estimator itself, not by the planner.
+    visit({key: value for key, value in config.items() if key != "soc_estimator"})
     return result
 
 
