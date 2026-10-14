@@ -124,16 +124,28 @@ async def _start(hass, freezer, site, voltage):
 
 async def _advance(hass, freezer, minutes, voltage):
     """Sources report every 30 s, as a live site does: an anchor reads fresh values."""
-    for _ in range(2 * minutes):
+    for _ in range(int(2 * minutes)):
         freezer.tick(timedelta(seconds=30))
         _sources(hass, voltage=voltage)
         refresh_telemetry(hass)
         await hass.async_block_till_done()
 
 
+def _timed(inverter, freezer):
+    """Every register write takes a second, as on the wire."""
+    apply = inverter._apply
+
+    def timed(entity, value):
+        freezer.tick(timedelta(seconds=1))
+        apply(entity, value)
+
+    inverter._apply = timed
+
+
 async def _into_hold(hass, freezer, entry, estimator, voltage):
     """The HOLD row starts at 17:15: the sources keep reporting, the controller runs."""
     await _advance(hass, freezer, 15, voltage)
+    freezer.tick(timedelta(seconds=1))
     await _run(entry)
     estimator.tick()
 
@@ -148,12 +160,15 @@ async def test_a_candidate_keeps_the_written_charge_current_at_the_cap_into_hold
     assert estimator.full_candidate
     cap = float(hass.states.get(CHARGE).state)
     assert cap > 1
+    _timed(inverter, freezer)
+    inverter.writes.clear()
 
     await _into_hold(hass, freezer, entry, estimator, 555.0)
     assert controller.state.runtime["state"] == "HOLD"
     assert float(hass.states.get(CHARGE).state) == cap
     # The switch to HOLD's Grid program stops the writers for the length of one
-    # transaction (the shared write order); the hold current is never written.
+    # transaction (the shared write order), so time passes between 0 A and the
+    # cap; the hold current is never written.
     charge_writes = [value for entity, value in inverter.writes if entity == CHARGE]
     assert charge_writes[-1] == cap
     assert 1 not in charge_writes
@@ -163,6 +178,22 @@ async def test_a_candidate_keeps_the_written_charge_current_at_the_cap_into_hold
     # The candidate survived the plan row that the estimator would exclude.
     assert estimator.full_candidate
     assert estimator.state.full_candidate_since is not None
+
+
+async def test_a_charge_limit_that_stays_low_ends_the_candidate(hass, freezer, site):
+    entry, _, estimator = await _start(hass, freezer, site, voltage=555.0)
+    await _into_hold(hass, freezer, entry, estimator, 555.0)
+    assert estimator.full_candidate
+
+    # The limit entity is kept at 0 A (the controller would write it back).
+    for _ in range(3):
+        hass.states.async_set(CHARGE, "0", hass.states.get(CHARGE).attributes)
+        await _advance(hass, freezer, 0.5, 555.0)
+    assert estimator.full_candidate
+    for _ in range(4):
+        hass.states.async_set(CHARGE, "0", hass.states.get(CHARGE).attributes)
+        await _advance(hass, freezer, 0.5, 555.0)
+    assert not estimator.full_candidate
 
 
 async def test_without_a_candidate_hold_lowers_the_charge_current(hass, freezer, site):

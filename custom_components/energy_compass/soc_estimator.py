@@ -52,6 +52,10 @@ NON_CHARGING_STATES = ("HOLD", "CURTAIL", "BASE", "DISCHARGE_GRID")
 
 # Full anchor evidence (DD-3).
 MIN_CHARGE_LIMIT_A = 2.0
+# The controller zeroes the charge current for the length of a transaction when
+# the program direction changes (e.g. CHARGE_PV to HOLD); a running candidate
+# lives through a limit below the minimum for this long.
+CHARGE_LIMIT_GRACE_SECONDS = 120.0
 MIN_TAPER_CURRENT_A = 1.0
 TAPER_CURRENT_FRACTION = 0.02
 MIN_SURPLUS_W = 300.0
@@ -195,6 +199,8 @@ class EstimatorState:
     last_full: Anchor | None = None
     full_candidate_since: datetime | None = None
     full_candidate_logged: bool = False
+    # Since when the charge limit has been below the minimum; never persisted.
+    charge_low_since: datetime | None = field(default=None, compare=False)
     candidates: list[dict] = field(default_factory=list)
     empty_candidate_since: datetime | None = None
     empty_candidate_logged: bool = False
@@ -367,8 +373,20 @@ def _full_anchor(
     discharge: float,
 ) -> str | None:
     """Track the full-anchor evidence (DD-3); the anchor kind when the step anchored."""
+    running = state.full_candidate_since is not None
+    limit = _number(inputs.facts.charge_limit_a) if inputs.facts else None
+    if limit is None or limit >= MIN_CHARGE_LIMIT_A:
+        state.charge_low_since = None
+    elif state.charge_low_since is None:
+        state.charge_low_since = inputs.at
+    grace = (
+        running
+        and state.charge_low_since is not None
+        and (inputs.at - state.charge_low_since).total_seconds()
+        <= CHARGE_LIMIT_GRACE_SECONDS
+    )
     evidence = (
-        _full_evidence(settings, inputs, state.full_candidate_since is not None)
+        _full_evidence(settings, inputs, running, grace)
         if inputs.anchor_inputs_fresh
         else None
     )
@@ -545,7 +563,10 @@ def _empty_evidence(settings: EstimatorSettings, inputs: Inputs) -> str | None:
 
 
 def _full_evidence(
-    settings: EstimatorSettings, inputs: Inputs, continuing: bool = False
+    settings: EstimatorSettings,
+    inputs: Inputs,
+    continuing: bool = False,
+    low_limit_grace: bool = False,
 ) -> dict | None:
     """The values behind a full candidate, or None while any condition fails.
 
@@ -566,7 +587,9 @@ def _full_evidence(
 
     HOLD ends a candidate that did not start in it, unless `continuing`: the
     controller keeps the charge path open for a running candidate, so the
-    charge limit in force (at least 2 A, as above) shows it did. HOLD's Grid
+    charge limit in force (at least 2 A, as above) shows it did. `low_limit_grace`
+    lets a running candidate through a numeric limit below 2 A (the controller's
+    own transient write); it never starts one. HOLD's Grid
     program only holds the SOC, so its voltage is no target and requested grid
     charging is no evidence there; only the export and surplus paths count.
     """
@@ -583,7 +606,9 @@ def _full_evidence(
     if not -taper <= current <= taper:
         return None
     charge_limit = _number(facts.charge_limit_a)
-    if charge_limit is None or charge_limit < MIN_CHARGE_LIMIT_A:
+    if charge_limit is None or (
+        charge_limit < MIN_CHARGE_LIMIT_A and not (continuing and low_limit_grace)
+    ):
         return None
     held_open = continuing and facts.state == "HOLD"
     if facts.state in NON_CHARGING_STATES and not held_open:

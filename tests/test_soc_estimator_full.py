@@ -505,11 +505,53 @@ def test_hold_never_starts_a_candidate():
     assert state.full_candidate_since is None
 
 
-def test_a_candidate_in_hold_ends_when_the_charge_path_closes():
+def test_a_candidate_in_hold_ends_when_the_charge_path_stays_closed():
     state = _state()
     _hold(state, EXPORTING, grid=-1500.0, seconds=300)
     closed = replace(HOLDING, charge_limit_a=1.0)
     step(state, EXPORTING, _inputs(360, facts=closed, grid=-1500.0))
+    assert state.full_candidate_since == T0
+    step(state, EXPORTING, _inputs(480, facts=closed, grid=-1500.0))
+    assert state.full_candidate_since == T0
+    step(state, EXPORTING, _inputs(481, facts=closed, grid=-1500.0))
+    assert state.full_candidate_since is None
+
+
+def test_a_low_charge_limit_that_returns_within_the_grace_keeps_the_candidate():
+    state = _state()
+    _hold(state, EXPORTING, grid=-1500.0, seconds=300)
+    closed = replace(HOLDING, charge_limit_a=0.0)
+    step(state, EXPORTING, _inputs(360, facts=closed, grid=-1500.0))
+    step(state, EXPORTING, _inputs(361, facts=HOLDING, grid=-1500.0))
+    step(state, EXPORTING, _inputs(420, facts=closed, grid=-1500.0))
+    step(state, EXPORTING, _inputs(540, facts=closed, grid=-1500.0))
+    assert state.full_candidate_since == T0
+    estimate = step(state, EXPORTING, _inputs(601, facts=HOLDING, grid=-1500.0))
+    assert estimate.events == ("full",)
+
+
+def test_the_charge_limit_grace_never_starts_a_candidate():
+    state = _state()
+    closed = replace(TAPER, charge_limit_a=0.0)
+    for second in range(0, 121, 30):
+        step(state, EXPORTING, _inputs(second, facts=closed, grid=-1500.0))
+    assert state.full_candidate_since is None
+
+
+def test_the_grace_does_not_cover_a_low_voltage_or_a_stale_input():
+    closed = replace(HOLDING, charge_limit_a=0.0)
+    state = _state()
+    _hold(state, EXPORTING, grid=-1500.0, seconds=300)
+    step(state, EXPORTING, _inputs(360, facts=closed, grid=-1500.0, voltage=500.0))
+    assert state.full_candidate_since is None
+    state = _state()
+    _hold(state, EXPORTING, grid=-1500.0, seconds=300)
+    step(state, EXPORTING, _inputs(360, facts=closed, grid=-1500.0, fresh=False))
+    assert state.full_candidate_since is None
+    state = _state()
+    _hold(state, EXPORTING, grid=-1500.0, seconds=300)
+    discharging = ControllerFacts(charge_limit_a=0.0, state="DISCHARGE_GRID")
+    step(state, EXPORTING, _inputs(360, facts=discharging, grid=-1500.0))
     assert state.full_candidate_since is None
 
 
