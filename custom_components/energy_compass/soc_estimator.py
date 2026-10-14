@@ -627,6 +627,15 @@ def _estimate(
     capacity = settings.capacity_kwh
     if total < capacity - TOP_LEAVE_KWH:
         state.top_confirmed = False
+    elif state.top_confirmed and total > capacity:
+        # A pack proven full stores nothing more: the rest is losses and float.
+        # The anchor stays a full one from its time, only its counters move up.
+        refreshed = Anchor(anchor.kind, anchor.at, capacity, charge, discharge)
+        if state.last_full is anchor:
+            state.last_full = refreshed
+        state.anchor = anchor = refreshed
+        state.pending_kwh = 0.0
+        total = capacity
     unanchored_top = total >= capacity and not state.top_confirmed
     energy = (
         capacity * UNANCHORED_TOP_FRACTION

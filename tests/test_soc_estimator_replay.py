@@ -74,13 +74,18 @@ def test_the_core_tracks_the_template_between_its_anchors(recording):
     errors = _replay(recording, follow_yaml_anchors=True)
     assert len(errors) > 9000
     size = sorted(abs(error) for _, error in errors)
-    assert size[int(0.95 * len(size))] < 0.1
-    assert size[int(0.99 * len(size))] < 0.15
-    off = [epoch for epoch, error in errors if abs(error) > 0.2]
+    # The template keeps counting the charge it takes at a confirmed top (about
+    # 0.2 kWh on 10-11/12) as stored energy; the core re-anchors at capacity
+    # there, so it sits that far below the template afterwards. Everything else
+    # is the tight tracking it had before (p95 0.063, p99 0.118 kWh).
+    assert size[int(0.95 * len(size))] < 0.25
+    assert size[int(0.99 * len(size))] < 0.3
+    off = [epoch for epoch, error in errors if abs(error) > 0.4]
     # The template drops its pending energy without a counter change a few
     # times (one 10-12 afternoon episode, one on 10-14); the core does not.
-    assert len(off) <= 5
-    assert size[-1] < 0.8
+    assert len(off) <= 20
+    assert size[-1] < 1.0
+    assert all(error < 0.6 for _, error in errors)
 
 
 def test_the_core_does_not_follow_the_template_s_false_full_anchor(recording):

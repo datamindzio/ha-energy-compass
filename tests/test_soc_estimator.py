@@ -209,6 +209,37 @@ def test_a_full_anchor_allows_one_hundred_percent_until_the_pack_is_left():
     assert again.soc_fraction == pytest.approx(0.999)
 
 
+def test_energy_above_capacity_after_a_confirmed_full_is_losses_not_storage():
+    state = _state(energy=24.0, confirmed=True)
+    top = _step(state, 60, 1002.0, 500.0)
+    assert top.energy_kwh == 24.0
+    assert top.excess_kwh == 0.0
+    assert top.top_confirmed
+    assert top.anchor_kind == "full"
+    assert top.anchor_at == T0
+    assert state.anchor.energy_kwh == 24.0
+    assert state.anchor.charge_kwh == 1002.0
+    left = _step(state, 120, 1002.0, 501.0)
+    assert left.energy_kwh == pytest.approx(23.0)
+    assert left.excess_kwh == 0.0
+
+
+def test_the_last_full_follows_the_refreshed_top():
+    state = _state(energy=24.0, confirmed=True)
+    state.last_full = state.anchor
+    _step(state, 60, 1002.0, 500.0)
+    assert state.last_full is state.anchor
+    assert state.last_full.charge_kwh == 1002.0
+
+
+def test_excess_without_a_confirmation_is_kept():
+    state = _state(energy=24.0, confirmed=False)
+    top = _step(state, 60, 1002.0, 500.0)
+    assert top.unanchored_top
+    assert top.excess_kwh == pytest.approx(1.8)
+    assert state.anchor.charge_kwh == 1000.0
+
+
 def test_clamping_at_the_bottom_creates_no_anchor():
     state = _state(energy=2.0)
     estimate = _step(state, 3600, 1000.0, 510.0)

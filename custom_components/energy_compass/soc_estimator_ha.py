@@ -240,7 +240,7 @@ class SocEstimator:
             self._remember(self.state.anchor)
         before = self.state.anchor
         estimate = core.step(self.state, self.settings, inputs)
-        if self.state.anchor is not before:
+        if (self.state.anchor.kind, self.state.anchor.at) != (before.kind, before.at):
             self._remember(self.state.anchor)
         self._publish(estimate, now, estimate.events)
 
