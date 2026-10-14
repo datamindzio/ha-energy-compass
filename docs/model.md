@@ -504,14 +504,14 @@ Limits:
   episode is soft too: the plan may end the episode at once or pay the slack.
 - It adds rows on the export indicators, and the solve is slower where it binds. Measured with
   `benchmarks/export_reserve_sweep.py --draws 40 --slots N --margins 0.5 1.0` (seed 93, G12-like days,
-  battery export on, `accept_incumbent` as the runtime), main 6f67bbd and this branch:
+  battery export on, `accept_incumbent` as the runtime), main 0318493 (T-094 merged) and this branch merged with it:
 
   | slots | margin | plan cost, mean / worst vs no floor | exported kWh | solve s, median / max | draws at the 10 s limit |
   | --- | --- | --- | --- | --- | --- |
-  | 96 | 0.5 | +0.000 / +0.000 | 7.14 -> 7.14 | 0.19 -> 0.20 / 2.86 -> 3.42 | 0 -> 0 |
-  | 96 | 1.0 | +0.171 / +1.117 | 7.14 -> 6.67 | 0.19 -> 1.75 / 2.88 -> 8.71 | 0 -> 0 |
-  | 192 | 0.5 | +0.000 / +0.000 | 13.93 -> 13.93 | 0.50 -> 0.51 / 8.26 -> 5.93 | 0 -> 0 |
-  | 192 | 1.0 | +0.345 / +2.183 | 13.93 -> 12.92 | 0.50 -> 3.93 / 8.26 -> 10.07 | 0 -> 4 |
+  | 96 | 0.5 | +0.000 / +0.000 | 7.14 -> 7.14 | 0.20 -> 0.21 / 3.08 -> 3.60 | 0 -> 0 |
+  | 96 | 1.0 | +0.171 / +1.117 | 7.14 -> 6.67 | 0.20 -> 1.85 / 3.08 -> 9.18 | 0 -> 0 |
+  | 192 | 0.5 | +0.000 / +0.000 | 13.93 -> 13.93 | 0.57 -> 0.57 / 8.90 -> 6.41 | 0 -> 0 |
+  | 192 | 1.0 | +0.351 / +2.183 | 13.93 -> 12.89 | 0.57 -> 4.19 / 8.90 -> 10.08 | 0 -> 4 |
 
   The plan cost is the premium of the margin when the forecast is right; costs are in the sweep's
   currency, evening buy price 1.1-1.3. A 0.5 kWh margin was met by the pack in these draws without
