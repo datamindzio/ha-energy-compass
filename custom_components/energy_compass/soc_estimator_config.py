@@ -113,6 +113,9 @@ def settings(
         )
     configured_rated = values.get("rated_pv_w")
     configured_current = values.get("max_charge_current")
+    # `grid_export_kw` 0 is the planner's zero export (it forces export to 0 in
+    # the optimizer), so it arms the derived-surplus evidence; a configuration
+    # without the key states no cap and leaves it off.
     export_kw = (config.get("settings") or {}).get("grid_export_kw")
     return EstimatorSettings(
         capacity_kwh=float(capacity),

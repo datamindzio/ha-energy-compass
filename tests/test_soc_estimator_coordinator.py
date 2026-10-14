@@ -317,6 +317,30 @@ async def test_the_export_limit_follows_the_grid_export_setting(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_the_export_limit_is_unset_without_a_grid_export_setting(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    _set_sources(hass)
+    config = _config()
+    del config["settings"]["grid_export_kw"]
+    entry = await _setup(hass, config)
+    assert entry.runtime_data.soc_estimator.settings.export_limit_w is None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_zero_grid_export_is_a_zero_export_limit(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    _set_sources(hass)
+    config = _config()
+    config["settings"].update(grid_export_kw=0)
+    entry = await _setup(hass, config)
+    assert entry.runtime_data.soc_estimator.settings.export_limit_w == 0.0
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_a_logged_full_candidate_confirms_the_balance_without_an_anchor(
     recorder_mock, hass, enable_custom_integrations, freezer
 ):
