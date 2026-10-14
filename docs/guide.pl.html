@@ -921,6 +921,12 @@ cecha Twojego pakietu, więc nie ma wartości domyślnej, a krok nie zapisze si�
 użyteczna energia między tym punktem a pełnym naładowaniem; domyślnie jest równa pojemności baterii z
 grupy Bateria (w ustawieniach eksperckich jest nadpisanie), a planer skaluje ułamek estymatora przez pojemność baterii,
 więc trzymaj obie równe.</p>
+<p><strong>Pełny pakiet to też napięcie.</strong> Kotwica pełna wymaga napięcia pakietu nie niższego niż <strong>Najniższe
+napięcie pakietu pełnego</strong> (<code>full_min_voltage</code>, w tej samej skali co napięcie 0 %). To cecha Twojego
+pakietu, więc nie ma wartości domyślnej, a krok nie zapisze się bez niego (musi też być wyższe niż
+napięcie 0 %). Poniżej niego kandydat na pełny nie startuje, a trwający się przerywa (zapis
+<code>below_full_voltage</code>). To napięcie, a nie liczniki, mówi, że pakiet jest pełny: liczniki, które
+uciekły w dół, nie mogą powstrzymać pełnego pakietu przed ich skorygowaniem.</p>
 <p><strong>Kotwice: tylko fizyczne dowody.</strong></p>
 <section class="table-scroll"><table>
 <thead>
@@ -933,12 +939,12 @@ więc trzymaj obie równe.</p>
 <tbody>
 <tr>
 <td><code>full</code></td>
-<td>Przez <code>full_hold_seconds</code> (600 s) bez przerwy, przy czym każde czytane źródło (prąd, napięcie, PV, zużycie, sieć) zgłosiło się w ciągu ostatnich 60 s: pakiet prawie nie przyjmuje ładunku (prąd w granicach max(1 A, 2 % maksymalnego prądu ładowania)); ładowanie było możliwe (limit prądu ładowania co najmniej 2 A, a sterownik Deye nie jest w <code>HOLD</code>, <code>CURTAIL</code>, <code>BASE</code> ani <code>DISCHARGE_GRID</code>; w <code>CHARGE_GRID</code> tylko z programem <code>Grid</code> poniżej 99 % jego napięcia i prądem ładowania z sieci co najmniej 2 A); a przyczyną nie jest brak słońca, co pokazuje <strong>zmierzony eksport do sieci</strong> co najmniej max(300 W, 5 % mocy znamionowej PV), gdy pakiet nie bierze nic (ścieżka <code>export</code>). Dopiero tam, gdzie eksport jest niemożliwy lub ograniczony (limit eksportu planera <code>grid_export_kw</code> wynosi 0 albo eksport jest w granicach 5 % tego limitu), liczy się wyliczona nadwyżka (ścieżka <code>surplus</code>): PV − zużycie − ładunek, który pakiet jeszcze bierze ≥ 300 W + 10 % mocy PV, bo PV po stronie DC minus zużycie po stronie AC zawyża prawdziwą nadwyżkę o straty konwersji falownika. Trzecia ścieżka (<code>grid</code>) to żądane ładowanie z sieci 2 A lub więcej poniżej napięcia swojego programu. Liczniki muszą też przed kotwicą dawać pakiet na <strong>co najmniej 70 % pojemności</strong>; inaczej kandydat jest zapisany jako <code>rejected_low_energy</code> i nigdy nie kotwiczy (ograniczenie prądu ładowania przez BMS na mrozie albo obniżenie mocy falownika wyglądają jak pełny pakiet).</td>
+<td>Przez <code>full_hold_seconds</code> (co najmniej 3600 s, czyli godzinę; domyślnie 3600 s) bez przerwy, przy napięciu pakietu cały czas nie niższym niż <code>full_min_voltage</code>, przy czym każde czytane źródło (prąd, napięcie, PV, zużycie, sieć) zgłosiło się w ciągu ostatnich 60 s: pakiet prawie nie przyjmuje ładunku (prąd w granicach max(1 A, 2 % maksymalnego prądu ładowania)); ładowanie było możliwe (limit prądu ładowania co najmniej 2 A, a sterownik Deye nie jest w <code>HOLD</code>, <code>CURTAIL</code>, <code>BASE</code> ani <code>DISCHARGE_GRID</code>; w <code>CHARGE_GRID</code> tylko z programem <code>Grid</code> poniżej 99 % jego napięcia i prądem ładowania z sieci co najmniej 2 A; trwający już kandydat trwa też w <code>HOLD</code>, patrz niżej); a przyczyną nie jest brak słońca, co pokazuje <strong>zmierzony eksport do sieci</strong> co najmniej max(300 W, 5 % mocy znamionowej PV), gdy pakiet nie bierze nic (ścieżka <code>export</code>). Dopiero tam, gdzie eksport jest niemożliwy lub ograniczony (limit eksportu planera <code>grid_export_kw</code> wynosi 0 albo eksport jest w granicach 5 % tego limitu), liczy się wyliczona nadwyżka (ścieżka <code>surplus</code>): PV − zużycie − ładunek, który pakiet jeszcze bierze ≥ 300 W + 10 % mocy PV, bo PV po stronie DC minus zużycie po stronie AC zawyża prawdziwą nadwyżkę o straty konwersji falownika. Trzecia ścieżka (<code>grid</code>) to żądane ładowanie z sieci 2 A lub więcej poniżej napięcia swojego programu. Liczniki nie są brane pod uwagę: pakiet na pełnym napięciu kotwiczy, nawet gdy liczniki dają go daleko poniżej pojemności, i właśnie do tego służy kotwica.</td>
 <td><code>E</code> = pojemność</td>
 </tr>
 <tr>
 <td><code>full_balance</code></td>
-<td>W wierszu planu będącym oknem balansu LFP (<code>balance_hold</code>), z programem <code>Grid</code> na jego (pełnym) napięciu: ładowanie, które ustaje na napięciu programu, z tymi samymi warunkami prądu końcówki, limitu, świeżości i 70 % utrzymanymi przez <code>full_hold_seconds</code>. Plan zażądał pełnego pakietu, a falownik zatrzymał się na pełnym napięciu, więc samo zatrzymanie jest dowodem; „cel osiągnięty” sterownika nie wyjaśnia go tu inaczej.</td>
+<td>W wierszu planu będącym oknem balansu LFP (<code>balance_hold</code>), z programem <code>Grid</code> na jego (pełnym) napięciu: ładowanie, które ustaje na napięciu programu, z tymi samymi warunkami prądu końcówki, limitu, świeżości i napięcia utrzymanymi przez <code>full_hold_seconds</code>. Plan zażądał pełnego pakietu, a falownik zatrzymał się na pełnym napięciu, więc samo zatrzymanie jest dowodem; „cel osiągnięty” sterownika nie wyjaśnia go tu inaczej.</td>
 <td><code>E</code> = pojemność</td>
 </tr>
 <tr>
@@ -969,7 +975,22 @@ startu estymatora (lub zasiania) kandydaci na kotwicę pełną są tylko <em>zap
 <code>full_candidates</code>, chyba że włączono <strong>Kotwicz na kandydatach od pierwszego dnia</strong>, bo wytrzymanie nigdy
 nie było widziane na prawdziwym ogonie ładowania. Kandydat pokazuje początek, wartości, to, która
 ścieżka zadziałała (<code>export</code>, <code>surplus</code>, <code>grid</code> lub <code>balance</code>) oraz jego <code>outcome</code> (<code>anchored</code>,
-<code>candidate</code> dla niezastosowanego albo <code>rejected_low_energy</code>).</p>
+<code>candidate</code> dla niezastosowanego) obok <code>energy_before_kwh</code>, czyli energii, którą liczniki dawały tuż
+przed kotwicą.</p>
+<p><strong>Ładowanie pozostaje dozwolone w trakcie wytrzymania.</strong> Gdy trwa kandydat na pełny (od pierwszego
+odczytu do zakwalifikowania lub przerwania), natywny sterownik Deye nie zamyka toru ładowania: tam,
+gdzie profil obniżyłby lub wyzerował prąd ładowania baterii (<code>CHARGE_PV</code> i <code>SELF_CONSUME</code> przy SOC
+100 %, <code>HOLD</code>, reguła pełnego pakietu i stop <code>CHARGE_GRID</code> przy 100 %), utrzymuje prąd ładowania na
+pułapie ładowania (ograniczonym przez <code>max_current</code>, <code>max_power_w</code> / V i histerezę pułapu prądu), a
+kierunek programu zostaje taki, jak ustawia go profil: nic nie jest dodawane, ładowanie z sieci nie
+jest przez to otwierane, a <code>HOLD</code> zachowuje własny program <code>Grid</code> i prąd z sieci. Bez tego ogon, który
+sterownik sam uciął, kończyłby dowód i wytrzymanie nigdy by się nie skończyło. Kandydat trwa też, gdy
+plan przechodzi do <code>HOLD</code> (kandydat nigdy nie <em>startuje</em> w <code>HOLD</code>): obowiązujący limit ładowania, co
+najmniej 2 A, pokazuje, że sterownik trzyma tor otwarty, a w <code>HOLD</code> liczą się tylko ścieżki <code>export</code> i
+<code>surplus</code>, bo jego program <code>Grid</code> jedynie utrzymuje SOC. Przejście do <code>CURTAIL</code>, <code>BASE</code> lub
+<code>DISCHARGE_GRID</code>, limit ładowania poniżej 2 A albo napięcie poniżej napięcia pełnego kończy kandydata,
+a profil wraca do własnych wartości. <strong>Silnik blueprint</strong> nie jest zmieniany i zamyka tor ładowania
+tam, gdzie mówi jego profil, więc wytrzymanie może tam zostać przerwane.</p>
 <p><strong>Nieaktualność.</strong> Estymata dostaje znacznik najnowszego raportu źródeł napięcia, prądu i mocy, ale nigdy
 świeższy, niż pozwalają jej liczniki: gdy liczniki są starsze niż ich zaobserwowany krok odświeżania
 (co najmniej minuta, najwyżej 15; do zaobserwowania kroku 15 minut), estymata jest tak stara jak liczniki,
@@ -989,8 +1010,9 @@ skok w górę i przechodzi przez to samo przesunięcie odniesienia co rekalibrac
   skoku), ze znacznikiem najnowszego raportu źródeł napięcia, prądu i mocy. Między nimi nie ma encji,
   więc przeładowanie szablonów ani restart nie czyni już źródła niedostępnym.</li>
 <li><em>Sterownik Deye.</em> Przy włączonym estymatorze fakt SOC natywnego sterownika to estymata: używają jej
-  bramka telemetrii, reguła pełnego pakietu w trybie Voltage i kontrole osiągnięcia celu. Zmienia się
-  tylko źródło faktu. <strong>Tryb Capacity nie jest obsługiwany z estymatorem</strong>: w tym trybie falownik
+  bramka telemetrii, reguła pełnego pakietu w trybie Voltage i kontrole osiągnięcia celu. Sterownik
+  czyta też, czy trwa kandydat na pełny, i wtedy utrzymuje zezwolenie na ładowanie (patrz <em>Ładowanie
+  pozostaje dozwolone w trakcie wytrzymania</em>). <strong>Tryb Capacity nie jest obsługiwany z estymatorem</strong>: w tym trybie falownik
   porównuje progi SOC swoich programów z własnym SOC z BMS, więc cel w skali estymatora byłby błędny.
   Zapis estymatora jest odrzucany (<em>falownik jest w trybie Capacity</em>), gdy włączony jest natywny
   sterownik, a tryb pracy baterii falownika to <code>Capacity</code>; najpierw przełącz falownik na <code>Voltage</code>. Gdy
@@ -999,11 +1021,17 @@ skok w górę i przechodzi przez to samo przesunięcie odniesienia co rekalibrac
   zapisywać progi SOC. Tryb Voltage nie jest dotknięty (jego progi to napięcia). Wycofywany silnik
   blueprintu zachowuje własne wejście <code>soc_entity</code> i nie jest zmieniany.</li>
 <li><em>Balansowanie LFP.</em> Balans uznaje pakiet za pełny tylko na podstawie fizycznego dowodu, a nie przy
-  SOC ≥ progu: kotwicy <code>full</code> lub <code>full_balance</code> albo trwającego kandydata na pełny (zapisanego,
-  wiarygodnego, także gdy przez pierwsze 14 dni kandydaci są tylko zapisywani i nie ma kotwicy). Odczyt,
+  SOC ≥ progu: kotwicy <code>full</code> lub <code>full_balance</code> albo trwającego kandydata na pełny (takiego, który
+  przetrzymał pełne wytrzymanie, także gdy przez pierwsze 14 dni kandydaci są tylko zapisywani i nie ma kotwicy). Odczyt,
   który arytmetyka dociągnęła do progu, nigdy nie zalicza balansu. Wiersz balansu, którego program Grid
   osiąga swoje napięcie i wchodzi w ogon ładowania, jest takim dowodem, więc ukończony balans jest
-  zapisywany i nie jest planowany od nowa każdego dnia.</li>
+  zapisywany i nie jest planowany od nowa każdego dnia. Wytrzymanie balansu (<code>balance_hold_minutes</code>)
+  zaczyna się liczyć dopiero, gdy ten dowód przetrwał pełne wytrzymanie, więc przy estymatorze planer
+  prosi o okno równe wytrzymaniu balansu <strong>plus</strong> pełnemu wytrzymaniu (przy ustawieniach domyślnych
+  dwie godziny). W pierwszej godzinie plan pokazuje to okno jako zwykły wiersz balansu (sterownik
+  ładuje, tracker jeszcze nie jest w stanie <code>holding</code>); gdy kandydat się zakwalifikuje, tracker
+  przetrzymuje, a pozostałe minuty wytrzymania balansu są planowane od teraz. Okno równe samemu
+  wytrzymaniu balansu kończy się przed zakwalifikowaniem dowodu i niczego nie kończy.</li>
 </ul>
 <p><strong>Diagnostyka.</strong> Diagnostyczny sensor <code>sensor.&lt;name&gt;_soc_estimator</code> (<strong>Estymator SOC</strong>, %, klasa
 urządzenia battery) istnieje, gdy estymator jest włączony albo działa w cieniu. Jego stan jest
@@ -1046,6 +1074,11 @@ tylko ostrzega, plany nie są blokowane, a znika przy następnej kotwicy. Pobran
 <td>wymagane, brak</td>
 </tr>
 <tr>
+<td><code>full_min_voltage</code></td>
+<td>najniższe napięcie pakietu pełnego; kandydat na pełny trwa tylko przy nim lub powyżej</td>
+<td>wymagane, brak</td>
+</tr>
+<tr>
 <td><code>initial_soc_percent</code></td>
 <td>SOC, od którego startuje się bez zapisanego stanu ani zasiania</td>
 <td>50</td>
@@ -1057,8 +1090,8 @@ tylko ostrzega, plany nie są blokowane, a znika przy następnej kotwicy. Pobran
 </tr>
 <tr>
 <td><code>full_hold_seconds</code></td>
-<td>wytrzymanie przed kotwicą pełną</td>
-<td>600</td>
+<td>wytrzymanie przed kotwicą pełną (co najmniej 3600, czyli godzina)</td>
+<td>3600</td>
 </tr>
 <tr>
 <td><code>drift_warn_cycles</code></td>
@@ -1124,7 +1157,7 @@ tylko ostrzega, plany nie są blokowane, a znika przy następnej kotwicy. Pobran
 <p><strong>Konfiguracja i wykrywanie.</strong> W nowej instalacji krok <strong>Wykryte źródła</strong> proponuje niezaznaczony
 <strong>Estymator z liczników (zalecany, gdy SOC z BMS jest niewiarygodny)</strong>, gdy jedno urządzenie Solarman
 Deye ma liczniki ładowania i rozładowania, napięcie i prąd pakietu. Zaznaczenie zastępuje wiersze SOC i
-przed Podglądem otwiera ustawienia estymatora, gdzie wymagane jest napięcie pakietu odpowiadające 0 %.</p>
+przed Podglądem otwiera ustawienia estymatora, gdzie wymagane są napięcie pakietu odpowiadające 0 % i najniższe napięcie pakietu pełnego.</p>
 <p><strong>Migracja z estymatora w szablonie.</strong> Instalacja z estymatorem w szablonie YAML może przejść bez
 skoku:</p>
 <ol>

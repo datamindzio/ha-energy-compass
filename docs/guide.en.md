@@ -580,12 +580,19 @@ capacity is the usable energy between that point and full; it defaults to the ba
 the Battery group (an expert override exists) and the planner scales the estimator fraction by the
 battery capacity, so keep the two equal.
 
+**A full pack is a voltage too.** A full anchor needs the pack voltage to be at or above **Lowest pack
+voltage of a full pack** (`full_min_voltage`, the same scale as the 0 % voltage). It is a property of
+your pack, so there is no default and the step refuses to save without it (it must also be above the
+0 % voltage). Below it no full candidate starts, and a running one breaks (logged as
+`below_full_voltage`). This voltage, not the counters, says the pack is full: counters that have drifted
+low must not be able to keep a full pack from correcting them.
+
 **Anchors: physical evidence only.**
 
 | Anchor | When | Effect |
 | --- | --- | --- |
-| `full` | For `full_hold_seconds` (600 s) without a break, with every source it reads (current, voltage, PV, load, grid) reported within the last 60 s: the pack takes (almost) no charge (current within max(1 A, 2 % of the maximum charge current)); charging was possible (the charge current limit is at least 2 A, and the Deye controller is not in `HOLD`, `CURTAIL`, `BASE` or `DISCHARGE_GRID`; in `CHARGE_GRID` only with a `Grid` program below 99 % of its voltage and a grid charge current of 2 A or more); and the cause is not lack of sun, shown by **measured grid export** of at least max(300 W, 5 % of the rated PV power) while the pack takes none (path `export`). Only where export is impossible or capped (the planner's export cap `grid_export_kw` is 0, or the export sits within 5 % of it) does the derived surplus count instead (path `surplus`): PV − load − the charge the pack still takes ≥ 300 W + 10 % of the PV power, because DC PV minus AC load overstates the real surplus by the inverter's conversion losses. Grid charging requested at 2 A or more below its program voltage is the third path (`grid`). The counters must also put the pack at **70 % of the capacity or more** before the anchor; otherwise the candidate is logged as `rejected_low_energy` and never anchors (a BMS charge-current limit in the cold, or inverter derating, looks like a full pack). | `E` = capacity |
-| `full_balance` | In a plan row that is an LFP balance hold (`balance_hold`), with a `Grid` program at its (full) voltage: charging that stops at the program voltage, with the same taper, limit, freshness and 70 % conditions held for `full_hold_seconds`. The plan asked for a full pack and the inverter stopped at the full voltage, so the stop is itself the evidence; the controller's own "target reached" does not explain it away here. | `E` = capacity |
+| `full` | For `full_hold_seconds` (at least 3600 s, one hour; default 3600 s) without a break, with the pack voltage at or above `full_min_voltage` throughout and every source it reads (current, voltage, PV, load, grid) reported within the last 60 s: the pack takes (almost) no charge (current within max(1 A, 2 % of the maximum charge current)); charging was possible (the charge current limit is at least 2 A, and the Deye controller is not in `HOLD`, `CURTAIL`, `BASE` or `DISCHARGE_GRID`; in `CHARGE_GRID` only with a `Grid` program below 99 % of its voltage and a grid charge current of 2 A or more; a candidate that already runs also continues in `HOLD`, see below); and the cause is not lack of sun, shown by **measured grid export** of at least max(300 W, 5 % of the rated PV power) while the pack takes none (path `export`). Only where export is impossible or capped (the planner's export cap `grid_export_kw` is 0, or the export sits within 5 % of it) does the derived surplus count instead (path `surplus`): PV − load − the charge the pack still takes ≥ 300 W + 10 % of the PV power, because DC PV minus AC load overstates the real surplus by the inverter's conversion losses. Grid charging requested at 2 A or more below its program voltage is the third path (`grid`). The counters are not consulted: a pack at the full voltage anchors even when they put it far below the capacity, which is exactly what an anchor is for. | `E` = capacity |
+| `full_balance` | In a plan row that is an LFP balance hold (`balance_hold`), with a `Grid` program at its (full) voltage: charging that stops at the program voltage, with the same taper, limit, freshness and voltage conditions held for `full_hold_seconds`. The plan asked for a full pack and the inverter stopped at the full voltage, so the stop is itself the evidence; the controller's own "target reached" does not explain it away here. | `E` = capacity |
 | `empty` | For 60 s, with the same 60 s freshness, and only if the pack voltage is at least half the 0 % voltage (a 0 V reading is a dropout) and, for the discharge case, the current and the battery power agree on discharging (otherwise no anchor, and the refusal is logged once): discharging at 0.5 A or more at no more than 0.1 C with the voltage at or below the 0 % voltage; or the discharge stopped although the house imports at least 300 W from the grid, the discharge current limit is at least 2 A, the controller state is not `HOLD` or `CURTAIL` and the voltage is within 1 % above the 0 % voltage. | `E` = 0 (a downward jump: like any recalibration it revokes the plan for about a minute while fresh reports confirm it); the energy since the last full anchor is shown as `measured_capacity_kwh` (never applied) |
 | `reset` | A counter went down | Re-anchors at the current energy |
 | `initial` / `seed` | First start: the SOC you state, or the anchor of the SOC template you migrate from | Shown as unanchored until the first physical anchor |
@@ -600,7 +607,23 @@ anchors, and the options step says so. For the **first 14 days** after the estim
 seeded), full candidates are only *logged* in the `full_candidates` attribute, unless **Anchor on
 candidates from day one** is on, because the hold has never been seen on a real taper. A candidate shows
 the start, the values, which path held (`export`, `surplus`, `grid` or `balance`) and its `outcome`
-(`anchored`, `candidate` for one not applied, or `rejected_low_energy`).
+(`anchored`, or `candidate` for one not applied) beside `energy_before_kwh`, the energy the counters
+gave just before.
+
+**Charging stays allowed during the hold.** While a full candidate runs (from its first reading until
+it qualifies or breaks), the native Deye controller does not close the charge path: where the
+profile would lower or zero the battery charge current (`CHARGE_PV` and `SELF_CONSUME` once the SOC
+reads 100 %, `HOLD`, the full-pack rule and the `CHARGE_GRID` stop at 100 %) it keeps the charge
+current at the charge cap (limited by `max_current`, `max_power_w` / V and the current-ceiling
+hysteresis), and the program direction stays as the profile sets it: nothing is added, grid charging
+is never opened for it, and `HOLD` keeps its own `Grid` program and grid current. Without this a
+taper that the controller itself cut would end the evidence and the hold would never complete. A
+candidate also continues while the plan moves to `HOLD` (a candidate never *starts* in `HOLD`): the
+charge limit in force, at least 2 A, shows that the controller is holding the path open, and in
+`HOLD` only the export and surplus paths count, since its `Grid` program only holds the SOC. Leaving
+for `CURTAIL`, `BASE` or `DISCHARGE_GRID`, a charge limit under 2 A, or a voltage under the full
+voltage ends the candidate, and the profile goes back to its own values. The **blueprint engine** is
+unchanged and closes the charge path where its profile says so, so the hold may break there.
 
 **Staleness.** The estimate is stamped with the newest report of the voltage, current and power
 sources, but never fresher than its counters allow: once the counters are older than their observed
@@ -624,8 +647,9 @@ reports confirm it).
   range, jump check), stamped with the newest report of the voltage, current and power sources. There
   is no entity between them, so a template reload or a restart no longer makes the source unavailable.
 - *Deye controller.* With the estimator on, the native controller's SOC fact is the estimate: the
-  telemetry gate, the Voltage-mode full-pack rule and the reached checks use it. Only the source of
-  the fact changes. **Capacity mode is not supported with the estimator**: in that mode the inverter
+  telemetry gate, the Voltage-mode full-pack rule and the reached checks use it. The controller
+  also reads whether a full candidate runs and then keeps charging allowed (see *Charging stays
+  allowed during the hold*). **Capacity mode is not supported with the estimator**: in that mode the inverter
   compares the SOC thresholds of its programs with its own BMS SOC, so a target in the estimator's
   scale would be wrong. Saving the estimator is refused (*the inverter is in Capacity mode*) while a
   native controller is enabled and the inverter's battery operation mode reads `Capacity`; switch the
@@ -635,10 +659,16 @@ reports confirm it).
   thresholds are voltages). The deprecated blueprint engine keeps its own `soc_entity` input and is
   not changed.
 - *LFP balance.* A balance counts a pack as full only on physical evidence, not at SOC ≥ the
-  threshold: a `full` or `full_balance` anchor, or a standing full candidate (a logged, plausible one,
+  threshold: a `full` or `full_balance` anchor, or a standing full candidate (one that has held the full hold,
   also while the first 14 days only log candidates and apply no anchor). A reading the arithmetic
   pushed to the threshold never credits a balance. A balance row whose Grid program reaches its voltage
   and tapers is such evidence, so a completed balance is recorded and not planned again every day.
+  The balance hold (`balance_hold_minutes`) starts counting only once that evidence has held for the
+  full hold, so with the estimator the planner asks for a window of the balance hold **plus** the
+  full hold (two hours at the defaults). During the first hour the plan shows that window as an
+  ordinary balance row (the controller charges, the tracker is not yet `holding`); once the candidate
+  qualifies the tracker holds and the remaining minutes of the balance hold are planned from now. A
+  window of the balance hold alone ends before the evidence qualifies and completes nothing.
 
 **Diagnostics.** The diagnostic sensor `sensor.<name>_soc_estimator` (**SOC estimator**, %, device class
 battery) exists while the estimator is on or in shadow. Its state is recorded; of its attributes only
@@ -659,9 +689,10 @@ the same detail and no entity ids.
 | `charge_counter`, `discharge_counter` | lifetime battery energy counters (kWh or Wh) | detected on a Solarman Deye device |
 | `voltage`, `current` | pack voltage and current (current positive while discharging) | detected on a Solarman Deye device |
 | `empty_voltage` | the pack voltage that is 0 % | required, none |
+| `full_min_voltage` | the lowest pack voltage of a full pack; a full candidate runs only at or above it | required, none |
 | `initial_soc_percent` | SOC to start from when there is no stored state or seed | 50 |
 | `eta_charge` | charge efficiency of the counters | the measured battery round trip when [calibration](#measured-calibration-optional) has one, else 0.95 |
-| `full_hold_seconds` | hold before a full anchor | 600 |
+| `full_hold_seconds` | hold before a full anchor (at least 3600, one hour) | 3600 |
 | `drift_warn_cycles` | capacities of throughput without an anchor before the repair issue | 3 |
 | `anchor_on_candidates` | anchor on full candidates inside the first 14 days | off |
 | `shadow` | run as diagnostics only beside the bound SOC entity | off |
@@ -682,7 +713,7 @@ Every source is read in the base unit its entity declares (kWh or Wh, W or kW, V
 **Setup and detection.** On a new installation the **Detected sources** step offers **Counter estimator
 (recommended when the BMS SOC is unreliable)** unticked when one Solarman Deye device has the charge
 and discharge counters, the pack voltage and the pack current. Ticking it replaces the SOC rows and
-opens the estimator's settings before Preview, where the pack voltage that is 0 % is required.
+opens the estimator's settings before Preview, where the pack voltage that is 0 % and the lowest pack voltage of a full pack are required.
 
 **Migrating from a template estimator.** A site that runs a YAML template estimator can move without a
 jump:
