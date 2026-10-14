@@ -963,8 +963,9 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
     exposures = hold_exposure(problem)
     lowest = battery.initial_kwh
     highest = battery.initial_kwh
-    for slot, v, drain, exposure in zip(
-        problem.slots, vectors, drains, exposures, strict=True
+    ceiling = battery.capacity_kwh * battery.maximum_soc_fraction
+    for at, (slot, v, drain, exposure) in enumerate(
+        zip(problem.slots, vectors, drains, exposures, strict=True)
     ):
         hours = (
             slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
@@ -1025,6 +1026,27 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 model.upper[v[key]] = 0
         x = {mode: v[f"mode_{mode}"] for mode in MODES}
         model.constrain({index: 1 for index in x.values()}, 1, 1)
+        step = battery.eta_charge * surplus
+        # Only where the pack can reach the point (`highest` is the most it can hold at
+        # the start of this interval): elsewhere the rows would have no feasible use.
+        if exposure > 0 and highest >= ceiling - step - _ROW_TOLERANCE:
+            # The charge is for a HOLD that could have been a charge. At the start of an
+            # interval the pack has less room than the PV-follow charge would store
+            # (`hold_full`), a HOLD is no choice and a priced one is a constant the solver
+            # cannot avoid: the relaxation dodges it with a fraction of a charge and the
+            # gap it leaves made every 192-interval plan time_limited (T-094). `relief`
+            # gives the charge back there; it is paid only against an idle mode.
+            packed = v["hold_full"] = model.variable(binary=True)
+            relief = v["hold_relief"] = model.variable(upper=1.0, cost=-exposure)
+            model.constrain({relief: 1, packed: -1}, -np.inf, 0)
+            model.constrain({relief: 1, x["HOLD"]: -1, x["CURTAIL"]: -1}, -np.inf, 0)
+            if at:
+                model.constrain(
+                    {vectors[at - 1]["energy"]: 1, packed: -(ceiling - step)}, 0, np.inf
+                )
+            elif battery.initial_kwh < ceiling - step:
+                model.upper[packed] = 0
+
         # Named modes already determine flow direction. Tie the auxiliary flags
         # to them so fractional relaxations cannot invent grid arbitrage.
         # A CURTAIL interval may charge from the PV it cannot pass (T-064): the direction

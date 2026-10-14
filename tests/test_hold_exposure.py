@@ -5,8 +5,10 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pytest
 
+from custom_components.energy_compass.engine import optimize
 from custom_components.energy_compass.engine.hold_exposure import (
     HOLD_FORECAST_MISS,
     hold_exposure,
@@ -176,3 +178,42 @@ def test_a_pack_with_no_room_is_charged_the_round_trip_loss_only():
         < 0.15 * hold_exposure(replace(priced, battery=_battery()))[0]
     )
     assert priced_plan.objective == pytest.approx(unpriced_plan.objective, abs=0.15)
+
+
+def _weighted_objective(problem):
+    """The solver's own objective of the plan, charge included (`Plan.objective` has none)."""
+    original = optimize._Model.solve
+    captured = {}
+
+    def spy(self, time_limit):
+        values = original(self, time_limit)
+        captured["weighted"] = float(np.dot(self.cost, values))
+        return values
+
+    optimize._Model.solve = spy
+    try:
+        plan = solve(problem)
+    finally:
+        optimize._Model.solve = original
+    return captured["weighted"], plan
+
+
+def test_a_hold_in_a_pack_that_cannot_take_the_charge_is_not_charged():
+    """A pack at its ceiling cannot take what a PV-follow charge would store, so a HOLD
+    there is not a choice and carries no charge: the solver's objective with the share is
+    the one without it, though `hold_exposure` prices the intervals (T-094)."""
+    full = _battery(initial_kwh=24)
+    priced = _problem(_live_day(), full, hold_miss_share=HOLD_FORECAST_MISS)
+    assert max(hold_exposure(priced)) > 0
+    with_share, _ = _weighted_objective(priced)
+    without, _ = _weighted_objective(replace(priced, hold_miss_share=0.0))
+    assert with_share == pytest.approx(without, abs=1e-6)
+
+
+def test_the_charge_stays_on_a_pack_with_room_to_take_it():
+    """The same day from a pack with room: the HOLD is a choice and the objective carries
+    the share of the miss it would have bought."""
+    room = _problem(_live_day(), _battery(), hold_miss_share=HOLD_FORECAST_MISS)
+    with_share, _ = _weighted_objective(room)
+    without, _ = _weighted_objective(replace(room, hold_miss_share=0.0))
+    assert with_share > without + 0.01
