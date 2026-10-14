@@ -220,6 +220,7 @@
           "grid_friendly_export_cap_kw": "Miękki limit eksportu do sieci",
           "autonomy_margin_per_kwh": "Margines rezerwy autonomii",
           "peak_reserve_margin_kwh": "Zapas baterii na drogie okresy",
+          "export_reserve_margin_kwh": "Zapas baterii po sprzedaży z baterii",
           "autonomy_reserve": "Rezerwa autonomii"
         },
         "description": "Zmień wartości stałe lub użyj edytora pomocników. {detail}",
@@ -232,6 +233,7 @@
           "minimum_grid_charge_episode_benefit": "Domyślnie 0 (wyłączone); zakres 0-1000, 0 wyłącza. Dodatkowy okres ładowania baterii z sieci musi poprawiać koszt całego horyzontu względem planu z mniejszą liczbą okresów o co najmniej tę kwotę. Uwzględnia ceny, straty, zużycie baterii i opcjonalną wartość końcową. Trwający, opublikowany okres nie jest liczony ponownie. Odzwierciedla próg korzyści z eksportu, ale dla ładowania z sieci zamiast eksportu baterii.",
           "import_penalty_per_kwh": "Domyślnie 0 (wyłączone); zakres 0-1000 za kWh. Cena preferencji doliczana wyłącznie w planowaniu do każdej kWh pobranej z sieci, w każdej strategii. Planer woli wtedy pokryć zużycie z baterii niż trzymać energię dla minimalnie lepszej ceny później, a plan ma zapas na błąd prognozy wewnątrz przedziału. Raportowane koszty pozostają w prawdziwej walucie i nigdy jej nie zawierają. Samowystarczalność używa większej z tej kary i własnej ceny importu.",
           "peak_reserve_margin_kwh": "Domyślnie 0 (wył.); zakres 0-100 kWh. Dodatkowa energia ponad prognozowaną potrzebę na start drogiego okresu (cena zakupu powyżej limitu ceny ładowania z sieci; wymaga limitu). Miękki cel tylko w planowaniu na ostatnim tanim przedziale, pochłania zużycie wyższe od prognozy; nie wchodzi do raportowanych kosztów.",
+          "export_reserve_margin_kwh": "Domyślnie 0 (wył.); zakres 0-100 kWh. Energia zostawiana w baterii po przedziale sprzedaży z baterii, ponad prognozowaną potrzebę do następnego przedziału w cenie nie wyższej niż limit ceny ładowania z sieci (wymaga limitu i sprzedaży z baterii). Miękki cel tylko w planowaniu: wyraźnie droższa sprzedaż nadal schodzi poniżej niego. Może wydłużyć obliczenia; nie wchodzi do raportowanych kosztów.",
           "maximum_grid_charge_price": "Końcowa cena zakupu po przeliczeniach taryfy, w walucie instalacji/kWh. Cena równa limitowi jest dozwolona. Zakres −1000–1000; 0 oznacza tylko ceny zerowe lub ujemne. Limit działa po włączeniu przełącznika. Nie ogranicza zasilania domu ani ładowania z nadwyżki PV.",
           "limit_grid_charge_price": "Domyślnie wyłączone. Powyżej limitu zabrania ładowania baterii z sieci, także przy czasie trybu 0. Nowy okres ładowania musi mieścić się w dozwolonych cenach przez cały minimalny czas. Gdy pozostały czas rozpoczętego ładowania koliduje z limitem, plan od razu przechodzi w HOLD do końca pierwotnego okresu; zegar nie jest resetowany.",
           "grid_friendly_import_cap_kw": "Miękki limit mocy poboru z sieci w trybie grid_friendly, w kW. Wartość 0 oznacza użycie limitu instalacji (grid_import_kw) zamiast osobnego limitu.",
@@ -725,6 +727,7 @@
           "grid_friendly_export_cap_kw": "Miękki limit eksportu do sieci",
           "autonomy_margin_per_kwh": "Margines rezerwy autonomii",
           "peak_reserve_margin_kwh": "Zapas baterii na drogie okresy",
+          "export_reserve_margin_kwh": "Zapas baterii po sprzedaży z baterii",
           "autonomy_reserve": "Rezerwa autonomii"
         },
         "description": "Zmień wartości stałe lub użyj edytora pomocników. {detail}",
@@ -737,6 +740,7 @@
           "minimum_grid_charge_episode_benefit": "Domyślnie 0 (wyłączone); zakres 0-1000, 0 wyłącza. Dodatkowy okres ładowania baterii z sieci musi poprawiać koszt całego horyzontu względem planu z mniejszą liczbą okresów o co najmniej tę kwotę. Uwzględnia ceny, straty, zużycie baterii i opcjonalną wartość końcową. Trwający, opublikowany okres nie jest liczony ponownie. Odzwierciedla próg korzyści z eksportu, ale dla ładowania z sieci zamiast eksportu baterii.",
           "import_penalty_per_kwh": "Domyślnie 0 (wyłączone); zakres 0-1000 za kWh. Cena preferencji doliczana wyłącznie w planowaniu do każdej kWh pobranej z sieci, w każdej strategii. Planer woli wtedy pokryć zużycie z baterii niż trzymać energię dla minimalnie lepszej ceny później, a plan ma zapas na błąd prognozy wewnątrz przedziału. Raportowane koszty pozostają w prawdziwej walucie i nigdy jej nie zawierają. Samowystarczalność używa większej z tej kary i własnej ceny importu.",
           "peak_reserve_margin_kwh": "Domyślnie 0 (wył.); zakres 0-100 kWh. Dodatkowa energia ponad prognozowaną potrzebę na start drogiego okresu (cena zakupu powyżej limitu ceny ładowania z sieci; wymaga limitu). Miękki cel tylko w planowaniu na ostatnim tanim przedziale, pochłania zużycie wyższe od prognozy; nie wchodzi do raportowanych kosztów.",
+          "export_reserve_margin_kwh": "Domyślnie 0 (wył.); zakres 0-100 kWh. Energia zostawiana w baterii po przedziale sprzedaży z baterii, ponad prognozowaną potrzebę do następnego przedziału w cenie nie wyższej niż limit ceny ładowania z sieci (wymaga limitu i sprzedaży z baterii). Miękki cel tylko w planowaniu: wyraźnie droższa sprzedaż nadal schodzi poniżej niego. Może wydłużyć obliczenia; nie wchodzi do raportowanych kosztów.",
           "maximum_grid_charge_price": "Końcowa cena zakupu po przeliczeniach taryfy, w walucie instalacji/kWh. Cena równa limitowi jest dozwolona. Zakres −1000–1000; 0 oznacza tylko ceny zerowe lub ujemne. Limit działa po włączeniu przełącznika. Nie ogranicza zasilania domu ani ładowania z nadwyżki PV.",
           "limit_grid_charge_price": "Domyślnie wyłączone. Powyżej limitu zabrania ładowania baterii z sieci, także przy czasie trybu 0. Nowy okres ładowania musi mieścić się w dozwolonych cenach przez cały minimalny czas. Gdy pozostały czas rozpoczętego ładowania koliduje z limitem, plan od razu przechodzi w HOLD do końca pierwotnego okresu; zegar nie jest resetowany.",
           "grid_friendly_import_cap_kw": "Miękki limit mocy poboru z sieci w trybie grid_friendly, w kW. Wartość 0 oznacza użycie limitu instalacji (grid_import_kw) zamiast osobnego limitu.",

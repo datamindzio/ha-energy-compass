@@ -202,6 +202,47 @@ def test_peak_reserve_without_a_grid_charge_ceiling_warns(capsys):
     assert "peak reserve needs limit_grid_charge_price" in err
 
 
+def test_export_reserve_override_changes_the_plan(capsys):
+    export = (
+        "--set",
+        "limit_grid_charge_price=true",
+        "--set",
+        "maximum_grid_charge_price=0.4",
+        "--set",
+        "allow_battery_export=true",
+        "--set",
+        "limit_export_to_pv=false",
+    )
+    _, without, _ = run(capsys, *export)
+    code, reserved, err = run(capsys, *export, "--set", "export_reserve_margin_kwh=3")
+
+    assert code == 0
+    assert "warning" not in err
+    assert [d["plan"] for d in reserved] != pytest.approx([d["plan"] for d in without])
+
+
+def test_export_reserve_without_a_grid_charge_ceiling_warns(capsys):
+    code, _, err = run(capsys, "--set", "export_reserve_margin_kwh=3")
+
+    assert code == 0
+    assert "export reserve needs limit_grid_charge_price" in err
+
+
+def test_export_reserve_with_a_ceiling_does_not_warn(capsys):
+    code, _, err = run(
+        capsys,
+        "--set",
+        "limit_grid_charge_price=true",
+        "--set",
+        "maximum_grid_charge_price=0.4",
+        "--set",
+        "export_reserve_margin_kwh=3",
+    )
+
+    assert code == 0
+    assert "warning" not in err
+
+
 def _document(**changes):
     document = json.loads(SAMPLE.read_text())
     document.update(changes)

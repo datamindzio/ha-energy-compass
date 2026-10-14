@@ -467,7 +467,7 @@ def main() -> None:
         type=float,
         default=0.0,
         metavar="KWH",
-        help="peak_reserve_margin_kwh kept after a battery-export slot until the next "
+        help="export_reserve_margin_kwh kept after a battery-export slot until the next "
         f"slot at or below {_EXPORT_RESERVE_CHEAP_PRICE} (needs --battery-export; 0 is "
         "the plan without the floor)",
     )

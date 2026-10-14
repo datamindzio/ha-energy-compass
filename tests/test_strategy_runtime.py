@@ -745,7 +745,15 @@ def test_export_reserve_absent_by_default():
     assert problem.export_reserve_weight == 0.0
 
 
-def test_export_reserve_follows_the_peak_reserve_margin_and_ceiling(monkeypatch):
+def _export_reserve_config(**changes):
+    config = battery_configuration()
+    config["settings"].update(
+        limit_grid_charge_price=True, maximum_grid_charge_price=-1000, **changes
+    )
+    return config
+
+
+def test_export_reserve_has_its_own_margin_and_ceiling(monkeypatch):
     from custom_components.energy_compass import runtime
     from custom_components.energy_compass.engine.peak_reserve import (
         PeakReserveResult,
@@ -759,24 +767,49 @@ def test_export_reserve_follows_the_peak_reserve_margin_and_ceiling(monkeypatch)
 
     monkeypatch.setattr(runtime, "export_reserve_targets", fake_targets)
     monkeypatch.setattr(runtime, "export_reserve_weight", lambda buy, windows: 2.0)
-    config = battery_configuration()
-    settings = config["settings"]
-    settings.update(
-        peak_reserve_margin_kwh=0.5,
-        limit_grid_charge_price=True,
-        maximum_grid_charge_price=-1000,
-    )
-    problem, _, _ = build_problem(config, _soc_state(_NOW), _NOW)
+    config = _export_reserve_config(export_reserve_margin_kwh=0.5)
+    problem, _, quality = build_problem(config, _soc_state(_NOW), _NOW)
     assert seen["cheap_price"] == -1000
     assert seen["margin_kwh"] == 0.5
     assert set(problem.export_reserve_window) == {0}
     assert problem.export_reserve_kwh[0] == 7.0
     assert problem.export_reserve_weight == 2.0
-    # no margin, no floor
-    settings["peak_reserve_margin_kwh"] = 0.0
+    # the entry floor stays off: it has its own setting
+    assert problem.peak_reserve_kwh == ()
+    assert not any(w.startswith("export_reserve") for w in quality["warnings"])
+    # margin 0 builds no rows
+    config["settings"]["export_reserve_margin_kwh"] = 0.0
     problem, _, _ = build_problem(config, _soc_state(_NOW), _NOW)
     assert problem.export_reserve_kwh == ()
     assert problem.export_reserve_weight == 0.0
+
+
+def test_peak_reserve_margin_alone_builds_no_export_reserve(monkeypatch):
+    from custom_components.energy_compass import runtime
+
+    def unused(*args, **kwargs):
+        raise AssertionError("the export reserve is built from its own setting")
+
+    monkeypatch.setattr(runtime, "export_reserve_targets", unused)
+    config = _export_reserve_config(peak_reserve_margin_kwh=0.5)
+    problem, _, _ = build_problem(config, _soc_state(_NOW), _NOW)
+    assert problem.export_reserve_kwh == ()
+    assert problem.export_reserve_window == ()
+    assert problem.export_reserve_weight == 0.0
+
+
+def test_export_reserve_requires_the_ceiling_and_battery_export():
+    config = battery_configuration()
+    config["settings"].update(export_reserve_margin_kwh=0.5)
+    problem, _, quality = build_problem(config, _soc_state(_NOW), _NOW)
+    assert problem.export_reserve_kwh == ()
+    assert "export_reserve_requires_grid_charge_ceiling" in quality["warnings"]
+    config = _export_reserve_config(
+        export_reserve_margin_kwh=0.5, allow_battery_export=False
+    )
+    problem, _, quality = build_problem(config, _soc_state(_NOW), _NOW)
+    assert problem.export_reserve_kwh == ()
+    assert "export_reserve_requires_battery_export" in quality["warnings"]
 
 
 def test_result_reports_a_proven_plan_by_default():

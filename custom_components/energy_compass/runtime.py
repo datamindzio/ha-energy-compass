@@ -826,17 +826,23 @@ def build_problem(
         else:
             peak_reserve_weight_value = 0.0
             autonomy_warnings.append("peak_reserve_inactive")
-        if battery.allow_battery_export:
+    if battery and values["export_reserve_margin_kwh"] > 0:
+        if not values["limit_grid_charge_price"]:
+            autonomy_warnings.append("export_reserve_requires_grid_charge_ceiling")
+        elif not battery.allow_battery_export:
+            autonomy_warnings.append("export_reserve_requires_battery_export")
+        else:
+            buy = tuple(slot.buy_per_kwh for slot in slots)
             export_reserve = export_reserve_targets(
                 buy,
                 tuple(slot.sell_per_kwh for slot in slots),
                 tuple(loads),
                 tuple(pv),
-                cheap_price=cheap_price,
+                cheap_price=values["maximum_grid_charge_price"],
                 reserve_kwh=battery.capacity_kwh * battery.minimum_soc_fraction,
                 usable_capacity_kwh=battery.capacity_kwh * battery.maximum_soc_fraction,
                 eta_discharge=values["eta_discharge"],
-                margin_kwh=values["peak_reserve_margin_kwh"],
+                margin_kwh=values["export_reserve_margin_kwh"],
             )
             export_reserve_weight_value = export_reserve_weight(
                 buy, export_reserve.window_ids
