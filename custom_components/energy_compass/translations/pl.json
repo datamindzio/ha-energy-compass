@@ -1453,6 +1453,9 @@
       },
       "deye_runtime": {
         "name": "Stan pracy sterownika Deye"
+      },
+      "soc_estimator": {
+        "name": "Estymator SOC"
       }
     },
     "select": {
@@ -1530,6 +1533,10 @@
     "source_removed": {
       "title": "Źródło zostało usunięte",
       "description": "Zmień źródła instalacji {name}."
+    },
+    "soc_estimator_unanchored": {
+      "title": "Estymator SOC długo działa bez kotwicy",
+      "description": "{name}: estymator SOC z liczników przeniósł więcej niż {cycles} pojemności baterii energii od ostatniej kotwicy (rodzaj: {kind}), więc błędy zaokrągleń i sprawności mogły się zsumować. Plany nie są zmieniane. Aby uzyskać nową kotwicę, pozwól pakietowi napełnić się na słońcu, aż ładowanie ustanie, choć mogłoby trwać (kotwica pełna), albo osiągnąć napięcie pakietu odpowiadające 0 % (kotwica pusta). Czujnik estymatora SOC pokazuje historię kotwic i kandydatów na kotwicę pełną."
     }
   },
   "services": {

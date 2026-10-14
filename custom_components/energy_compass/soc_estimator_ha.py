@@ -7,11 +7,13 @@ between the estimator and the planner.
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from math import isfinite
 from typing import Any
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
@@ -35,6 +37,12 @@ SAVE_INTERVAL = timedelta(seconds=60)
 NOTIFY_INTERVAL = timedelta(seconds=20)
 NOTIFY_FRACTION = 0.0005
 TICK = timedelta(seconds=60)
+# The sensor is rewritten when the SOC moved this much (percentage points), on an
+# anchor, and at least once a minute.
+SENSOR_STEP = 0.1
+ISSUE = "soc_estimator_unanchored"
+# The only attribute worth keeping in the recorder; the rest is live detail.
+RECORDED_ATTRIBUTES = frozenset({"anchor_kind"})
 
 _KINDS = {
     "energy": {"kWh": 1.0, "Wh": 0.001, "MWh": 1000.0},
@@ -87,6 +95,8 @@ class SocEstimator:
         # Held back while the coordinator starts or applies a configuration:
         # it recalculates once the setup is done.
         self._quiet = True
+        self._listeners_ha: list[Callable[[], None]] = []
+        self._last_sensor: tuple[datetime, float | None] | None = None
 
     @property
     def active(self) -> bool:
@@ -119,6 +129,7 @@ class SocEstimator:
         self.settings = None
         if not cfg.estimator_active(configuration):
             self.estimate = None
+            ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
             return
         try:
             cfg.validate(configuration)
@@ -141,6 +152,28 @@ class SocEstimator:
 
     def start_notifying(self) -> None:
         self._quiet = False
+
+    @property
+    def _issue_id(self) -> str:
+        return f"{ISSUE}_{self.entry.entry_id}"
+
+    @callback
+    def async_add_listener(self, update: Callable[[], None]) -> CALLBACK_TYPE:
+        """Call `update` when the published estimate moved enough to show."""
+        self._listeners_ha.append(update)
+
+        @callback
+        def remove() -> None:
+            if update in self._listeners_ha:
+                self._listeners_ha.remove(update)
+
+        return remove
+
+    def diagnostics(self) -> dict[str, Any]:
+        """The estimator block of the diagnostics download: no entity ids."""
+        if not self._active:
+            return {"enabled": False, **({"error": self.error} if self.error else {})}
+        return {"enabled": True, **self.attributes()}
 
     def view(self) -> dict | None:
         """What the planner reads: the fraction and when its inputs last reported."""
@@ -222,6 +255,8 @@ class SocEstimator:
             self._last_save = now
             self._store.async_delay_save(self._data, 1)
         fraction = None if estimate is None else estimate.soc_fraction
+        self._update_issue(estimate)
+        self._update_sensor(now, fraction, anchored)
         was = None if previous is None else previous.soc_fraction
         last = self._last_notice
         due = (
@@ -238,6 +273,42 @@ class SocEstimator:
         if due and not self._quiet:
             self._last_notice = (now, fraction)
             self.coordinator.soc_estimate_changed()
+
+    def _update_sensor(self, now, fraction, anchored) -> None:
+        last = self._last_sensor
+        if (
+            not anchored
+            and last is not None
+            and (fraction is None) == (last[1] is None)
+            and now - last[0] < SAVE_INTERVAL
+            and (fraction is None or abs(fraction - last[1]) * 100 < SENSOR_STEP)
+        ):
+            return
+        self._last_sensor = (now, fraction)
+        for update in list(self._listeners_ha):
+            update()
+
+    def _update_issue(self, estimate) -> None:
+        """A repair issue while the throughput since the last anchor is large."""
+        if estimate is None or not estimate.available or self.settings is None:
+            return
+        cycles = cfg.drift_cycles(self.config)
+        if estimate.throughput_since_anchor_kwh > cycles * self.settings.capacity_kwh:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                self._issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE,
+                translation_placeholders={
+                    "name": self.entry.title,
+                    "cycles": f"{cycles:g}",
+                    "kind": estimate.anchor_kind,
+                },
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
 
     def _remember(self, anchor: core.Anchor) -> None:
         self.history.append(

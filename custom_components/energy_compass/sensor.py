@@ -3,6 +3,7 @@
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorStateClass,
 )
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
@@ -11,6 +12,8 @@ from .balance_tracker import SENSOR_STATES
 from .controller_entity import DeyeControllerSensor, DeyeRuntimeSensor
 from .entity import EnergyCompassEntity, next_change
 from .settings import DOMAIN
+from .soc_estimator_config import estimator_active
+from .soc_estimator_ha import RECORDED_ATTRIBUTES
 from .sources.bindings import parse_timestamp
 
 SENSOR_KEYS = (
@@ -60,6 +63,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
             ):
                 registry.async_update_entity(entity_id, disabled_by=None)
     entities = [EnergyCompassSensor(entry.runtime_data, key) for key in SENSOR_KEYS]
+    if estimator_active(entry.runtime_data.configuration):
+        entities.append(SocEstimatorSensor(entry.runtime_data))
     if (controller := entry.runtime_data.controller) is not None:
         entities += [DeyeControllerSensor(controller), DeyeRuntimeSensor(controller)]
     async_add_entities(entities)
@@ -135,3 +140,64 @@ class EnergyCompassSensor(EnergyCompassEntity, SensorEntity):
             row = self._window()
             return parse_timestamp(row["start"]) if row else None
         return data.get(self.key)
+
+
+class SocEstimatorSensor(EnergyCompassEntity, SensorEntity):
+    """The counter SOC estimate: diagnostic, whether it plans or only runs in shadow."""
+
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "%"
+    _attr_suggested_display_precision = 1
+    _unrecorded_attributes = (
+        frozenset(
+            {
+                "energy_kwh",
+                "anchor_at",
+                "anchor_age_h",
+                "throughput_since_anchor_kwh",
+                "pending_kwh",
+                "unanchored_top",
+                "excess_kwh",
+                "full_candidate",
+                "measured_capacity_kwh",
+                "eta_charge",
+                "capacity_kwh",
+                "mode",
+                "bms_soc",
+                "full_candidates",
+                "anchors",
+                "error",
+            }
+        )
+        - RECORDED_ATTRIBUTES
+    )
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator, "soc_estimator")
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self.coordinator.soc_estimator.async_add_listener(self.async_write_ha_state)
+        )
+
+    @property
+    def available(self):
+        estimate = self.coordinator.soc_estimator.estimate
+        return estimate is not None and estimate.available
+
+    @property
+    def native_value(self):
+        estimate = self.coordinator.soc_estimator.estimate
+        if estimate is None or estimate.soc_fraction is None:
+            return None
+        return round(estimate.soc_fraction * 100, 2)
+
+    @property
+    def extra_state_attributes(self):
+        return self.coordinator.soc_estimator.attributes()
+
+    @callback
+    def _handle_coordinator_update(self):
+        """Plan updates carry nothing for this entity; the estimator pushes its own."""

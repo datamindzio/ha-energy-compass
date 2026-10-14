@@ -1453,6 +1453,9 @@
       },
       "deye_runtime": {
         "name": "Deye controller runtime"
+      },
+      "soc_estimator": {
+        "name": "SOC estimator"
       }
     },
     "select": {
@@ -1530,6 +1533,10 @@
     "source_removed": {
       "title": "Source removed",
       "description": "Reconfigure the selected sources for {name}."
+    },
+    "soc_estimator_unanchored": {
+      "title": "The SOC estimator has gone a long time without an anchor",
+      "description": "{name}: the counter SOC estimator has moved more than {cycles} battery capacities of energy since its last anchor (kind: {kind}), so rounding and efficiency errors may have added up. Plans are not affected. To get a fresh anchor, let the pack fill in the sun until charging stops although it could continue (a full anchor), or let it reach the pack voltage that is 0 % (an empty anchor). The SOC estimator sensor shows the anchor history and the full-anchor candidates."
     }
   },
   "services": {
