@@ -633,6 +633,56 @@ def carried_curtail(problem) -> bool:
     return bool(problem.minimum_mode_minutes) and _initial(problem)[0] == "CURTAIL"
 
 
+def carried_curtail_until(problem):
+    """Tell when the CURTAIL run carried into the plan may end, or None where there is none (mode model)."""
+    if not carried_curtail(problem):
+        return None
+    return problem.initial_dispatch_mode_since.astimezone(UTC) + timedelta(
+        minutes=problem.minimum_mode_minutes
+    )
+
+
+def carried_hold_until(problem):
+    """Tell when the HOLD run carried into the plan may end, or None where there is none (mode model).
+
+    A HOLD takes none of the PV the site cannot pass (`curtail_need`): on a site that
+    cannot curtail the inverter throttles by itself where the run must last, a CURTAIL
+    that takes the HOLD over, and that spill is the commitment's, not the plan's choice
+    (T-082). A HOLD the plan chose itself is no reason to spill into a pack with room,
+    and one released from the commitment has no clock. The safety exception's HOLD is a
+    full pack, which spills anyway.
+    """
+    if (
+        not problem.minimum_mode_minutes
+        or problem.initial_dispatch_mode != "HOLD"
+        or problem.initial_dispatch_mode_since is None
+        or problem.initial_dispatch_released
+        or not problem.battery
+        or problem.site.allow_curtailment
+    ):
+        return None
+    return problem.initial_dispatch_mode_since.astimezone(UTC) + timedelta(
+        minutes=problem.minimum_mode_minutes
+    )
+
+
+def carried_hold(problem, slot=None) -> bool:
+    """Tell whether a slot (the first one) starts inside the run `carried_hold_until` names."""
+    until = carried_hold_until(problem)
+    slot = slot or (problem.slots[0] if problem.slots else None)
+    return until is not None and slot is not None and slot.start.astimezone(UTC) < until
+
+
+def takes_over_hold(problem, slot) -> bool:
+    """Tell whether a CURTAIL in a slot may take the carried HOLD run over with room in the pack (T-082).
+
+    Only where the slot has nothing forced (`forced_spill_limit` is zero whatever a probe
+    adds to the load, the largest it can be): the slot with a forced part spills that and
+    charges the rest, as it did before the takeover was offered.
+    """
+    return carried_hold(problem, slot) and forced_spill_limit(problem, slot) <= 0
+
+
 def _curtail_dry(problem, slot) -> bool:
     """Tell whether a slot has nothing to curtail the minimum activity from.
 
@@ -1148,6 +1198,26 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             terms[bridge[j]] = 1
         return terms
 
+    def within_run(i, run):
+        """Tie `run` (the run going on in interval i) to the duration of the run it continues.
+
+        Carried in: interval i starts before the run's minimum duration is up. Begun
+        inside the plan: only while that run began inside its duration, so one of the
+        intervals that precede that start must not be CURTAIL or a bridge.
+        """
+        if held_curtail and starts[i] < curtail_until:
+            return
+        window = [j for j in range(-1, i) if starts[i] < starts[j + 1] + dwell]
+        terms = {}
+        for j in window:
+            for key in curtail_terms(j) if j >= 0 else {}:
+                terms[key] = terms.get(key, 0) + 1
+        model.constrain(
+            {run: 1, **terms},
+            -np.inf,
+            len(window) - int(held_curtail and -1 in window),
+        )
+
     for i, (slot, v) in enumerate(zip(problem.slots, vectors, strict=True)):
         if not _curtail_dry(problem, slot):
             continue
@@ -1167,20 +1237,14 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             model.constrain(
                 {run: 1, **{key: -1 for key in curtail_terms(i - 1)}}, -np.inf, 0
             )
-        if held_curtail and starts[i] < curtail_until:
-            continue
-        # Only while the run that this continues began inside its duration: one of the
-        # intervals that precede that start must not be CURTAIL or a bridge.
-        window = [j for j in range(-1, i) if starts[i] < starts[j + 1] + dwell]
-        terms = {}
-        for j in window:
-            for key in curtail_terms(j) if j >= 0 else {}:
-                terms[key] = terms.get(key, 0) + 1
-        model.constrain(
-            {run: 1, **terms},
-            -np.inf,
-            len(window) - int(held_curtail and -1 in window),
-        )
+        within_run(i, run)
+        # The run's spill stays open into the next interval only while that interval is
+        # still inside the run's minimum duration (`relay`, T-082): after it the pack's
+        # room is the plan's choice again.
+        if i + 1 < len(starts) and not problem.site.allow_curtailment:
+            relay = v["curtail_relay"] = model.variable(upper=1.0)
+            model.constrain({relay: 1, run: -1}, -np.inf, 0)
+            within_run(i + 1, relay)
     # A HOLD takes no curtailment: in an interval whose PV the site cannot pass
     # (`curtail_need`) a HOLD run inside its minimum duration has no legal mode left
     # but CURTAIL, which the inverter does by itself. That CURTAIL takes the HOLD over

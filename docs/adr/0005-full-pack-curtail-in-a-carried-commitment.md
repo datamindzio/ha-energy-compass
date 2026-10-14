@@ -870,6 +870,58 @@ plan now may say so.
   a plan are none infeasible with curtailment on: 42 of the 47 base draws start from a carried `HOLD` or `CURTAIL`
   commitment with room in the pack (pinned: `test_pinned_limit_*`), the rest are listed in the model document.
 
+## Amendment (T-082): a carried HOLD run is taken over by the spill where nothing is forced, and the relay rides through a bridge inside the run
+
+T-066 left 47 base draws of `spill_sweep` (seeds 11 and 22, `run`, `negrun`, `bell`) without a plan; 42 start from a
+carried `HOLD` (22) or `CURTAIL` (20) commitment with room in the pack and curtailment off. Two rows had no legal mode.
+
+- **Carried `HOLD` with room.** The `HOLD` run (a clock of its own, `initial_dispatch_mode_since`) cannot pass PV the
+  site cannot pass, and cannot charge; the `CURTAIL` that takes it over (`takeover`) needs `curt ≥ activity`, while the
+  gate row holds `curt ≤ forced` with room in the pack. `takeover` now opens the gate (`_Spill.held`), in the intervals of
+  the carried run only (`dispatch_policy.carried_hold`) **and only where nothing is forced in them**
+  (`dispatch_policy.takes_over_hold`: `forced_spill_limit ≤ 0`, taken at the largest load a probe can add). An interval
+  with a forced part spills that and charges the rest, as before (`test_carried_hold_takeover_spills_only_what_is_forced_where_part_of_the_need_is`);
+  a takeover there would let the solver spill more than the forced part by choice. The certificate (`_validate_solution`)
+  accepts a spill above the forced part for a `CURTAIL` that takes a carried `HOLD` over in the same intervals
+  (`takes_over`), and for no other.
+- **Bridge.** A `CURTAIL` run goes on through an interval with no need (`curtail_bridge`); the relay stopped there, so a
+  need that came back smaller than the room had the gate closed and the run's clock forbade the charge. The relay now
+  rides through the bridge into the next interval, **but only while that interval is inside the run's minimum
+  duration**: a variable `curtail_relay`, bound by the bridge and by the run (`within_run(i + 1, relay)`), carries it in
+  the model, and the certificate relays after a bridge up to the end of the run (the carried one's, or the one begun
+  inside the plan) and not after it. An interval after the run is the plan's choice again, and the model does not offer a
+  spill by choice (`test_bridge_does_not_keep_the_spill_open_after_the_run_it_goes_on_with_is_over`; the certificate
+  refuses the other plan with `invalid solver result: forced spill`).
+- **Not changed:** the owner decision of T-062 B (a pack that can take the need never spills by choice), a site that can
+  curtail, the Deye controller, and every interval where nothing is beyond the pack. Two wider forms were tried and
+  rejected, both in the first commit of T-082 (`09c93ab`) and found by the review: a takeover in every interval of the
+  carried run (a forced part there plus a spill by choice), and a relay that went on past the run's minimum duration
+  (a spill by choice in an interval after the run: `bell` seed 5 index 82 spilled 2.5 kWh more than main's plan, 4.903
+  against 2.375 kWh, which that form opened and was not a suboptimal plan of main, whose solver gap is 6.9e-5; the
+  plan of this branch is main's to the digit, −2.839271). A takeover of *any* `HOLD`, a plan's own included, makes the
+  solver spill by choice in 86 of 300 `bell` plans (seed 11) and loses 11 rolls.
+- **Measured** (`benchmarks/spill_sweep.py`, seeds 11, 22, 5 and 77 × 300 per draw, main `7f2ee63` against the branch
+  `56781e3` with that main merged in; the same counts for main `8663543` against `c9f2ff0`): 0 newly infeasible and 0
+  solver failures in all 16 `compare`s. Seeds 11 and 22: not planned `run` 13 → 4, `negrun` 14 → 5, `bell` 20 → 4,
+  `probe` 29 → 25 of 600 (76 → 38 in all); not followed `roll` 19 → 6, `negroll` 12 → 2, `bellroll` 26 → 8. Of the 47 base
+  draws 34 are planned (21 of the 22 `HOLD`, 13 of the 20 `CURTAIL`) and 13 stay. Over the four seeds (1200 per draw),
+  planned now and not on main: `run` 19, `negrun` 25, `bell` 20, `probe` 15; of the plans that main had, better 10
+  (`negrun` 3, `bell` 5, `probe` 2), worse 1 (`negrun` 11/208, dearer by 1e-6 with the same modes and bridges), the
+  rest the same. Eight of the better draws have a `CURTAIL` interval right after a bridge, inside the run, that main's
+  gate row closed with room in the pack: taking `curtail_relay` out of the gate rows gives main's cost to the printed
+  digit in each, taking the takeover out changes none; the other two are within the solver's tolerance (6.6e-5, 1e-6).
+  Rolling: not followed `roll` 29 → 10, `negroll` 24 → 7, `bellroll` 52 → 22 of 1200; `rollcompare`: 0 newly infeasible
+  while followed, 66 more followed to the end, 2 whose first failure is later (both real stops), 0 earlier, and 2 plans
+  whose next boundary newly changes their mode against 1 that no longer does (`bellroll` seed 11 index 238 and seed 22
+  index 159): at the boundary where each is contradicted the plan before is a feasible plan of the next problem except for
+  the terminal floor of `terminal_mode = preserve_initial`, which rises when a plan charges in its first interval; that is
+  the rule's own effect, not the relay reaching past its run. The model document lists them, with the draws.
+- **Limits that stay** (pinned: `test_pinned_limit_hold_the_plan_chose_meets_a_need_with_room_in_the_pack`): a `HOLD`
+  run that the plan itself starts (60 minutes) that meets a need with room in the pack. The spill would be the plan's
+  choice, which the model does not offer. 13 of the 47 base draws stay without a plan (one carried `HOLD`, seven carried
+  `CURTAIL`, three `CHARGE_PV`, two with no commitment; 12 at 60 minutes, one at 30), and so do 25 `probe` draws; none of
+  them is characterized further than that. Tests: `tests/test_forced_spill.py`.
+
 ## Amendment (T-078): a CURTAIL run that PV beyond the pack opens goes on through its minimum duration
 
 Status: implemented and swept on T-078. Measured on main `d917b02` (T-066 merged over `a5cfb1e`, which had T-086

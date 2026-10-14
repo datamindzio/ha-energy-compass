@@ -512,33 +512,230 @@ def test_infeasible_site_is_not_solved_twice_without_a_forced_spill(monkeypatch)
     assert runs == [{}]
 
 
-def test_pinned_limit_hold_that_lost_the_full_level_has_no_plan_for_a_need():
-    # Pinned limit (docs/model.md, forced spill), bell roll seed 12, problem 72: a HOLD
-    # with a clock of its own (60 minutes) loses 0.0125 kWh a quarter hour to standby and
-    # is below the full level when 0.021 kWh the site cannot pass arrives. The pack has
-    # room, so that is no spill, and the HOLD cannot charge. A site that can curtail
-    # takes the HOLD over with a CURTAIL; so does this one while the pack stays full.
+def test_carried_hold_that_lost_the_full_level_is_taken_over_by_the_spill_for_a_need():
+    # Bell roll seed 12, problem 72 (a pinned limit until T-082): a HOLD with a clock of
+    # its own (60 minutes) loses 0.0125 kWh a quarter hour to standby and is below the
+    # full level when 0.021 kWh the site cannot pass arrives. The pack has room, and the
+    # HOLD cannot charge nor pass the PV: the inverter throttles by itself, which is the
+    # CURTAIL that takes the carried HOLD over, as on a site that can curtail.
     rows = ((0.9, 0.0, 0.054, 0.1), (1.14, 0.49, 0.192, 0.4), (0.78, 0.41, 0.371, 0.1))
     battery = Battery(5, 0, 1, 4.9875, 4, 1, 0.95, 0.95, 0.01, True, False, 0.05)
     day = carried_hold(rows, battery, 60, 0.3)
-    with pytest.raises(SolveError) as error:
-        solve(day)
-    assert error.value.reason == "infeasible"
+    plan = solve(day)
+    assert plan.flows[2].dispatch_mode == "CURTAIL"
+    # The CURTAIL carries at least the minimum activity (0.1 kW for a quarter hour).
+    assert plan.flows[2].curtail_kwh == pytest.approx(0.025, abs=1e-3)
     able = solve(replace(day, site=replace(day.site, allow_curtailment=True)))
     assert able.flows[2].dispatch_mode == "CURTAIL"
     lossless = solve(replace(day, battery=replace(battery, idle_drain_kw=0.0)))
     assert lossless.flows[2].dispatch_mode == "CURTAIL"
 
 
-def test_pinned_limit_curtail_run_with_a_gap_in_the_need_has_no_plan_at_60_minutes():
-    # Pinned limit (docs/model.md, forced spill), rolled sweep negroll seed 12, problem
-    # 65, fourth plan: PV around the inverter rating (0.75 kWh a quarter hour at 3 kW).
-    # The first need opens a CURTAIL run of 60 minutes, the second interval has none (a
-    # bridge) and the third has 0.02 kWh, less than the room two standby losses have made
-    # (0.025 kWh): the relay rides the interval before, which is no CURTAIL, the gate reads
-    # room, and the run's clock forbids the charge. The roll reaches it through the safety
-    # exception: a CHARGE_PV commitment on a full pack keeps its clock over the forced
-    # CURTAIL (`_commit_battery_direction`), so the next plan starts the run afresh.
+def carried_run(
+    rows, battery, site, mode, ago, value=0.3, minutes=60, terminal="preserve_initial"
+):
+    """Quarter hours of a draw of the sweep: a run of `mode` of `minutes` begun `ago` minutes before."""
+    return Problem(
+        tuple(
+            Slot(START + i * QUARTER, START + (i + 1) * QUARTER, *row)
+            for i, row in enumerate(rows)
+        ),
+        site,
+        battery,
+        terminal,
+        value,
+        (),
+        "UTC",
+        minimum_mode_minutes=minutes,
+        minimum_export_episode_benefit=0.0,
+        initial_dispatch_mode=mode,
+        initial_dispatch_mode_since=START - timedelta(minutes=ago),
+    )
+
+
+def test_carried_hold_run_is_taken_over_by_the_spill_at_a_need_with_room_in_the_pack():
+    # spill_sweep `bell` seed 11, problem 13 (T-082): a HOLD begun a minute ago lasts to
+    # the fourth interval, whose PV above the export cap (0.171 kWh) arrives at a pack
+    # 0.3 kWh below its ceiling. Nothing but the spill is legal there: the plan had none.
+    rows = (
+        (0.75, 0.13, 0.044, 0.02),
+        (0.47, 0.7, 0.202, 0.05),
+        (1.41, 0.27, 0.06, 0.05),
+        (0.38, 0.57, 0.441, 0.02),
+    )
+    battery = Battery(5, 0, 1, 4.7, 3, 4, 0.95, 0.95, 0.01, False, True, 0)
+    day = carried_run(rows, battery, SiteLimits(3, 8, 1, False), "HOLD", 1)
+    plan = solve(day)
+    assert [flow.dispatch_mode for flow in plan.flows] == ["HOLD"] * 3 + ["CURTAIL"]
+    assert plan.flows[3].curtail_kwh == pytest.approx(0.171, abs=1e-3)
+    assert plan.flows[0].end_soc_kwh == pytest.approx(4.7, abs=1e-6)
+
+
+def test_carried_curtail_run_goes_on_through_a_bridge_into_a_need_with_room_in_the_pack():
+    # spill_sweep `bell` seed 11, problem 15 (T-082): a CURTAIL run of 60 minutes begun 29
+    # minutes ago goes on as a HOLD through the interval with no PV above the cap (a
+    # bridge) and meets 0.01 kWh of need at a pack that lost 0.1 kWh to standby: the
+    # relay of the spill rode only CURTAIL intervals, so the run had no mode left.
+    rows = ((1.03, 0.02, 0.0, 0.05), (0.54, 0.39, 0.075, 0.4), (0.24, 0.66, 0.24, 0.1))
+    battery = Battery(5, 0.1, 1, 4.95, 3, 4, 0.95, 0.95, 0.0, True, True, 0.05)
+    day = carried_run(rows, battery, SiteLimits(8, 8, 0.5, False), "CURTAIL", 29)
+    plan = solve(day)
+    assert [flow.dispatch_mode for flow in plan.flows] == ["HOLD", "HOLD", "CURTAIL"]
+    assert plan.flows[2].curtail_kwh > 0
+
+
+def test_bridge_does_not_keep_the_spill_open_after_the_run_it_goes_on_with_is_over():
+    # spill_sweep `bell` seed 5, problem 200 (T-082 review): a CURTAIL run of 60 minutes
+    # begun 29 minutes ago is over in the fourth interval, whose PV above the export cap
+    # (0.15 kWh) meets a pack at 1.4 of 10 kWh. The first three intervals are the run
+    # going on as a HOLD (bridges): the gate they relay is for the intervals of the run,
+    # not for the ones after it, where the pack with room charges and spilling would be the
+    # plan's own choice (1.1 kWh lost to a pack that could take it).
+    rows = (
+        (0.95, 0.66, 0.002, 0.2),
+        (0.57, 0.12, 0.071, 0.1),
+        (0.73, 0.4, 0.311, 0.2),
+        (1.1, 0.55, 0.474, 0.2),
+        (1.47, 0.49, 0.636, 0.4),
+        (1.46, 0.19, 0.8, 0.05),
+        (0.26, 0.28, 0.442, 0.1),
+        (0.82, 0.71, 0.436, 0.4),
+        (1.4, 0.2, 0.383, 0.1),
+        (0.94, 0.71, 0.6, 0.05),
+        (0.3, 0.71, 0.415, 0.02),
+        (1.05, 0.58, 0.297, 0.2),
+        (0.65, 0.3, 0.13, 0.1),
+        (0.63, 0.44, 0.017, 0.05),
+    )
+    battery = Battery(10, 0, 1, 1.44, 3, 4, 0.95, 0.95, 0, True, True, 0.02)
+    day = carried_run(rows, battery, SiteLimits(3, 8, 0.5, False), "CURTAIL", 29)
+    plan = solve(day)
+    modes = [flow.dispatch_mode for flow in plan.flows]
+    assert modes[:3] == ["HOLD"] * 3
+    assert modes[3:11] == ["CHARGE_PV"] * 8
+    assert sum(flow.curtail_kwh for flow in plan.flows) == 0
+    assert plan.objective == pytest.approx(0.11576, abs=1e-5)
+
+
+def test_carried_hold_takeover_spills_only_what_is_forced_where_part_of_the_need_is():
+    # spill_sweep `run` seed 11, problem 238 (T-082 review): a HOLD begun a minute ago
+    # lasts 14 minutes more, in the first interval of 1.36 kWh of PV over a 1 kW cap. The
+    # site cannot pass 0.91 kWh of it and the pack charges 0.75 kWh at its power: the
+    # 0.16 kWh beyond that is the forced part, which the CURTAIL that takes the HOLD over
+    # spills, charging the rest, as before. Opening the whole need to the takeover spilled
+    # 0.91 kWh with room for it in the pack.
+    rows = (
+        (1.22, 0.73, 1.36, 0.2),
+        (0.9, 0.57, 1.0, 0.2),
+        (0.44, 0.29, 0.05, 0.4),
+        (0.29, 0.15, 0, 0.1),
+    )
+    battery = Battery(10, 0.1, 1, 5.81, 3, 3, 0.95, 0.95, 0.01, False, False, 0)
+    day = carried_run(
+        rows,
+        battery,
+        SiteLimits(8, 8, 1, False),
+        "HOLD",
+        1,
+        0,
+        minutes=15,
+        terminal="value",
+    )
+    plan = solve(day)
+    assert plan.flows[0].dispatch_mode == "CURTAIL"
+    assert plan.flows[0].curtail_kwh == pytest.approx(0.16, abs=1e-3)
+    assert plan.flows[0].end_soc_kwh == pytest.approx(6.52, abs=1e-2)
+    assert plan.objective == pytest.approx(-0.319, abs=1e-5)
+
+
+def spill_by_choice(day, monkeypatch):
+    """Solve with the model's gate removed, which leaves the certificate to refuse a spill with room."""
+    monkeypatch.setattr(optimize, "_gate_forced_spill", lambda *a, **k: None)
+    with pytest.raises(SolveError) as error:
+        solve(day)
+    assert error.value.reason == "solver_failure"
+    assert "forced spill with room in the pack" in str(error.value)
+
+
+def test_validator_refuses_a_spill_by_choice_after_a_bridge_past_the_run(monkeypatch):
+    # The bell draw of the T-082 review (seed 5, problem 200) without the model's gate:
+    # spilling in the fourth interval is cheaper and the certificate refuses it, as the
+    # carried run of 60 minutes was over after the second one. Its bridges (the first three
+    # intervals) keep the gate open only inside the run's duration.
+    rows = (
+        (0.95, 0.66, 0.002, 0.2),
+        (0.57, 0.12, 0.071, 0.1),
+        (0.73, 0.4, 0.311, 0.2),
+        (1.1, 0.55, 0.474, 0.2),
+        (1.47, 0.49, 0.636, 0.4),
+        (1.46, 0.19, 0.8, 0.05),
+        (0.26, 0.28, 0.442, 0.1),
+    )
+    battery = Battery(10, 0, 1, 1.44, 3, 4, 0.95, 0.95, 0, True, True, 0.02)
+    day = carried_run(rows, battery, SiteLimits(3, 8, 0.5, False), "CURTAIL", 29)
+    spill_by_choice(day, monkeypatch)
+
+
+@pytest.mark.parametrize("ago", [1, 20])
+def test_validator_refuses_a_takeover_that_spills_more_than_the_forced_part(
+    monkeypatch, ago
+):
+    # `run` seed 11, problem 238 without the model's gate: spilling the whole need of the
+    # first interval is cheaper than its forced part (0.16 kWh). A carried HOLD of 15
+    # minutes may be taken over only where nothing is forced (`ago` 1: it has 14 minutes
+    # left and part of the need is forced), and not at all once its clock has run out (20).
+    rows = (
+        (1.22, 0.73, 1.36, 0.2),
+        (0.9, 0.57, 1.0, 0.2),
+        (0.44, 0.29, 0.05, 0.4),
+        (0.29, 0.15, 0, 0.1),
+    )
+    battery = Battery(10, 0.1, 1, 5.81, 3, 3, 0.95, 0.95, 0.01, False, False, 0)
+    day = carried_run(
+        rows,
+        battery,
+        SiteLimits(8, 8, 1, False),
+        "HOLD",
+        ago,
+        0,
+        minutes=15,
+        terminal="value",
+    )
+    spill_by_choice(day, monkeypatch)
+
+
+def test_pinned_limit_hold_the_plan_chose_meets_a_need_with_room_in_the_pack():
+    # Pinned limit (docs/model.md, forced spill), spill_sweep `run` seed 11, problem 118
+    # (T-082): a carried HOLD is taken over by the spill in the first two intervals, and
+    # the 15 minutes after its clock has nothing to follow (no PV, a load the pack may
+    # not carry under the terminal rule), so the plan's own HOLD of 60 minutes meets 0.085
+    # kWh the site cannot pass with room in the pack. A spill there would be the plan's
+    # choice, not the commitment's, and a site that cannot curtail does not choose it.
+    rows = (
+        (0.55, 0.41, 0.33, 0.05),
+        (1.38, 0.22, 0.33, 0.2),
+        (0.84, 0.28, 0.01, 0.02),
+        (0.74, 0.23, 0.02, 0.02),
+        (0.7, 0.2, 0.0, 0.4),
+        (0.4, 0.45, 0.31, 0.1),
+    )
+    battery = Battery(5, 0.1, 1, 4.7, 3, 1, 0.95, 0.95, 0.01, True, True, 0)
+    day = carried_run(rows, battery, SiteLimits(3, 8, 0.5, False), "HOLD", 29, 0.0)
+    with pytest.raises(SolveError) as error:
+        solve(day)
+    assert error.value.reason == "infeasible"
+    able = solve(replace(day, site=replace(day.site, allow_curtailment=True)))
+    assert able.flows[5].dispatch_mode in ("CHARGE_PV", "CURTAIL")
+
+
+def test_curtail_run_with_a_gap_in_the_need_goes_on_through_the_bridge_at_60_minutes():
+    # Rolled sweep negroll seed 12, problem 65, fourth plan (a pinned limit until T-082):
+    # PV around the inverter rating (0.75 kWh a quarter hour at 3 kW). The first need
+    # opens a CURTAIL run of 60 minutes, the second interval has none (a bridge) and the
+    # third has 0.02 kWh, less than the room two standby losses have made (0.025 kWh).
+    # The spill's gate stays open through the bridge, so the run goes on as CURTAIL, as a
+    # steady need or no standby loss has it. A run of 30 minutes is over after the bridge:
+    # the spill stays shut there and the pack with room charges (CHARGE_PV).
     gap = (
         (1.0, 0.1, 0.81, 0.1),
         (1.0, 0.1, 0.75, 0.0),
@@ -546,9 +743,14 @@ def test_pinned_limit_curtail_run_with_a_gap_in_the_need_has_no_plan_at_60_minut
         (1.0, 0.1, 0.75, 0.0),
     )
     site = {"cap_kw": 8, "inverter_kw": 3, "drain_kw": 0.05}
-    with pytest.raises(SolveError) as error:
-        solve(problem(gap, minutes=60, **site))
-    assert error.value.reason == "infeasible"
+    plan = solve(problem(gap, minutes=60, **site))
+    assert [flow.dispatch_mode for flow in plan.flows] == [
+        "CURTAIL",
+        "HOLD",
+        "CURTAIL",
+        "HOLD",
+    ]
+    assert plan.carried_bridges == (1, 3)
     steady = (gap[0], gap[2], gap[2], gap[2])
     plan = solve(problem(steady, minutes=60, **site))
     assert [flow.dispatch_mode for flow in plan.flows] == ["CURTAIL"] * 4

@@ -899,13 +899,19 @@ Rules (defaults: 60 min, 0.1 kW):
   its end keeps a plan all the way in 207 of 214 days at 15 minutes, 172 of 189 at 30 minutes and
   158 of 197 at 60 minutes (without the spill 27, 23 and 23); most of the others have no plan
   from the first interval. The rest stay without a plan, as before, mainly for two reasons the
-  plan does not cover: a carried `HOLD` or `CURTAIL` commitment whose duration the model cannot
-  end while the pack has room, more often at 60 minutes, and some draws with a flexible-load
-  probe. The forced part (T-066) cut the 2400 problems solved once without a plan from 226 to 76,
-  and the rolling draws not followed from 190 to 57 of 1800, with no problem solved once that main
-  planned newly infeasible; of 3600 days followed interval by interval on four seeds one that main
-  follows to its end stops at a boundary with no plan on any site (counts and commits in the model
-  document)
+  plan does not cover: a `HOLD` run that the plan itself starts and that meets PV the site cannot
+  pass while the pack has room (the spill there would be the plan's own choice), more often at 60
+  minutes, and some draws with a flexible-load probe. The forced part (T-066) cut the 2400 problems
+  solved once without a plan from 226 to 76, and the rolling draws not followed from 190 to 57 of
+  1800, with no problem solved once that main planned newly infeasible; of 3600 days followed
+  interval by interval on four seeds one that main follows to its end stops at a boundary with no
+  plan on any site. A carried `HOLD` or `CURTAIL` commitment more often leaves a plan (T-082):
+  where the site cannot pass the PV, a `CURTAIL` takes the carried `HOLD` over with room in the
+  pack, in the intervals of that run where nothing is forced, and a `CURTAIL` run goes on through an
+  interval with no need, while it is inside its minimum duration, into a need that comes back
+  smaller than the room; that cut the 2400 draws without a plan from 76 to 38 and the rolling draws
+  not followed from 57 to 16 of 1800, with none newly infeasible (counts, better and worse draws and
+  commits in the model document)
   ([model and limitations](model.md#operating-mode-duration-and-pv-export-budget)).
 - **`CURTAIL` goes on through a PV gap.** A `CURTAIL` run lasts the minimum duration, and PV can
   drop inside it. A `HOLD` in an interval with PV below the minimum activity (`minimum_mode_power_kw × h`)
