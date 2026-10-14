@@ -232,3 +232,44 @@ async def test_shadow_mode_leaves_the_planner_on_the_bound_entity(
     assert ESTIMATE_KEY not in states
     assert coordinator.data["status"] == "ready", coordinator.data
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def _anchoring_sources(hass):
+    hass.states.async_set(
+        "sensor.pv", "3000", {"unit_of_measurement": "W"}, force_update=True
+    )
+    hass.states.async_set(
+        "sensor.grid", "-2500", {"unit_of_measurement": "W"}, force_update=True
+    )
+    hass.states.async_set(
+        "number.charge_limit", "14", {"unit_of_measurement": "A"}, force_update=True
+    )
+    _set_sources(hass, voltage=545)
+
+
+async def test_a_physical_full_anchor_starts_the_balance_hold(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    config = _config(initial_soc_percent=99, anchor_on_candidates=True)
+    config["soc_estimator"]["bindings"].update(
+        pv_power={"entity_id": "sensor.pv"},
+        grid_power={"entity_id": "sensor.grid"},
+        charge_limit={"entity_id": "number.charge_limit"},
+    )
+    config["settings"].update(lfp_balance=True)
+    _anchoring_sources(hass)
+    entry = await _setup(hass, config)
+    coordinator = entry.runtime_data
+    estimator = coordinator.soc_estimator
+    assert coordinator._balance["hold_started_at"] is None
+    for _ in range(12):
+        freezer.tick(timedelta(minutes=1))
+        _anchoring_sources(hass)
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert estimator.estimate.anchor_kind == "full"
+    assert estimator.estimate.top_confirmed
+    assert estimator.estimate.soc_fraction == pytest.approx(1.0)
+    coordinator._inputs()
+    assert coordinator._balance["hold_started_at"] is not None
+    assert await hass.config_entries.async_unload(entry.entry_id)
