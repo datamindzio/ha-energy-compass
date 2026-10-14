@@ -75,6 +75,38 @@ class Recording:
         index = int((epoch - self.start) // 60)
         return self.yaml["energy_kwh"][index] if 0 <= index < self.count else None
 
+    def inputs(self, epoch, *, facts=True):
+        """Estimator inputs as the Home Assistant layer would build them."""
+        from custom_components.energy_compass.soc_estimator import (
+            ControllerFacts,
+            Inputs,
+        )
+
+        controller = None
+        if facts:
+            number = self.active_program(epoch)
+            row = self.controller_row(epoch)
+            voltage = self.program(number, "voltage", epoch)
+            controller = ControllerFacts(
+                charge_limit_a=self.sample("max_charge_current", epoch),
+                grid_charge_a=self.sample("grid_charge_current", epoch) or 0.0,
+                state=row[2] if row and row[1] == "ok" else None,
+                program_direction=self.program(number, "charging", epoch),
+                # The recorded program voltage is in 48 V units; the pack reads x10.
+                program_voltage_v=None if voltage is None else voltage * 10,
+            )
+        return Inputs(
+            at(epoch),
+            self.counter("charge", epoch),
+            self.counter("discharge", epoch),
+            self.sample("battery_power", epoch),
+            self.sample("battery_voltage", epoch),
+            self.sample("battery_current", epoch),
+            self.sample("pv_power", epoch),
+            self.sample("load_power", epoch),
+            controller,
+        )
+
 
 def at(epoch):
     return datetime.fromtimestamp(epoch, UTC)
