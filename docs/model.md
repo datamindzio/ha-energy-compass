@@ -458,6 +458,43 @@ select's `current_option` always reads the cached configuration the user set, wh
 `strategy` attribute is the label of the generation that actually produced it — the two differ only
 for the moment a recalculation is in flight.
 
+## Load forecast from history
+
+Per local hour and day group (weekday/weekend when `group_weekends`), the forecast is the mean of the
+complete hours between `slot_start - lookback_days` and `slot_start`; a bucket needs `minimum_samples`
+hours or falls back to `fallback_daily_kwh / 24`. A plain mean follows a level change at the speed the window turns over
+(a house that begins heating needs about half the lookback before the profile is half way).
+
+`forecast_half_life_days = H > 0` (T-092) replaces the mean by a weighted mean,
+`Σ w_i x_i / Σ w_i` with `w_i = 0.5^(a_i / H)`, where `a_i` is the age in days of hour `i` at the start
+of the first forecast slot. `H = 0` (default) gives every weight 1, the plain mean. The forecast stays a
+mean for the solver; margins are the reserve logic's (Peak-period reserve). Sample counts and the
+`load_quality` coverage are unchanged: `minimum_samples` counts hours, not weight.
+
+Backtest (`benchmarks/load_forecast_backtest.py`, each day forecast at local midnight from the hours
+before it, lookback 28 days, MAE and bias = forecast − measured in kWh/h) on the deterministic synthetic
+scenarios of the tool, 20 evaluated days after a ×1.9 step of the night/morning level (evening ×1.1) and on the
+same house without the step. These are not recorder data of a household: the recorder history
+since 2026-09-01 of the live site was not reachable from the development session, and the default was not
+chosen from this table.
+
+| Method | Step: morning MAE | Step: morning bias | Step: evening MAE | Stable: morning MAE | Stable: evening MAE |
+| --- | --- | --- | --- | --- | --- |
+| plain mean | 0.390 | −0.387 | 0.180 | 0.074 | 0.151 |
+| `H` = 2 | 0.199 | −0.108 | 0.188 (+4.4 %) | 0.080 | 0.171 (+12.7 %) |
+| `H` = 3 | 0.214 | −0.148 | 0.180 (−0.4 %) | 0.078 | 0.163 (+7.8 %) |
+| `H` = 5 | 0.250 | −0.212 | 0.174 (−3.8 %) | 0.076 | 0.156 (+2.8 %) |
+| `H` = 7 | 0.278 | −0.253 | 0.173 (−3.8 %) | 0.075 | 0.153 (+1.2 %) |
+| `H` = 10 | 0.308 | −0.290 | 0.174 (−3.3 %) | 0.074 | 0.152 (+0.4 %) |
+| plain × (last 3 d / lookback) | 0.233 | −0.197 | 0.258 (+43 %) | 0.078 | 0.165 (+8.8 %) |
+| plain × (last 7 d / lookback) | 0.259 | −0.229 | 0.211 (+17 %) | 0.073 | 0.151 (−0.0 %) |
+
+`H` = 5 is the shortest half-life that keeps the evening MAE within 5 % of the plain mean on both
+scenarios and cuts the step's morning MAE by 36 % and its bias by 45 %. A day-wide level ratio (the last
+N days over the lookback mean, clipped to 0.5-2) corrects the morning and overshoots the evening, so it was evaluated
+and not built. Default 0 stays until the same command is run on the household's recorder
+(`--recorder-db ... --statistic-id ... --since 2026-09-01`).
+
 ## Incremental consumption guidance
 
 `analyze_consumption(problem, plan, settings, budget_s=50.0)` recomputes the same optimization with an extra load probe in each display and percentile-reference interval. The starting stored energy, terminal rule and value, prices, and equipment limits stay fixed. A probe adds the configured energy, 1 kWh by default, across underlying slots in proportion to UTC elapsed overlap. Display and reference bins are anchored at the actual snapshot start. The final covered bin is clipped to source coverage and probed at its actual duration; the configured probe energy is unchanged, so a short tail implies higher average power and can genuinely fail when equipment limits bind. Later display bins remain unknown. The incremental cost is the physical `Plan.objective` difference divided by the energy actually added; both plans use the same export-benefit decision policy, but their decision reserves are excluded from this difference. Infeasible and expired probes have unknown costs and levels. The optimizer calls are serial and stop when the shared probe budget expires.

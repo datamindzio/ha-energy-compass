@@ -602,6 +602,7 @@ def build_problem(
         values["group_weekends"],
         values["minimum_samples"],
         values["allow_fallback"],
+        float(values["forecast_half_life_days"]),
     )
     load_result = load_for_slots_with_quality(
         load_source,

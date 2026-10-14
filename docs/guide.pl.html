@@ -229,8 +229,8 @@ kreator; nic nie jest zapisywane przed jego ostatnim krokiem.</p>
      dobowego szacunku, który tu wpisujesz (<strong>Dobowe zużycie domu</strong>, domyślnie 10 kWh/dobę). Historia
      rekordera jest używana, gdy powiązane jest źródło zużycia domu: zostaw wiersz <strong>Historia zużycia
      domu</strong> w <strong>Wykrytych źródłach</strong> albo użyj <strong>Źródła danych → Dodaj źródło → Zużycie</strong>. <strong>Prognoza
-     zużycia</strong> dostraja wtedy okno historii (<strong>Długość historii</strong>, <strong>Minimalna liczba próbek</strong>) i
-     rozwiązanie zapasowe.
+     zużycia</strong> dostraja wtedy okno historii (<strong>Długość historii</strong>, <strong>Minimalna liczba próbek</strong>,
+     <strong>Okres połowicznego zaniku wagi próbek, dni</strong>) i rozwiązanie zapasowe.
    - <strong>Źródła danych</strong> — przegląd i edycja wszystkich powiązanych źródeł, także PV; <strong>Bateria</strong> i
      <strong>Możliwości sprzętu</strong> zawierają limity baterii i limit importu z sieci. Grupy planowania,
      prognozy kosztu zużycia, wydajności i prezentacji pojawiają się po <strong>Pokaż ustawienia eksperckie</strong>
@@ -307,6 +307,77 @@ przycisk na stronie integracji w <strong>Ustawienia → Urządzenia i usługi</s
 <li><strong>Ważność planu:</strong> nowy plan jest ważny do <code>generated_at + 2 × refresh_minutes</code>, nie dłużej niż
   pokrycie prognozy.</li>
 </ul>
+<h3 id="prognoza-zużycia">Prognoza zużycia</h3>
+<p>Prognoza z historii to średnia godzinowa z pełnych godzin ostatnich <code>lookback_days</code>, w lokalnej
+strefie czasowej, grupowana na dni robocze i weekendy (<code>group_weekends</code>), z wymaganymi
+<code>minimum_samples</code> godzinami w koszyku. Zwykła średnia nadąża za zmianą poziomu tylko tak szybko, jak
+wymienia się okno: przy 28 dniach historii dom, który w tym tygodniu zaczął ogrzewać, nadal jest
+prognozowany głównie poziomem z poprzedniego miesiąca, a najwcześniej widać to rano.</p>
+<p><code>forecast_half_life_days</code> (<strong>Okres połowicznego zaniku wagi próbek, dni</strong>, domyślnie <strong>0</strong> =
+wyłączone, zakres 0-60) waży każdą próbkę przez <code>0.5^(wiek / okres)</code>, a wiek liczy się od początku
+prognozy. Wynik nadal jest średnią, więc zapasy zostają w logice rezerwy
+(<a href="#zapas-na-drogie-okresy">Rezerwa na okres szczytu</a>). <code>minimum_samples</code> liczy próbki, nie wagę.
+Przy 0 prognoza to zwykła średnia, jak dotąd.</p>
+<p><code>benchmarks/load_forecast_backtest.py</code> prognozuje każdy dzień o lokalnej północy z godzin
+sprzed niego i podaje MAE oraz błąd systematyczny (prognoza − pomiar, kWh na godzinę) dla poranka
+(06-13) i wieczoru (15-22). Przyjmuje rejestrator Home Assistanta (<code>--recorder-db</code>,
+<code>--statistic-id</code>), plik CSV z godzinami albo scenariusz syntetyczny. Pomiar na scenariuszach
+syntetycznych (70 dni, historia 28 dni, ocena przez 20 dni po skoku poziomu porannego; <strong>nie</strong> na
+historii konkretnego domu):</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Metoda</th>
+<th>Zmiana poziomu: MAE poranka / błąd sys.</th>
+<th>Zmiana poziomu: MAE wieczoru</th>
+<th>Stabilny dom: MAE wieczoru</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>zwykła średnia</td>
+<td>0,390 / −0,387</td>
+<td>0,180</td>
+<td>0,151</td>
+</tr>
+<tr>
+<td>okres 3 dni</td>
+<td>0,214 / −0,148</td>
+<td>−0,4 %</td>
+<td><strong>+7,8 %</strong></td>
+</tr>
+<tr>
+<td>okres 5 dni</td>
+<td>0,250 / −0,212</td>
+<td>−3,8 %</td>
+<td>+2,8 %</td>
+</tr>
+<tr>
+<td>okres 7 dni</td>
+<td>0,278 / −0,253</td>
+<td>−3,8 %</td>
+<td>+1,2 %</td>
+</tr>
+<tr>
+<td>zwykła × średnia z 3 dni / okno</td>
+<td>0,233 / −0,197</td>
+<td><strong>+43 %</strong></td>
+<td>+8,8 %</td>
+</tr>
+<tr>
+<td>zwykła × średnia z 7 dni / okno</td>
+<td>0,259 / −0,229</td>
+<td><strong>+17 %</strong></td>
+<td>−0,0 %</td>
+</tr>
+</tbody>
+</table></section>
+<p>Kolumny wieczorne poza pierwszym wierszem to zmiana względem zwykłej średniej. Okres 5 dni jest
+najkrótszy, przy którym wieczór mieści się w 5 % w obu scenariuszach, a ważenie świeżością
+zmniejsza błąd poranny o jedną trzecią; jeden współczynnik poziomu na całą dobę (ostatnie N dni /
+okno) przesuwa wieczór w złą stronę i nie został zbudowany. Domyślnie opcja jest wyłączona, dopóki
+liczby nie zostaną odtworzone na rejestratorze konkretnego domu powyższym poleceniem; ustaw 5, aby
+ją włączyć.</p>
 <h3 id="profile-startowe-nowe-instalacje">Profile startowe (nowe instalacje)</h3>
 <p>Trzy osie na pierwszym formularzu (<strong>Użytkownik</strong>), <strong>Rozliczenie prosumenckie</strong>, <strong>Polska taryfa
 dystrybucyjna</strong> (<code>buy_tariff</code>) i <strong>Falownik</strong>, jednorazowo wypełniają edytowalne strojenie nowej

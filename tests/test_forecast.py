@@ -139,3 +139,81 @@ def test_dst_coverage_uses_elapsed_utc_duration(start, end, hours):
     assert sum(
         (row.end - row.start for row in result.coverage), timedelta()
     ) == timedelta(hours=hours)
+
+
+def _same_hour_history(days_ago_values):
+    """Hourly 10:00 samples on Mon-Fri, keyed by days before the Monday 21 Sep slot."""
+    return tuple(
+        (stamp(21 - days, 10), value) for days, value in days_ago_values.items()
+    )
+
+
+def test_half_life_off_is_the_plain_mean():
+    history = _same_hour_history({7: 1.0, 14: 1.0, 3: 3.0})
+    slots = ((stamp(21, 10), stamp(21, 11)),)
+    plain = forecast_load(history, slots, "Europe/Warsaw", None, ForecastSettings())
+    explicit = forecast_load(
+        history, slots, "Europe/Warsaw", None, ForecastSettings(half_life_days=0.0)
+    )
+    assert plain == explicit == (pytest.approx(5.0 / 3),)
+
+
+def test_half_life_pulls_the_profile_towards_the_recent_level():
+    # Three weeks at 1.0 kWh, then the last three days at 2.0 kWh (a level change).
+    history = _same_hour_history({16: 1.0, 15: 1.0, 14: 1.0, 3: 2.0, 2: 2.0, 1: 2.0})
+    slots = ((stamp(21, 10), stamp(21, 11)),)
+
+    def forecast(half_life):
+        return forecast_load(
+            history,
+            slots,
+            "Europe/Warsaw",
+            None,
+            ForecastSettings(lookback_days=28, half_life_days=half_life),
+        )[0]
+
+    plain, slow, fast = forecast(0), forecast(10), forecast(2)
+    assert plain == pytest.approx(1.5)
+    assert plain < slow < fast < 2.0
+
+
+def test_half_life_weight_halves_per_half_life():
+    # Ages 3 and 6 days at half-life 3: weights 0.5 and 0.25, so (3*0.5 + 0*0.25) / 0.75.
+    history = _same_hour_history({3: 3.0, 6: 0.0})
+    slots = ((stamp(21, 10), stamp(21, 11)),)
+    value = forecast_load(
+        history,
+        slots,
+        "Europe/Warsaw",
+        None,
+        ForecastSettings(half_life_days=3.0),
+    )[0]
+    assert value == pytest.approx(2.0)
+
+
+def test_half_life_keeps_sample_count_and_coverage():
+    history = _same_hour_history({3: 3.0, 6: 0.0})
+    slots = ((stamp(21, 10), stamp(21, 11)),)
+    from custom_components.energy_compass.engine.forecast import (
+        forecast_load_with_quality,
+    )
+
+    result = forecast_load_with_quality(
+        history,
+        slots,
+        "Europe/Warsaw",
+        None,
+        ForecastSettings(half_life_days=3.0, minimum_samples=2),
+    )
+    assert [(c.method, c.samples_available) for c in result.coverage] == [
+        ("history", 2)
+    ]
+
+
+@pytest.mark.parametrize("bad", [-1.0, float("nan"), float("inf")])
+def test_half_life_rejects_invalid_values(bad):
+    slots = ((stamp(21, 10), stamp(21, 11)),)
+    with pytest.raises(InputError, match="half-life"):
+        forecast_load(
+            (), slots, "Europe/Warsaw", 24, ForecastSettings(half_life_days=bad)
+        )
