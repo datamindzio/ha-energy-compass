@@ -1605,6 +1605,11 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <td>Energia ponad prognozowaną potrzebę na start drogiego okresu. Zob. <a href="#zapas-na-drogie-okresy">Zapas na drogie okresy</a>.</td>
 </tr>
 <tr>
+<td><strong>Zapas baterii po sprzedaży z baterii</strong> (<code>export_reserve_margin_kwh</code>)</td>
+<td>0 (wył.)</td>
+<td>Energia ponad prognozowaną potrzebę po każdym eksporcie z baterii w drogim okresie, do następnego taniego przedziału. Osobne ustawienie (nie idzie za zapasem powyżej); wymaga eksportu z baterii i opcji <strong>Ogranicz cenę ładowania baterii z sieci</strong>. Zob. <a href="#zapas-na-drogie-okresy">Zapas na drogie okresy</a>.</td>
+</tr>
+<tr>
 <td><strong>Reguła końcowa</strong> (<code>terminal_mode</code>)</td>
 <td><code>preserve_initial</code></td>
 <td>SOC na końcu ≥ SOC na starcie, albo <code>value</code>: energia na końcu wyceniana po <code>terminal_value_per_kwh</code>.</td>
@@ -1768,11 +1773,34 @@ zapas, gdy dom już go zużył — odwrotnie niż ma działać zapas. Z tego sam
 trwa w chwili liczenia planu, nie dostaje celu, tak jak ciąg, w którym PV pokrywa dom. Cel jest
 <strong>miękki</strong>: niedobór wyceniany jest po medianie drogiej ceny minus sufit i raportowany jako
 <code>peak_reserve_shortfall_kwh</code>; nie wchodzi do raportowanych kosztów. Wewnątrz ciągu zapas jest zwykłą
-energią w baterii, więc plan może go sprzedać, gdy sprzedaż daje więcej niż późniejszy zakup. Działa w
-każdej strategii, obok progu autonomii. Ostrzeżenia: <code>peak_reserve_requires_grid_charge_ceiling</code>
-(ustawienie powyżej 0 przy wyłączonym limicie ceny) i <code>peak_reserve_inactive</code> (w horyzoncie brak
-nadchodzącego drogiego ciągu z deficytem).</p>
-<p>Dobór: rozsądny start to 0,25–0,75 kWh. W backteście jednego domu z taryfą dwustrefową 0,5 kWh
+energią w baterii, więc plan może go sprzedać, gdy sprzedaż daje więcej niż późniejszy zakup — ale do
+prognozowanej potrzeby, plus <code>export_reserve_margin_kwh</code>, gdy jest ustawione, nie głębiej (następny
+akapit). Działa w każdej
+strategii, obok progu autonomii. Ostrzeżenia: <code>peak_reserve_requires_grid_charge_ceiling</code> (ustawienie
+powyżej 0 przy wyłączonym limicie ceny) i <code>peak_reserve_inactive</code> (w horyzoncie brak nadchodzącego
+drogiego ciągu z deficytem).</p>
+<p><strong>Zapas pod eksportem.</strong> <code>export_reserve_margin_kwh</code> (domyślnie 0 = wył.) to osobne ustawienie: nie idzie
+za <code>peak_reserve_margin_kwh</code>, a instalacja, która już ma zapas na wejściu, zachowuje swoje plany i czasy
+liczenia, dopóki to ustawienie nie zostanie podniesione. Wymaga eksportu z baterii i opcji <strong>Ogranicz
+cenę ładowania baterii z sieci</strong> (ostrzeżenia <code>export_reserve_requires_battery_export</code> i
+<code>export_reserve_requires_grid_charge_ceiling</code>). Działa wewnątrz ciągu, ale tylko w przedziale, w którym
+plan eksportuje z baterii: po takim przedziale bateria musi zachować
+<code>rezerwa + export_reserve_margin_kwh + deficyt do następnego taniego przedziału / η_rozładowania</code>.
+Przedział bez eksportu nie ma celu, więc przeliczenie w trakcie ciągu nigdy nie kupuje po drogiej cenie,
+żeby odbudować zapas; plan po prostu przestaje eksportować. Cel jest miękki, wyceniany po medianie ceny
+zakupu tych przedziałów (tyle kosztuje brakująca kWh zapasu, gdy zużycie wyjdzie ponad prognozę) i
+wlicza się do <code>peak_reserve_shortfall_kwh</code>. Plan zachowuje więc zapas, dopóki eksport zarabia mniej,
+niż kosztowałby taki zakup: najtańszy przedział eksportu kurczy się pierwszy. Cel mają tylko przedziały,
+w których <code>cena sprzedaży × η_rozładowania</code> jest powyżej sufitu ładowania z sieci, a ciąg, po którym w
+horyzoncie nie ma taniego przedziału, go nie ma. Koszt: dochodzą wiersze, a liczenie jest wolniejsze tam,
+gdzie zapas wiąże. W teście porównawczym (40 dni po 96 i 192 przedziały, tylko dni, w których zapas
+wiązał) 0,5 kWh oddało 0,7 z 3,6 kWh eksportu z baterii w dniach z wieczornym oknem sprzedaży, utrzymało
+najwolniejsze liczenie na 2,4 do 3,9 s przy 96 przedziałach (5,0 do 6,1 s przy 192) i żadne nie
+skończyło na limicie 10 s; od 0,75 kWh liczenie długiego wieczornego ciągu trwało medianowo 4 do 6 razy
+dłużej, a część dni dochodziła do limitu (1 z 40 przy 96 przedziałach i 0,75 kWh, 4 z 40 przy 192
+przedziałach i 1,0 kWh). Podnoś ustawienie stopniowo i sprawdzaj <code>time_limited</code> planu
+(szczegóły w <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#reserve-under-a-battery-export">model.md</a>); przy 0 nic się nie zmienia.</p>
+<p>Dobór zapasu na wejściu: rozsądny start to 0,25–0,75 kWh. W backteście jednego domu z taryfą dwustrefową 0,5 kWh
 zmniejszyło o połowę liczbę poranków, w których bateria kończyła się przed PV (42 % → 21 %), przy
 koszcie mniej więcej zerowym: zapas nie przepada, jest zużywany później albo wyceniany na końcu
 horyzontu.</p>
@@ -2317,7 +2345,7 @@ powrót do mediany następuje przy najbliższym okresowym przeliczeniu (<code>re
 </tr>
 <tr>
 <td><code>peak_reserve_shortfall_kwh</code></td>
-<td>Łączny niedobór poniżej <a href="#zapas-na-drogie-okresy">zapasu na drogie okresy</a>; <code>0</code> = spełniony lub wyłączony.</td>
+<td>Łączny niedobór poniżej <a href="#zapas-na-drogie-okresy">zapasu na drogie okresy</a>, zapasu na wejściu i zapasu pod eksportem razem; <code>0</code> = spełniony lub wyłączony.</td>
 </tr>
 <tr>
 <td><code>time_limited</code></td>
@@ -3558,7 +3586,7 @@ grupowane w dni według lokalnej daty <code>start</code>; ustawienia podaje się
 <li><strong>W pliku z opustem koszty to ceny godzinowe, a nie rozliczenie.</strong> Opust jest rozliczany w rocznych
   kWh (<a href="#profile-startowe-nowe-instalacje">Profile startowe</a>), więc <code>plan − self_use</code> nie jest tam
   oszczędnością; nie porównuj po nim strategii.</li>
-<li><a href="#zapas-na-drogie-okresy">Zapas na drogie okresy</a> (<code>peak_reserve_margin_kwh</code>) jest odtwarzany jak w integracji: wymaga
+<li><a href="#zapas-na-drogie-okresy">Zapas na drogie okresy</a> (<code>peak_reserve_margin_kwh</code> i <code>export_reserve_margin_kwh</code>) jest odtwarzany jak w integracji: wymaga
   <code>limit_grid_charge_price</code> (jego pułap to cena „tania”), w przeciwnym razie ostrzeżenie mówi, że nie
   ma efektu.</li>
 <li>Nie są odtwarzane: okna balansowania LFP, ogon autonomii poza danymi oraz przenoszone zobowiązania
@@ -3719,6 +3747,14 @@ jak podany szereg prognoz.</p>
 <tr>
 <td><code>peak_reserve_inactive</code></td>
 <td>W horyzoncie brak nadchodzącego drogiego ciągu z deficytem — zapas nie ma czego chronić.</td>
+</tr>
+<tr>
+<td><code>export_reserve_requires_grid_charge_ceiling</code></td>
+<td><code>export_reserve_margin_kwh</code> powyżej 0, ale <strong>Ogranicz cenę ładowania baterii z sieci</strong> wyłączone — zapas pod eksportem pominięty.</td>
+</tr>
+<tr>
+<td><code>export_reserve_requires_battery_export</code></td>
+<td><code>export_reserve_margin_kwh</code> powyżej 0, ale eksport z baterii wyłączony — zapas pod eksportem pominięty.</td>
 </tr>
 </tbody>
 </table></section>

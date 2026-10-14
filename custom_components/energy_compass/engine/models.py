@@ -131,6 +131,10 @@ class Problem:
     peak_reserve_kwh: tuple[float, ...] = ()
     peak_reserve_window: tuple[int, ...] = ()
     peak_reserve_weight: float = 0.0
+    # Conditional floor on a physical battery-export slot (`export_reserve.py`).
+    export_reserve_kwh: tuple[float, ...] = ()
+    export_reserve_window: tuple[int, ...] = ()
+    export_reserve_weight: float = 0.0
     peak_import_weight: float = 0.0
     soft_import_cap_kw: float | None = None
     soft_export_cap_kw: float | None = None

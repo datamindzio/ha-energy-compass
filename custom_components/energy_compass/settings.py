@@ -93,6 +93,7 @@ NUMBERS = {
     "grid_friendly_export_cap_kw": ("planning", 0, 0, 1000, "kW"),
     "autonomy_margin_per_kwh": ("planning", 0.10, 0, 1000, "currency/kWh"),
     "peak_reserve_margin_kwh": ("planning", 0, 0, 100, "kWh"),
+    "export_reserve_margin_kwh": ("planning", 0, 0, 100, "kWh"),
     "display_horizon_hours": ("compass", 24, 1, 48, "h"),
     "reference_horizon_hours": ("compass", 24, 1, 48, "h"),
     "display_interval_minutes": ("compass", 60, 15, 60, "min"),

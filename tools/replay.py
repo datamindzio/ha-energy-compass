@@ -78,6 +78,8 @@ from custom_components.energy_compass.engine.models import (
 )
 from custom_components.energy_compass.engine.optimize import solve, solve_released
 from custom_components.energy_compass.engine.peak_reserve import (
+    export_reserve_targets,
+    export_reserve_weight,
     peak_reserve_targets,
     peak_reserve_weight,
 )
@@ -379,6 +381,38 @@ def _peak_reserve(values: dict, slots, battery: Battery):
     return (), (), 0.0
 
 
+def _export_reserve(values: dict, slots, battery: Battery):
+    """Floor under a battery-export slot, built from the slots at hand.
+
+    Mirrors runtime.py: needs `limit_grid_charge_price` (its ceiling is the cheap
+    price) and battery export, and stays inactive when no export-capable slot of an
+    expensive run has a cheap slot after it.
+    """
+    margin = values["export_reserve_margin_kwh"]
+    if (
+        margin <= 0
+        or not values["limit_grid_charge_price"]
+        or not battery.allow_battery_export
+    ):
+        return (), (), 0.0
+    buy = tuple(slot.buy_per_kwh for slot in slots)
+    reserve = export_reserve_targets(
+        buy,
+        tuple(slot.sell_per_kwh for slot in slots),
+        tuple(slot.load_kwh for slot in slots),
+        tuple(slot.pv_kwh for slot in slots),
+        cheap_price=values["maximum_grid_charge_price"],
+        reserve_kwh=battery.capacity_kwh * battery.minimum_soc_fraction,
+        usable_capacity_kwh=battery.capacity_kwh * battery.maximum_soc_fraction,
+        eta_discharge=battery.eta_discharge,
+        margin_kwh=margin,
+    )
+    weight = export_reserve_weight(buy, reserve.window_ids)
+    if weight > 0:
+        return reserve.targets_kwh, reserve.window_ids, weight
+    return (), (), 0.0
+
+
 def build_problem(
     values: dict,
     slots: tuple[Slot, ...],
@@ -426,6 +460,7 @@ def build_problem(
     )
     targets, windows, target_weight = _autonomy(values, slots, battery, zone_name)
     peak_kwh, peak_window, peak_weight = _peak_reserve(values, slots, battery)
+    export_kwh, export_window, export_weight = _export_reserve(values, slots, battery)
     settlement = resolve_settlement(
         values,
         split_known=any(slot.buy_per_kwh > slot.buy_energy_per_kwh for slot in slots),
@@ -465,6 +500,9 @@ def build_problem(
         peak_reserve_kwh=peak_kwh,
         peak_reserve_window=peak_window,
         peak_reserve_weight=peak_weight,
+        export_reserve_kwh=export_kwh,
+        export_reserve_window=export_window,
+        export_reserve_weight=export_weight,
         export_value_factor=settlement["export_value_factor"],
         import_energy_factor=settlement["import_energy_factor"],
         **weights,
@@ -855,6 +893,15 @@ def main(argv=None) -> int:
             print(
                 "warning: peak reserve needs limit_grid_charge_price (its ceiling is "
                 "the cheap price); it has no effect (peak_reserve_margin_kwh)",
+                file=sys.stderr,
+            )
+        if (
+            values["export_reserve_margin_kwh"] > 0
+            and not values["limit_grid_charge_price"]
+        ):
+            print(
+                "warning: export reserve needs limit_grid_charge_price (its ceiling is "
+                "the cheap price); it has no effect (export_reserve_margin_kwh)",
                 file=sys.stderr,
             )
         results = replay(days, values, zone_name)

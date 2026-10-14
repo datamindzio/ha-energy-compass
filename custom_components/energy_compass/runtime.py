@@ -53,7 +53,12 @@ from .engine.models import (
 )
 from .engine.normalize import finite, validate_problem
 from .engine.optimize import solve, solve_released
-from .engine.peak_reserve import peak_reserve_targets, peak_reserve_weight
+from .engine.peak_reserve import (
+    export_reserve_targets,
+    export_reserve_weight,
+    peak_reserve_targets,
+    peak_reserve_weight,
+)
 from .engine.strategy import resolve_flags, strategy_weights
 from .settings import validate_configuration
 from .settlement import resolve_settlement
@@ -792,6 +797,9 @@ def build_problem(
     peak_reserve_kwh: tuple[float, ...] = ()
     peak_reserve_window: tuple[int, ...] = ()
     peak_reserve_weight_value = 0.0
+    export_reserve_kwh: tuple[float, ...] = ()
+    export_reserve_window: tuple[int, ...] = ()
+    export_reserve_weight_value = 0.0
     if (
         battery
         and values["peak_reserve_margin_kwh"] > 0
@@ -818,6 +826,30 @@ def build_problem(
         else:
             peak_reserve_weight_value = 0.0
             autonomy_warnings.append("peak_reserve_inactive")
+    if battery and values["export_reserve_margin_kwh"] > 0:
+        if not values["limit_grid_charge_price"]:
+            autonomy_warnings.append("export_reserve_requires_grid_charge_ceiling")
+        elif not battery.allow_battery_export:
+            autonomy_warnings.append("export_reserve_requires_battery_export")
+        else:
+            buy = tuple(slot.buy_per_kwh for slot in slots)
+            export_reserve = export_reserve_targets(
+                buy,
+                tuple(slot.sell_per_kwh for slot in slots),
+                tuple(loads),
+                tuple(pv),
+                cheap_price=values["maximum_grid_charge_price"],
+                reserve_kwh=battery.capacity_kwh * battery.minimum_soc_fraction,
+                usable_capacity_kwh=battery.capacity_kwh * battery.maximum_soc_fraction,
+                eta_discharge=values["eta_discharge"],
+                margin_kwh=values["export_reserve_margin_kwh"],
+            )
+            export_reserve_weight_value = export_reserve_weight(
+                buy, export_reserve.window_ids
+            )
+            if export_reserve_weight_value > 0:
+                export_reserve_kwh = export_reserve.targets_kwh
+                export_reserve_window = export_reserve.window_ids
     problem = Problem(
         slots,
         SiteLimits(
@@ -863,6 +895,9 @@ def build_problem(
         peak_reserve_kwh=peak_reserve_kwh,
         peak_reserve_window=peak_reserve_window,
         peak_reserve_weight=peak_reserve_weight_value,
+        export_reserve_kwh=export_reserve_kwh,
+        export_reserve_window=export_reserve_window,
+        export_reserve_weight=export_reserve_weight_value,
         export_value_factor=settlement["export_value_factor"],
         import_energy_factor=settlement["import_energy_factor"],
         hold_miss_share=HOLD_FORECAST_MISS,

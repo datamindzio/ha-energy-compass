@@ -1576,6 +1576,11 @@ directly by any other available mode.</p>
 <td>Energy kept above the forecast need when an expensive period starts. See <a href="#peak-period-reserve">Peak-period reserve</a>.</td>
 </tr>
 <tr>
+<td><strong>Battery buffer after battery export</strong> (<code>export_reserve_margin_kwh</code>)</td>
+<td>0 (off)</td>
+<td>Energy kept above the forecast need after each battery export inside an expensive period, until the next cheap interval. Its own setting (does not follow the buffer above); needs battery export and <strong>Limit grid-charging price</strong>. See <a href="#peak-period-reserve">Peak-period reserve</a>.</td>
+</tr>
+<tr>
 <td><strong>Terminal rule</strong> (<code>terminal_mode</code>)</td>
 <td><code>preserve_initial</code></td>
 <td>End SOC ≥ start SOC, or <code>value</code>: stored energy at the end is credited at <code>terminal_value_per_kwh</code>.</td>
@@ -1738,10 +1743,31 @@ reason a run that is already in progress when the plan is calculated gets no tar
 where PV covers the house. The target is <strong>soft</strong>: a shortfall is billed at the median expensive price
 minus the ceiling and reported as <code>peak_reserve_shortfall_kwh</code>; reported costs never include it. Inside
 the run the buffer is ordinary stored energy, so the plan may still export it when selling pays more
-than the later purchase. It works in every strategy, next to the autonomy floor. Warnings:
+than the later purchase — down to the forecast need, plus <code>export_reserve_margin_kwh</code> when that is set,
+not below (next paragraph). It works in every strategy, next to the autonomy floor. Warnings:
 <code>peak_reserve_requires_grid_charge_ceiling</code> (setting above 0 while the ceiling is off) and
 <code>peak_reserve_inactive</code> (no upcoming expensive run with a deficit in the horizon).</p>
-<p>Sizing: 0.25–0.75 kWh is a reasonable start. In a backtest on one household with a two-zone tariff,
+<p><strong>Buffer under an export.</strong> <code>export_reserve_margin_kwh</code> (default 0 = off) is its own setting: it does not
+follow <code>peak_reserve_margin_kwh</code>, and a site that already runs the entry buffer keeps its plans and
+solve times until this one is set. It needs battery export and <strong>Limit grid-charging price</strong> (warnings
+<code>export_reserve_requires_battery_export</code> and <code>export_reserve_requires_grid_charge_ceiling</code>). It applies
+inside the run, but only to an interval in which the plan exports from the battery: there the battery
+must keep <code>reserve + export_reserve_margin_kwh + deficit until the next cheap interval / η_discharge</code>
+after the interval. An interval without an export has no target, so a recalculation during the run never
+buys at the expensive price to rebuild the buffer; the plan simply stops exporting. The target is soft,
+billed at the median buy price of those intervals (what a missing kWh of buffer costs when the load runs
+above the forecast) and counted in <code>peak_reserve_shortfall_kwh</code>. The plan therefore keeps the buffer as
+long as the export earns less than that purchase would cost: the cheapest export interval shrinks first.
+Only intervals where <code>sell price × η_discharge</code> is above the grid-charging ceiling carry a target, and a
+run that no cheap interval follows in the horizon has none. Cost: it adds rows, and the solve is slower
+where the buffer binds. In the benchmark sweep (40 days of 96 and 192 intervals, binding days only) 0.5 kWh
+gave up 0.7 of 3.6 kWh of battery export on the evening-window days, left the slowest solve at 2.4 to
+3.9 s at 96 intervals (5.0 to 6.1 s at 192) and ended none at the 10 s limit; from 0.75 kWh the solve of
+a long evening run took 4 to 6 times longer at its median and some days reached the limit (1 of 40 at 96
+intervals and 0.75 kWh, 4 of 40 at 192 intervals and 1.0 kWh). Raise the
+setting in steps and check <code>time_limited</code> on the plan (details in
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#reserve-under-a-battery-export">model.md</a>); at 0 nothing changes.</p>
+<p>Sizing of the entry buffer: 0.25–0.75 kWh is a reasonable start. In a backtest on one household with a two-zone tariff,
 0.5 kWh halved the mornings that ran out before PV (42 % → 21 %) at roughly neutral cost: the buffer
 is not lost, it is used later or valued at the end of the horizon.</p>
 <h2 id="consumption-levels--boost-cheap-normal-limit">Consumption levels — BOOST, CHEAP, NORMAL, LIMIT</h2>
@@ -2281,7 +2307,7 @@ takes effect at the next periodic recalculation (<code>refresh_minutes</code>) o
 </tr>
 <tr>
 <td><code>peak_reserve_shortfall_kwh</code></td>
-<td>Total shortfall below the <a href="#peak-period-reserve">peak-period reserve</a>; <code>0</code> = met or off.</td>
+<td>Total shortfall below the <a href="#peak-period-reserve">peak-period reserve</a>, the entry buffer and the buffer under an export together; <code>0</code> = met or off.</td>
 </tr>
 <tr>
 <td><code>time_limited</code></td>
@@ -3517,8 +3543,8 @@ into days by the local date of <code>start</code>; settings come only from <code
 <li><strong>On a net-metering file the costs are hourly prices, not the settlement.</strong> Net-metering is settled on
   yearly kWh (<a href="#setup-profiles-new-installations">Setup profiles</a>), so <code>plan − self_use</code> is not a saving
   there; do not compare strategies by it.</li>
-<li>The <a href="#peak-period-reserve">peak-period reserve</a> (<code>peak_reserve_margin_kwh</code>) is replayed as in the integration: it needs
-  <code>limit_grid_charge_price</code> (its ceiling is the cheap price), else a warning says it has no effect.</li>
+<li>The <a href="#peak-period-reserve">peak-period reserve</a> (<code>peak_reserve_margin_kwh</code> and <code>export_reserve_margin_kwh</code>) is replayed as in
+  the integration: it needs <code>limit_grid_charge_price</code> (its ceiling is the cheap price), else a warning says it has no effect.</li>
 <li>Not replayed: LFP balance windows, the autonomy tail beyond the data, and carried export or
   grid-charge commitments. A warning names the enabled ones. A failed plan solve runs that step as
   self-consumption and is reported under the table and as <code>solve_failures</code>; a failed <code>hindsight</code>
@@ -3676,6 +3702,14 @@ series you give it.</p>
 <tr>
 <td><code>peak_reserve_inactive</code></td>
 <td>No upcoming expensive run with a deficit in the horizon — peak-period reserve has nothing to protect.</td>
+</tr>
+<tr>
+<td><code>export_reserve_requires_grid_charge_ceiling</code></td>
+<td><code>export_reserve_margin_kwh</code> above 0 but <strong>Limit grid-charging price</strong> off — buffer under an export skipped.</td>
+</tr>
+<tr>
+<td><code>export_reserve_requires_battery_export</code></td>
+<td><code>export_reserve_margin_kwh</code> above 0 but battery export off — buffer under an export skipped.</td>
 </tr>
 </tbody>
 </table></section>

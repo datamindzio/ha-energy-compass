@@ -30,6 +30,7 @@ from .dispatch_policy import (
     validate_modes,
 )
 from .export_benefit import constrain_export_benefit, validate_export_benefit
+from .export_reserve import constrain_export_reserve, validate_export_reserve
 from .idle_drain import cumulative, drain_schedule
 from .mode_noise import settle_mode_noise
 from .models import (
@@ -347,6 +348,7 @@ def _validate_solution(
     _check(bool(np.all(np.isfinite(values))), "nonfinite variables")
     validate_export_benefit(problem, vectors, values)
     validate_charge_benefit(problem, vectors, values)
+    validate_export_reserve(problem, vectors, values)
     battery = problem.battery
     previous_energy = battery.initial_kwh if battery else 0.0
     drains = drain_schedule(problem)
@@ -1285,6 +1287,7 @@ def _solve(
                 model.constrain(terms, -np.inf, budget)
 
     constrain_export_benefit(model, problem, vectors)
+    constrain_export_reserve(model, problem, vectors)
     constrain_charge_benefit(model, problem, vectors)
     values = model.solve(time_limit)
     _validate_solution(problem, vectors, values, daily_fractions, budgets)
@@ -1383,7 +1386,10 @@ def _solve(
         float(values[v["soc_slack"]]) for v in vectors if "soc_slack" in v
     )
     peak_reserve_shortfall_kwh = sum(
-        float(values[v["peak_slack"]]) for v in vectors if "peak_slack" in v
+        float(values[v[name]])
+        for v in vectors
+        for name in ("peak_slack", "export_reserve_slack")
+        if name in v
     )
     cap_violation_kwh = sum(
         float(values[v[name]])
