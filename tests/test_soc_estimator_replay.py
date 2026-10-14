@@ -23,7 +23,9 @@ def recording():
 def _replay(recording, *, follow_yaml_anchors):
     yaml = recording.yaml
     first = yaml["anchors"][0]
-    settings = EstimatorSettings(capacity_kwh=yaml["full_kwh"], eta_charge=yaml["eta"])
+    settings = EstimatorSettings(
+        capacity_kwh=yaml["full_kwh"], empty_voltage_v=496.0, eta_charge=yaml["eta"]
+    )
     state = EstimatorState(
         Anchor(
             "full",

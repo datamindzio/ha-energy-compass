@@ -18,6 +18,7 @@ from custom_components.energy_compass.soc_estimator import (
 T0 = dt.datetime(2026, 10, 1, 12, tzinfo=dt.UTC)
 SETTINGS = EstimatorSettings(
     capacity_kwh=24.0,
+    empty_voltage_v=480.0,
     eta_charge=0.9,
     max_charge_current_a=14.0,
     rated_pv_w=8000.0,
@@ -45,12 +46,12 @@ def _inputs(
         T0 + dt.timedelta(seconds=seconds),
         charge,
         discharge,
-        current * -voltage,
+        current * voltage,
         voltage,
         current,
         pv,
         load,
-        facts,
+        facts=facts,
     )
 
 

@@ -43,6 +43,12 @@ SURPLUS_RATED_FRACTION = 0.05
 TARGET_VOLTAGE_MARGIN = 0.01
 MAX_CANDIDATES = 20
 
+# Empty anchor evidence (DD-4).
+MIN_DISCHARGE_A = 0.5
+LIGHT_LOAD_C = 0.1
+STOPPED_VOLTAGE_MARGIN = 0.01
+MIN_IMPORT_W = 300.0
+
 
 @dataclass(frozen=True)
 class Anchor:
@@ -58,12 +64,15 @@ class Anchor:
 @dataclass(frozen=True)
 class EstimatorSettings:
     capacity_kwh: float
+    # Pack voltage that is 0 %; the site must state it, there is no default.
+    empty_voltage_v: float
     eta_charge: float = 0.95
     # Largest charge current the pack takes; 0 when unknown (the taper
     # threshold is then the 1 A floor). Rated PV power likewise.
     max_charge_current_a: float = 0.0
     rated_pv_w: float = 0.0
     full_hold_seconds: float = 600.0
+    empty_hold_seconds: float = 60.0
     # E1: a full candidate only anchors after this many days since the
     # estimator started, unless the switch is on from day one.
     anchor_on_candidates: bool = False
@@ -74,10 +83,13 @@ class EstimatorSettings:
             raise InputError("invalid estimator capacity")
         if not (isfinite(self.eta_charge) and 0 < self.eta_charge <= 1):
             raise InputError("invalid estimator efficiency")
+        if not (isfinite(self.empty_voltage_v) and self.empty_voltage_v > 0):
+            raise InputError("invalid estimator empty voltage")
         for value in (
             self.max_charge_current_a,
             self.rated_pv_w,
             self.full_hold_seconds,
+            self.empty_hold_seconds,
             self.candidates_only_days,
         ):
             if not (isfinite(value) and value >= 0):
@@ -104,6 +116,8 @@ class ControllerFacts:
     # Direction (Disabled, Grid, Sell) and voltage target of the active TOU program.
     program_direction: str | None = None
     program_voltage_v: float | None = None
+    # Discharge current limit in force; None unknown.
+    discharge_limit_a: float | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +134,8 @@ class Inputs:
     current_a: float | None = None
     pv_w: float | None = None
     load_w: float | None = None
+    # Grid power in W, positive while importing.
+    grid_w: float | None = None
     facts: ControllerFacts | None = None
 
 
@@ -140,6 +156,11 @@ class EstimatorState:
     full_candidate_since: datetime | None = None
     full_candidate_logged: bool = False
     candidates: list[dict] = field(default_factory=list)
+    empty_candidate_since: datetime | None = None
+    empty_candidate_logged: bool = False
+    # Energy between the last full anchor and the empty anchor that followed;
+    # shown, never applied.
+    measured_capacity_kwh: float | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +176,8 @@ class Estimate:
     throughput_since_anchor_kwh: float = 0.0
     pending_kwh: float = 0.0
     full_candidate: bool = False
+    empty_candidate: bool = False
+    measured_capacity_kwh: float | None = None
     events: tuple[str, ...] = ()
 
 
@@ -228,6 +251,7 @@ def step(
     charge, discharge = _number(inputs.charge_kwh), _number(inputs.discharge_kwh)
     if charge is None or discharge is None:
         _break_full_candidate(state)
+        _break_empty_candidate(state)
         return Estimate(
             None,
             None,
@@ -247,6 +271,7 @@ def step(
         )
         state.last_full = None
         events.append("reset")
+        _break_empty_candidate(state)
     changed = state.last_counters is not None and (charge, discharge) != (
         state.last_counters
     )
@@ -269,6 +294,8 @@ def step(
         )
     if _full_anchor(state, settings, inputs, charge, discharge):
         events.append("full")
+    if _empty_anchor(state, settings, inputs, charge, discharge):
+        events.append("empty")
     return _estimate(state, settings, tuple(events))
 
 
@@ -325,6 +352,82 @@ def _full_anchor(
 def _break_full_candidate(state: EstimatorState) -> None:
     state.full_candidate_since = None
     state.full_candidate_logged = False
+
+
+def _empty_anchor(
+    state: EstimatorState,
+    settings: EstimatorSettings,
+    inputs: Inputs,
+    charge: float,
+    discharge: float,
+) -> bool:
+    """Track the empty-anchor evidence (DD-4); True when the step anchored."""
+    if _empty_evidence(settings, inputs) is None:
+        _break_empty_candidate(state)
+        return False
+    at = inputs.at
+    if state.empty_candidate_since is None:
+        state.empty_candidate_since = at
+    if (
+        state.empty_candidate_logged
+        or (at - state.empty_candidate_since).total_seconds()
+        < settings.empty_hold_seconds
+    ):
+        return False
+    state.empty_candidate_logged = True
+    full = state.last_full
+    if full is not None:
+        measured = (discharge - full.discharge_kwh) - settings.eta_charge * (
+            charge - full.charge_kwh
+        )
+        if measured > 0:
+            state.measured_capacity_kwh = round(measured, 3)
+    state.last_full = None
+    set_anchor(state, Anchor("empty", at, 0.0, charge, discharge))
+    return True
+
+
+def _break_empty_candidate(state: EstimatorState) -> None:
+    state.empty_candidate_since = None
+    state.empty_candidate_logged = False
+
+
+def _empty_evidence(settings: EstimatorSettings, inputs: Inputs) -> str | None:
+    """The rule that holds ("light_load", "stopped"), or None.
+
+    Light load: discharging at no more than 0.1 C with the voltage at or below
+    the 0 % voltage; a heavier load sags the voltage and proves nothing.
+    Stopped: the discharge ceased although the house imports from the grid and
+    the controller allows discharging, with the voltage within 1 % above the
+    0 % voltage.
+    """
+    current, voltage = _number(inputs.current_a), _number(inputs.voltage_v)
+    if current is None or voltage is None:
+        return None
+    power = _number(inputs.power_w)
+    discharge_w = power if power is not None else current * voltage
+    light = LIGHT_LOAD_C * settings.capacity_kwh * 1000
+    if (
+        current >= MIN_DISCHARGE_A
+        and discharge_w <= light
+        and voltage <= settings.empty_voltage_v
+    ):
+        return "light_load"
+    facts, grid = inputs.facts, _number(inputs.grid_w)
+    if facts is None or grid is None:
+        return None
+    limit = _number(facts.discharge_limit_a)
+    if (
+        -MIN_DISCHARGE_A < current < MIN_DISCHARGE_A
+        and grid >= MIN_IMPORT_W
+        and limit is not None
+        and limit >= MIN_CHARGE_LIMIT_A
+        and not facts.target_reached
+        and facts.state not in ("HOLD", "CURTAIL")
+        and voltage <= settings.empty_voltage_v * (1 + STOPPED_VOLTAGE_MARGIN)
+    ):
+        return "stopped"
+    return None
 
 
 def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
@@ -451,6 +554,8 @@ def _estimate(
         / 2,
         pending_kwh=state.pending_kwh,
         full_candidate=state.full_candidate_since is not None,
+        empty_candidate=state.empty_candidate_since is not None,
+        measured_capacity_kwh=state.measured_capacity_kwh,
         events=events,
     )
 

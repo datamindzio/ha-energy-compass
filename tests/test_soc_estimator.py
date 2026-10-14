@@ -14,7 +14,7 @@ from custom_components.energy_compass.soc_estimator import (
 )
 
 T0 = datetime(2026, 10, 1, 12, tzinfo=UTC)
-SETTINGS = EstimatorSettings(capacity_kwh=24.0, eta_charge=0.9)
+SETTINGS = EstimatorSettings(capacity_kwh=24.0, empty_voltage_v=480.0, eta_charge=0.9)
 
 
 def _state(energy=10.0, charge=1000.0, discharge=500.0, kind="full", confirmed=False):
@@ -48,11 +48,13 @@ def test_energy_follows_counters_from_the_anchor():
 
 def test_settings_reject_nonsense():
     with pytest.raises(InputError):
-        EstimatorSettings(capacity_kwh=0)
+        EstimatorSettings(capacity_kwh=0, empty_voltage_v=480.0)
     with pytest.raises(InputError):
-        EstimatorSettings(capacity_kwh=24, eta_charge=1.2)
+        EstimatorSettings(capacity_kwh=24, empty_voltage_v=480.0, eta_charge=1.2)
     with pytest.raises(InputError):
-        EstimatorSettings(capacity_kwh=float("nan"))
+        EstimatorSettings(capacity_kwh=float("nan"), empty_voltage_v=480.0)
+    with pytest.raises(InputError):
+        EstimatorSettings(capacity_kwh=24, empty_voltage_v=0)
 
 
 def test_interpolation_integrates_discharge_power_between_counter_steps():

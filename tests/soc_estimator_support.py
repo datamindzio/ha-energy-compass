@@ -89,6 +89,7 @@ class Recording:
             voltage = self.program(number, "voltage", epoch)
             controller = ControllerFacts(
                 charge_limit_a=self.sample("max_charge_current", epoch),
+                discharge_limit_a=self.sample("max_discharge_current", epoch),
                 grid_charge_a=self.sample("grid_charge_current", epoch) or 0.0,
                 state=row[2] if row and row[1] == "ok" else None,
                 program_direction=self.program(number, "charging", epoch),
@@ -104,6 +105,7 @@ class Recording:
             self.sample("battery_current", epoch),
             self.sample("pv_power", epoch),
             self.sample("load_power", epoch),
+            self.sample("grid_power", epoch),
             controller,
         )
 
