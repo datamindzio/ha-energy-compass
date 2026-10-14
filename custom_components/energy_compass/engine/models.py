@@ -122,6 +122,9 @@ class Problem:
     import_kwh_weight: float = 0.0
     battery_export_penalty_per_kwh: float = 0.0
     pv_export_margin: float = 0.0
+    # Share of an interval's forecast load a HOLD or CURTAIL interval is charged as a
+    # miss bought from the grid (`hold_exposure.py`); 0 leaves the model unpriced.
+    hold_miss_share: float = 0.0
     soc_target_kwh: tuple[float, ...] = ()
     soc_target_window: tuple[int, ...] = ()
     soc_target_weight: float = 0.0

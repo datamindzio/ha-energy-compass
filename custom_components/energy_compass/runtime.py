@@ -40,6 +40,7 @@ from .engine.consumption import (
 )
 from .engine.daily_energy import daily_export_rows
 from .engine.dispatch_policy import MODES, dwell_group, safety_exception
+from .engine.hold_exposure import HOLD_FORECAST_MISS
 from .engine.models import (
     Battery,
     CompassSettings,
@@ -864,6 +865,7 @@ def build_problem(
         peak_reserve_weight=peak_reserve_weight_value,
         export_value_factor=settlement["export_value_factor"],
         import_energy_factor=settlement["import_energy_factor"],
+        hold_miss_share=HOLD_FORECAST_MISS,
         **weights,
     )
     balance_phase = None

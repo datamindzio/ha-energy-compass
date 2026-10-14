@@ -1556,6 +1556,11 @@ directly by any other available mode.</p>
 <td>Planning-only shadow price per imported kWh, under every strategy.</td>
 </tr>
 <tr>
+<td><strong>HOLD forecast-miss charge</strong> (built in, not a setting)</td>
+<td>0.5 of the forecast load</td>
+<td>Planning-only charge on <code>HOLD</code> and <code>CURTAIL</code> in an interval with PV above its load, where the buy price exceeds what a stored kWh can still earn or save later: the plan stores the surplus (<code>CHARGE_PV</code>) instead of holding the pack through a peak for a few watts of export. Not a ban: a <code>HOLD</code> worth more is still planned. Never in a published cost. See <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#hold-and-curtail-at-a-peak-price">HOLD and CURTAIL at a peak price</a>.</td>
+</tr>
+<tr>
 <td><strong>Deposit model</strong> (<code>deposit_model</code>)</td>
 <td><code>off</code></td>
 <td><code>off</code> is the setting for every site. <code>manual</code> (experimental) values exported energy and the deposit-payable part of imports by a factor you state; measured on a one-year replay it did not lower the bill. Needs the distribution part of the buy price. See <a href="#net-billing-deposit-value">Net-billing deposit value</a>.</td>

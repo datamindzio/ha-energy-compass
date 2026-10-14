@@ -1585,6 +1585,11 @@ przejść bezpośrednio w dowolny inny dostępny tryb.</p>
 <td>Planistyczna cena cienia za każdą importowaną kWh, w każdej strategii.</td>
 </tr>
 <tr>
+<td><strong>Opłata za błąd prognozy w HOLD</strong> (wbudowana, nie jest ustawieniem)</td>
+<td>0,5 prognozowanego zużycia</td>
+<td>Planistyczna opłata za <code>HOLD</code> i <code>CURTAIL</code> w przedziale, w którym PV jest większe niż zużycie, a cena zakupu przekracza to, co zmagazynowana kWh może jeszcze zarobić lub zaoszczędzić później: plan magazynuje nadwyżkę (<code>CHARGE_PV</code>) zamiast trzymać baterię przez szczyt dla kilku watów eksportu. To nie zakaz: <code>HOLD</code> wart więcej nadal jest planowany. Nigdy nie wchodzi do publikowanego kosztu. Zob. <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md#hold-and-curtail-at-a-peak-price">HOLD i CURTAIL w cenie szczytowej</a> (EN).</td>
+</tr>
+<tr>
 <td><strong>Model depozytu</strong> (<code>deposit_model</code>)</td>
 <td><code>off</code></td>
 <td><code>off</code> jest ustawieniem dla każdej instalacji. <code>manual</code> (eksperymentalny) wycenia eksport i część energetyczną importu podanym przez Ciebie współczynnikiem; w rocznym odtworzeniu nie obniżył rachunku. Wymaga części dystrybucyjnej ceny zakupu. Zob. <a href="#wartość-depozytu-w-net-billingu">Wartość depozytu w net-billingu</a>.</td>
