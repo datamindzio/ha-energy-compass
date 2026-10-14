@@ -1,5 +1,7 @@
 """The SOC source choice and the estimator group in the options flow."""
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -242,3 +244,16 @@ async def test_the_measured_round_trip_becomes_the_suggested_efficiency(hass):
     schema = {str(key): key for key in form["data_schema"].schema}
     assert schema["eta_charge"].description["suggested_value"] == 0.937
     assert "0.937" in form["description_placeholders"]["round_trip"]
+
+
+@pytest.mark.parametrize(
+    ("language", "phrase"),
+    [("en", "blueprint engine"), ("pl", "silnikiem blueprint")],
+)
+@pytest.mark.parametrize("flow", ["config", "options"])
+def test_the_step_warns_that_targets_are_invisible_without_the_native_controller(
+    language, phrase, flow
+):
+    folder = Path(__file__).parents[1] / "custom_components" / "energy_compass"
+    texts = json.loads((folder / "translations" / f"{language}.json").read_text())
+    assert phrase in texts[flow]["step"]["soc_estimator"]["description"]

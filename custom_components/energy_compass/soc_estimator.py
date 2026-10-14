@@ -42,6 +42,10 @@ TOP_LEAVE_KWH = 0.1
 STATE_VERSION = 1
 ANCHOR_KINDS = ("initial", "seed", "full", "empty", "reset")
 
+# Dispatch states in which the inverter is not trying to fill the pack, so a
+# stopped charge proves nothing.
+NON_CHARGING_STATES = ("HOLD", "CURTAIL", "BASE", "DISCHARGE_GRID")
+
 # Full anchor evidence (DD-3).
 MIN_CHARGE_LIMIT_A = 2.0
 MIN_TAPER_CURRENT_A = 1.0
@@ -469,8 +473,10 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
     """The values behind a full candidate, or None while any condition fails.
 
     1. the battery takes (almost) no charge and gives none;
-    2. charging was possible: a charge limit of at least 2 A and no controller
-       target that explains the stop;
+    2. charging was possible: a charge limit of at least 2 A, no controller
+       target that explains the stop, and a dispatch state that charges (not
+       HOLD, CURTAIL, BASE or DISCHARGE_GRID; CHARGE_GRID only with a Grid
+       program below its voltage and a grid charge current of 2 A or more);
     3. the cause is not lack of sun: power measured leaving to the grid by at
        least max(300 W, 5 % of the rated PV) while the pack takes none; where
        export is impossible or capped, the derived surplus (PV less load and the
@@ -490,7 +496,7 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
     limit = _number(facts.charge_limit_a)
     if limit is None or limit < MIN_CHARGE_LIMIT_A:
         return None
-    if facts.target_reached or facts.state == "DISCHARGE_GRID":
+    if facts.target_reached or facts.state in NON_CHARGING_STATES:
         return None
     grid_charging = facts.program_direction == "Grid"
     target = _number(facts.program_voltage_v)
@@ -498,6 +504,12 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
         grid_charging
         and target is not None
         and voltage >= target * (1 - TARGET_VOLTAGE_MARGIN)
+    ):
+        return None
+    if facts.state == "CHARGE_GRID" and not (
+        grid_charging
+        and target is not None
+        and facts.grid_charge_a >= MIN_CHARGE_LIMIT_A
     ):
         return None
     threshold = max(MIN_SURPLUS_W, SURPLUS_RATED_FRACTION * settings.rated_pv_w)
@@ -521,7 +533,11 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
         and surplus >= MIN_SURPLUS_W + DERIVED_SURPLUS_PV_FRACTION * pv
     ):
         path = "surplus"
-    elif grid_charging and facts.grid_charge_a >= MIN_CHARGE_LIMIT_A:
+    elif (
+        grid_charging
+        and facts.state is not None
+        and facts.grid_charge_a >= MIN_CHARGE_LIMIT_A
+    ):
         path = "grid"
     else:
         return None

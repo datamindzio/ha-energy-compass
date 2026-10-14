@@ -310,6 +310,67 @@ def test_a_single_sample_after_a_grid_pulse_does_not_anchor():
     assert state.anchor.kind == "initial"
 
 
+@pytest.mark.parametrize("state_name", ["HOLD", "CURTAIL", "BASE", "DISCHARGE_GRID"])
+def test_these_controller_states_never_anchor_full(state_name):
+    facts = ControllerFacts(charge_limit_a=14.0, state=state_name)
+    state = _state()
+    _hold(state, EXPORTING, facts=facts, grid=-1500.0)
+    assert state.candidates == []
+
+
+def _grid_facts(**changes):
+    values = {
+        "charge_limit_a": 14.0,
+        "grid_charge_a": 14.0,
+        "state": "CHARGE_GRID",
+        "program_direction": "Grid",
+        "program_voltage_v": 552.0,
+    }
+    return ControllerFacts(**{**values, **changes})
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [
+        _grid_facts(program_direction="Disabled"),
+        _grid_facts(program_direction=None),
+        _grid_facts(grid_charge_a=1.0),
+        _grid_facts(program_voltage_v=None),
+    ],
+    ids=["disabled", "no-program", "one-amp-grid", "no-voltage"],
+)
+def test_grid_charging_without_a_requested_grid_charge_never_anchors_full(facts):
+    state = _state()
+    _hold(state, EXPORTING, facts=facts, grid=-1500.0, voltage=540.0)
+    assert state.candidates == []
+
+
+def test_grid_charging_below_its_program_voltage_may_anchor_full():
+    state = _state()
+    _hold(state, EXPORTING, facts=_grid_facts(), grid=-1500.0, voltage=540.0)
+    assert len(state.candidates) == 1
+    state = _state()
+    _hold(state, EXPORTING, facts=_grid_facts(), grid=-1500.0, voltage=547.0)
+    assert state.candidates == []
+
+
+def test_without_the_native_controller_only_export_evidence_counts():
+    # No dispatch state and no TOU program are visible: no grid path.
+    facts = ControllerFacts(
+        charge_limit_a=14.0,
+        grid_charge_a=14.0,
+        program_direction="Grid",
+        program_voltage_v=552.0,
+    )
+    state = _state()
+    _hold(state, EXPORTING, facts=facts, voltage=540.0, pv=0.0, grid=300.0)
+    assert state.candidates == []
+    state = _state()
+    _hold(state, EXPORTING, facts=ControllerFacts(14.0), grid=-1500.0)
+    [candidate] = state.candidates
+    assert candidate["path"] == "export"
+
+
 def test_a_pack_the_counters_put_below_70_percent_is_not_anchored_full():
     # A BMS charge-current limit in the cold, or inverter derating, looks like a
     # full pack; the counters say the pack is far from it.
