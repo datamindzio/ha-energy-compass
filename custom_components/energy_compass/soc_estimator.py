@@ -13,10 +13,17 @@ clamping never creates an anchor and the stored anchor is never moved by it:
 only physical evidence re-anchors. A counter that goes down re-anchors at the
 current energy, and a rise faster than any battery delivers is ignored as a
 glitch, as the calibration counters are treated.
+
+Anchors come from physical evidence only: a full anchor when charging stops
+although it could continue and the cause is not lack of sun, an empty anchor
+at the pack voltage that defines 0 %. `state_to_dict` and `state_from_dict`
+are the versioned form the Store keeps; `seed_from_template` starts from the
+attributes of the template estimator this replaces.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from math import isfinite
 
 from .calibration import COUNTER_SLACK_KWH, MAX_COUNTER_KW
@@ -31,6 +38,9 @@ MAX_PENDING_KWH = 2.0
 UNANCHORED_TOP_FRACTION = 0.999
 # Leaving the top by this much ends the confirmation a full anchor gave.
 TOP_LEAVE_KWH = 0.1
+
+STATE_VERSION = 1
+ANCHOR_KINDS = ("initial", "seed", "full", "empty", "reset")
 
 # Full anchor evidence (DD-3).
 MIN_CHARGE_LIMIT_A = 2.0
@@ -161,6 +171,8 @@ class EstimatorState:
     # Energy between the last full anchor and the empty anchor that followed;
     # shown, never applied.
     measured_capacity_kwh: float | None = None
+    # Kind and time of the template anchor this state was seeded from.
+    seed: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -568,3 +580,185 @@ def _number(value) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value) if isfinite(value) else None
+
+
+def state_to_dict(state: EstimatorState) -> dict:
+    """JSON-serialisable form for the Store, versioned.
+
+    The hold timers of the anchor candidates are not kept: a restart breaks a
+    hold, so a long downtime can never complete one.
+    """
+    return {
+        "version": STATE_VERSION,
+        "anchor": _anchor_to_dict(state.anchor),
+        "started_at": state.started_at.isoformat(),
+        "pending_kwh": state.pending_kwh,
+        "last_counters": (
+            None if state.last_counters is None else list(state.last_counters)
+        ),
+        "last_counters_at": _iso(state.last_counters_at),
+        "last_at": _iso(state.last_at),
+        "last_power_w": state.last_power_w,
+        "suspect": list(state.suspect),
+        "top_confirmed": state.top_confirmed,
+        "last_full": (
+            None if state.last_full is None else _anchor_to_dict(state.last_full)
+        ),
+        "candidates": [dict(candidate) for candidate in state.candidates],
+        "measured_capacity_kwh": state.measured_capacity_kwh,
+        "seed": None if state.seed is None else dict(state.seed),
+    }
+
+
+def state_from_dict(raw) -> EstimatorState | None:
+    """Rebuild a state from the Store; None for anything malformed.
+
+    The counters are read again on the next step: the stored ones only tell a
+    reset or a glitch apart from the normal rise made while Home Assistant was
+    down.
+    """
+    try:
+        if not isinstance(raw, Mapping) or raw.get("version") != STATE_VERSION:
+            return None
+        last = raw["last_counters"]
+        if last is not None:
+            if not isinstance(last, list | tuple) or len(last) != 2:
+                return None
+            last = (_required(last[0]), _required(last[1]))
+        suspect = raw["suspect"]
+        if not isinstance(suspect, list | tuple) or len(suspect) != 2:
+            return None
+        candidates = raw["candidates"]
+        if (
+            not isinstance(candidates, list)
+            or len(candidates) > MAX_CANDIDATES
+            or not all(_plain_dict(candidate) for candidate in candidates)
+        ):
+            return None
+        seed = raw["seed"]
+        if seed is not None and not _plain_dict(seed):
+            return None
+        last_full = raw["last_full"]
+        measured = raw["measured_capacity_kwh"]
+        if not isinstance(raw["top_confirmed"], bool):
+            return None
+        return EstimatorState(
+            _anchor_from_dict(raw["anchor"]),
+            _stamp(raw["started_at"]),
+            pending_kwh=_required(raw["pending_kwh"]),
+            last_counters=last,
+            last_counters_at=_optional_stamp(raw["last_counters_at"]),
+            last_at=_optional_stamp(raw["last_at"]),
+            last_power_w=_required(raw["last_power_w"]),
+            suspect=(_optional_number(suspect[0]), _optional_number(suspect[1])),
+            top_confirmed=raw["top_confirmed"],
+            last_full=None if last_full is None else _anchor_from_dict(last_full),
+            candidates=[dict(candidate) for candidate in candidates],
+            measured_capacity_kwh=(None if measured is None else _required(measured)),
+            seed=None if seed is None else dict(seed),
+        )
+    except KeyError, TypeError, ValueError:
+        return None
+
+
+def seed_from_template(attributes: Mapping, *, now: datetime) -> EstimatorState | None:
+    """State seeded from the attributes of the template estimator it replaces.
+
+    Reads `anchor_kwh`, `anchor_charge`, `anchor_discharge`, `anchor_kind`,
+    `anchor_at` and `pending_kwh`. The anchor is kept as the numbers say but is
+    never trusted as a full anchor: its kind becomes "seed", the template's kind
+    and time are kept in `seed`. None when any anchor value is missing or not
+    a plausible number. The counters are read at the first step.
+    """
+    try:
+        energy = _seed_number(attributes["anchor_kwh"])
+        charge = _seed_number(attributes["anchor_charge"])
+        discharge = _seed_number(attributes["anchor_discharge"])
+        kind = attributes["anchor_kind"]
+        anchored_at = attributes["anchor_at"]
+        if energy < 0 or charge < 0 or discharge < 0:
+            return None
+        if not isinstance(kind, str) or not isinstance(anchored_at, str):
+            return None
+        stamp = datetime.fromisoformat(anchored_at)
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        pending = _seed_number(attributes.get("pending_kwh", 0.0))
+    except KeyError, TypeError, ValueError:
+        return None
+    return EstimatorState(
+        Anchor("seed", stamp, energy, charge, discharge),
+        now,
+        pending_kwh=min(MAX_PENDING_KWH, max(-MAX_PENDING_KWH, pending)),
+        seed={"kind": kind, "at": stamp.isoformat()},
+    )
+
+
+def _anchor_to_dict(anchor: Anchor) -> dict:
+    return {
+        "kind": anchor.kind,
+        "at": anchor.at.isoformat(),
+        "energy_kwh": anchor.energy_kwh,
+        "charge_kwh": anchor.charge_kwh,
+        "discharge_kwh": anchor.discharge_kwh,
+    }
+
+
+def _anchor_from_dict(raw) -> Anchor:
+    if raw["kind"] not in ANCHOR_KINDS:
+        raise ValueError("unknown anchor kind")
+    return Anchor(
+        raw["kind"],
+        _stamp(raw["at"]),
+        _required(raw["energy_kwh"]),
+        _required(raw["charge_kwh"]),
+        _required(raw["discharge_kwh"]),
+    )
+
+
+def _iso(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
+def _stamp(raw) -> datetime:
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        raise ValueError("naive timestamp")
+    return parsed
+
+
+def _optional_stamp(raw) -> datetime | None:
+    return None if raw is None else _stamp(raw)
+
+
+def _required(value) -> float:
+    number = _number(value)
+    if number is None:
+        raise ValueError("not a finite number")
+    return number
+
+
+def _optional_number(value) -> float | None:
+    return None if value is None else _required(value)
+
+
+def _seed_number(value) -> float:
+    """A template attribute: a number, or the text of one."""
+    if isinstance(value, str):
+        value = float(value)
+    return _required(value)
+
+
+def _plain_dict(value) -> bool:
+    """A JSON object of plain values, so the Store can always write it back."""
+    if not isinstance(value, dict):
+        return False
+    return all(
+        isinstance(key, str)
+        and (
+            item is None
+            or isinstance(item, str | bool)
+            or (isinstance(item, int | float) and isfinite(item))
+        )
+        for key, item in value.items()
+    )
