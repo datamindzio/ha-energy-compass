@@ -1026,25 +1026,32 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 model.upper[v[key]] = 0
         x = {mode: v[f"mode_{mode}"] for mode in MODES}
         model.constrain({index: 1 for index in x.values()}, 1, 1)
+        # The relief starts at the later of two energies. `ceiling - step` is where the
+        # full PV-follow charge no longer fits (T-094). `_lock_ceiling` is where CHARGE_PV
+        # closes (the minimum activity, or `curtail_need` when that is more): below it a
+        # CHARGE_PV may fill the room and end on the ceiling, so a HOLD there is a choice
+        # even with less room than the full step (T-095). The flexible load of a probe
+        # only raises the lock energy, so the load-free one gives the most relief.
         step = battery.eta_charge * surplus
+        full_at = max(ceiling - step, _lock_ceiling(problem, drains, at))
         # Only where the pack can reach the point (`highest` is the most it can hold at
         # the start of this interval): elsewhere the rows would have no feasible use.
-        if exposure > 0 and highest >= ceiling - step - _ROW_TOLERANCE:
+        if exposure > 0 and highest >= full_at - _ROW_TOLERANCE:
             # The charge is for a HOLD that could have been a charge. At the start of an
-            # interval the pack has less room than the PV-follow charge would store
-            # (`hold_full`), a HOLD is no choice and a priced one is a constant the solver
-            # cannot avoid: the relaxation dodges it with a fraction of a charge and the
-            # gap it leaves made every 192-interval plan time_limited (T-094). `relief`
-            # gives the charge back there; it is paid only against an idle mode.
+            # interval the pack has no room for the PV-follow charge (`hold_full`), a HOLD
+            # is no choice and a priced one is a constant the solver cannot avoid: the
+            # relaxation dodges it with a fraction of a charge and the gap it leaves made
+            # every 192-interval plan time_limited (T-094). `relief` gives the charge back
+            # there; it is paid only against an idle mode.
             packed = v["hold_full"] = model.variable(binary=True)
             relief = v["hold_relief"] = model.variable(upper=1.0, cost=-exposure)
             model.constrain({relief: 1, packed: -1}, -np.inf, 0)
             model.constrain({relief: 1, x["HOLD"]: -1, x["CURTAIL"]: -1}, -np.inf, 0)
             if at:
                 model.constrain(
-                    {vectors[at - 1]["energy"]: 1, packed: -(ceiling - step)}, 0, np.inf
+                    {vectors[at - 1]["energy"]: 1, packed: -full_at}, 0, np.inf
                 )
-            elif battery.initial_kwh < ceiling - step:
+            elif battery.initial_kwh < full_at:
                 model.upper[packed] = 0
 
         # Named modes already determine flow direction. Tie the auxiliary flags

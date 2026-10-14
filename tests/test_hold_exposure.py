@@ -217,3 +217,83 @@ def test_the_charge_stays_on_a_pack_with_room_to_take_it():
     with_share, _ = _weighted_objective(room)
     without, _ = _weighted_objective(replace(room, hold_miss_share=0.0))
     assert with_share > without + 0.01
+
+
+def test_a_pack_with_less_room_than_the_minimum_charge_is_not_charged():
+    """The minimum PV-follow charge no longer fits: CHARGE_PV is closed, so the HOLD is
+    no choice and the charge is given back, as for a full pack."""
+    tight = _problem(
+        _live_day(), _battery(initial_kwh=23.99), hold_miss_share=HOLD_FORECAST_MISS
+    )
+    with_share, _ = _weighted_objective(tight)
+    without, _ = _weighted_objective(replace(tight, hold_miss_share=0.0))
+    assert with_share == pytest.approx(without, abs=1e-6)
+
+
+def _first_interval_relief(problem, monkeypatch):
+    """Whether the model has a `hold_relief` on the first interval and may use it.
+
+    The rows `constrain_modes` builds are the contract: the solver's objective also
+    carries the later intervals, which hide where the first one starts to be given back.
+    """
+    built = {}
+    original = optimize.constrain_modes
+
+    def spy(model, problem, vectors, **kwargs):
+        original(model, problem, vectors, **kwargs)
+        built["model"], built["first"] = model, vectors[0]
+
+    monkeypatch.setattr(optimize, "constrain_modes", spy)
+    solve(problem)
+    first = built["first"]
+    return "hold_full" in first and built["model"].upper[first["hold_full"]] > 0
+
+
+def test_the_relief_starts_where_the_minimum_charge_no_longer_fits(monkeypatch):
+    """08:15: a surplus of 0.09 kWh, a step of 0.085 (ceiling 24 - 0.085 = 23.915), a
+    minimum activity (0.1 kW for 15 minutes) that stores 0.0236 (23.976). A pack between
+    the two still takes a CHARGE_PV, so the first interval is not given back; above the
+    second it is (T-095)."""
+    day = _live_day()
+
+    def relief(initial_kwh):
+        problem = _problem(
+            day, _battery(initial_kwh=initial_kwh), hold_miss_share=HOLD_FORECAST_MISS
+        )
+        return _first_interval_relief(problem, monkeypatch)
+
+    assert not relief(23.5)
+    assert not relief(23.95)
+    assert relief(23.99)
+    assert relief(24)
+
+
+def _capped_day(pv_kwh=2.0):
+    """The first hour has 2 kWh of PV in a quarter-hour against a 0.5 kW export cap, then
+    the live day: a pack with less room than the site must pass cannot CHARGE_PV."""
+    rows = [(1.242, 1.08, pv_kwh, 0.19)] * 4 + [
+        (slot.buy_per_kwh, slot.sell_per_kwh, slot.pv_kwh, slot.load_kwh)
+        for slot in _live_day()[4:]
+    ]
+    return _slots(rows)
+
+
+def test_the_relief_stays_where_the_export_cap_closes_charge_pv(monkeypatch):
+    """With the export cap at 0.5 kW the interval needs 1.685 kWh stored or curtailed
+    (2.0 - 0.19 - 0.125), more than the minimum activity: CHARGE_PV is closed from 24 -
+    0.943 x 1.685 = 22.41 kWh, where only a CURTAIL is left. That is no choice, so the
+    charge is given back there, below the point of the minimum activity (T-095)."""
+    site = SiteLimits(10, 10, 0.5, True)
+
+    def relief(initial_kwh):
+        problem = _problem(
+            _capped_day(),
+            _battery(initial_kwh=initial_kwh),
+            hold_miss_share=HOLD_FORECAST_MISS,
+            site=site,
+        )
+        return _first_interval_relief(problem, monkeypatch)
+
+    assert not relief(22.0)
+    assert relief(22.5)
+    assert relief(23.5)
