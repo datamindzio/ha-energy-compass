@@ -42,6 +42,14 @@ from .settlement import planning_buy, planning_sell
 
 _TOL = REACH_TOL
 _UTC = UTC
+# A run without presolve replaces the default run only where it is cheaper by more than
+# this: the 1e-4 relative gap the default run stops at, plus a floor. A model that asked
+# for gap 0 (`exact_mip_gap`) gets the same margin; a plan cheaper by less is not worth a swap.
+_SWITCH_ABSOLUTE = 1e-6
+_SWITCH_RELATIVE = 1e-4
+# The run without presolve is started only when what is left of the time limit is at least
+# this many times what the default run took, so that it has the time to finish (T-085).
+_SWITCH_HEADROOM = 2.0
 
 
 class _Model:
@@ -51,6 +59,9 @@ class _Model:
         self.time_limited = False
         # Set by the rows HiGHS is known to misjudge: forced spill, mode rows (`solve`).
         self.second_attempt = False
+        # Set by the forced-spill binaries alone: a proven default run is checked against
+        # a run without presolve (T-085).
+        self.compare_switches = False
         self.mip_gap: float | None = 0.0
         self.cost: list[float] = []
         self.lower: list[float] = []
@@ -93,6 +104,18 @@ class _Model:
         binaries = np.asarray(values)[np.asarray(self.integrality, dtype=bool)]
         return bool(np.any(np.minimum(np.abs(binaries), np.abs(binaries - 1)) > _TOL))
 
+    def _satisfies(self, matrix, values) -> bool:
+        """Tell whether a returned point meets every bound, row and binary of the model."""
+        x = np.asarray(values, dtype=float)
+        activity = matrix @ x
+        return bool(
+            not self._fractional(x)
+            and np.all(x >= np.asarray(self.lower) - _TOL)
+            and np.all(x <= np.asarray(self.upper) + _TOL)
+            and np.all(activity >= np.asarray([row[1] for row in self.rows]) - _TOL)
+            and np.all(activity <= np.asarray([row[2] for row in self.rows]) + _TOL)
+        )
+
     def solve(self, time_limit_s: float) -> np.ndarray:
         entries = [
             (row_index, column, coefficient)
@@ -109,6 +132,7 @@ class _Model:
         ).tocsc()
         started = perf_counter()
         result = self._run(matrix, time_limit_s)
+        first_s = perf_counter() - started
         if self.second_attempt and (
             result.status == 2 or result.x is not None and self._fractional(result.x)
         ):
@@ -124,10 +148,34 @@ class _Model:
             # plan is accepted by the certificate (`_validate_solution`), its gap is only
             # what HiGHS reports, and an infeasible second run may still have a plan.
             result = self._run(
-                matrix,
-                max(time_limit_s - (perf_counter() - started), 1e-3),
-                presolve=False,
+                matrix, max(time_limit_s - first_s, 1e-3), presolve=False
             )
+        elif (
+            self.compare_switches
+            and result.status == 0
+            and result.x is not None
+            and time_limit_s - first_s >= _SWITCH_HEADROOM * first_s
+        ):
+            # The default run of a model with forced-spill binaries can also come back
+            # `Optimal` (status 0, no fractional binary) at a plan dearer than one the
+            # same model has: without presolve HiGHS found it on two of about 3500 probe
+            # matrices of `main` before T-066 (T-085, `tests/test_solver_switches.py`). So
+            # the model is solved without presolve too, in what is left of the time
+            # limit, and the cheaper of the two plans is kept if it satisfies every row
+            # (`_satisfies`): that run is wrong in its own way (T-072) and is never taken
+            # on its word, only on a lower cost the rows confirm. It is started only with
+            # `_SWITCH_HEADROOM` times the default run's time left: a model whose default
+            # run took more than a third of the limit is not checked, since the second
+            # run (twice the first at 96 slots) would only run into the limit.
+            other = self._run(matrix, max(time_limit_s - first_s, 1e-3), presolve=False)
+            margin = _SWITCH_ABSOLUTE + _SWITCH_RELATIVE * abs(result.fun)
+            if (
+                other.status == 0
+                and other.x is not None
+                and other.fun < result.fun - margin
+                and self._satisfies(matrix, other.x)
+            ):
+                result = other
         # A time-limited run often holds the optimum long before HiGHS can
         # prove it. Only the base dispatch plan opts in; probes stay exact.
         if self.accept_incumbent and result.status == 1 and result.x is not None:
@@ -723,6 +771,7 @@ def _gate_forced_spill(
     )
     if gated or flexible_load:
         model.second_attempt = True
+        model.compare_switches = True
         spill.binary = spill_open = v["spill_open"] = model.variable(binary=True)
         if forced > 0:
             extra = model.variable(upper=upper - forced)
