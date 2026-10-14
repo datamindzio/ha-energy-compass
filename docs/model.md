@@ -266,6 +266,18 @@ Two bounds move with the loss. The per-interval operating-reserve floor relaxes 
 
 The independent result validator applies the same per-interval loss and the same relaxed floor, so a solution that ignores the leak is rejected.
 
+## Counter SOC estimator
+
+With `sources.soc_mode = counter_estimator` the observed initial SOC is not read from an entity. Let `chg` and `dis` be the battery's lifetime charge and discharge counters (kWh, at the terminals), `eta` the estimator's charge efficiency, `C` its capacity and `A = (E_A, chg_A, dis_A)` the last anchor. Between anchors
+
+`E = clamp(E_A − (dis − dis_A) + eta·(chg − chg_A) + p, 0, C)`, `SOC = E / C`,
+
+where `p` integrates the battery power `P` (positive while discharging) between counter steps, `p ← clamp(p − (P⁺ + eta·P⁻)·Δt, ±2 kWh)` with `Δt ≤ 120 s` per step and `p = 0` whenever a counter changes. The planner receives `SOC × C_battery` through the same validation as any observed SOC: age, range `[0, C_battery]`, and the jump bound `P_max·Δt + soc_jump_percent·C_battery`.
+
+Clamping never moves the anchor, so energy above `C` is kept: `excess = max(0, E_raw − C)` and the estimate reads `0.999·C` (`unanchored_top`) until a full anchor sets `E = C`; leaving the top by 0.1 kWh ends that confirmation. A counter that decreases sets `A` to the current clamped `E` at the last accepted counters.
+
+A full anchor is set after a continuous hold (`full_hold_seconds`) of: `|I| ≤ max(1 A, 2 % of I_charge,max)`; a charge current limit of at least 2 A and no explaining controller target (`DISCHARGE_GRID`, or a grid charge within 1 % of its program voltage); and either `pv − load − charge power ≥ max(300 W, 5 % rated PV)` or grid charging requested at 2 A or more. An empty anchor sets `E = 0` after 60 s of discharge of at least 0.5 A at no more than `0.1·C` per hour with `V ≤ V_0`, or of a stopped discharge at `V ≤ 1.01·V_0` while the house imports at least 300 W with a discharge limit of at least 2 A and the controller not in `HOLD`/`CURTAIL` (`V_0` is the pack voltage that is 0 %). The LFP balance counts a pack as full only while a full anchor confirms the top.
+
 ## LFP balance
 
 `lfp_balance` adds one optional binary hold window to the dispatch problem so a lithium iron

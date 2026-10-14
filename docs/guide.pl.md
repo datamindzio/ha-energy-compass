@@ -478,6 +478,7 @@ falownika.
 | `load` | skumulowane zużycie domu z `solarman` (`total_load_consumption`) jako statystyka rejestratora |
 | `soc` | SOC baterii z panelu; zewnętrzny szablon SOC (`template`, klasa urządzenia battery, jednostka %); `solarman` `battery` |
 | `bms_soc` | `solarman` `battery`, atrybut `BMS SOC`; jedyny włączony czujnik pakietu BMS (`battery_N`); nigdy nie jest wstępnie wybrany |
+| `soc_estimator` | jeden wpis Solarman Deye z `total_battery_charge`, `total_battery_discharge`, `battery_voltage` i `battery_current` (oraz `battery_power`, gdy jest); nigdy nie jest wstępnie wybrany; zob. [Estymator SOC z liczników](#estymator-soc-z-liczników) |
 | `battery_power` | moc baterii z panelu; `battery_power` |
 | `pv_power` | moc PV z panelu; `pv_power` |
 | `grid_import_power`, `grid_export_power` | moc sieci z panelu (znak +1 dla importu, −1 dla eksportu); `grid_power` z tymi samymi znakami |
@@ -508,8 +509,14 @@ falownika.
 - **SOC z BMS.** Jest proponowany bez zaznaczenia. Przy niezbalansowanych ogniwach SOC z BMS i SOC
   baterii mogą się różnić o więcej niż Bateria → Tolerancja różnicy BMS (domyślnie 5 %), a wtedy
   każdy plan jest blokowany. Zaznacz tylko, jeśli oba są zgodne przez całą dobę.
+- **Estymator z liczników.** Jest proponowany bez zaznaczenia obok wiersza BMS jako **Estymator z
+  liczników (zalecany, gdy SOC z BMS jest niewiarygodny)**, gdy dokładnie jeden wpis Solarman Deye ma
+  te cztery źródła. Zaznaczenie zastępuje wiersze `soc` i `bms_soc` (zaznaczony SOC z BMS przechodzi do
+  estymatora jako odczyt porównawczy) i przed Podglądem otwiera jego ustawienia (zob. [Estymator SOC z
+  liczników](#estymator-soc-z-liczników)). SOC z BMS bywa błędny nawet przy 100 % i na ten przypadek jest
+  estymator.
 - **Bramki.** `sell` pojawia się tylko przy walucie PLN. Przy wyłączonym PV nie ma wierszy `pv`,
-  `pv_power` ani `pv_energy`; przy wyłączonej baterii nie ma `soc`, `bms_soc` ani `battery_power`.
+  `pv_power` ani `pv_energy`; przy wyłączonej baterii nie ma `soc`, `bms_soc`, `soc_estimator` ani `battery_power`.
   Dwa liczniki dzienne nie podlegają bramkom.
 - **Zapisywane limity wieku** pomiarów: 3600 s dla `battery_power`, `grid_import_power` i
   `grid_export_power`; 86400 s dla `pv_power`, liczników skumulowanych, liczników energii ładowania
@@ -551,11 +558,149 @@ słonecznych panelu. Wykryte źródła oferują ten tryb jako pierwszy, gdy pane
 
 Podgląd dodaje dla tego trybu wiersz `PV source: Energy dashboard solar forecast …`.
 
+### Estymator SOC z liczników
+
+Niektóre pakiety podają SOC z BMS, który jest błędny nawet przy 100 % (niezbalansowane ogniwa, BMS
+kotwiczący się po swojemu). **Estymator SOC z liczników** to drugi sposób na SOC baterii: zamiast
+czytać encję SOC, Energy Compass liczy go w integracji z całkowitych liczników energii ładowania i
+rozładowania baterii. Wybierasz go w **Konfiguruj → Źródło SOC baterii**
+(`sources.soc_mode = counter_estimator`); domyślnie zostaje **Encja**, czyli źródło SOC wskazane w
+**Źródłach danych**. Estymator zastępuje wtedy źródła SOC i SOC z BMS dla planera, balansowania LFP i
+natywnego [sterownika Deye](#sterownik-falownika-deye-solarman). SOC z BMS nie jest nigdzie uznawany
+za wiarygodny: nie ma kotwicy ani rozwiązania zapasowego opartego na BMS, a źródło SOC z BMS, jeśli
+dodasz je w ustawieniach eksperckich, jest tylko pokazywane obok estymaty do porównania.
+
+**Arytmetyka.** Estymator niesie *kotwicę*, czyli znaną energię powyżej punktu 0 % pakietu przy znanych
+wartościach liczników, i dodaje to, o co liczniki przesunęły się od tamtej pory:
+
+    E = energia kotwicy − (rozładowanie − rozładowanie kotwicy) + eta × (ładowanie − ładowanie kotwicy) + pending
+
+`E` jest obcinane do 0 … pojemność, a SOC to `E / pojemność`. `eta` to sprawność ładowania liczników
+(liczniki stoją na zaciskach baterii, sprawności planu są po stronie AC). `pending` całkuje moc baterii
+między dwoma skokami liczników, więc wartość zmienia się płynnie, choć liczniki raportują grubymi
+krokami (krok jest całkowany najwyżej 120 s, `pending` mieści się w ±2 kWh i zaczyna od zera przy każdej
+zmianie licznika). Licznik, który spadł, kotwiczy na bieżącej energii (rodzaj kotwicy `reset`); wzrost
+szybszy niż 100 kW jest ignorowany jako usterka, chyba że się powtórzy. Estymata nie skacze sama z siebie.
+
+**Zero to napięcie.** 0 % to napięcie pakietu wpisane jako **Napięcie pakietu odpowiadające 0 %**
+(`empty_voltage`, w skali napięcia pakietu z czujnika napięcia, na przykład odcięcie falownika). To
+cecha Twojego pakietu, więc nie ma wartości domyślnej, a krok nie zapisze się bez niej. Pojemność to
+użyteczna energia między tym punktem a pełnym naładowaniem; domyślnie jest równa pojemności baterii z
+grupy Bateria (w ustawieniach eksperckich jest nadpisanie), a planer skaluje ułamek estymatora przez pojemność baterii,
+więc trzymaj obie równe.
+
+**Kotwice: tylko fizyczne dowody.**
+
+| Kotwica | Kiedy | Skutek |
+| --- | --- | --- |
+| `full` | Przez `full_hold_seconds` (600 s) bez przerwy: pakiet prawie nie przyjmuje ładunku (prąd w granicach max(1 A, 2 % maksymalnego prądu ładowania)); ładowanie było możliwe (limit prądu ładowania co najmniej 2 A, sterownik Deye nie jest w `DISCHARGE_GRID`, a ładowanie z sieci nie osiągnęło 99 % napięcia swojego programu); a przyczyną nie jest brak słońca: PV powyżej zużycia i ładunku, który pakiet jeszcze bierze, o co najmniej max(300 W, 5 % mocy znamionowej PV), albo żądane ładowanie z sieci 2 A lub więcej. | `E` = pojemność |
+| `empty` | Przez 60 s: rozładowanie co najmniej 0,5 A przy najwyżej 0,1 C i napięciu nie wyższym niż napięcie 0 %; albo rozładowanie ustało, choć dom pobiera z sieci co najmniej 300 W, limit prądu rozładowania wynosi co najmniej 2 A, stan sterownika nie jest `HOLD` ani `CURTAIL`, a napięcie jest najwyżej 1 % powyżej napięcia 0 %. | `E` = 0; energia od ostatniej kotwicy pełnej jest pokazana jako `measured_capacity_kwh` (nigdy nie jest stosowana) |
+| `reset` | Licznik spadł | Kotwiczy na bieżącej energii |
+| `initial` / `seed` | Pierwszy start: podany przez Ciebie SOC albo kotwica szablonu SOC, z którego migrujesz | Pokazane jako niekotwiczone do pierwszej fizycznej kotwicy |
+
+Kotwica pełna wymaga limitu prądu ładowania (encja natywnego sterownika albo źródło eksperckie
+**Limit prądu ładowania**) oraz, dla ścieżki słonecznej, mocy PV z mocą sieci (lub mocą zużycia);
+ścieżka sieciowa wymaga encji programu i ładowania z sieci natywnego sterownika. Bez nich nigdy się nie
+uruchamia, a estymata pozostaje niekotwiczonym wyliczeniem. Przez **pierwsze 14 dni** od startu
+estymatora (lub zasiania) kandydaci na kotwicę pełną są tylko *zapisywani* w atrybucie
+`full_candidates`, chyba że włączono **Kotwicz na kandydatach od pierwszego dnia**, bo wytrzymanie nigdy
+nie było widziane na prawdziwym ogonie ładowania. Kandydat pokazuje początek, wartości i to, która
+ścieżka zadziałała (`surplus` lub `grid`).
+
+**Nigdy 100 % na zgadnięcie.** Obcięcie na górze nigdy nie tworzy kotwicy. Wyliczenie, które dochodzi do
+pojemności bez kotwicy pełnej, pokazuje **99,9 %** z `unanchored_top: true`; energia powyżej pojemności
+jest zachowana (nie jest odrzucana) i pokazana jako `excess_kwh`, a zejście z góry najpierw ją zużywa.
+100 % pokazuje się dopiero po kotwicy `full`, aż pakiet spadnie o 0,1 kWh poniżej góry. Kotwica pełna to
+skok w górę i przechodzi przez to samo przesunięcie odniesienia co rekalibracja BMS (zachowany plan do
+300 s, gdy świeże odczyty to potwierdzają).
+
+**Kto czyta estymatę.**
+
+- *Planer.* Koordynator czyta estymatę przez tę samą walidację co encję SOC (wiek, zakres, kontrola
+  skoku), ze znacznikiem najnowszego raportu źródeł napięcia, prądu i mocy. Między nimi nie ma encji,
+  więc przeładowanie szablonów ani restart nie czyni już źródła niedostępnym.
+- *Sterownik Deye.* Przy włączonym estymatorze fakt SOC natywnego sterownika to estymata: używają jej
+  bramka telemetrii, reguła pełnego pakietu w trybie Voltage i kontrole osiągnięcia celu. Zmienia się
+  tylko źródło faktu. **Tryb Capacity nie jest obsługiwany z estymatorem**: w tym trybie falownik
+  porównuje progi SOC swoich programów z własnym SOC z BMS, więc cel w skali estymatora byłby błędny.
+  Zapis estymatora jest odrzucany (*falownik jest w trybie Capacity*), gdy włączony jest natywny
+  sterownik, a tryb pracy baterii falownika to `Capacity`; najpierw przełącz falownik na `Voltage`. Gdy
+  estymator jest źródłem, sterownik traktuje też `Capacity` jako niezatwierdzony, więc późniejsze
+  przełączenie falownika na Capacity wstawia go na profil bazowy (`mode_not_commissioned`) zamiast
+  zapisywać progi SOC. Tryb Voltage nie jest dotknięty (jego progi to napięcia). Wycofywany silnik
+  blueprintu zachowuje własne wejście `soc_entity` i nie jest zmieniany.
+- *Balansowanie LFP.* Balans uznaje pakiet za pełny tylko, gdy kotwica `full` potwierdza górę, a nie
+  przy SOC ≥ progu. Odczyt, który arytmetyka dociągnęła do progu, nigdy nie zalicza balansu.
+
+**Diagnostyka.** Diagnostyczny sensor `sensor.<name>_soc_estimator` (**Estymator SOC**, %, klasa
+urządzenia battery) istnieje, gdy estymator jest włączony albo działa w cieniu. Jego stan jest
+zapisywany; z atrybutów zapisywany jest tylko `anchor_kind`: `energy_kwh`, `anchor_at`, `anchor_age_h`,
+`throughput_since_anchor_kwh`, `pending_kwh`, `unanchored_top`, `excess_kwh`, `full_candidate`,
+`measured_capacity_kwh`, `eta_charge`, `capacity_kwh`, `mode` (`counter_estimator` lub `shadow`),
+`bms_soc` (tylko porównanie), `full_candidates` (ostatnie 20) i `anchors` (ostatnie 20). Gdy przepływ
+energii od ostatniej kotwicy przekroczy **Ostrzegaj po tylu pojemnościach bez kotwicy**
+(`drift_warn_cycles`, 3) razy pojemność, pojawia się problem *Estymator SOC długo działa bez kotwicy*;
+tylko ostrzega, plany nie są blokowane, a znika przy następnej kotwicy. Pobranie diagnostyki ma blok
+`soc_estimator` z tym samym szczegółem i bez identyfikatorów encji.
+
+**Ustawienia** (Konfiguruj → Źródło SOC baterii; Ustawienia eksperckie dodają drugą tabelę):
+
+| Pole | Znaczenie | Domyślnie |
+| --- | --- | --- |
+| `soc_source` | `entity` lub `counter_estimator` | `entity` |
+| `charge_counter`, `discharge_counter` | całkowite liczniki energii baterii (kWh lub Wh) | wykrywane na urządzeniu Solarman Deye |
+| `voltage`, `current` | napięcie i prąd pakietu (prąd dodatni przy rozładowaniu) | wykrywane na urządzeniu Solarman Deye |
+| `empty_voltage` | napięcie pakietu odpowiadające 0 % | wymagane, brak |
+| `initial_soc_percent` | SOC, od którego startuje się bez zapisanego stanu ani zasiania | 50 |
+| `eta_charge` | sprawność ładowania liczników | zmierzony obieg baterii, gdy [kalibracja](#pomiary-kalibracyjne-opcjonalnie) go ma, inaczej 0,95 |
+| `full_hold_seconds` | wytrzymanie przed kotwicą pełną | 600 |
+| `drift_warn_cycles` | pojemności przepływu bez kotwicy przed problemem naprawczym | 3 |
+| `anchor_on_candidates` | kotwicz na kandydatach pełnych w pierwszych 14 dniach | wyłączone |
+| `shadow` | uruchom tylko diagnostycznie obok podpiętej encji SOC | wyłączone |
+| `seed_from_template` | start od kotwicy podpiętego szablonu SOC (oferowane tylko, gdy ma atrybuty kotwicy szablonu) | włączone, gdy oferowane |
+
+| Pole eksperckie | Znaczenie |
+| --- | --- |
+| `capacity_kwh` | nadpisanie pojemności estymatora (domyślnie: pojemność baterii) |
+| `power`, `pv_power` | moc baterii (dodatnia przy rozładowaniu) i moc PV; zapasowo pomiary o tych nazwach ze Źródeł danych |
+| `grid_power`, `load_power` | moc sieci (dodatnia przy poborze) i zużycie domu; zużycie jest liczone z mocy PV, sieci i baterii, gdy go brak |
+| `charge_limit`, `discharge_limit`, `grid_charge_current` | limity prądu falownika; gdy działa natywny sterownik, używane są jego encje |
+| `bms_soc` | SOC z BMS, tylko do porównania |
+| `power_sign`, `current_sign`, `grid_sign` | `1` lub `-1`, by odwrócić znak czujnika |
+| `max_charge_current`, `rated_pv_w` | do progów kotwicy pełnej; domyślnie maksimum encji limitu ładowania i `pv_kwp` z Atlasa |
+
+Każde źródło jest czytane w jednostce bazowej, którą deklaruje jego encja (kWh lub Wh, W lub kW, V, A).
+
+**Konfiguracja i wykrywanie.** W nowej instalacji krok **Wykryte źródła** proponuje niezaznaczony
+**Estymator z liczników (zalecany, gdy SOC z BMS jest niewiarygodny)**, gdy jedno urządzenie Solarman
+Deye ma liczniki ładowania i rozładowania, napięcie i prąd pakietu. Zaznaczenie zastępuje wiersze SOC i
+przed Podglądem otwiera ustawienia estymatora, gdzie wymagane jest napięcie pakietu odpowiadające 0 %.
+
+**Migracja z estymatora w szablonie.** Instalacja z estymatorem w szablonie YAML może przejść bez
+skoku:
+
+1. Otwórz **Konfiguruj → Źródło SOC baterii**, zostaw **Encja**, zaznacz **Uruchomienie cieniowe**, wpisz
+   liczniki, napięcie, prąd i napięcie 0 % oraz zaznacz **Start od kotwicy istniejącego szablonu SOC**
+   (oferowane, gdy podpięta encja ma atrybuty `anchor_kwh`, `anchor_charge`, `anchor_discharge`,
+   `anchor_kind`, `anchor_at`; `pending_kwh` jest opcjonalny). Planer dalej używa szablonu, a obok niego
+   działa `sensor.<name>_soc_estimator`.
+2. Po co najmniej jednej dobie porównaj je narzędziem `tools/soc_shadow.py` na historii rejestratora obu
+   encji (albo na katalogu zrzutów stanów, jak czyta je `tools/shadow_compare.py`). Kryterium: energia
+   różni się najwyżej o 0,2 kWh w 95 % minut i żadnej kotwicy pełnej ani pustej jednego nie brakuje w
+   drugim.
+3. Przełącz **Źródło SOC baterii** na **Estymator z liczników**, potem usuń blok YAML szablonu i
+   przeładuj szablony. Przeładowanie szablonów na chwilę czyni SOC szablonu niedostępnym; estymator już
+   od niego nie zależy.
+
+**Ograniczenia tej wersji.** Wykrywanie proponuje estymator tylko dla urządzeń Solarman Deye (inne
+falowniki: ustaw źródła w grupie eksperckiej); sprawność i pojemność nigdy nie są uczone ani zmieniane
+automatycznie; obowiązuje powyższe ograniczenie trybu Capacity.
+
 ### Ustawienia eksperckie
 
 Menu główne Konfiguracji, Konfiguruj i Rekonfiguruj zaczyna się tylko od grup podstawowych:
-Instalacja, Źródła danych, Bateria, Możliwości sprzętu, Taryfy, Prognoza zużycia i Ustawienia
-powiadomień.
+Instalacja, Źródła danych, Bateria, Możliwości sprzętu, Źródło SOC baterii (przy włączonej baterii), Taryfy,
+Prognoza zużycia i Ustawienia powiadomień.
 **Pokaż ustawienia eksperckie** dodaje cztery grupy eksperckie, **Planowanie**, **Prognoza kosztu
 zużycia**, **Wydajność i jakość danych** i **Prezentacja**, oraz **Pomocniki liczbowe**; **Ukryj
 ustawienia eksperckie** chowa je z powrotem. Widok dotyczy jednego przepływu i nie jest zapisywany.
@@ -573,7 +718,7 @@ profil bazowy. Powiązania źródeł i pomocników są jednocześnie subskrybowa
 **przeładowuje się** (poprzedni plan znika do pierwszego nowego obliczenia, a sterownik w tym czasie dalej wykonuje swój zaakceptowany plan), gdy zapis zmienia zestaw
 encji lub ich nazwę: **Okresowe balansowanie LFP** (`lfp_balance`), **Włącz głębokość elastycznego zużycia**
 (`flexible_load_enabled`), **Włącz encje kosztów** (`expose_costs`), **Włącz encje okresów**
-(`expose_windows`), nazwę instalacji lub walutę. Działający
+(`expose_windows`), włączenie lub wyłączenie [estymatora SOC z liczników](#estymator-soc-z-liczników) (albo jego uruchomienia cieniowego), nazwę instalacji lub walutę. Działający
 [Energy Atlas](#energy-atlas-opcjonalnie) jest odświeżany w miejscu (śledzenie stanów i atrybuty
 witryny), bez restartu jego kolejki wysyłki. **Rekonfiguracja** zawsze przeładowuje.
 
@@ -596,6 +741,7 @@ witryny), bez restartu jego kolejki wysyłki. **Rekonfiguracja** zawsze przeład
 | `sensor.<name>_expected_wear_cost` | Expected wear cost | Przewidywany koszt zużycia baterii | waluta w horyzoncie |
 | `sensor.<name>_optimizer_status` | Optimizer status | Stan optymalizatora | stan obliczeń (diagnostyczny) |
 | `sensor.<name>_battery_balance` | Battery balance | Balansowanie baterii | `ok` / `eligible` / `scheduled` / `holding` / `overdue` (diagnostyczny) |
+| `sensor.<name>_soc_estimator` | SOC estimator | Estymator SOC | estymowany SOC w % (diagnostyczny); tylko przy włączonym [estymatorze SOC z liczników](#estymator-soc-z-liczników) lub jego uruchomieniu cieniowym |
 | `binary_sensor.<name>_forecast_valid` | Forecast valid | Poprawna prognoza | `on` / `off` |
 | `binary_sensor.<name>_alert` | Alert | Alert | `on` / `off` (diagnostyczny, problem) |
 | `select.<name>_strategy` | Strategy | Strategia | jedna z sześciu strategii |
@@ -1971,6 +2117,13 @@ Sterowane są tylko tryby baterii z listy `commissioned_battery_modes`; każdy i
 przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Voltage cel poza zakresem
 495–560 V jest odrzucany.
 
+Gdy źródłem SOC jest [estymator SOC z liczników](#estymator-soc-z-liczników), sterownik czyta SOC z
+estymatora zamiast z encji baterii Solarman (bramka telemetrii, reguła pełnego pakietu w trybie Voltage
+i kontrole osiągnięcia celu), a Capacity jest wyłączone z trybów, którymi steruje, niezależnie od
+`commissioned_battery_modes`: w trybie Capacity falownik porównuje progi SOC programów z własnym SOC z
+BMS, więc cel planu byłby w złej skali. Po przełączeniu falownika na Capacity zostaje wtedy na profilu
+bazowym z `mode_not_commissioned`.
+
 W trybie Voltage napięcie pakietu spada pod obciążeniem rozładowania (ok. 0,7 V przy 7 kW), a krzywa LFP
 jest płaska (515–528 V to ok. 30–70 %), więc cel napięciowy `DISCHARGE_GRID` jest osiągany kilka sekund
 po starcie. Gdy `discharge_energy_entity` ma wartość liczbową, przedział `DISCHARGE_GRID` w trybie Voltage kończy się, gdy licznik wzrośnie o zaplanowane `discharge_kwh`
@@ -2023,7 +2176,7 @@ Assistant (po polsku dla `pl`, w pozostałych przypadkach po angielsku); teksty 
 | `plan_expired` | pierwotny termin ważności minął albo żaden przedział nie obejmuje teraz |
 | `plan_malformed` | przedział z brakującymi lub błędnymi wartościami; wymagany nowy plan |
 | `operation_mode` | tryb baterii falownika to nie Capacity ani Voltage |
-| `mode_not_commissioned` | tryb baterii nie jest w `commissioned_battery_modes` |
+| `mode_not_commissioned` | tryb baterii nie jest w `commissioned_battery_modes` (przy estymatorze SOC z liczników jako źródle SOC Capacity nigdy nie jest) |
 | `voltage_range` | cel w trybie Voltage poza 495–560 V |
 | `settings_range` | brak zakresu lub kroku encji albo cel poza zakresem |
 | `takeover_blocked` | automatyzacja z `old_writers` jest włączona lub działa |

@@ -466,6 +466,7 @@ dashboard's two grid meters resolve to the inverter's counter.
 | `load` | `solarman` lifetime household consumption (`total_load_consumption`) as a recorder statistic |
 | `soc` | the dashboard battery SOC; an external SOC template (`template`, device class battery, unit %); `solarman` `battery` |
 | `bms_soc` | `solarman` `battery` attribute `BMS SOC`; the one enabled BMS pack sensor (`battery_N`); never preselected |
+| `soc_estimator` | one Solarman Deye config entry with `total_battery_charge`, `total_battery_discharge`, `battery_voltage` and `battery_current` (and `battery_power` when present); never preselected; see [Counter SOC estimator](#counter-soc-estimator) |
 | `battery_power` | the dashboard battery power; `battery_power` |
 | `pv_power` | the dashboard solar power; `pv_power` |
 | `grid_import_power`, `grid_export_power` | the dashboard grid power (sign +1 for import, −1 for export); `grid_power` with the same signs |
@@ -497,8 +498,14 @@ dashboard's two grid meters resolve to the inverter's counter.
 - **BMS SOC.** It is offered unticked. With imbalanced battery cells the BMS SOC and the battery SOC
   can differ by more than Battery → Soc disagreement percent (default 5 %), and then every plan is
   blocked. Tick it only if both agree over a full day.
+- **Counter estimator.** It is offered unticked next to the BMS row, as **Counter estimator
+  (recommended when the BMS SOC is unreliable)**, when exactly one Solarman Deye config entry has the
+  four sources. Ticking it replaces the `soc` and `bms_soc` rows (a ticked BMS SOC moves to the
+  estimator as a comparison reading) and opens its settings before Preview (see [Counter SOC
+  estimator](#counter-soc-estimator)). The BMS SOC can be wrong even at 100 %, which is the case the
+  estimator is for.
 - **Gates.** `sell` appears only with currency PLN. With PV off there are no `pv`, `pv_power` or
-  `pv_energy` rows; with the battery off no `soc`, `bms_soc` or `battery_power` rows. The two daily
+  `pv_energy` rows; with the battery off no `soc`, `bms_soc`, `soc_estimator` or `battery_power` rows. The two daily
   counters are never gated.
 - **Stored age limits** of the measurements: 3600 s for `battery_power`, `grid_import_power` and
   `grid_export_power`; 86400 s for `pv_power`, the lifetime counters, the battery charge and discharge
@@ -541,10 +548,150 @@ forecast.
 
 Preview adds a line `PV source: Energy dashboard solar forecast …` for this mode.
 
+### Counter SOC estimator
+
+Some packs report a BMS SOC that is wrong even at 100 % (imbalanced cells, a BMS that re-anchors on
+its own). The **counter SOC estimator** is a second way to get the battery SOC: instead of reading
+an SOC entity, Energy Compass computes it inside the integration from the battery's lifetime charge
+and discharge energy counters. Choose it under **Configure → Battery SOC source**
+(`sources.soc_mode = counter_estimator`); the default stays **Entity**, the SOC source bound in
+**Sources**. The estimator then replaces the SOC and BMS SOC sources for the planner, for the LFP
+balance and for the native [Deye controller](#deye-inverter-controller-solarman). The BMS SOC is not
+trusted anywhere: there is no BMS-based anchor or fallback, and a BMS SOC source, if you add one in
+the expert settings, is only shown beside the estimate for comparison.
+
+**The arithmetic.** The estimator carries an *anchor*, a known energy above the pack's 0 % point at
+known counter values, and adds what the counters have moved since:
+
+    E = anchor energy − (discharge − anchor discharge) + eta × (charge − anchor charge) + pending
+
+`E` is clamped to 0 … capacity and the SOC is `E / capacity`. `eta` is the charge efficiency of the
+counters (the counters sit at the battery terminals, the plan's efficiencies are AC-side). `pending`
+integrates the battery power between two counter steps, so the value moves smoothly although the
+counters report in coarse steps (a step is integrated for at most 120 s, `pending` is held within
+±2 kWh and restarts at zero whenever a counter changes). A counter that goes down re-anchors at the
+current energy (anchor kind `reset`); a rise faster than 100 kW is ignored as a glitch unless it
+repeats. The estimate never jumps on its own.
+
+**Zero is a voltage.** 0 % is the pack voltage you enter as **Pack voltage that is 0 %**
+(`empty_voltage`, in the pack-voltage scale of the voltage sensor, for example the inverter's cutoff).
+It is a property of your pack, so there is no default and the step refuses to save without it. The
+capacity is the usable energy between that point and full; it defaults to the battery capacity of
+the Battery group (an expert override exists) and the planner scales the estimator fraction by the
+battery capacity, so keep the two equal.
+
+**Anchors: physical evidence only.**
+
+| Anchor | When | Effect |
+| --- | --- | --- |
+| `full` | For `full_hold_seconds` (600 s) without a break: the pack takes (almost) no charge (current within max(1 A, 2 % of the maximum charge current)); charging was possible (the charge current limit is at least 2 A, the Deye controller is not in `DISCHARGE_GRID`, and a grid charge has not reached 99 % of its program voltage); and the cause is not lack of sun: PV above load plus the charge the pack still takes by at least max(300 W, 5 % of the rated PV power), or grid charging requested at 2 A or more. | `E` = capacity |
+| `empty` | For 60 s: discharging at 0.5 A or more at no more than 0.1 C with the voltage at or below the 0 % voltage; or the discharge stopped although the house imports at least 300 W from the grid, the discharge current limit is at least 2 A, the controller state is not `HOLD` or `CURTAIL` and the voltage is within 1 % above the 0 % voltage. | `E` = 0; the energy since the last full anchor is shown as `measured_capacity_kwh` (never applied) |
+| `reset` | A counter went down | Re-anchors at the current energy |
+| `initial` / `seed` | First start: the SOC you state, or the anchor of the SOC template you migrate from | Shown as unanchored until the first physical anchor |
+
+The full anchor needs the charge current limit (the native controller's entity, or the expert source
+**Charge current limit**) and, for the sun path, the PV power with the grid power (or the load power);
+the grid path needs the native controller's program and grid-charge entities. Without them it never
+fires and the estimate stays an unanchored count. For the **first 14 days** after the estimator starts (or is seeded), full
+candidates are only *logged* in the `full_candidates` attribute, unless **Anchor on candidates from day
+one** is on, because the hold has never been seen on a real taper. A candidate shows the start, the
+values and which path held (`surplus` or `grid`).
+
+**Never 100 % by guess.** Clamping at the top never creates an anchor. A count that reaches the capacity
+without a full anchor shows **99.9 %** with `unanchored_top: true`; the energy above the capacity is
+kept (it is not dropped) and shown as `excess_kwh`, and leaving the top first spends it. 100 % is shown
+only after a `full` anchor, until the pack falls 0.1 kWh below the top. A full anchor is an upward jump
+and goes through the same rebase as a BMS recalibration (a retained plan for up to 300 s while fresh
+reports confirm it).
+
+**What reads the estimate.**
+
+- *Planner.* The coordinator reads the estimate through the same validation as an SOC entity (age,
+  range, jump check), stamped with the newest report of the voltage, current and power sources. There
+  is no entity between them, so a template reload or a restart no longer makes the source unavailable.
+- *Deye controller.* With the estimator on, the native controller's SOC fact is the estimate: the
+  telemetry gate, the Voltage-mode full-pack rule and the reached checks use it. Only the source of
+  the fact changes. **Capacity mode is not supported with the estimator**: in that mode the inverter
+  compares the SOC thresholds of its programs with its own BMS SOC, so a target in the estimator's
+  scale would be wrong. Saving the estimator is refused (*the inverter is in Capacity mode*) while a
+  native controller is enabled and the inverter's battery operation mode reads `Capacity`; switch the
+  inverter to `Voltage` first. While the estimator is the source the controller also treats `Capacity`
+  as not commissioned, so a later switch of the inverter to Capacity parks it in the base profile
+  (`mode_not_commissioned`) instead of writing SOC thresholds. Voltage mode is unaffected (its
+  thresholds are voltages). The deprecated blueprint engine keeps its own `soc_entity` input and is
+  not changed.
+- *LFP balance.* A balance counts a pack as full only while a `full` anchor confirms the top, not at
+  SOC ≥ the threshold. A reading the arithmetic pushed to the threshold never credits a balance.
+
+**Diagnostics.** The diagnostic sensor `sensor.<name>_soc_estimator` (**SOC estimator**, %, device class
+battery) exists while the estimator is on or in shadow. Its state is recorded; of its attributes only
+`anchor_kind` is recorded: `energy_kwh`, `anchor_at`, `anchor_age_h`, `throughput_since_anchor_kwh`,
+`pending_kwh`, `unanchored_top`, `excess_kwh`, `full_candidate`, `measured_capacity_kwh`,
+`eta_charge`, `capacity_kwh`, `mode` (`counter_estimator` or `shadow`), `bms_soc` (comparison only),
+`full_candidates` (the last 20) and `anchors` (the last 20). When the throughput since the last anchor
+exceeds **Warn after this many capacities** (`drift_warn_cycles`, 3) times the capacity, the repair
+issue *The SOC estimator has gone a long time without an anchor* appears; it only warns, plans are not
+blocked, and it clears at the next anchor. The diagnostics download has a `soc_estimator` block with
+the same detail and no entity ids.
+
+**Settings** (Configure → Battery SOC source; Expert settings adds the second table):
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `soc_source` | `entity` or `counter_estimator` | `entity` |
+| `charge_counter`, `discharge_counter` | lifetime battery energy counters (kWh or Wh) | detected on a Solarman Deye device |
+| `voltage`, `current` | pack voltage and current (current positive while discharging) | detected on a Solarman Deye device |
+| `empty_voltage` | the pack voltage that is 0 % | required, none |
+| `initial_soc_percent` | SOC to start from when there is no stored state or seed | 50 |
+| `eta_charge` | charge efficiency of the counters | the measured battery round trip when [calibration](#measured-calibration-optional) has one, else 0.95 |
+| `full_hold_seconds` | hold before a full anchor | 600 |
+| `drift_warn_cycles` | capacities of throughput without an anchor before the repair issue | 3 |
+| `anchor_on_candidates` | anchor on full candidates inside the first 14 days | off |
+| `shadow` | run as diagnostics only beside the bound SOC entity | off |
+| `seed_from_template` | start from the anchor of the bound SOC template (only offered when it has the template's anchor attributes) | on when offered |
+
+| Expert field | Meaning |
+| --- | --- |
+| `capacity_kwh` | estimator capacity override (default: battery capacity) |
+| `power`, `pv_power` | battery power (positive while discharging) and PV power; fall back to the measurements of the same name in Sources |
+| `grid_power`, `load_power` | grid power (positive while importing) and house load; the load is computed from PV, grid and battery power when absent |
+| `charge_limit`, `discharge_limit`, `grid_charge_current` | the inverter's current limits; the native controller's entities are used when it runs |
+| `bms_soc` | BMS SOC, for comparison only |
+| `power_sign`, `current_sign`, `grid_sign` | `1` or `-1` to flip a sensor's sign |
+| `max_charge_current`, `rated_pv_w` | for the full-anchor thresholds; default the charge limit entity's maximum and the Atlas `pv_kwp` |
+
+Every source is read in the base unit its entity declares (kWh or Wh, W or kW, V, A).
+
+**Setup and detection.** On a new installation the **Detected sources** step offers **Counter estimator
+(recommended when the BMS SOC is unreliable)** unticked when one Solarman Deye device has the charge
+and discharge counters, the pack voltage and the pack current. Ticking it replaces the SOC rows and
+opens the estimator's settings before Preview, where the pack voltage that is 0 % is required.
+
+**Migrating from a template estimator.** A site that runs a YAML template estimator can move without a
+jump:
+
+1. Open **Configure → Battery SOC source**, keep **Entity**, tick **Shadow run**, enter the counters, the
+   voltage, the current and the 0 % voltage, and tick **Start from the anchor of the existing SOC
+   template** (offered when the bound entity has the attributes `anchor_kwh`, `anchor_charge`,
+   `anchor_discharge`, `anchor_kind`, `anchor_at`; `pending_kwh` is optional). The planner keeps using
+   the template while `sensor.<name>_soc_estimator` runs beside it.
+2. After at least one day compare them with `tools/soc_shadow.py` on the recorder history of both
+   entities (or a directory of state dumps as `tools/shadow_compare.py` reads them). The acceptance is
+   that the energy differs by at most 0.2 kWh in 95 % of the minutes and that no full or empty anchor of
+   one is missing from the other.
+3. Switch **Battery SOC source** to **Counter estimator**, then remove the template's YAML block and
+   reload the templates. Reloading templates makes the template SOC unavailable for a moment; the
+   estimator no longer depends on it.
+
+**Limits of this version.** Detection offers the estimator for Solarman Deye devices only (other
+inverters: set the sources in the expert group); efficiency and capacity are never learned or changed
+automatically; the Capacity-mode restriction above applies.
+
 ### Expert settings
 
 The main menu of Setup, Configure and Reconfigure starts with the common groups only: Installation,
-Sources, Battery, Hardware capabilities, Tariffs, Load forecasting and Notification preferences. **Show expert
+Sources, Battery, Hardware capabilities, Battery SOC source (with a battery), Tariffs, Load forecasting and
+Notification preferences. **Show expert
 settings** adds the four expert groups, **Planning**, **Consumption outlook**, **Performance and
 input quality** and **Presentation**, and **Numeric helper bindings**; **Hide expert settings** hides
 them again. The view is per flow and is not stored. Hidden settings keep their values and keep
@@ -562,7 +709,7 @@ profile. Source and helper bindings are re-subscribed at the same time. The entr
 with the previous plan lost until the first new calculation (the controller keeps executing its accepted
 plan meanwhile), when the save changes which entities
 exist or how they are named: **Periodic LFP balance charge** (`lfp_balance`), **Enable flexible energy depth**
-(`flexible_load_enabled`), **Expose costs** (`expose_costs`), **Expose windows** (`expose_windows`), the
+(`flexible_load_enabled`), **Expose costs** (`expose_costs`), **Expose windows** (`expose_windows`), turning the [counter SOC estimator](#counter-soc-estimator) (or its shadow run) on or off, the
 installation name or the currency. A running [Energy Atlas](#energy-atlas-optional) is refreshed in
 place (state tracking and site attributes), without a restart of its sink. **Reconfigure** always
 reloads.
@@ -586,6 +733,7 @@ reloads.
 | `sensor.<name>_expected_wear_cost` | Expected wear cost | Przewidywany koszt zużycia baterii | currency over the horizon |
 | `sensor.<name>_optimizer_status` | Optimizer status | Stan optymalizatora | calculation status (diagnostic) |
 | `sensor.<name>_battery_balance` | Battery balance | Balansowanie baterii | `ok` / `eligible` / `scheduled` / `holding` / `overdue` (diagnostic) |
+| `sensor.<name>_soc_estimator` | SOC estimator | Estymator SOC | estimated SOC in % (diagnostic); only with the [counter SOC estimator](#counter-soc-estimator) on or in shadow |
 | `binary_sensor.<name>_forecast_valid` | Forecast valid | Poprawna prognoza | `on` / `off` |
 | `binary_sensor.<name>_alert` | Alert | Alert | `on` / `off` (diagnostic, problem) |
 | `select.<name>_strategy` | Strategy | Strategia | one of six strategies |
@@ -1933,6 +2081,13 @@ Only battery modes listed in `commissioned_battery_modes` are controlled; any ot
 Voltage before its thresholds were proven) keeps the base profile. With Voltage allowed, a target
 outside 495–560 V is refused.
 
+With the [counter SOC estimator](#counter-soc-estimator) as the SOC source the controller reads its SOC
+from the estimator instead of the Solarman battery entity (the telemetry gate, the Voltage-mode
+full-pack rule and the reached checks), and Capacity is dropped from the modes it controls, whatever
+`commissioned_battery_modes` says: in Capacity mode the inverter compares the programs' SOC thresholds
+with its own BMS SOC, so the plan's target would be in the wrong scale. The inverter then stays on the base
+profile with `mode_not_commissioned` if it is switched to Capacity.
+
 In Voltage mode the pack voltage sags under discharge (about 0.7 V at 7 kW) and the LFP curve is flat
 (515–528 V spans roughly 30–70 %), so a `DISCHARGE_GRID` voltage target is reached within seconds of
 starting. With a numeric `discharge_energy_entity`, a `DISCHARGE_GRID` interval in Voltage mode instead ends once the counter has risen by the planned `discharge_kwh` (0.05 kWh
@@ -1984,7 +2139,7 @@ the Home Assistant language (Polish for `pl`, English otherwise); the blueprint 
 | `plan_expired` | the original validity ended or no interval covers now |
 | `plan_malformed` | an interval has missing or invalid values; a new plan is required |
 | `operation_mode` | the inverter battery mode is neither Capacity nor Voltage |
-| `mode_not_commissioned` | the battery mode is not in `commissioned_battery_modes` |
+| `mode_not_commissioned` | the battery mode is not in `commissioned_battery_modes` (with the counter SOC estimator as the SOC source, Capacity never is) |
 | `voltage_range` | a Voltage-mode target outside 495–560 V |
 | `settings_range` | an entity range or step is missing, or a target is outside it |
 | `takeover_blocked` | an automation in `old_writers` is on or running |
