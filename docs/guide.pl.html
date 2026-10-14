@@ -933,13 +933,18 @@ więc trzymaj obie równe.</p>
 <tbody>
 <tr>
 <td><code>full</code></td>
-<td>Przez <code>full_hold_seconds</code> (600 s) bez przerwy: pakiet prawie nie przyjmuje ładunku (prąd w granicach max(1 A, 2 % maksymalnego prądu ładowania)); ładowanie było możliwe (limit prądu ładowania co najmniej 2 A, sterownik Deye nie jest w <code>DISCHARGE_GRID</code>, a ładowanie z sieci nie osiągnęło 99 % napięcia swojego programu); a przyczyną nie jest brak słońca: PV powyżej zużycia i ładunku, który pakiet jeszcze bierze, o co najmniej max(300 W, 5 % mocy znamionowej PV), albo żądane ładowanie z sieci 2 A lub więcej.</td>
+<td>Przez <code>full_hold_seconds</code> (600 s) bez przerwy, przy czym każde czytane źródło (prąd, napięcie, PV, zużycie, sieć) zgłosiło się w ciągu ostatnich 60 s: pakiet prawie nie przyjmuje ładunku (prąd w granicach max(1 A, 2 % maksymalnego prądu ładowania)); ładowanie było możliwe (limit prądu ładowania co najmniej 2 A, a sterownik Deye nie jest w <code>HOLD</code>, <code>CURTAIL</code>, <code>BASE</code> ani <code>DISCHARGE_GRID</code>; w <code>CHARGE_GRID</code> tylko z programem <code>Grid</code> poniżej 99 % jego napięcia i prądem ładowania z sieci co najmniej 2 A); a przyczyną nie jest brak słońca, co pokazuje <strong>zmierzony eksport do sieci</strong> co najmniej max(300 W, 5 % mocy znamionowej PV), gdy pakiet nie bierze nic (ścieżka <code>export</code>). Dopiero tam, gdzie eksport jest niemożliwy lub ograniczony (limit eksportu planera <code>grid_export_kw</code> wynosi 0 albo eksport jest w granicach 5 % tego limitu), liczy się wyliczona nadwyżka (ścieżka <code>surplus</code>): PV − zużycie − ładunek, który pakiet jeszcze bierze ≥ 300 W + 10 % mocy PV, bo PV po stronie DC minus zużycie po stronie AC zawyża prawdziwą nadwyżkę o straty konwersji falownika. Trzecia ścieżka (<code>grid</code>) to żądane ładowanie z sieci 2 A lub więcej poniżej napięcia swojego programu. Liczniki muszą też przed kotwicą dawać pakiet na <strong>co najmniej 70 % pojemności</strong>; inaczej kandydat jest zapisany jako <code>rejected_low_energy</code> i nigdy nie kotwiczy (ograniczenie prądu ładowania przez BMS na mrozie albo obniżenie mocy falownika wyglądają jak pełny pakiet).</td>
+<td><code>E</code> = pojemność</td>
+</tr>
+<tr>
+<td><code>full_balance</code></td>
+<td>W wierszu planu będącym oknem balansu LFP (<code>balance_hold</code>), z programem <code>Grid</code> na jego (pełnym) napięciu: ładowanie, które ustaje na napięciu programu, z tymi samymi warunkami prądu końcówki, limitu, świeżości i 70 % utrzymanymi przez <code>full_hold_seconds</code>. Plan zażądał pełnego pakietu, a falownik zatrzymał się na pełnym napięciu, więc samo zatrzymanie jest dowodem; „cel osiągnięty” sterownika nie wyjaśnia go tu inaczej.</td>
 <td><code>E</code> = pojemność</td>
 </tr>
 <tr>
 <td><code>empty</code></td>
-<td>Przez 60 s: rozładowanie co najmniej 0,5 A przy najwyżej 0,1 C i napięciu nie wyższym niż napięcie 0 %; albo rozładowanie ustało, choć dom pobiera z sieci co najmniej 300 W, limit prądu rozładowania wynosi co najmniej 2 A, stan sterownika nie jest <code>HOLD</code> ani <code>CURTAIL</code>, a napięcie jest najwyżej 1 % powyżej napięcia 0 %.</td>
-<td><code>E</code> = 0; energia od ostatniej kotwicy pełnej jest pokazana jako <code>measured_capacity_kwh</code> (nigdy nie jest stosowana)</td>
+<td>Przez 60 s, z tą samą świeżością 60 s, i tylko gdy napięcie pakietu wynosi co najmniej połowę napięcia 0 % (odczyt 0 V to zanik sygnału) oraz, dla rozładowania, prąd i moc baterii zgadzają się co do rozładowania (inaczej brak kotwicy, a odmowa jest zapisana raz w logu): rozładowanie co najmniej 0,5 A przy najwyżej 0,1 C i napięciu nie wyższym niż napięcie 0 %; albo rozładowanie ustało, choć dom pobiera z sieci co najmniej 300 W, limit prądu rozładowania wynosi co najmniej 2 A, stan sterownika nie jest <code>HOLD</code> ani <code>CURTAIL</code>, a napięcie jest najwyżej 1 % powyżej napięcia 0 %.</td>
+<td><code>E</code> = 0 (skok w dół: jak każda rekalibracja unieważnia plan na około minutę, aż świeże odczyty to potwierdzą); energia od ostatniej kotwicy pełnej jest pokazana jako <code>measured_capacity_kwh</code> (nigdy nie jest stosowana)</td>
 </tr>
 <tr>
 <td><code>reset</code></td>
@@ -954,17 +959,28 @@ więc trzymaj obie równe.</p>
 </tbody>
 </table></section>
 <p>Kotwica pełna wymaga limitu prądu ładowania (encja natywnego sterownika albo źródło eksperckie
-<strong>Limit prądu ładowania</strong>) oraz, dla ścieżki słonecznej, mocy PV z mocą sieci (lub mocą zużycia);
-ścieżka sieciowa wymaga encji programu i ładowania z sieci natywnego sterownika. Bez nich nigdy się nie
-uruchamia, a estymata pozostaje niekotwiczonym wyliczeniem. Przez <strong>pierwsze 14 dni</strong> od startu
-estymatora (lub zasiania) kandydaci na kotwicę pełną są tylko <em>zapisywani</em> w atrybucie
+<strong>Limit prądu ładowania</strong>) oraz mocy sieci z mocą PV (lub mocą zużycia); ścieżka sieciowa wymaga encji
+programu i ładowania z sieci natywnego sterownika. Bez nich nigdy się nie uruchamia, a estymata
+pozostaje niekotwiczonym wyliczeniem. <strong>Bez natywnego sterownika Deye</strong> (wyłączonego lub z silnikiem
+blueprint) estymator nie widzi stanu sterowania ani programu TOU, więc reguła pełna opiera się wyłącznie
+na zmierzonym eksporcie do sieci (albo na wyliczonej nadwyżce, gdy eksport jest ograniczony lub
+zerowy): ładowanie z sieci nigdy nie kotwiczy, o czym mówi też krok opcji. Przez <strong>pierwsze 14 dni</strong> od
+startu estymatora (lub zasiania) kandydaci na kotwicę pełną są tylko <em>zapisywani</em> w atrybucie
 <code>full_candidates</code>, chyba że włączono <strong>Kotwicz na kandydatach od pierwszego dnia</strong>, bo wytrzymanie nigdy
-nie było widziane na prawdziwym ogonie ładowania. Kandydat pokazuje początek, wartości i to, która
-ścieżka zadziałała (<code>surplus</code> lub <code>grid</code>).</p>
+nie było widziane na prawdziwym ogonie ładowania. Kandydat pokazuje początek, wartości, to, która
+ścieżka zadziałała (<code>export</code>, <code>surplus</code>, <code>grid</code> lub <code>balance</code>) oraz jego <code>outcome</code> (<code>anchored</code>,
+<code>candidate</code> dla niezastosowanego albo <code>rejected_low_energy</code>).</p>
+<p><strong>Nieaktualność.</strong> Estymata dostaje znacznik najnowszego raportu źródeł napięcia, prądu i mocy, ale nigdy
+świeższy, niż pozwalają jej liczniki: gdy liczniki są starsze niż ich zaobserwowany krok odświeżania
+(co najmniej minuta, najwyżej 15; do zaobserwowania kroku 15 minut), estymata jest tak stara jak liczniki,
+nawet przy świeżej mocy. Po restarcie pierwszy krok nie całkuje mocy zapisanej przed przestojem.</p>
 <p><strong>Nigdy 100 % na zgadnięcie.</strong> Obcięcie na górze nigdy nie tworzy kotwicy. Wyliczenie, które dochodzi do
 pojemności bez kotwicy pełnej, pokazuje <strong>99,9 %</strong> z <code>unanchored_top: true</code>; energia powyżej pojemności
 jest zachowana (nie jest odrzucana) i pokazana jako <code>excess_kwh</code>, a zejście z góry najpierw ją zużywa.
-100 % pokazuje się dopiero po kotwicy <code>full</code>, aż pakiet spadnie o 0,1 kWh poniżej góry. Kotwica pełna to
+100 % pokazuje się dopiero po kotwicy <code>full</code>, aż pakiet spadnie o 0,1 kWh poniżej góry. Dopóki góra jest
+potwierdzona, ładunek policzony powyżej pojemności to straty i podtrzymanie, a nie zmagazynowana energia:
+kotwica pozostaje kotwicą <code>full</code> z pierwotnym czasem i przejmuje bieżące liczniki, więc <code>excess_kwh</code>
+zostaje 0, a energia nie przenosi fantomowej nadwyżki do następnego rozładowania. Kotwica pełna to
 skok w górę i przechodzi przez to samo przesunięcie odniesienia co rekalibracja BMS (zachowany plan do
 300 s, gdy świeże odczyty to potwierdzają).</p>
 <p><strong>Kto czyta estymatę.</strong></p>
@@ -982,8 +998,12 @@ skok w górę i przechodzi przez to samo przesunięcie odniesienia co rekalibrac
   przełączenie falownika na Capacity wstawia go na profil bazowy (<code>mode_not_commissioned</code>) zamiast
   zapisywać progi SOC. Tryb Voltage nie jest dotknięty (jego progi to napięcia). Wycofywany silnik
   blueprintu zachowuje własne wejście <code>soc_entity</code> i nie jest zmieniany.</li>
-<li><em>Balansowanie LFP.</em> Balans uznaje pakiet za pełny tylko, gdy kotwica <code>full</code> potwierdza górę, a nie
-  przy SOC ≥ progu. Odczyt, który arytmetyka dociągnęła do progu, nigdy nie zalicza balansu.</li>
+<li><em>Balansowanie LFP.</em> Balans uznaje pakiet za pełny tylko na podstawie fizycznego dowodu, a nie przy
+  SOC ≥ progu: kotwicy <code>full</code> lub <code>full_balance</code> albo trwającego kandydata na pełny (zapisanego,
+  wiarygodnego, także gdy przez pierwsze 14 dni kandydaci są tylko zapisywani i nie ma kotwicy). Odczyt,
+  który arytmetyka dociągnęła do progu, nigdy nie zalicza balansu. Wiersz balansu, którego program Grid
+  osiąga swoje napięcie i wchodzi w ogon ładowania, jest takim dowodem, więc ukończony balans jest
+  zapisywany i nie jest planowany od nowa każdego dnia.</li>
 </ul>
 <p><strong>Diagnostyka.</strong> Diagnostyczny sensor <code>sensor.&lt;name&gt;_soc_estimator</code> (<strong>Estymator SOC</strong>, %, klasa
 urządzenia battery) istnieje, gdy estymator jest włączony albo działa w cieniu. Jego stan jest

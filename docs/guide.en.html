@@ -924,13 +924,18 @@ battery capacity, so keep the two equal.</p>
 <tbody>
 <tr>
 <td><code>full</code></td>
-<td>For <code>full_hold_seconds</code> (600 s) without a break: the pack takes (almost) no charge (current within max(1 A, 2 % of the maximum charge current)); charging was possible (the charge current limit is at least 2 A, the Deye controller is not in <code>DISCHARGE_GRID</code>, and a grid charge has not reached 99 % of its program voltage); and the cause is not lack of sun: PV above load plus the charge the pack still takes by at least max(300 W, 5 % of the rated PV power), or grid charging requested at 2 A or more.</td>
+<td>For <code>full_hold_seconds</code> (600 s) without a break, with every source it reads (current, voltage, PV, load, grid) reported within the last 60 s: the pack takes (almost) no charge (current within max(1 A, 2 % of the maximum charge current)); charging was possible (the charge current limit is at least 2 A, and the Deye controller is not in <code>HOLD</code>, <code>CURTAIL</code>, <code>BASE</code> or <code>DISCHARGE_GRID</code>; in <code>CHARGE_GRID</code> only with a <code>Grid</code> program below 99 % of its voltage and a grid charge current of 2 A or more); and the cause is not lack of sun, shown by <strong>measured grid export</strong> of at least max(300 W, 5 % of the rated PV power) while the pack takes none (path <code>export</code>). Only where export is impossible or capped (the planner's export cap <code>grid_export_kw</code> is 0, or the export sits within 5 % of it) does the derived surplus count instead (path <code>surplus</code>): PV − load − the charge the pack still takes ≥ 300 W + 10 % of the PV power, because DC PV minus AC load overstates the real surplus by the inverter's conversion losses. Grid charging requested at 2 A or more below its program voltage is the third path (<code>grid</code>). The counters must also put the pack at <strong>70 % of the capacity or more</strong> before the anchor; otherwise the candidate is logged as <code>rejected_low_energy</code> and never anchors (a BMS charge-current limit in the cold, or inverter derating, looks like a full pack).</td>
+<td><code>E</code> = capacity</td>
+</tr>
+<tr>
+<td><code>full_balance</code></td>
+<td>In a plan row that is an LFP balance hold (<code>balance_hold</code>), with a <code>Grid</code> program at its (full) voltage: charging that stops at the program voltage, with the same taper, limit, freshness and 70 % conditions held for <code>full_hold_seconds</code>. The plan asked for a full pack and the inverter stopped at the full voltage, so the stop is itself the evidence; the controller's own "target reached" does not explain it away here.</td>
 <td><code>E</code> = capacity</td>
 </tr>
 <tr>
 <td><code>empty</code></td>
-<td>For 60 s: discharging at 0.5 A or more at no more than 0.1 C with the voltage at or below the 0 % voltage; or the discharge stopped although the house imports at least 300 W from the grid, the discharge current limit is at least 2 A, the controller state is not <code>HOLD</code> or <code>CURTAIL</code> and the voltage is within 1 % above the 0 % voltage.</td>
-<td><code>E</code> = 0; the energy since the last full anchor is shown as <code>measured_capacity_kwh</code> (never applied)</td>
+<td>For 60 s, with the same 60 s freshness, and only if the pack voltage is at least half the 0 % voltage (a 0 V reading is a dropout) and, for the discharge case, the current and the battery power agree on discharging (otherwise no anchor, and the refusal is logged once): discharging at 0.5 A or more at no more than 0.1 C with the voltage at or below the 0 % voltage; or the discharge stopped although the house imports at least 300 W from the grid, the discharge current limit is at least 2 A, the controller state is not <code>HOLD</code> or <code>CURTAIL</code> and the voltage is within 1 % above the 0 % voltage.</td>
+<td><code>E</code> = 0 (a downward jump: like any recalibration it revokes the plan for about a minute while fresh reports confirm it); the energy since the last full anchor is shown as <code>measured_capacity_kwh</code> (never applied)</td>
 </tr>
 <tr>
 <td><code>reset</code></td>
@@ -945,16 +950,28 @@ battery capacity, so keep the two equal.</p>
 </tbody>
 </table></section>
 <p>The full anchor needs the charge current limit (the native controller's entity, or the expert source
-<strong>Charge current limit</strong>) and, for the sun path, the PV power with the grid power (or the load power);
-the grid path needs the native controller's program and grid-charge entities. Without them it never
-fires and the estimate stays an unanchored count. For the <strong>first 14 days</strong> after the estimator starts (or is seeded), full
-candidates are only <em>logged</em> in the <code>full_candidates</code> attribute, unless <strong>Anchor on candidates from day
-one</strong> is on, because the hold has never been seen on a real taper. A candidate shows the start, the
-values and which path held (<code>surplus</code> or <code>grid</code>).</p>
+<strong>Charge current limit</strong>) and the grid power with the PV power (or the load power); the grid path needs
+the native controller's program and grid-charge entities. Without them it never fires and the estimate
+stays an unanchored count. <strong>Without the native Deye controller</strong> (disabled, or the blueprint engine)
+the dispatch state and the TOU program are invisible to the estimator, so the full rule rests on the
+measured grid export (or the derived surplus where export is capped or zero) alone: grid charging never
+anchors, and the options step says so. For the <strong>first 14 days</strong> after the estimator starts (or is
+seeded), full candidates are only <em>logged</em> in the <code>full_candidates</code> attribute, unless <strong>Anchor on
+candidates from day one</strong> is on, because the hold has never been seen on a real taper. A candidate shows
+the start, the values, which path held (<code>export</code>, <code>surplus</code>, <code>grid</code> or <code>balance</code>) and its <code>outcome</code>
+(<code>anchored</code>, <code>candidate</code> for one not applied, or <code>rejected_low_energy</code>).</p>
+<p><strong>Staleness.</strong> The estimate is stamped with the newest report of the voltage, current and power
+sources, but never fresher than its counters allow: once the counters are older than their observed
+update step (at least one minute, at most 15; 15 minutes until a step was seen), the estimate is as
+old as the counters even while power is fresh. After a restart the first step does not integrate the
+power stored before the downtime.</p>
 <p><strong>Never 100 % by guess.</strong> Clamping at the top never creates an anchor. A count that reaches the capacity
 without a full anchor shows <strong>99.9 %</strong> with <code>unanchored_top: true</code>; the energy above the capacity is
 kept (it is not dropped) and shown as <code>excess_kwh</code>, and leaving the top first spends it. 100 % is shown
-only after a <code>full</code> anchor, until the pack falls 0.1 kWh below the top. A full anchor is an upward jump
+only after a <code>full</code> anchor, until the pack falls 0.1 kWh below the top. While the top is confirmed, charge
+counted above the capacity is losses and float, not stored energy: the anchor stays a <code>full</code> one from
+its original time and takes the current counters, so <code>excess_kwh</code> stays 0 and the energy does not
+carry a phantom surplus into the next discharge. A full anchor is an upward jump
 and goes through the same rebase as a BMS recalibration (a retained plan for up to 300 s while fresh
 reports confirm it).</p>
 <p><strong>What reads the estimate.</strong></p>
@@ -973,8 +990,11 @@ reports confirm it).</p>
   (<code>mode_not_commissioned</code>) instead of writing SOC thresholds. Voltage mode is unaffected (its
   thresholds are voltages). The deprecated blueprint engine keeps its own <code>soc_entity</code> input and is
   not changed.</li>
-<li><em>LFP balance.</em> A balance counts a pack as full only while a <code>full</code> anchor confirms the top, not at
-  SOC ≥ the threshold. A reading the arithmetic pushed to the threshold never credits a balance.</li>
+<li><em>LFP balance.</em> A balance counts a pack as full only on physical evidence, not at SOC ≥ the
+  threshold: a <code>full</code> or <code>full_balance</code> anchor, or a standing full candidate (a logged, plausible one,
+  also while the first 14 days only log candidates and apply no anchor). A reading the arithmetic
+  pushed to the threshold never credits a balance. A balance row whose Grid program reaches its voltage
+  and tapers is such evidence, so a completed balance is recorded and not planned again every day.</li>
 </ul>
 <p><strong>Diagnostics.</strong> The diagnostic sensor <code>sensor.&lt;name&gt;_soc_estimator</code> (<strong>SOC estimator</strong>, %, device class
 battery) exists while the estimator is on or in shadow. Its state is recorded; of its attributes only
