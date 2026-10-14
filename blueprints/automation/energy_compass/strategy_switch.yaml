@@ -28,6 +28,7 @@ blueprint:
     "manual:self_sufficiency") and `pending_marker` (Text, max length at
     least 20).
   domain: automation
+  source_url: https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/strategy_switch.yaml
   homeassistant:
     min_version: 2026.9.1
   input:
