@@ -907,9 +907,17 @@ carried `HOLD` (22) or `CURTAIL` (20) commitment with room in the pack and curta
   draws 34 are planned (21 of the 22 `HOLD`, 13 of the 20 `CURTAIL`) and 13 stay. Over the four seeds (1200 per draw),
   planned now and not on main: `run` 19, `negrun` 25, `bell` 20, `probe` 15; of the plans that main had, better 10
   (`negrun` 3, `bell` 5, `probe` 2), worse 1 (`negrun` 11/208, dearer by 1e-6 with the same modes and bridges), the
-  rest the same. Eight of the better draws have a `CURTAIL` interval right after a bridge, inside the run, that main's
-  gate row closed with room in the pack: taking `curtail_relay` out of the gate rows gives main's cost to the printed
-  digit in each, taking the takeover out changes none; the other two are within the solver's tolerance (6.6e-5, 1e-6).
+  rest the same. Nine of the better draws are an effect of `curtail_relay`: taking it out of the gate rows gives main's
+  cost to the printed digit in each, taking the takeover out changes none; only `bell` 77/73 (1e-6) is within the
+  solver's tolerance. `bell` 11/58 (by 6.6e-5) was first counted as tolerance and is a relay effect: a `CURTAIL`
+  carried 29 minutes into a run of 60, intervals 0 and 1 are bridges, interval 2 starts inside the run (30 < 31
+  minutes) and has a forced part (need 0.341 kWh, forced 0.091 kWh, the pack 3.08 kWh below the gate 4.68 kWh). Main
+  spills the forced part and charges the rest (−1.079709); this branch spills the whole need (−1.079775), and the
+  relay from one `CURTAIL` interval to the next keeps intervals 3 to 8 open: about 1.75 kWh spilled above the forced
+  part with about 1.9 kWh of room, the pack at 3.05 instead of 4.475 kWh after interval 8. The spill over the day
+  differs by 0.013 kWh only (the pack fills later), so the money is the same. The relay through a bridge opens the
+  whole need also where the interval has a forced part, as the first interval of a carried `CURTAIL` run and the
+  `CURTAIL`-to-`CURTAIL` relay do since T-066: that is the T-066 rule, not a new one.
   Rolling: not followed `roll` 29 → 10, `negroll` 24 → 7, `bellroll` 52 → 22 of 1200; `rollcompare`: 0 newly infeasible
   while followed, 66 more followed to the end, 2 whose first failure is later (both real stops), 0 earlier, and 2 plans
   whose next boundary newly changes their mode against 1 that no longer does (`bellroll` seed 11 index 238 and seed 22
