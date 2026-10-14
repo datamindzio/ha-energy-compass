@@ -254,6 +254,7 @@ class SourceConfig:
     bms_soc: EntityBinding | None = None
     numeric: Mapping[str, NumericSetting] = field(default_factory=dict)
     currency: str = "PLN"
+    soc_mode: str = "entity"
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize selected sources without any live state values."""
@@ -269,6 +270,8 @@ class SourceConfig:
                 name: setting.to_dict() for name, setting in self.numeric.items()
             },
             "currency": self.currency,
+            # Absent for the default so stored configurations stay unchanged.
+            **({"soc_mode": self.soc_mode} if self.soc_mode != "entity" else {}),
         }
 
     @classmethod
@@ -287,6 +290,7 @@ class SourceConfig:
                 for name, item in value.get("numeric", {}).items()
             },
             value.get("currency", "PLN"),
+            value.get("soc_mode", "entity"),
         )
 
 
@@ -359,12 +363,19 @@ def validate_sources(config: SourceConfig, own_entity_ids: set[str]) -> None:
             raise InputError("daily estimate missing")
     else:
         raise InputError("invalid load mode")
-    if config.battery_enabled:
+    if config.soc_mode not in ("entity", "counter_estimator"):
+        raise InputError("invalid SOC mode")
+    if config.battery_enabled and config.soc_mode == "counter_estimator":
+        if config.soc is not None or config.bms_soc is not None:
+            raise InputError("the counter SOC estimator replaces the SOC sources")
+    elif config.battery_enabled:
         if config.soc is None:
             raise InputError("enabled battery needs SOC")
         dependencies.append(config.soc)
         if config.bms_soc:
             dependencies.append(config.bms_soc)
+    elif config.soc_mode != "entity":
+        raise InputError("the counter SOC estimator needs the battery enabled")
     elif config.soc is not None or config.bms_soc is not None:
         raise InputError("disabled battery cannot have active SOC")
     if config.load.daily_estimate and config.load.daily_estimate.entity:

@@ -190,6 +190,11 @@ class Estimate:
     full_candidate: bool = False
     empty_candidate: bool = False
     measured_capacity_kwh: float | None = None
+    # Energy the counters put above the capacity; kept, so leaving the top
+    # first spends it, and shown beside the 99.9 % of an unanchored top.
+    excess_kwh: float = 0.0
+    # A full anchor confirmed the top and the pack has not left it since.
+    top_confirmed: bool = False
     events: tuple[str, ...] = ()
 
 
@@ -568,6 +573,8 @@ def _estimate(
         full_candidate=state.full_candidate_since is not None,
         empty_candidate=state.empty_candidate_since is not None,
         measured_capacity_kwh=state.measured_capacity_kwh,
+        excess_kwh=max(0.0, total - capacity),
+        top_confirmed=state.top_confirmed,
         events=events,
     )
 

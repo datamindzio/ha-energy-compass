@@ -215,6 +215,15 @@ def seed_from_history(
     return state
 
 
+def confirmed_percent(percent: float, confirmed: bool) -> float:
+    """SOC for the hold when only a physical full anchor counts as full.
+
+    The counter estimator reaches the threshold by arithmetic; a balance needs
+    the pack proven full, so without the anchor the reading counts as below it.
+    """
+    return percent if confirmed else -inf
+
+
 def soc_percent(raw: float, unit: str, capacity_kwh: float) -> float | None:
     if unit == "%":
         return float(raw)

@@ -20,6 +20,7 @@ from homeassistant.util import dt as dt_util
 from . import calibration
 from .balance_tracker import (
     balance_settings,
+    confirmed_percent,
     empty_state,
     observe,
     planned_window,
@@ -54,6 +55,9 @@ from .runtime import (
     restore_grid_charge_commitment,
 )
 from .settings import DOMAIN, merged_configuration
+from .soc_estimator_config import ESTIMATE_KEY, counter_mode
+from .soc_estimator_config import entity_ids as estimator_entity_ids
+from .soc_estimator_ha import SocEstimator
 from .sources.bindings import merge_continuations, parse_intervals, parse_timestamp
 
 _LOGGER = logging.getLogger(__name__)
@@ -116,6 +120,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         self._calibration_store = Store(
             hass, 1, f"{DOMAIN}.{entry.entry_id}.calibration"
         )
+        self.soc_estimator = SocEstimator(hass, entry, self)
         self.previous_plan = None
         # Set by async_setup_entry only when options["atlas"]["enabled"] (ADR-0019 §3).
         self.atlas = None
@@ -151,6 +156,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("Invalid stored calibration state; starting empty")
             stored = None
         self._calibration = stored or calibration.empty_state()
+        await self.soc_estimator.async_start(self.configuration)
         self._registry_unsub = self.hass.bus.async_listen(
             er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_changed
         )
@@ -163,6 +169,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         self.entry.async_create_background_task(
             self.hass, self.async_recalculate(), "energy_compass first solve"
         )
+        self.soc_estimator.start_notifying()
 
     async def async_apply_atlas(self, new_settings: dict) -> None:
         """Apply Atlas settings live: start/stop the sink thread, no entry reload.
@@ -219,6 +226,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             self.entry, options={**self.entry.options, "configuration": config}
         )
         self._subscribe()
+        self.soc_estimator.configure(self.configuration)
         self._generation += 1
         self._epoch += 1
         self._fingerprint = None
@@ -362,7 +370,9 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
 
     @callback
     def _registry_changed(self, event):
-        tracked = entity_ids(self.configuration)
+        tracked = entity_ids(self.configuration) | estimator_entity_ids(
+            self.configuration
+        )
         if (
             event.data.get("entity_id") in tracked
             or event.data.get("old_entity_id") in tracked
@@ -405,16 +415,9 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                             dt_util.utcnow(),
                             self._previous_soc,
                         )
-                        percent = energy / values["capacity_kwh"] * 100
-                        if (
-                            self._soc_reference is not None
-                            and abs(percent - self._soc_reference)
-                            < values["soc_trigger_percent"]
-                        ):
-                            raw = self._soc_reference
-                        else:
-                            self._soc_reference = percent
-                            raw = percent
+                        raw = self._soc_trigger_value(
+                            energy / values["capacity_kwh"] * 100, values
+                        )
                     selected.append((value["entity_id"], value.get("attribute"), raw))
                 for child in value.values():
                     visit(child)
@@ -435,6 +438,24 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                 "measurements", {}
             ).get("throughput_today")
         visit(planning_inputs)
+        if counter_mode(self.configuration) and ESTIMATE_KEY in states:
+            energy, _ = _soc(
+                self.configuration,
+                source,
+                values,
+                states,
+                dt_util.utcnow(),
+                self._previous_soc,
+            )
+            selected.append(
+                (
+                    ESTIMATE_KEY,
+                    None,
+                    self._soc_trigger_value(
+                        energy / values["capacity_kwh"] * 100, values
+                    ),
+                )
+            )
         groups = [
             price.forecast
             for price in (source.buy, source.sell)
@@ -478,6 +499,21 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                 )
         return json.dumps(selected, sort_keys=True, default=str)
 
+    def _soc_trigger_value(self, percent, values):
+        """The SOC the fingerprint sees: unchanged until it moves by the trigger."""
+        if (
+            self._soc_reference is not None
+            and abs(percent - self._soc_reference) < values["soc_trigger_percent"]
+        ):
+            return self._soc_reference
+        self._soc_reference = percent
+        return percent
+
+    @callback
+    def soc_estimate_changed(self):
+        """Treat a moved estimate like a changed SOC source."""
+        self._source_changed(None)
+
     def _inputs(self):
         # A failed health check consumes the previous deadline; recovery keeps
         # using source events and health polling, never a past 100 ms timer.
@@ -486,6 +522,8 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         self.configuration = config
         states = snapshot(self.hass, config)
         now = dt_util.utcnow()
+        if (view := self.soc_estimator.view()) is not None and counter_mode(config):
+            states[ESTIMATE_KEY] = view
         self._observe_calibration(config, states, now)
         values = effective_settings(config, states, now)
         daily_export_observations(config, states, values, now)
@@ -521,7 +559,12 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             energy, (stamp, _) = _soc(
                 config, source, values, states, now, self._previous_soc
             )
-            self._observe_balance(values, energy / values["capacity_kwh"] * 100, stamp)
+            percent = energy / values["capacity_kwh"] * 100
+            if counter_mode(config):
+                percent = confirmed_percent(
+                    percent, states[ESTIMATE_KEY]["top_confirmed"]
+                )
+            self._observe_balance(values, percent, stamp)
         deadline = freshness_deadline(config, states, values, now)
         if deadline is not None and deadline <= now:
             raise InputError("expired_inputs")
@@ -1227,3 +1270,4 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         if self._balance is not None and self._balance_persist:
             await self._balance_store.async_save(self._balance)
         await self._calibration_store.async_save(self._calibration)
+        await self.soc_estimator.async_stop()

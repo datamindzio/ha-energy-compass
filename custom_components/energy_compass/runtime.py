@@ -62,6 +62,7 @@ from .engine.peak_reserve import (
 from .engine.strategy import resolve_flags, strategy_weights
 from .settings import validate_configuration
 from .settlement import resolve_settlement
+from .soc_estimator_config import ESTIMATE_KEY
 from .sources.battery import SocSettings, validate_soc
 from .sources.bindings import (
     field,
@@ -239,8 +240,6 @@ def _soc_timestamp(
 
 def _soc(config, source, values, states, now, previous_soc=None):
     options = config["soc_options"]
-    binding = source.soc
-    stamp = _soc_timestamp(config, states, binding)
     settings = SocSettings(
         values["capacity_kwh"],
         max(values["charge_kw"], values["discharge_kw"], 0.000001),
@@ -248,6 +247,18 @@ def _soc(config, source, values, states, now, previous_soc=None):
         values["soc_disagreement_percent"] / 100,
         values["soc_jump_percent"] / 100,
     )
+    if source.soc_mode == "counter_estimator":
+        estimate = states.get(ESTIMATE_KEY)
+        if estimate is None:
+            raise InputError(f"missing or unavailable source: {ESTIMATE_KEY}")
+        stamp = estimate["reported_at"]
+        prior = previous_soc if previous_soc and stamp != previous_soc[0] else None
+        energy = validate_soc(
+            estimate["fraction"], "fraction", stamp, now, settings, previous=prior
+        )
+        return energy, (stamp, energy)
+    binding = source.soc
+    stamp = _soc_timestamp(config, states, binding)
     bms = None
     if source.bms_soc:
         bms_stamp = _soc_timestamp(config, states, source.bms_soc, prefix="bms_")
@@ -306,6 +317,11 @@ def freshness_deadline(config, states, values, now):
             stamp = parse_timestamp(states[setting.entity.entity_id]["last_updated"])
             deadlines.append(stamp + timedelta(seconds=setting.max_age_seconds))
     if source.battery_enabled:
+        if source.soc_mode == "counter_estimator" and ESTIMATE_KEY in states:
+            deadlines.append(
+                states[ESTIMATE_KEY]["reported_at"]
+                + timedelta(seconds=values["soc_max_age_seconds"])
+            )
         for binding, prefix, setting in (
             (source.soc, "", "soc_max_age_seconds"),
             (source.bms_soc, "bms_", "bms_max_age_seconds"),
