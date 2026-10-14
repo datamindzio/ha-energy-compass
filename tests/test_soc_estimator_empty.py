@@ -81,6 +81,41 @@ def test_a_stale_anchor_input_breaks_the_empty_hold():
     assert state.anchor.kind == "initial"
 
 
+@pytest.mark.parametrize("voltage", [0.0, 100.0, 247.0])
+def test_a_voltage_that_cannot_be_a_pack_reading_never_anchors_empty(voltage, caplog):
+    state = _state()
+    _hold(state, seconds=180, voltage=voltage, current=3.0)
+    assert state.anchor.kind == "initial"
+    assert state.empty_candidate_since is None
+    assert caplog.text.count("no empty anchor") == 1
+
+
+def test_a_pack_voltage_at_half_the_zero_point_is_plausible():
+    state = _state()
+    _hold(state, voltage=249.0, current=3.0)
+    assert state.anchor.kind == "empty"
+
+
+def test_a_current_that_disagrees_with_the_battery_power_never_anchors_empty(caplog):
+    # Current says discharging, power says charging.
+    state = _state()
+    _hold(state, seconds=180, current=3.0, power=-1500.0)
+    assert state.anchor.kind == "initial"
+    assert caplog.text.count("no empty anchor") == 1
+    state = _state()
+    _hold(state, current=3.0, power=1500.0)
+    assert state.anchor.kind == "empty"
+
+
+def test_a_stopped_discharge_at_an_implausible_voltage_never_anchors_empty():
+    facts = ControllerFacts(
+        charge_limit_a=14.0, discharge_limit_a=14.0, state="CHARGE_PV"
+    )
+    state = _state()
+    _hold(state, voltage=0.0, current=0.0, power=0.0, grid=800.0, facts=facts)
+    assert state.anchor.kind == "initial"
+
+
 def test_voltage_sag_under_heavy_load_is_not_empty():
     state = _state()
     _hold(state, voltage=488.0, current=14.0, power=6800.0)

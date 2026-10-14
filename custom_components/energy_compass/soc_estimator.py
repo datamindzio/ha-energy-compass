@@ -21,6 +21,7 @@ are the versioned form the Store keeps; `seed_from_template` starts from the
 attributes of the template estimator this replaces.
 """
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -28,6 +29,8 @@ from math import isfinite
 
 from .calibration import COUNTER_SLACK_KWH, MAX_COUNTER_KW
 from .engine.models import InputError
+
+_LOGGER = logging.getLogger(__name__)
 
 # The interpolation never integrates a longer gap than this, nor accumulates
 # more than the bound, so a missing sample cannot invent energy.
@@ -71,6 +74,8 @@ MIN_DISCHARGE_A = 0.5
 LIGHT_LOAD_C = 0.1
 STOPPED_VOLTAGE_MARGIN = 0.01
 MIN_IMPORT_W = 300.0
+# A reading below this share of the 0 % voltage is a dropout, not a pack at 0 %.
+MIN_PLAUSIBLE_VOLTAGE_FRACTION = 0.5
 
 
 @dataclass(frozen=True)
@@ -189,11 +194,15 @@ class EstimatorState:
     candidates: list[dict] = field(default_factory=list)
     empty_candidate_since: datetime | None = None
     empty_candidate_logged: bool = False
+    empty_rejected_logged: bool = False
     # Energy between the last full anchor and the empty anchor that followed;
     # shown, never applied.
     measured_capacity_kwh: float | None = None
     # Kind and time of the template anchor this state was seeded from.
     seed: dict | None = None
+    # Read from the Store and not stepped since: its stored power is as old as
+    # the downtime. Never persisted and not part of the state's identity.
+    restored: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -287,6 +296,12 @@ def step(
         else 0.0
     )
     previous_power = state.last_power_w
+    if state.restored:
+        state.restored = False
+        if state.last_at is not None and (
+            (at - state.last_at).total_seconds() > MAX_PENDING_STEP_SECONDS
+        ):
+            previous_power = 0.0
     state.last_at = at
     state.last_power_w = 0.0 if power is None else power
     charge, discharge = _number(inputs.charge_kwh), _number(inputs.discharge_kwh)
@@ -418,9 +433,24 @@ def _empty_anchor(
     discharge: float,
 ) -> bool:
     """Track the empty-anchor evidence (DD-4); True when the step anchored."""
-    if not inputs.anchor_inputs_fresh or _empty_evidence(settings, inputs) is None:
+    rule = _empty_evidence(settings, inputs) if inputs.anchor_inputs_fresh else None
+    if rule is None:
         _break_empty_candidate(state)
+        state.empty_rejected_logged = False
         return False
+    problem = _empty_implausible(inputs, settings)
+    if problem is not None:
+        _break_empty_candidate(state)
+        if not state.empty_rejected_logged:
+            state.empty_rejected_logged = True
+            _LOGGER.warning(
+                "SOC estimator: no empty anchor, %s (voltage %s V, current %s A)",
+                problem,
+                inputs.voltage_v,
+                inputs.current_a,
+            )
+        return False
+    state.empty_rejected_logged = False
     at = inputs.at
     if state.empty_candidate_since is None:
         state.empty_candidate_since = at
@@ -441,6 +471,25 @@ def _empty_anchor(
     state.last_full = None
     set_anchor(state, Anchor("empty", at, 0.0, charge, discharge))
     return True
+
+
+def _empty_implausible(inputs: Inputs, settings: EstimatorSettings) -> str | None:
+    """Why an empty reading cannot be believed, or None."""
+    voltage = _number(inputs.voltage_v)
+    if (
+        voltage is None
+        or voltage < MIN_PLAUSIBLE_VOLTAGE_FRACTION * settings.empty_voltage_v
+    ):
+        return "the pack voltage reads as a dropout"
+    current, power = _number(inputs.current_a), _number(inputs.power_w)
+    if (
+        current is not None
+        and power is not None
+        and current >= MIN_DISCHARGE_A
+        and power < 0
+    ):
+        return "the current says discharging but the power says charging"
+    return None
 
 
 def _break_empty_candidate(state: EstimatorState) -> None:
@@ -751,6 +800,7 @@ def state_from_dict(raw) -> EstimatorState | None:
             candidates=[dict(candidate) for candidate in candidates],
             measured_capacity_kwh=(None if measured is None else _required(measured)),
             seed=None if seed is None else dict(seed),
+            restored=True,
         )
     except KeyError, TypeError, ValueError:
         return None

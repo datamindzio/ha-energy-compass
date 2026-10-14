@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -10,6 +11,8 @@ from custom_components.energy_compass.soc_estimator import (
     counter_energy,
     initial_state,
     set_anchor,
+    state_from_dict,
+    state_to_dict,
     step,
 )
 
@@ -77,6 +80,26 @@ def test_interpolation_ignores_the_part_of_a_gap_beyond_two_minutes():
     _step(state, 0, 1000.0, 500.0, 3600)
     estimate = _step(state, 900, 1000.0, 500.0, 3600)
     assert estimate.pending_kwh == pytest.approx(-0.12)
+
+
+def test_the_first_step_after_a_restart_does_not_use_the_stale_power():
+    state = _state()
+    _step(state, 0, 1000.0, 500.0, 3600)
+    restored = state_from_dict(json.loads(json.dumps(state_to_dict(state))))
+    assert restored.last_power_w == 3600
+    estimate = _step(restored, 1800, 1000.0, 500.0, 3600)
+    assert estimate.pending_kwh == 0.0
+    # Power read after the restart is integrated as usual.
+    assert _step(restored, 1860, 1000.0, 500.0, 3600).pending_kwh == pytest.approx(
+        -0.06
+    )
+
+
+def test_a_restart_within_two_minutes_keeps_the_power():
+    state = _state()
+    _step(state, 0, 1000.0, 500.0, 3600)
+    restored = state_from_dict(state_to_dict(state))
+    assert _step(restored, 90, 1000.0, 500.0, 3600).pending_kwh == pytest.approx(-0.09)
 
 
 def test_interpolation_is_bounded():
