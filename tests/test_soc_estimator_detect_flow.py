@@ -77,7 +77,7 @@ async def test_the_detected_offer_opens_the_estimator_settings_before_the_previe
             "discharge_counter": "sensor.fx_batt_discharge_total",
             "voltage": "sensor.fx_pack_voltage",
             "current": "sensor.fx_pack_current",
-            "empty_voltage": 496,
+            "empty_voltage": 480,
             "anchor_on_candidates": False,
             "shadow": False,
         },

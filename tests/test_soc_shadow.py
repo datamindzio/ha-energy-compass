@@ -58,7 +58,7 @@ def _estimator_rows(recording, *, follow):
     yaml = recording.yaml
     first = yaml["anchors"][0]
     settings = EstimatorSettings(
-        capacity_kwh=yaml["full_kwh"], empty_voltage_v=496.0, eta_charge=yaml["eta"]
+        capacity_kwh=yaml["full_kwh"], empty_voltage_v=480.0, eta_charge=yaml["eta"]
     )
     state = EstimatorState(
         Anchor(
