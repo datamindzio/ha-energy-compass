@@ -25,6 +25,7 @@ SETTINGS = EstimatorSettings(
     empty_voltage_v=496.0,
     eta_charge=0.9,
     anchor_on_candidates=True,
+    export_limit_w=0.0,
 )
 FACTS = ControllerFacts(charge_limit_a=14.0, state="CHARGE_PV")
 

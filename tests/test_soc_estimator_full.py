@@ -310,6 +310,34 @@ def test_a_single_sample_after_a_grid_pulse_does_not_anchor():
     assert state.anchor.kind == "initial"
 
 
+def test_a_pack_the_counters_put_below_70_percent_is_not_anchored_full():
+    # A BMS charge-current limit in the cold, or inverter derating, looks like a
+    # full pack; the counters say the pack is far from it.
+    state = EstimatorState(Anchor("initial", T0, 12.0, 1000.0, 500.0), T0)
+    estimate = _hold(state)
+    assert estimate.events == ()
+    assert estimate.anchor_kind == "initial"
+    [candidate] = state.candidates
+    assert candidate["outcome"] == "rejected_low_energy"
+    assert candidate["anchored"] is False
+    assert candidate["energy_before_kwh"] == pytest.approx(12.0, abs=0.1)
+
+
+def test_the_plausibility_gate_opens_at_70_percent_of_the_capacity():
+    state = EstimatorState(Anchor("initial", T0, 16.8, 1000.0, 500.0), T0)
+    assert _hold(state).events == ("full",)
+    assert state.candidates[0]["outcome"] == "anchored"
+    state = EstimatorState(Anchor("initial", T0, 16.7, 1000.0, 500.0), T0)
+    assert _hold(state).events == ()
+    assert state.candidates[0]["outcome"] == "rejected_low_energy"
+
+
+def test_a_rejected_candidate_is_logged_once():
+    state = EstimatorState(Anchor("initial", T0, 12.0, 1000.0, 500.0), T0)
+    _hold(state, seconds=1200)
+    assert len(state.candidates) == 1
+
+
 @pytest.fixture(scope="module")
 def recording():
     return Recording()

@@ -58,6 +58,9 @@ EXPORT_CAP_FRACTION = 0.95
 # below it (as a fraction) counts as having reached it.
 TARGET_VOLTAGE_MARGIN = 0.01
 MAX_CANDIDATES = 20
+# A full anchor needs the counters to put the pack at least this far up: a BMS
+# charge-current limit in the cold, or inverter derating, looks like a full pack.
+MIN_PLAUSIBLE_FRACTION = 0.7
 
 # Empty anchor evidence (DD-4).
 MIN_DISCHARGE_A = 0.5
@@ -347,22 +350,28 @@ def _full_anchor(
     ):
         return False
     state.full_candidate_logged = True
-    anchored = settings.anchor_on_candidates or at - state.started_at >= timedelta(
-        days=settings.candidates_only_days
+    before = _clamp(
+        counter_energy(state, settings, charge, discharge) + state.pending_kwh,
+        settings,
+    )
+    plausible = before >= MIN_PLAUSIBLE_FRACTION * settings.capacity_kwh
+    anchored = plausible and (
+        settings.anchor_on_candidates
+        or at - state.started_at >= timedelta(days=settings.candidates_only_days)
     )
     state.candidates.append(
         {
             "started_at": state.full_candidate_since.isoformat(),
             "qualified_at": at.isoformat(),
             "anchored": anchored,
-            "energy_before_kwh": round(
-                _clamp(
-                    counter_energy(state, settings, charge, discharge)
-                    + state.pending_kwh,
-                    settings,
-                ),
-                3,
+            "outcome": (
+                "anchored"
+                if anchored
+                else "candidate"
+                if plausible
+                else "rejected_low_energy"
             ),
+            "energy_before_kwh": round(before, 3),
             **evidence,
         }
     )
