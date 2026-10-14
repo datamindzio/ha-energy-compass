@@ -323,10 +323,13 @@ def run_one(
     minimum_mode_minutes: float | None = None,
     accept_incumbent: bool = False,
     proof_limit_s: float | None = None,
+    hold_miss_share: float = 0.0,
 ) -> dict:
     problem = make_problem(
         slots, strategy=strategy, allow_battery_export=battery_export
     )
+    if hold_miss_share:
+        problem = replace(problem, hold_miss_share=hold_miss_share)
     if minimum_mode_minutes is not None:
         problem = replace(problem, minimum_mode_minutes=minimum_mode_minutes)
     if balance and problem.battery:
@@ -423,6 +426,13 @@ def main() -> None:
         metavar="SECONDS",
         help="re-solve every time-limited plan strictly with this limit and report the difference",
     )
+    parser.add_argument(
+        "--hold-miss-share",
+        type=float,
+        default=0.0,
+        help="price a HOLD or CURTAIL interval at this share of its load's miss (the "
+        "runtime sets 0.5, `hold_exposure.HOLD_FORECAST_MISS`; 0 is the unpriced model)",
+    )
     args = parser.parse_args()
 
     strategies = STRATEGIES if args.strategy == "all" else (args.strategy,)
@@ -437,6 +447,7 @@ def main() -> None:
             minimum_mode_minutes=args.minimum_mode_minutes,
             accept_incumbent=args.accept_incumbent,
             proof_limit_s=args.compare_proven,
+            hold_miss_share=args.hold_miss_share,
         )
         for strategy in strategies
     ]

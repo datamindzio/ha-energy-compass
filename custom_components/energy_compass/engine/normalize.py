@@ -193,6 +193,8 @@ def validate_problem(problem: Problem) -> None:
             raise InputError(f"{name} must be in [0, 1]")
     if finite(problem.pv_export_margin, "pv_export_margin") < 0:
         raise InputError("pv_export_margin must be nonnegative")
+    if not 0 <= finite(problem.hold_miss_share, "hold_miss_share") <= 1:
+        raise InputError("hold_miss_share must be in [0, 1]")
     for name in ("soft_import_cap_kw", "soft_export_cap_kw"):
         cap = getattr(problem, name)
         if cap is not None and (isinstance(cap, bool) or finite(cap, name) < 0):

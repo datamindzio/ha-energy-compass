@@ -9,6 +9,7 @@ from datetime import UTC, timedelta
 import numpy as np
 
 from .charge_price import price_allows_grid_charge
+from .hold_exposure import hold_exposure
 from .idle_drain import cumulative, drain_schedule
 from .machine_state import _TOL as _CLASSIFIER_TOLERANCE
 from .machine_state import activity_tolerance, machine_state
@@ -959,9 +960,12 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
     coverage_end = problem.slots[-1].end.astimezone(UTC)
     previous, since = _initial(problem)
     drains = drain_schedule(problem)
+    exposures = hold_exposure(problem)
     lowest = battery.initial_kwh
     highest = battery.initial_kwh
-    for slot, v, drain in zip(problem.slots, vectors, drains, strict=True):
+    for slot, v, drain, exposure in zip(
+        problem.slots, vectors, drains, exposures, strict=True
+    ):
         hours = (
             slot.end.astimezone(UTC) - slot.start.astimezone(UTC)
         ).total_seconds() / 3600
@@ -1007,10 +1011,14 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
             # HOLD is the remainder of the one-hot row below, so it is integral whenever
             # the other modes are; leaving it continuous spares the solver a branching
             # variable without changing the feasible set.
+            # HOLD and CURTAIL discharge nothing: whatever the forecast misses by is
+            # bought from the grid, which a PV-follow mode would have drawn from the pack.
+            # Priced alike, or the plan swaps one for the other.
+            cost = exposure if mode in ("HOLD", "CURTAIL") else 0.0
             v[key] = (
-                model.variable(upper=1.0)
+                model.variable(upper=1.0, cost=cost)
                 if mode == "HOLD"
-                else model.variable(binary=True)
+                else model.variable(binary=True, cost=cost)
             )
             # Below classifier resolution a named material state cannot be certified.
             if not available[mode] or (mode != "HOLD" and activity <= 2e-6):
