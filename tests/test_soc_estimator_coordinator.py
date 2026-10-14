@@ -273,3 +273,32 @@ async def test_a_physical_full_anchor_starts_the_balance_hold(
     coordinator._inputs()
     assert coordinator._balance["hold_started_at"] is not None
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_a_shadow_run_starts_from_the_template_anchor(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    _set_sources(hass, charge=6290.3, discharge=5662.4)
+    hass.states.async_set("sensor.soc", "60", {"unit_of_measurement": "%"})
+    config = _config(
+        shadow=True,
+        capacity_kwh=24,
+        eta_charge=0.937,
+        seed={
+            "anchor_kwh": 21.3,
+            "anchor_charge": 6288.3,
+            "anchor_discharge": 5662.4,
+            "anchor_kind": "corrected",
+            "anchor_at": "2026-10-12T19:06:30+00:00",
+            "pending_kwh": 0.0,
+        },
+    )
+    config["sources"].update(
+        soc_mode="entity", soc={"entity_id": "sensor.soc", "registry_id": None}
+    )
+    entry = await _setup(hass, config)
+    estimate = entry.runtime_data.soc_estimator.estimate
+    assert estimate.anchor_kind == "seed"
+    assert estimate.energy_kwh == pytest.approx(21.3 + 0.937 * 2.0)
+    assert await hass.config_entries.async_unload(entry.entry_id)
