@@ -509,7 +509,8 @@
       "optimizer_error": "Optymalizator nie mógł zweryfikować planu bazowego.",
       "settlement_currency": "Polskie profile rozliczenia wymagają waluty PLN.",
       "buy_tariff_currency": "Wybrana polska taryfa wymaga waluty PLN.",
-      "schedule_currency": "Taryfa OSD i taryfa dystrybucyjna wymagają waluty PLN; najpierw zmień źródło ceny zakupu albo usuń taryfę dystrybucyjną."
+      "schedule_currency": "Taryfa OSD i taryfa dystrybucyjna wymagają waluty PLN; najpierw zmień źródło ceny zakupu albo usuń taryfę dystrybucyjną.",
+      "soc_estimator_capacity_mode": "Estymator SOC z liczników nie może działać, gdy falownik jest w trybie Capacity: w tym trybie falownik porównuje własne progi SOC programów z SOC z BMS. Najpierw przełącz tryb baterii falownika na Voltage albo zostaw encję SOC jako źródło SOC."
     },
     "abort": {
       "reconfigure_successful": "Zapisano konfigurację."
@@ -1061,7 +1062,8 @@
       "controller_entity_missing": "Urządzeniu brakuje tego, czego potrzebuje sterownik natywny: {missing}.",
       "controller_low_voltage_pack": "Ten sterownik obsługuje pakiety wysokonapięciowe (400–610 V). Zmierzono: {voltage} V. Modele Deye 48 V nie są jeszcze obsługiwane.",
       "controller_voltage_unavailable": "Czujnik napięcia baterii ({entity}) nie ma odczytu liczbowego, więc nie da się odróżnić pakietu od 48 V. Poczekaj, aż falownik poda napięcie, i zapisz ponownie.",
-      "controller_limits_required": "Nie da się wyliczyć maksymalnej mocy i prądów (moc ładowania lub rozładowania w ustawieniach baterii albo limit prądu falownika wynosi zero). Wpisz je w grupie Limity i przejęcie."
+      "controller_limits_required": "Nie da się wyliczyć maksymalnej mocy i prądów (moc ładowania lub rozładowania w ustawieniach baterii albo limit prądu falownika wynosi zero). Wpisz je w grupie Limity i przejęcie.",
+      "soc_estimator_capacity_mode": "Estymator SOC z liczników nie może działać, gdy falownik jest w trybie Capacity: w tym trybie falownik porównuje własne progi SOC programów z SOC z BMS. Najpierw przełącz tryb baterii falownika na Voltage albo zostaw encję SOC jako źródło SOC."
     },
     "abort": {
       "site_not_registered": "Ta witryna została zapomniana w innym oknie; włącz ponownie Energy Atlas, aby zarejestrować nową."

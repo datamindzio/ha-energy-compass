@@ -509,7 +509,8 @@
       "optimizer_error": "The optimizer could not validate the base plan.",
       "settlement_currency": "Polish settlement profiles require currency PLN.",
       "buy_tariff_currency": "The selected Polish tariff requires currency PLN.",
-      "schedule_currency": "The Polish tariff schedule and the distribution tariff require currency PLN; change the buy source or remove the distribution tariff first."
+      "schedule_currency": "The Polish tariff schedule and the distribution tariff require currency PLN; change the buy source or remove the distribution tariff first.",
+      "soc_estimator_capacity_mode": "The counter SOC estimator cannot be used while the inverter is in Capacity mode: in that mode the inverter compares its own program SOC thresholds with the BMS SOC. Switch the inverter battery mode to Voltage first, or keep an SOC entity as the SOC source."
     },
     "abort": {
       "reconfigure_successful": "Configuration saved."
@@ -1061,7 +1062,8 @@
       "controller_entity_missing": "The device lacks what the native controller needs: {missing}.",
       "controller_low_voltage_pack": "This controller supports high-voltage packs (400–610 V). Measured: {voltage} V. 48 V Deye models are not supported yet.",
       "controller_voltage_unavailable": "The battery voltage sensor ({entity}) has no numeric reading, so the pack cannot be told from a 48 V one. Wait until the inverter reports a voltage and save again.",
-      "controller_limits_required": "The maximum power and currents cannot be derived (the charge or discharge power in the battery settings, or the inverter's current limit, is zero). Enter them in the Limits and takeover group."
+      "controller_limits_required": "The maximum power and currents cannot be derived (the charge or discharge power in the battery settings, or the inverter's current limit, is zero). Enter them in the Limits and takeover group.",
+      "soc_estimator_capacity_mode": "The counter SOC estimator cannot be used while the inverter is in Capacity mode: in that mode the inverter compares its own program SOC thresholds with the BMS SOC. Switch the inverter battery mode to Voltage first, or keep an SOC entity as the SOC source."
     },
     "abort": {
       "site_not_registered": "This site was forgotten in another window; re-enable Energy Atlas to register a new one."
