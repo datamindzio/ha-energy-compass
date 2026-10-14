@@ -23,7 +23,9 @@ SETTINGS = EstimatorSettings(
     max_charge_current_a=14.0,
     rated_pv_w=8000.0,
     anchor_on_candidates=True,
+    export_limit_w=0.0,
 )
+EXPORTING = replace(SETTINGS, export_limit_w=5000.0)
 TAPER = ControllerFacts(charge_limit_a=14.0, state="CHARGE_PV")
 
 
@@ -38,6 +40,7 @@ def _inputs(
     current=-0.3,
     pv=4000.0,
     load=800.0,
+    grid=None,
     facts=TAPER,
     charge=1000.0,
     discharge=500.0,
@@ -51,6 +54,7 @@ def _inputs(
         current,
         pv,
         load,
+        grid,
         facts=facts,
     )
 
@@ -139,15 +143,67 @@ def test_what_the_battery_still_takes_is_not_surplus():
     assert state.candidates == []
 
 
-def test_the_surplus_threshold_follows_the_rated_pv_power():
+def test_the_export_threshold_follows_the_rated_pv_power():
     state = _state()
-    _hold(state, pv=1600.0, load=800.0)
+    _hold(state, EXPORTING, grid=-450.0)
     assert len(state.candidates) == 1
     state = _state()
-    _hold(state, pv=1000.0, load=800.0)
+    _hold(state, EXPORTING, grid=-350.0)
     assert state.candidates == []
     state = _state()
-    _hold(state, settings=replace(SETTINGS, rated_pv_w=20000.0), pv=1600.0, load=800.0)
+    _hold(state, replace(EXPORTING, rated_pv_w=20000.0), grid=-450.0)
+    assert state.candidates == []
+    state = _state()
+    _hold(state, replace(EXPORTING, rated_pv_w=2000.0), grid=-350.0)
+    assert len(state.candidates) == 1
+
+
+def test_measured_export_is_the_primary_evidence():
+    state = _state()
+    _hold(state, EXPORTING, grid=-1500.0, pv=4000.0, load=800.0)
+    [candidate] = state.candidates
+    assert candidate["path"] == "export"
+    assert candidate["export_w"] == 1500.0
+
+
+def test_an_apparent_surplus_is_no_evidence_while_export_is_possible():
+    # DC PV minus AC load overstates the surplus by the conversion losses.
+    state = _state()
+    _hold(state, EXPORTING, pv=7000.0, load=6600.0, grid=0.0)
+    assert state.candidates == []
+    state = _state()
+    _hold(state, EXPORTING, pv=7000.0, load=6600.0, grid=150.0)
+    assert state.candidates == []
+    state = _state()
+    _hold(state, EXPORTING, pv=7000.0, load=6600.0)
+    assert state.candidates == []
+
+
+def test_the_derived_surplus_counts_where_export_is_capped():
+    capped = replace(SETTINGS, export_limit_w=2000.0)
+    state = _state()
+    _hold(state, capped, pv=5000.0, load=800.0, grid=-150.0)
+    assert state.candidates == []
+    state = _state()
+    _hold(state, capped, pv=5000.0, load=800.0, grid=-1950.0)
+    [candidate] = state.candidates
+    assert candidate["path"] == "export"
+    state = _state()
+    _hold(state, capped, pv=2500.0, load=800.0, grid=-300.0)
+    assert state.candidates == []
+
+
+def test_the_derived_surplus_margin_scales_with_pv_on_a_zero_export_site():
+    state = _state()
+    _hold(state, pv=8000.0, load=7000.0)
+    assert state.candidates == []
+    state = _state()
+    _hold(state, pv=8000.0, load=6600.0)
+    [candidate] = state.candidates
+    assert candidate["path"] == "surplus"
+    assert candidate["surplus_w"] == pytest.approx(1400 - 0.3 * 546)
+    state = _state()
+    _hold(state, replace(SETTINGS, export_limit_w=None), pv=8000.0, load=6000.0)
     assert state.candidates == []
 
 
@@ -290,13 +346,45 @@ def test_the_recorded_false_anchor_of_10_11_does_not_anchor(recording):
     assert state.anchor.at == at(recording.start)
 
 
-def test_the_week_holds_no_full_candidate(recording):
+@pytest.mark.parametrize("export_limit_w", [None, 0.0, 5000.0])
+def test_the_week_holds_no_full_candidate(recording, export_limit_w):
     site = replace(
         SETTINGS,
         max_charge_current_a=14.0,
         rated_pv_w=8600.0,
         anchor_on_candidates=False,
+        export_limit_w=export_limit_w,
     )
     state, events = _replay(recording, site, 0, 1e12)
     assert events == []
     assert state.candidates == []
+
+
+def test_the_near_miss_of_10_12_fails_both_surplus_rules(recording):
+    start = dt.datetime(2026, 10, 12, 13, 20, tzinfo=dt.UTC).timestamp()
+    end = dt.datetime(2026, 10, 12, 13, 46, tzinfo=dt.UTC).timestamp()
+    exports, margins = [], []
+    for epoch in range(int(start), int(end), 60):
+        grid = recording.sample("grid_power", epoch)
+        pv = recording.sample("pv_power", epoch)
+        spare = (
+            pv
+            - recording.sample("load_power", epoch)
+            - max(-recording.sample("battery_current", epoch), 0.0)
+            * recording.sample("battery_voltage", epoch)
+        )
+        exports.append(max(-grid, 0.0))
+        margins.append(spare - (300.0 + 0.1 * pv))
+    # No power left to the grid, and the derived surplus never reached its line.
+    assert max(exports) == 0.0
+    assert max(margins) < 0
+    for limit in (None, 0.0, 5000.0):
+        site = replace(
+            SETTINGS,
+            max_charge_current_a=14.0,
+            rated_pv_w=8600.0,
+            anchor_on_candidates=False,
+            export_limit_w=limit,
+        )
+        state, _ = _replay(recording, site, start - 3600, end + 3600)
+        assert state.candidates == []

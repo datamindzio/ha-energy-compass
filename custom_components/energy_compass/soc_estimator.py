@@ -48,6 +48,12 @@ MIN_TAPER_CURRENT_A = 1.0
 TAPER_CURRENT_FRACTION = 0.02
 MIN_SURPLUS_W = 300.0
 SURPLUS_RATED_FRACTION = 0.05
+# Where export is capped, the derived surplus (DC PV less AC load) must clear
+# the threshold by this share of the PV power: the inverter's conversion
+# losses are that large and are not in the difference.
+DERIVED_SURPLUS_PV_FRACTION = 0.10
+# Export this close to the configured limit (as a fraction) counts as capped.
+EXPORT_CAP_FRACTION = 0.95
 # The inverter stops grid charging at the program voltage; a reading this close
 # below it (as a fraction) counts as having reached it.
 TARGET_VOLTAGE_MARGIN = 0.01
@@ -81,6 +87,8 @@ class EstimatorSettings:
     # threshold is then the 1 A floor). Rated PV power likewise.
     max_charge_current_a: float = 0.0
     rated_pv_w: float = 0.0
+    # Largest grid export the site allows in W; 0 is zero-export, None unknown.
+    export_limit_w: float | None = None
     full_hold_seconds: float = 600.0
     empty_hold_seconds: float = 60.0
     # E1: a full candidate only anchors after this many days since the
@@ -101,6 +109,7 @@ class EstimatorSettings:
             self.full_hold_seconds,
             self.empty_hold_seconds,
             self.candidates_only_days,
+            *(() if self.export_limit_w is None else (self.export_limit_w,)),
         ):
             if not (isfinite(value) and value >= 0):
                 raise InputError("invalid estimator setting")
@@ -453,9 +462,11 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
     1. the battery takes (almost) no charge and gives none;
     2. charging was possible: a charge limit of at least 2 A and no controller
        target that explains the stop;
-    3. the cause is not lack of sun: PV above the load and the charge the pack
-       still takes by the surplus threshold, or grid charging requested and
-       still short of its voltage.
+    3. the cause is not lack of sun: power measured leaving to the grid by at
+       least max(300 W, 5 % of the rated PV) while the pack takes none; where
+       export is impossible or capped, the derived surplus (PV less load and the
+       charge still taken) at least 300 W plus 10 % of the PV power; or grid
+       charging requested and still short of its voltage.
     """
     facts = inputs.facts
     current, voltage = _number(inputs.current_a), _number(inputs.voltage_v)
@@ -480,13 +491,26 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
         and voltage >= target * (1 - TARGET_VOLTAGE_MARGIN)
     ):
         return None
+    threshold = max(MIN_SURPLUS_W, SURPLUS_RATED_FRACTION * settings.rated_pv_w)
+    grid = _number(inputs.grid_w)
+    export = None if grid is None else max(-grid, 0.0)
     # What the battery already takes is not surplus: only PV that goes to
     # export or is curtailed shows a pack that cannot take more.
     surplus = (
         None if pv is None or load is None else pv - load - max(-current, 0.0) * voltage
     )
-    threshold = max(MIN_SURPLUS_W, SURPLUS_RATED_FRACTION * settings.rated_pv_w)
-    if surplus is not None and surplus >= threshold:
+    limit = settings.export_limit_w
+    capped = limit is not None and (
+        limit <= 0 or (export is not None and export >= EXPORT_CAP_FRACTION * limit)
+    )
+    if export is not None and export >= threshold:
+        path = "export"
+    elif (
+        capped
+        and surplus is not None
+        and pv is not None
+        and surplus >= MIN_SURPLUS_W + DERIVED_SURPLUS_PV_FRACTION * pv
+    ):
         path = "surplus"
     elif grid_charging and facts.grid_charge_a >= MIN_CHARGE_LIMIT_A:
         path = "grid"
@@ -497,6 +521,7 @@ def _full_evidence(settings: EstimatorSettings, inputs: Inputs) -> dict | None:
         "voltage_v": voltage,
         "current_a": current,
         "surplus_w": surplus,
+        "export_w": export,
         "charge_limit_a": limit,
         "grid_charge_a": facts.grid_charge_a,
         "controller_state": facts.state,

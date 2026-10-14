@@ -302,3 +302,15 @@ async def test_a_shadow_run_starts_from_the_template_anchor(
     assert estimate.anchor_kind == "seed"
     assert estimate.energy_kwh == pytest.approx(21.3 + 0.937 * 2.0)
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_the_export_limit_follows_the_grid_export_setting(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(START)
+    _set_sources(hass)
+    config = _config()
+    config["settings"].update(grid_export_kw=3.5)
+    entry = await _setup(hass, config)
+    assert entry.runtime_data.soc_estimator.settings.export_limit_w == 3500.0
+    assert await hass.config_entries.async_unload(entry.entry_id)

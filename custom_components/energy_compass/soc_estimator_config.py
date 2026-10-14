@@ -106,6 +106,7 @@ def settings(
         raise InputError("the SOC estimator needs the pack voltage that is 0 %")
     configured_rated = values.get("rated_pv_w")
     configured_current = values.get("max_charge_current")
+    export_kw = (config.get("settings") or {}).get("grid_export_kw")
     return EstimatorSettings(
         capacity_kwh=float(capacity),
         empty_voltage_v=float(empty),
@@ -114,6 +115,7 @@ def settings(
             configured_current if _number(configured_current) else max_charge_current_a
         ),
         rated_pv_w=float(configured_rated if _number(configured_rated) else rated_pv_w),
+        export_limit_w=float(export_kw) * 1000 if _number(export_kw) else None,
         full_hold_seconds=float(
             values.get("full_hold_seconds", DEFAULT_FULL_HOLD_SECONDS)
         ),
