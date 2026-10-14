@@ -909,7 +909,22 @@ carried `HOLD` (22) or `CURTAIL` (20) commitment with room in the pack and curta
   (`negrun` 3, `bell` 5, `probe` 2), worse 1 (`negrun` 11/208, dearer by 1e-6 with the same modes and bridges), the
   rest the same. Eight of the better draws have a `CURTAIL` interval right after a bridge, inside the run, that main's
   gate row closed with room in the pack: taking `curtail_relay` out of the gate rows gives main's cost to the printed
-  digit in each, taking the takeover out changes none; the other two are within the solver's tolerance (6.6e-5, 1e-6).
+  digit in each, taking the takeover out changes none. The other two are within the solver's tolerance: `bell` 77/73
+  (1e-6) and `bell` 11/58 (by 6.6e-5, 6.1e-5 of the cost, against the relative gap of 1e-4). `bell` 11/58 is the gap,
+  though the relay moves it, and two measurements say so: with `curtail_relay` taken out of the gate rows the default
+  run returns main's cost to the digit (−1.079709), and main's own model solved with a relative gap of 0 costs
+  −1.079775, the cost of the branch to nine places (main on a native macOS venv, SciPy 1.18.1, returns it at the
+  default gap too). The row steers which plan HiGHS returns inside the gap and opens no money the model could not
+  reach. What the bridge relay changes in the plan: a `CURTAIL` carried 29 minutes into a run of 60, intervals 0 and 1
+  are bridges, interval 2 starts inside the run (30 < 31 minutes) and has a forced part (need 0.341 kWh, forced 0.091
+  kWh, the pack 3.08 kWh below the gate 4.68 kWh). Main's model can spill the forced part only there (0.091 kWh, the
+  pack at 3.3125 kWh after it); with the relay the plan spills the whole need (0.341 kWh, 3.075 kWh after it), worth no
+  money: both spill 37.5300 kWh over the day at a gap of 0, and main's model spills the whole need in intervals 3 to 6
+  as well (0.429, 0.715, 0.858, 0.894 kWh against forced 0.179, 0.465, 0.608, 0.644) through the `CURTAIL`-to-`CURTAIL`
+  relay it has since T-066. The plan main returns at the default gap is another plan inside the gap: the forced part
+  only in intervals 2 to 8, the pack at 4.475 kWh after interval 7 against 3.050 kWh, 37.5168 kWh spilled over the day.
+  The relay through a bridge opens the whole need also where the interval has a forced part, as the first interval of a
+  carried `CURTAIL` run and the `CURTAIL`-to-`CURTAIL` relay do since T-066: that is the T-066 rule, not a new one.
   Rolling: not followed `roll` 29 → 10, `negroll` 24 → 7, `bellroll` 52 → 22 of 1200; `rollcompare`: 0 newly infeasible
   while followed, 66 more followed to the end, 2 whose first failure is later (both real stops), 0 earlier, and 2 plans
   whose next boundary newly changes their mode against 1 that no longer does (`bellroll` seed 11 index 238 and seed 22
