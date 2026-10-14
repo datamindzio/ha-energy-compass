@@ -97,7 +97,8 @@ nothing is saved until its last step.
      installation starts from the daily estimate you type there (**Daily load kwh**, 10 kWh/day by
      default). Recorder history is used once a household load source is bound: keep the **Household load
      history** row in **Detected sources**, or use **Sources → Add source → Load**. **Load forecasting**
-     then tunes the history window (**Lookback days**, **Minimum samples**) and the fallback.
+     then tunes the history window (**Lookback days**, **Minimum samples**, **Recency half-life days**)
+     and the fallback.
    - **Sources** reviews and edits every bound source, including PV; **Battery** and **Hardware
      capabilities** hold the battery limits and the grid import limit. The planning, outlook,
      performance and presentation groups appear after **Show expert settings** (see
@@ -211,6 +212,40 @@ flowchart TD
   dropped, mode clocks tick) without a solve.
 - **Plan lifetime:** a new plan is valid until `generated_at + 2 × refresh_minutes`, capped by
   forecast coverage.
+
+### Load forecast
+
+The history forecast is a per-hour mean of complete hours of the last `lookback_days`, in the
+local timezone, grouped weekday/weekend (`group_weekends`) and needing `minimum_samples` hours per
+bucket. A plain mean follows a level change only as fast as the window turns over: after a
+28-day lookback a house that started heating this week is still forecast at mostly last month's
+level, and the morning is the first to show it.
+
+`forecast_half_life_days` (**Recency half-life days**, default **0** = off, range 0-60) weights each
+sample by `0.5^(age / half-life)`, with the age counted from the start of the forecast. The result
+is still a mean, so margins stay in the reserve logic ([Peak-period reserve](#peak-period-reserve)).
+`minimum_samples` counts samples, not weight. With 0 the forecast is the plain mean as before.
+
+`benchmarks/load_forecast_backtest.py` forecasts each day at local midnight from the hours before
+it and reports MAE and bias (forecast − measured, kWh per hour) for the morning (06-13) and
+evening (15-22). It takes a Home Assistant recorder (`--recorder-db`, `--statistic-id`), a CSV of
+hours or a synthetic scenario. Measured on the synthetic scenarios (70 days, 28-day lookback,
+evaluated over the 20 days after a step of the morning level; **not** the household's own history):
+
+| Method | Level change: morning MAE / bias | Level change: evening MAE | Stable house: evening MAE |
+| --- | --- | --- | --- |
+| plain mean | 0.390 / −0.387 | 0.180 | 0.151 |
+| half-life 3 d | 0.214 / −0.148 | −0.4 % | **+7.8 %** |
+| half-life 5 d | 0.250 / −0.212 | −3.8 % | +2.8 % |
+| half-life 7 d | 0.278 / −0.253 | −3.8 % | +1.2 % |
+| plain × mean of the last 3 d / lookback | 0.233 / −0.197 | **+43 %** | +8.8 % |
+| plain × mean of the last 7 d / lookback | 0.259 / −0.229 | **+17 %** | −0.0 % |
+
+Evening columns after the first are changes against the plain mean. A half-life of 5 days is the
+shortest that keeps the evening within 5 % on both scenarios, and recency weighting cuts the
+morning error by a third; a single level ratio over the whole day (last N days / lookback) moves
+the evening the wrong way and was not built. The default stays off until the numbers are
+reproduced on the household's own recorder with the command above; set 5 to turn it on.
 
 ### Setup profiles (new installations)
 

@@ -231,7 +231,8 @@ nothing is saved until its last step.</p>
      installation starts from the daily estimate you type there (<strong>Daily load kwh</strong>, 10 kWh/day by
      default). Recorder history is used once a household load source is bound: keep the <strong>Household load
      history</strong> row in <strong>Detected sources</strong>, or use <strong>Sources → Add source → Load</strong>. <strong>Load forecasting</strong>
-     then tunes the history window (<strong>Lookback days</strong>, <strong>Minimum samples</strong>) and the fallback.
+     then tunes the history window (<strong>Lookback days</strong>, <strong>Minimum samples</strong>, <strong>Recency half-life days</strong>)
+     and the fallback.
    - <strong>Sources</strong> reviews and edits every bound source, including PV; <strong>Battery</strong> and <strong>Hardware
      capabilities</strong> hold the battery limits and the grid import limit. The planning, outlook,
      performance and presentation groups appear after <strong>Show expert settings</strong> (see
@@ -303,6 +304,74 @@ button on the integration's page in <strong>Settings → Devices &amp; services<
 <li><strong>Plan lifetime:</strong> a new plan is valid until <code>generated_at + 2 × refresh_minutes</code>, capped by
   forecast coverage.</li>
 </ul>
+<h3 id="load-forecast">Load forecast</h3>
+<p>The history forecast is a per-hour mean of complete hours of the last <code>lookback_days</code>, in the
+local timezone, grouped weekday/weekend (<code>group_weekends</code>) and needing <code>minimum_samples</code> hours per
+bucket. A plain mean follows a level change only as fast as the window turns over: after a
+28-day lookback a house that started heating this week is still forecast at mostly last month's
+level, and the morning is the first to show it.</p>
+<p><code>forecast_half_life_days</code> (<strong>Recency half-life days</strong>, default <strong>0</strong> = off, range 0-60) weights each
+sample by <code>0.5^(age / half-life)</code>, with the age counted from the start of the forecast. The result
+is still a mean, so margins stay in the reserve logic (<a href="#peak-period-reserve">Peak-period reserve</a>).
+<code>minimum_samples</code> counts samples, not weight. With 0 the forecast is the plain mean as before.</p>
+<p><code>benchmarks/load_forecast_backtest.py</code> forecasts each day at local midnight from the hours before
+it and reports MAE and bias (forecast − measured, kWh per hour) for the morning (06-13) and
+evening (15-22). It takes a Home Assistant recorder (<code>--recorder-db</code>, <code>--statistic-id</code>), a CSV of
+hours or a synthetic scenario. Measured on the synthetic scenarios (70 days, 28-day lookback,
+evaluated over the 20 days after a step of the morning level; <strong>not</strong> the household's own history):</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Level change: morning MAE / bias</th>
+<th>Level change: evening MAE</th>
+<th>Stable house: evening MAE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>plain mean</td>
+<td>0.390 / −0.387</td>
+<td>0.180</td>
+<td>0.151</td>
+</tr>
+<tr>
+<td>half-life 3 d</td>
+<td>0.214 / −0.148</td>
+<td>−0.4 %</td>
+<td><strong>+7.8 %</strong></td>
+</tr>
+<tr>
+<td>half-life 5 d</td>
+<td>0.250 / −0.212</td>
+<td>−3.8 %</td>
+<td>+2.8 %</td>
+</tr>
+<tr>
+<td>half-life 7 d</td>
+<td>0.278 / −0.253</td>
+<td>−3.8 %</td>
+<td>+1.2 %</td>
+</tr>
+<tr>
+<td>plain × mean of the last 3 d / lookback</td>
+<td>0.233 / −0.197</td>
+<td><strong>+43 %</strong></td>
+<td>+8.8 %</td>
+</tr>
+<tr>
+<td>plain × mean of the last 7 d / lookback</td>
+<td>0.259 / −0.229</td>
+<td><strong>+17 %</strong></td>
+<td>−0.0 %</td>
+</tr>
+</tbody>
+</table></section>
+<p>Evening columns after the first are changes against the plain mean. A half-life of 5 days is the
+shortest that keeps the evening within 5 % on both scenarios, and recency weighting cuts the
+morning error by a third; a single level ratio over the whole day (last N days / lookback) moves
+the evening the wrong way and was not built. The default stays off until the numbers are
+reproduced on the household's own recorder with the command above; set 5 to turn it on.</p>
 <h3 id="setup-profiles-new-installations">Setup profiles (new installations)</h3>
 <p>Three axes on the first (<strong>User</strong>) setup form, <strong>Prosumer settlement</strong>, <strong>Polish distribution
 tariff</strong> (<code>buy_tariff</code>) and <strong>Inverter</strong>, pre-fill editable tuning for a brand-new installation.

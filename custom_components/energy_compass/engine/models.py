@@ -216,6 +216,7 @@ class ForecastSettings:
     group_weekends: bool = True
     minimum_samples: int = 2
     allow_fallback: bool = True
+    half_life_days: float = 0.0
 
 
 @dataclass(frozen=True)

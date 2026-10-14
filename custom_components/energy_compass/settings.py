@@ -65,6 +65,7 @@ NUMBERS = {
     "fallback_daily_kwh": ("forecast", 10, 0, 10000, "kWh"),
     "lookback_days": ("forecast", 14, 1, 60, "d"),
     "minimum_samples": ("forecast", 2, 1, 30, ""),
+    "forecast_half_life_days": ("forecast", 0, 0, 60, "d"),
     "power_max_gap_minutes": ("forecast", 60, 1, 120, "min"),
     "horizon_hours": ("planning", 24, 1, 48, "h"),
     "refresh_minutes": ("planning", 15, 1, 60, "min"),
