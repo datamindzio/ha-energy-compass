@@ -1026,12 +1026,14 @@ def constrain_modes(model, problem: Problem, vectors, *, flexible_load=False) ->
                 model.upper[v[key]] = 0
         x = {mode: v[f"mode_{mode}"] for mode in MODES}
         model.constrain({index: 1 for index in x.values()}, 1, 1)
-        # Above this energy the pack cannot take even the minimum PV-follow charge:
-        # CHARGE_PV is closed and a HOLD is no choice. Below it CHARGE_PV may fill the
-        # room and end on the ceiling, so a HOLD is a choice even with less room than the
-        # full step (T-095). A surplus under the activity keeps the point T-094 set.
+        # The relief starts at the later of two energies. `ceiling - step` is where the
+        # full PV-follow charge no longer fits (T-094). `_lock_ceiling` is where CHARGE_PV
+        # closes (the minimum activity, or `curtail_need` when that is more): below it a
+        # CHARGE_PV may fill the room and end on the ceiling, so a HOLD there is a choice
+        # even with less room than the full step (T-095). The flexible load of a probe
+        # only raises the lock energy, so the load-free one gives the most relief.
         step = battery.eta_charge * surplus
-        full_at = max(ceiling - step, _ceiling_less(problem, drains, at, activity))
+        full_at = max(ceiling - step, _lock_ceiling(problem, drains, at))
         # Only where the pack can reach the point (`highest` is the most it can hold at
         # the start of this interval): elsewhere the rows would have no feasible use.
         if exposure > 0 and highest >= full_at - _ROW_TOLERANCE:
