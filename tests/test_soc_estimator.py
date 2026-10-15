@@ -207,6 +207,30 @@ def test_rise_limit_scales_with_the_time_since_the_last_reading():
     assert estimate.unanchored_top
 
 
+def test_a_coarse_counter_step_after_frequent_readings_is_not_a_reset():
+    # The Solarman counters move in 1.2 kWh steps about every 10 min under a
+    # 7 kW load while the estimator reads every few seconds (live, 2026-10-15).
+    state = _state()
+    seconds = 0
+    for discharge in (501.2, 502.4, 503.6):
+        for _ in range(119):
+            seconds += 5
+            assert _step(state, seconds, 1000.0, discharge - 1.2).events == ()
+        seconds += 5
+        estimate = _step(state, seconds, 1000.0, discharge)
+        assert estimate.events == ()
+        assert state.last_counters == (1000.0, discharge)
+    assert estimate.anchor_kind == "full"
+    assert estimate.energy_kwh == pytest.approx(10 - 3.6)
+
+
+def test_rise_limit_stops_growing_after_a_long_quiet_spell():
+    state = _state()
+    glitch = _step(state, 10 * 3600, 1500.0, 500.0)
+    assert glitch.events == ()
+    assert state.last_counters == (1000.0, 500.0)
+
+
 def test_the_top_without_a_full_anchor_shows_just_below_full():
     state = _state(energy=22.0, kind="initial")
     estimate = _step(state, 3600, 1010.0, 500.0)

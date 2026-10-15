@@ -914,7 +914,8 @@ wartościach liczników, i dodaje to, o co liczniki przesunęły się od tamtej 
 między dwoma skokami liczników, więc wartość zmienia się płynnie, choć liczniki raportują grubymi
 krokami (krok jest całkowany najwyżej 120 s, <code>pending</code> mieści się w ±2 kWh i zaczyna od zera przy każdej
 zmianie licznika). Licznik, który spadł, kotwiczy na bieżącej energii (rodzaj kotwicy <code>reset</code>); wzrost
-szybszy niż 100 kW jest ignorowany jako usterka, chyba że się powtórzy. Estymata nie skacze sama z siebie.</p>
+szybszy niż 100 kW od poprzedniego skoku licznika (liczony najwyżej godzinę wstecz) jest ignorowany jako
+usterka, chyba że się powtórzy. Estymata nie skacze sama z siebie.</p>
 <p><strong>Zero to napięcie.</strong> 0 % to napięcie pakietu wpisane jako <strong>Napięcie pakietu odpowiadające 0 %</strong>
 (<code>empty_voltage</code>, w skali napięcia pakietu z czujnika napięcia, na przykład odcięcie falownika). To
 cecha Twojego pakietu, więc nie ma wartości domyślnej, a krok nie zapisze się bez niej. Pojemność to

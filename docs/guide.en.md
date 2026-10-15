@@ -570,8 +570,8 @@ counters (the counters sit at the battery terminals, the plan's efficiencies are
 integrates the battery power between two counter steps, so the value moves smoothly although the
 counters report in coarse steps (a step is integrated for at most 120 s, `pending` is held within
 ±2 kWh and restarts at zero whenever a counter changes). A counter that goes down re-anchors at the
-current energy (anchor kind `reset`); a rise faster than 100 kW is ignored as a glitch unless it
-repeats. The estimate never jumps on its own.
+current energy (anchor kind `reset`); a rise faster than 100 kW since the counter's previous step
+(at most one hour back) is ignored as a glitch unless it repeats. The estimate never jumps on its own.
 
 **Zero is a voltage.** 0 % is the pack voltage you enter as **Pack voltage that is 0 %**
 (`empty_voltage`, in the pack-voltage scale of the voltage sensor, for example the inverter's cutoff).
