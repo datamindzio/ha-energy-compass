@@ -37,6 +37,9 @@ _LOGGER = logging.getLogger(__name__)
 # more than the bound, so a missing sample cannot invent energy.
 MAX_PENDING_STEP_SECONDS = 120.0
 MAX_PENDING_KWH = 2.0
+# The counter rise limit grows with the time since the counters last moved, up
+# to this much, so a long quiet spell does not let any glitch through.
+MAX_COUNTER_STEP_SECONDS = 3600.0
 # The estimate shown for a pack that the counters put at the top without a full
 # anchor: not 100 %, because nothing proved the pack is full.
 UNANCHORED_TOP_FRACTION = 0.999
@@ -189,6 +192,8 @@ class EstimatorState:
     started_at: datetime
     pending_kwh: float = 0.0
     last_counters: tuple[float, float] | None = None
+    # When the counters last moved (not last read): the inverter publishes them
+    # in steps, minutes apart, so a step is weighed against the time it covers.
     last_counters_at: datetime | None = None
     last_at: datetime | None = None
     last_power_w: float = 0.0
@@ -341,8 +346,9 @@ def step(
     changed = state.last_counters is not None and (charge, discharge) != (
         state.last_counters
     )
+    if changed or reset or state.last_counters is None:
+        state.last_counters_at = at
     state.last_counters = (charge, discharge)
-    state.last_counters_at = at
     if changed or reset:
         state.pending_kwh = 0.0
     else:
@@ -689,7 +695,8 @@ def _accept_counters(
     """
     if state.last_counters is None or state.last_counters_at is None:
         return charge, discharge, None
-    hours = max((at - state.last_counters_at).total_seconds(), 0.0) / 3600
+    seconds = (at - state.last_counters_at).total_seconds()
+    hours = min(max(seconds, 0.0), MAX_COUNTER_STEP_SECONDS) / 3600
     limit = MAX_COUNTER_KW * hours + COUNTER_SLACK_KWH
     accepted = []
     basis = []
