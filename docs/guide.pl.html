@@ -922,10 +922,13 @@ cecha Twojego pakietu, więc nie ma wartości domyślnej, a krok nie zapisze si�
 użyteczna energia między tym punktem a pełnym naładowaniem; domyślnie jest równa pojemności baterii z
 grupy Bateria (w ustawieniach eksperckich jest nadpisanie), a planer skaluje ułamek estymatora przez pojemność baterii,
 więc trzymaj obie równe.</p>
-<p><strong>Pełny pakiet to też napięcie.</strong> Kotwica pełna wymaga napięcia pakietu nie niższego niż <strong>Najniższe
-napięcie pakietu pełnego</strong> (<code>full_min_voltage</code>, w tej samej skali co napięcie 0 %). To cecha Twojego
-pakietu, więc nie ma wartości domyślnej, a krok nie zapisze się bez niego (musi też być wyższe niż
-napięcie 0 %). Poniżej niego kandydat na pełny nie startuje, a trwający się przerywa (zapis
+<p><strong>Pełny pakiet to też napięcie.</strong> Kotwica pełna wymaga, by ładowanie doszło do <strong>Napięcia pakietu,
+które ładowanie osiąga przy pełnym</strong> (<code>full_min_voltage</code>, w tej samej skali co napięcie 0 %). To cecha
+Twojego pakietu, więc nie ma wartości domyślnej, a krok nie zapisze się bez niego (musi też być wyższe
+niż napięcie 0 %). Pakiet osiąga to napięcie tylko pod prądem ładowania i po jego zatrzymaniu opada o
+kilka woltów (w jednej instalacji: 556 V przy zatrzymaniu, 546 V w spoczynku), dlatego kandydat na pełny
+startuje tylko w ciągu 30 minut od odczytu na tym napięciu lub wyżej, a trwający wymaga jedynie, by
+pakiet w spoczynku trzymał co najmniej 97 % tego napięcia; poniżej się przerywa (zapis
 <code>below_full_voltage</code>). To napięcie, a nie liczniki, mówi, że pakiet jest pełny: liczniki, które
 uciekły w dół, nie mogą powstrzymać pełnego pakietu przed ich skorygowaniem.</p>
 <p><strong>Kotwice: tylko fizyczne dowody.</strong></p>
@@ -940,7 +943,7 @@ uciekły w dół, nie mogą powstrzymać pełnego pakietu przed ich skorygowanie
 <tbody>
 <tr>
 <td><code>full</code></td>
-<td>Przez <code>full_hold_seconds</code> (co najmniej 3600 s, czyli godzinę; domyślnie 3600 s) bez przerwy, przy napięciu pakietu cały czas nie niższym niż <code>full_min_voltage</code>, przy czym każde czytane źródło (prąd, napięcie, PV, zużycie, sieć) zgłosiło się w ciągu ostatnich 60 s: pakiet prawie nie przyjmuje ładunku (prąd w granicach max(1 A, 2 % maksymalnego prądu ładowania)); ładowanie było możliwe (limit prądu ładowania co najmniej 2 A, a sterownik Deye nie jest w <code>HOLD</code>, <code>CURTAIL</code>, <code>BASE</code> ani <code>DISCHARGE_GRID</code>; w <code>CHARGE_GRID</code> tylko z programem <code>Grid</code> poniżej 99 % jego napięcia i prądem ładowania z sieci co najmniej 2 A; trwający już kandydat trwa też w <code>HOLD</code>, patrz niżej); a przyczyną nie jest brak słońca, co pokazuje <strong>zmierzony eksport do sieci</strong> co najmniej max(300 W, 5 % mocy znamionowej PV), gdy pakiet nie bierze nic (ścieżka <code>export</code>). Dopiero tam, gdzie eksport jest niemożliwy lub ograniczony (limit eksportu planera <code>grid_export_kw</code> wynosi 0 albo eksport jest w granicach 5 % tego limitu), liczy się wyliczona nadwyżka (ścieżka <code>surplus</code>): PV − zużycie − ładunek, który pakiet jeszcze bierze ≥ 300 W + 10 % mocy PV, bo PV po stronie DC minus zużycie po stronie AC zawyża prawdziwą nadwyżkę o straty konwersji falownika. Trzecia ścieżka (<code>grid</code>) to żądane ładowanie z sieci 2 A lub więcej poniżej napięcia swojego programu. Liczniki nie są brane pod uwagę: pakiet na pełnym napięciu kotwiczy, nawet gdy liczniki dają go daleko poniżej pojemności, i właśnie do tego służy kotwica.</td>
+<td>Przez <code>full_hold_seconds</code> (co najmniej 3600 s, czyli godzinę; domyślnie 3600 s) bez przerwy, ze startem w ciągu 30 minut od napięcia pakietu nie niższego niż <code>full_min_voltage</code> i przy napięciu cały czas nie niższym niż 97 % tej wartości, przy czym każde czytane źródło (prąd, napięcie, PV, zużycie, sieć) zgłosiło się w ciągu ostatnich 60 s: pakiet prawie nie przyjmuje ładunku (prąd w granicach max(1 A, 2 % maksymalnego prądu ładowania)); ładowanie było możliwe (limit prądu ładowania co najmniej 2 A, a sterownik Deye nie jest w <code>HOLD</code>, <code>CURTAIL</code>, <code>BASE</code> ani <code>DISCHARGE_GRID</code>; w <code>CHARGE_GRID</code> tylko z programem <code>Grid</code> poniżej 99 % jego napięcia i prądem ładowania z sieci co najmniej 2 A; trwający już kandydat trwa też w <code>HOLD</code>, patrz niżej); a przyczyną nie jest brak słońca, co pokazuje <strong>zmierzony eksport do sieci</strong> co najmniej max(300 W, 5 % mocy znamionowej PV), gdy pakiet nie bierze nic (ścieżka <code>export</code>). Dopiero tam, gdzie eksport jest niemożliwy lub ograniczony (limit eksportu planera <code>grid_export_kw</code> wynosi 0 albo eksport jest w granicach 5 % tego limitu), liczy się wyliczona nadwyżka (ścieżka <code>surplus</code>): PV − zużycie − ładunek, który pakiet jeszcze bierze ≥ 300 W + 10 % mocy PV, bo PV po stronie DC minus zużycie po stronie AC zawyża prawdziwą nadwyżkę o straty konwersji falownika. Trzecia ścieżka (<code>grid</code>) to żądane ładowanie z sieci 2 A lub więcej poniżej napięcia swojego programu. Liczniki nie są brane pod uwagę: pakiet na pełnym napięciu kotwiczy, nawet gdy liczniki dają go daleko poniżej pojemności, i właśnie do tego służy kotwica.</td>
 <td><code>E</code> = pojemność</td>
 </tr>
 <tr>
@@ -1078,7 +1081,7 @@ tylko ostrzega, plany nie są blokowane, a znika przy następnej kotwicy. Pobran
 </tr>
 <tr>
 <td><code>full_min_voltage</code></td>
-<td>najniższe napięcie pakietu pełnego; kandydat na pełny trwa tylko przy nim lub powyżej</td>
+<td>napięcie pakietu, które ładowanie osiąga przy pełnym; kandydat na pełny startuje tylko w ciągu 30 min od niego i trwa, póki pakiet w spoczynku trzyma co najmniej 97 % tej wartości</td>
 <td>wymagane, brak</td>
 </tr>
 <tr>

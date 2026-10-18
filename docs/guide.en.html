@@ -912,12 +912,15 @@ It is a property of your pack, so there is no default and the step refuses to sa
 capacity is the usable energy between that point and full; it defaults to the battery capacity of
 the Battery group (an expert override exists) and the planner scales the estimator fraction by the
 battery capacity, so keep the two equal.</p>
-<p><strong>A full pack is a voltage too.</strong> A full anchor needs the pack voltage to be at or above <strong>Lowest pack
-voltage of a full pack</strong> (<code>full_min_voltage</code>, the same scale as the 0 % voltage). It is a property of
+<p><strong>A full pack is a voltage too.</strong> A full anchor needs the charge to have reached <strong>Pack voltage a
+charge reaches at full</strong> (<code>full_min_voltage</code>, the same scale as the 0 % voltage). It is a property of
 your pack, so there is no default and the step refuses to save without it (it must also be above the
-0 % voltage). Below it no full candidate starts, and a running one breaks (logged as
-<code>below_full_voltage</code>). This voltage, not the counters, says the pack is full: counters that have drifted
-low must not be able to keep a full pack from correcting them.</p>
+0 % voltage). A pack reaches this voltage only while charge current flows and relaxes a few volts once
+the charge stops (one site: 556 V at the stop, 546 V at rest), so a full candidate starts only within
+30 minutes of a reading at or above it, and a running one only needs the resting pack to stay at or
+above 97 % of it; below that it breaks (logged as <code>below_full_voltage</code>). This voltage, not the counters,
+says the pack is full: counters that have drifted low must not be able to keep a full pack from
+correcting them.</p>
 <p><strong>Anchors: physical evidence only.</strong></p>
 <section class="table-scroll"><table>
 <thead>
@@ -930,7 +933,7 @@ low must not be able to keep a full pack from correcting them.</p>
 <tbody>
 <tr>
 <td><code>full</code></td>
-<td>For <code>full_hold_seconds</code> (at least 3600 s, one hour; default 3600 s) without a break, with the pack voltage at or above <code>full_min_voltage</code> throughout and every source it reads (current, voltage, PV, load, grid) reported within the last 60 s: the pack takes (almost) no charge (current within max(1 A, 2 % of the maximum charge current)); charging was possible (the charge current limit is at least 2 A, and the Deye controller is not in <code>HOLD</code>, <code>CURTAIL</code>, <code>BASE</code> or <code>DISCHARGE_GRID</code>; in <code>CHARGE_GRID</code> only with a <code>Grid</code> program below 99 % of its voltage and a grid charge current of 2 A or more; a candidate that already runs also continues in <code>HOLD</code>, see below); and the cause is not lack of sun, shown by <strong>measured grid export</strong> of at least max(300 W, 5 % of the rated PV power) while the pack takes none (path <code>export</code>). Only where export is impossible or capped (the planner's export cap <code>grid_export_kw</code> is 0, or the export sits within 5 % of it) does the derived surplus count instead (path <code>surplus</code>): PV − load − the charge the pack still takes ≥ 300 W + 10 % of the PV power, because DC PV minus AC load overstates the real surplus by the inverter's conversion losses. Grid charging requested at 2 A or more below its program voltage is the third path (<code>grid</code>). The counters are not consulted: a pack at the full voltage anchors even when they put it far below the capacity, which is exactly what an anchor is for.</td>
+<td>For <code>full_hold_seconds</code> (at least 3600 s, one hour; default 3600 s) without a break, starting within 30 minutes of a pack voltage at or above <code>full_min_voltage</code> and with the pack at or above 97 % of it throughout, and every source it reads (current, voltage, PV, load, grid) reported within the last 60 s: the pack takes (almost) no charge (current within max(1 A, 2 % of the maximum charge current)); charging was possible (the charge current limit is at least 2 A, and the Deye controller is not in <code>HOLD</code>, <code>CURTAIL</code>, <code>BASE</code> or <code>DISCHARGE_GRID</code>; in <code>CHARGE_GRID</code> only with a <code>Grid</code> program below 99 % of its voltage and a grid charge current of 2 A or more; a candidate that already runs also continues in <code>HOLD</code>, see below); and the cause is not lack of sun, shown by <strong>measured grid export</strong> of at least max(300 W, 5 % of the rated PV power) while the pack takes none (path <code>export</code>). Only where export is impossible or capped (the planner's export cap <code>grid_export_kw</code> is 0, or the export sits within 5 % of it) does the derived surplus count instead (path <code>surplus</code>): PV − load − the charge the pack still takes ≥ 300 W + 10 % of the PV power, because DC PV minus AC load overstates the real surplus by the inverter's conversion losses. Grid charging requested at 2 A or more below its program voltage is the third path (<code>grid</code>). The counters are not consulted: a pack at the full voltage anchors even when they put it far below the capacity, which is exactly what an anchor is for.</td>
 <td><code>E</code> = capacity</td>
 </tr>
 <tr>
@@ -1069,7 +1072,7 @@ the same detail and no entity ids.</p>
 </tr>
 <tr>
 <td><code>full_min_voltage</code></td>
-<td>the lowest pack voltage of a full pack; a full candidate runs only at or above it</td>
+<td>the pack voltage a charge reaches at full; a full candidate starts only within 30 min of it and runs while the pack rests at or above 97 % of it</td>
 <td>required, none</td>
 </tr>
 <tr>

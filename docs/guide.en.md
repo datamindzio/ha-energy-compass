@@ -580,18 +580,21 @@ capacity is the usable energy between that point and full; it defaults to the ba
 the Battery group (an expert override exists) and the planner scales the estimator fraction by the
 battery capacity, so keep the two equal.
 
-**A full pack is a voltage too.** A full anchor needs the pack voltage to be at or above **Lowest pack
-voltage of a full pack** (`full_min_voltage`, the same scale as the 0 % voltage). It is a property of
+**A full pack is a voltage too.** A full anchor needs the charge to have reached **Pack voltage a
+charge reaches at full** (`full_min_voltage`, the same scale as the 0 % voltage). It is a property of
 your pack, so there is no default and the step refuses to save without it (it must also be above the
-0 % voltage). Below it no full candidate starts, and a running one breaks (logged as
-`below_full_voltage`). This voltage, not the counters, says the pack is full: counters that have drifted
-low must not be able to keep a full pack from correcting them.
+0 % voltage). A pack reaches this voltage only while charge current flows and relaxes a few volts once
+the charge stops (one site: 556 V at the stop, 546 V at rest), so a full candidate starts only within
+30 minutes of a reading at or above it, and a running one only needs the resting pack to stay at or
+above 97 % of it; below that it breaks (logged as `below_full_voltage`). This voltage, not the counters,
+says the pack is full: counters that have drifted low must not be able to keep a full pack from
+correcting them.
 
 **Anchors: physical evidence only.**
 
 | Anchor | When | Effect |
 | --- | --- | --- |
-| `full` | For `full_hold_seconds` (at least 3600 s, one hour; default 3600 s) without a break, with the pack voltage at or above `full_min_voltage` throughout and every source it reads (current, voltage, PV, load, grid) reported within the last 60 s: the pack takes (almost) no charge (current within max(1 A, 2 % of the maximum charge current)); charging was possible (the charge current limit is at least 2 A, and the Deye controller is not in `HOLD`, `CURTAIL`, `BASE` or `DISCHARGE_GRID`; in `CHARGE_GRID` only with a `Grid` program below 99 % of its voltage and a grid charge current of 2 A or more; a candidate that already runs also continues in `HOLD`, see below); and the cause is not lack of sun, shown by **measured grid export** of at least max(300 W, 5 % of the rated PV power) while the pack takes none (path `export`). Only where export is impossible or capped (the planner's export cap `grid_export_kw` is 0, or the export sits within 5 % of it) does the derived surplus count instead (path `surplus`): PV − load − the charge the pack still takes ≥ 300 W + 10 % of the PV power, because DC PV minus AC load overstates the real surplus by the inverter's conversion losses. Grid charging requested at 2 A or more below its program voltage is the third path (`grid`). The counters are not consulted: a pack at the full voltage anchors even when they put it far below the capacity, which is exactly what an anchor is for. | `E` = capacity |
+| `full` | For `full_hold_seconds` (at least 3600 s, one hour; default 3600 s) without a break, starting within 30 minutes of a pack voltage at or above `full_min_voltage` and with the pack at or above 97 % of it throughout, and every source it reads (current, voltage, PV, load, grid) reported within the last 60 s: the pack takes (almost) no charge (current within max(1 A, 2 % of the maximum charge current)); charging was possible (the charge current limit is at least 2 A, and the Deye controller is not in `HOLD`, `CURTAIL`, `BASE` or `DISCHARGE_GRID`; in `CHARGE_GRID` only with a `Grid` program below 99 % of its voltage and a grid charge current of 2 A or more; a candidate that already runs also continues in `HOLD`, see below); and the cause is not lack of sun, shown by **measured grid export** of at least max(300 W, 5 % of the rated PV power) while the pack takes none (path `export`). Only where export is impossible or capped (the planner's export cap `grid_export_kw` is 0, or the export sits within 5 % of it) does the derived surplus count instead (path `surplus`): PV − load − the charge the pack still takes ≥ 300 W + 10 % of the PV power, because DC PV minus AC load overstates the real surplus by the inverter's conversion losses. Grid charging requested at 2 A or more below its program voltage is the third path (`grid`). The counters are not consulted: a pack at the full voltage anchors even when they put it far below the capacity, which is exactly what an anchor is for. | `E` = capacity |
 | `full_balance` | In a plan row that is an LFP balance hold (`balance_hold`), with a `Grid` program at its (full) voltage: charging that stops at the program voltage, with the same taper, limit, freshness and voltage conditions held for `full_hold_seconds`. The plan asked for a full pack and the inverter stopped at the full voltage, so the stop is itself the evidence; the controller's own "target reached" does not explain it away here. | `E` = capacity |
 | `empty` | For 60 s, with the same 60 s freshness, and only if the pack voltage is at least half the 0 % voltage (a 0 V reading is a dropout) and, for the discharge case, the current and the battery power agree on discharging (otherwise no anchor, and the refusal is logged once): discharging at 0.5 A or more at no more than 0.1 C with the voltage at or below the 0 % voltage; or the discharge stopped although the house imports at least 300 W from the grid, the discharge current limit is at least 2 A, the controller state is not `HOLD` or `CURTAIL` and the voltage is within 1 % above the 0 % voltage. | `E` = 0 (a downward jump: like any recalibration it revokes the plan for about a minute while fresh reports confirm it); the energy since the last full anchor is shown as `measured_capacity_kwh` (never applied) |
 | `reset` | A counter went down | Re-anchors at the current energy |
@@ -692,7 +695,7 @@ the same detail and no entity ids.
 | `charge_counter`, `discharge_counter` | lifetime battery energy counters (kWh or Wh) | detected on a Solarman Deye device |
 | `voltage`, `current` | pack voltage and current (current positive while discharging) | detected on a Solarman Deye device |
 | `empty_voltage` | the pack voltage that is 0 % | required, none |
-| `full_min_voltage` | the lowest pack voltage of a full pack; a full candidate runs only at or above it | required, none |
+| `full_min_voltage` | the pack voltage a charge reaches at full; a full candidate starts only within 30 min of it and runs while the pack rests at or above 97 % of it | required, none |
 | `initial_soc_percent` | SOC to start from when there is no stored state or seed | 50 |
 | `eta_charge` | charge efficiency of the counters | the measured battery round trip when [calibration](#measured-calibration-optional) has one, else 0.95 |
 | `full_hold_seconds` | hold before a full anchor (at least 3600, one hour) | 3600 |

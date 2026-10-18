@@ -213,7 +213,7 @@ async def test_the_hold_breaks_and_the_charge_closes_when_the_voltage_falls(
     await _into_hold(hass, freezer, entry, estimator, 555.0)
     assert float(hass.states.get(CHARGE).state) > 1
 
-    await _advance(hass, freezer, 1, 545.0)
+    await _advance(hass, freezer, 1, 530.0)
     assert not estimator.full_candidate
     await _run(entry)
     assert float(hass.states.get(CHARGE).state) == 1
