@@ -79,7 +79,7 @@ With **Battery SOC source → Counter estimator** the SOC comes from these sourc
 | `voltage` | yes | V | Pack voltage; its report time, with the current's and the power's, stamps the estimate that the planner age-checks (never fresher than the counters allow) |
 | `current` | yes | A, positive while discharging (`current_sign` flips it) | Pack current; decides the taper for a full anchor and the light load for an empty one |
 | `empty_voltage` (a number, not an entity) | yes | V, in the scale of `voltage` | The pack voltage that is 0 %. No default |
-| `full_min_voltage` (a number, not an entity) | yes | V, in the scale of `voltage` | The lowest pack voltage of a full pack; above `empty_voltage`. No default |
+| `full_min_voltage` (a number, not an entity) | yes | V, in the scale of `voltage` | The pack voltage a charge reaches at full (a candidate starts within 30 min of it and holds at 97 % of it); above `empty_voltage`. No default |
 | `power` | no, falls back to the `battery_power` measurement | W or kW, positive while discharging | Interpolates between counter steps |
 | `pv_power`, `grid_power`, `load_power` | no for the estimate; `grid_power` is needed for a full anchor on the sun path | W or kW; grid positive while importing | Show that the cause of a stopped charge is not lack of sun: measured export is the primary evidence, PV and load only where export is capped. The load is computed from PV, grid and battery power when absent. Each must have reported within 60 s for a full or empty hold to continue |
 | `charge_limit`, `discharge_limit`, `grid_charge_current` | the charge limit is needed for any full anchor | A | The inverter's current limits; the native Deye controller's entities are used when it runs |

@@ -422,6 +422,49 @@ def test_the_minimum_full_voltage_gates_the_start():
     assert _hold(state, gated, voltage=550.0).events == ("full",)
 
 
+SITE_552 = replace(SETTINGS, full_min_voltage_v=552.0, full_hold_seconds=3600.0)
+
+
+def _charge_then_rest(state, settings, *, peak, rest=545.7, gap=0):
+    """Charge at 8 A up to `peak`, then rest at about 0 A (live, 2026-10-17)."""
+    for second, voltage in ((-1200, 544.1), (-600, 546.7), (-60, peak)):
+        step(state, settings, _inputs(second, voltage=voltage, current=-7.9))
+    estimate = None
+    for second in range(gap, gap + 3601, 60):
+        estimate = step(state, settings, _inputs(second, voltage=rest))
+    return estimate
+
+
+def test_a_pack_that_reached_the_full_voltage_and_rests_below_it_is_full():
+    # 556 V under 8 A at the stop, 545.7 V at rest with the sun still up.
+    state = _state()
+    estimate = _charge_then_rest(state, SITE_552, peak=556.4)
+    assert estimate.events == ("full",)
+    [candidate] = state.candidates
+    assert candidate["voltage_v"] == 545.7
+
+
+def test_a_charge_that_stops_short_of_the_full_voltage_is_not_full():
+    state = _state()
+    estimate = _charge_then_rest(state, SITE_552, peak=551.9)
+    assert not estimate.full_candidate
+    assert state.candidates == []
+
+
+def test_the_full_voltage_peak_must_be_recent():
+    state = _state()
+    estimate = _charge_then_rest(state, SITE_552, peak=556.4, gap=1800)
+    assert not estimate.full_candidate
+    assert state.candidates == []
+
+
+def test_a_stale_reading_at_the_full_voltage_is_no_peak():
+    state = _state()
+    step(state, SITE_552, _inputs(-60, voltage=556.4, current=-7.9, fresh=False))
+    estimate = _hold(state, SITE_552, seconds=3600, voltage=545.7)
+    assert not estimate.full_candidate
+
+
 def test_the_minimum_full_voltage_is_required_and_positive():
     with pytest.raises(InputError):
         EstimatorSettings(
@@ -451,13 +494,17 @@ def test_the_default_full_hold_is_one_hour():
     assert candidate["qualified_at"] == (T0 + dt.timedelta(hours=1)).isoformat()
 
 
-def test_a_dip_below_the_full_voltage_breaks_the_hold_and_is_logged(caplog):
+def test_a_dip_below_the_rest_voltage_breaks_the_hold_and_is_logged(caplog):
     gated = replace(SETTINGS, full_min_voltage_v=540.0, full_hold_seconds=3600.0)
     state = _state()
     _hold(state, gated, seconds=3300)
     assert state.full_candidate_since == T0
     with caplog.at_level("INFO", logger="custom_components.energy_compass"):
-        step(state, gated, _inputs(3360, voltage=539.9))
+        step(state, gated, _inputs(3360, voltage=546.0))
+    # Resting a few volts below the full voltage keeps the hold.
+    assert state.full_candidate_since == T0
+    with caplog.at_level("INFO", logger="custom_components.energy_compass"):
+        step(state, gated, _inputs(3380, voltage=523.7))
     assert state.full_candidate_since is None
     assert "below_full_voltage" in caplog.text
     # The hold restarts from the first reading back at the gate.
@@ -472,7 +519,7 @@ def test_a_qualified_candidate_ends_when_the_voltage_drops():
     state = _state()
     estimate = _hold(state, replace(SETTINGS, anchor_on_candidates=False))
     assert estimate.full_qualified
-    after = step(state, SETTINGS, _inputs(660, voltage=520.0))
+    after = step(state, SETTINGS, _inputs(660, voltage=514.0))
     assert not after.full_qualified
     assert not after.full_candidate
 

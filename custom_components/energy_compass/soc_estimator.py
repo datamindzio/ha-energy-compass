@@ -60,6 +60,12 @@ MIN_CHARGE_LIMIT_A = 2.0
 # lives through a limit below the minimum for this long.
 CHARGE_LIMIT_GRACE_SECONDS = 120.0
 MIN_TAPER_CURRENT_A = 1.0
+# A pack reaches its full voltage only under charge current and relaxes a few
+# volts once the charge stops (live: 556 V at the stop, 546 V at rest), so the
+# full voltage gates the start of a candidate through a recent peak and the hold
+# only needs the pack to stay near it.
+FULL_PEAK_WINDOW_SECONDS = 1800.0
+FULL_REST_VOLTAGE_FRACTION = 0.97
 TAPER_CURRENT_FRACTION = 0.02
 MIN_SURPLUS_W = 300.0
 SURPLUS_RATED_FRACTION = 0.05
@@ -99,9 +105,11 @@ class EstimatorSettings:
     capacity_kwh: float
     # Pack voltage that is 0 %; the site must state it, there is no default.
     empty_voltage_v: float
-    # A full candidate starts and continues only at or above this pack voltage;
-    # the site must state it, there is no default. Counters that drifted low
-    # must not be able to keep a full pack from correcting them.
+    # The pack voltage a charge reaches before it stops at full; the site must
+    # state it, there is no default. A full candidate starts only within
+    # FULL_PEAK_WINDOW_SECONDS of a reading at or above it and continues while
+    # the resting pack stays above FULL_REST_VOLTAGE_FRACTION of it. Counters
+    # that drifted low must not be able to keep a full pack from correcting them.
     full_min_voltage_v: float
     eta_charge: float = 0.95
     # Largest charge current the pack takes; 0 when unknown (the taper
@@ -204,6 +212,8 @@ class EstimatorState:
     last_full: Anchor | None = None
     full_candidate_since: datetime | None = None
     full_candidate_logged: bool = False
+    # Last reading at or above the full voltage; never persisted.
+    full_voltage_at: datetime | None = field(default=None, compare=False)
     # Since when the charge limit has been below the minimum; never persisted.
     charge_low_since: datetime | None = field(default=None, compare=False)
     candidates: list[dict] = field(default_factory=list)
@@ -380,6 +390,19 @@ def _full_anchor(
 ) -> str | None:
     """Track the full-anchor evidence (DD-3); the anchor kind when the step anchored."""
     running = state.full_candidate_since is not None
+    voltage = _number(inputs.voltage_v)
+    if (
+        voltage is not None
+        and inputs.anchor_inputs_fresh
+        and voltage >= settings.full_min_voltage_v
+    ):
+        state.full_voltage_at = inputs.at
+    peaked = (
+        state.full_voltage_at is not None
+        and 0
+        <= (inputs.at - state.full_voltage_at).total_seconds()
+        <= FULL_PEAK_WINDOW_SECONDS
+    )
     limit = _number(inputs.facts.charge_limit_a) if inputs.facts else None
     if limit is None or limit >= MIN_CHARGE_LIMIT_A:
         state.charge_low_since = None
@@ -393,7 +416,7 @@ def _full_anchor(
     )
     evidence = (
         _full_evidence(settings, inputs, running, grace)
-        if inputs.anchor_inputs_fresh
+        if inputs.anchor_inputs_fresh and (running or peaked)
         else None
     )
     if evidence is None:
@@ -403,7 +426,7 @@ def _full_anchor(
             _LOGGER.info(
                 "SOC estimator: full hold broken, below_full_voltage (%s V < %s V)",
                 inputs.voltage_v,
-                settings.full_min_voltage_v,
+                _rest_voltage(settings),
             )
         _break_full_candidate(state)
         return None
@@ -448,9 +471,13 @@ def _qualified(state: EstimatorState) -> bool:
     return state.full_candidate_since is not None and state.full_candidate_logged
 
 
+def _rest_voltage(settings: EstimatorSettings) -> float:
+    return FULL_REST_VOLTAGE_FRACTION * settings.full_min_voltage_v
+
+
 def _below_full_voltage(settings: EstimatorSettings, inputs: Inputs) -> bool:
     voltage = _number(inputs.voltage_v)
-    return voltage is not None and voltage < settings.full_min_voltage_v
+    return voltage is not None and voltage < _rest_voltage(settings)
 
 
 def _break_full_candidate(state: EstimatorState) -> None:
@@ -576,7 +603,9 @@ def _full_evidence(
 ) -> dict | None:
     """The values behind a full candidate, or None while any condition fails.
 
-    0. the pack voltage is at least `full_min_voltage_v`;
+    0. the pack voltage is at least FULL_REST_VOLTAGE_FRACTION of
+       `full_min_voltage_v` (the caller starts a candidate only within
+       FULL_PEAK_WINDOW_SECONDS of a reading at the full voltage itself);
     1. the battery takes (almost) no charge and gives none;
     2. charging was possible: a charge limit of at least 2 A, no controller
        target that explains the stop, and a dispatch state that charges (not
@@ -604,7 +633,7 @@ def _full_evidence(
     pv, load = _number(inputs.pv_w), _number(inputs.load_w)
     if facts is None or current is None or voltage is None:
         return None
-    if voltage < settings.full_min_voltage_v:
+    if voltage < _rest_voltage(settings):
         return None
     taper = max(
         MIN_TAPER_CURRENT_A, TAPER_CURRENT_FRACTION * settings.max_charge_current_a
