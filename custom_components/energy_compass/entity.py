@@ -272,17 +272,6 @@ def price_interval(data, now):
     return None
 
 
-def next_price_boundary(data, now):
-    """The first interval edge after `now`: where a price sensor's state may change."""
-    edges = [
-        edge
-        for row in data.get("intervals") or ()
-        for edge in (parse_timestamp(row["start"]), parse_timestamp(row["end"]))
-        if edge > now
-    ]
-    return min(edges, default=None)
-
-
 def next_change(data):
     """Stop at unknown coverage rather than forecasting through missing advice."""
     rows = data.get("outlook", [])
