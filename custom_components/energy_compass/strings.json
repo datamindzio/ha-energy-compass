@@ -1194,6 +1194,12 @@
           }
         }
       },
+      "buy_price_now": {
+        "name": "Buy price now"
+      },
+      "sell_price_now": {
+        "name": "Sell price now"
+      },
       "flexible_energy_depth": {
         "name": "Flexible energy depth"
       },

@@ -1194,6 +1194,12 @@
           }
         }
       },
+      "buy_price_now": {
+        "name": "Cena zakupu teraz"
+      },
+      "sell_price_now": {
+        "name": "Cena sprzedaży teraz"
+      },
       "flexible_energy_depth": {
         "name": "Głębokość elastycznego zużycia"
       },

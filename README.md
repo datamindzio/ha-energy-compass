@@ -29,7 +29,7 @@ To measure what a setting change does to real cost, replay recorded days offline
 
 Read the [published entity and calculation guide](https://datamindzio.github.io/ha-energy-compass/) for every entity, state, formula, quality flag and worked example. You can also open [docs/index.html](docs/index.html) from a checkout for offline viewing. The guide includes English and Polish entity names and follows your system's light or dark theme. See [publishing setup](docs/publishing.md) for GitHub Pages maintenance.
 
-The integration creates current consumption level and extra-kWh cost sensors, a flexible-energy depth sensor, optimized machine state and cost sensors, next change and next `BOOST`/`CHEAP`/`LIMIT` window timestamps, a plan with a bounded outlook, optimizer status, a forecast-valid binary sensor, and a diagnostic **Alert** binary sensor. Native entity names, diagnostics, and reasons are translated into English and Polish. Automations should compare level and machine state values using their stable uppercase names.
+The integration creates current consumption level and extra-kWh cost sensors, buy and sell price now sensors (the price of the plan interval in force, for any price source), a flexible-energy depth sensor, optimized machine state and cost sensors, next change and next `BOOST`/`CHEAP`/`LIMIT` window timestamps, a plan with a bounded outlook, optimizer status, a forecast-valid binary sensor, and a diagnostic **Alert** binary sensor. Native entity names, diagnostics, and reasons are translated into English and Polish. Automations should compare level and machine state values using their stable uppercase names.
 
 ### Dispatch strategy
 

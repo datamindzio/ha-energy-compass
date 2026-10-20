@@ -6,6 +6,8 @@ def test_public_contract():
     assert set(SENSOR_KEYS) == {
         "consumption_compass",
         "consumption_cost",
+        "buy_price_now",
+        "sell_price_now",
         "flexible_energy_depth",
         "next_change",
         "next_boost_start",

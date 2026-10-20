@@ -29,7 +29,7 @@ Aby zmierzyć, co zmiana ustawienia robi z rzeczywistym kosztem, odtwórz zapisa
 
 [Opublikowany przewodnik po encjach i obliczeniach](https://datamindzio.github.io/ha-energy-compass/) opisuje każdą encję, stan, wzór, flagę jakości i przykład. Z lokalnej kopii repozytorium możesz otworzyć [docs/index.html](docs/index.html). Przewodnik zawiera angielskie i polskie nazwy encji oraz dopasowuje się do jasnego lub ciemnego motywu systemu.
 
-Integracja tworzy sensory bieżącego poziomu zużycia i kosztu dodatkowej kWh, sensor głębokości elastycznego zużycia, sensory zoptymalizowanego trybu pracy i kosztów, znaczniki czasu następnej zmiany i następnych okien `BOOST`/`CHEAP`/`LIMIT`, plan z ograniczonym horyzontem, stan optymalizatora, binarny sensor poprawności prognozy, diagnostyczny binarny sensor **Alert** oraz select **Strategia**. Nazwy encji, diagnostyka i powody są przetłumaczone na angielski i polski. Automatyzacje powinny porównywać poziomy i tryby pracy po ich stałych nazwach pisanych wielkimi literami.
+Integracja tworzy sensory bieżącego poziomu zużycia i kosztu dodatkowej kWh, sensory ceny zakupu i sprzedaży teraz (cena z obowiązującego interwału planu, dla dowolnego źródła ceny), sensor głębokości elastycznego zużycia, sensory zoptymalizowanego trybu pracy i kosztów, znaczniki czasu następnej zmiany i następnych okien `BOOST`/`CHEAP`/`LIMIT`, plan z ograniczonym horyzontem, stan optymalizatora, binarny sensor poprawności prognozy, diagnostyczny binarny sensor **Alert** oraz select **Strategia**. Nazwy encji, diagnostyka i powody są przetłumaczone na angielski i polski. Automatyzacje powinny porównywać poziomy i tryby pracy po ich stałych nazwach pisanych wielkimi literami.
 
 ### Strategia dyspozycji
 

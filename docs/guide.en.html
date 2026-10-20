@@ -1222,6 +1222,18 @@ reloads.</p>
 <td>currency/kWh of one more kWh now</td>
 </tr>
 <tr>
+<td><code>sensor.&lt;name&gt;_buy_price_now</code></td>
+<td>Buy price now</td>
+<td>Cena zakupu teraz</td>
+<td>currency/kWh buy price of the plan interval in force now; moves at each interval boundary</td>
+</tr>
+<tr>
+<td><code>sensor.&lt;name&gt;_sell_price_now</code></td>
+<td>Sell price now</td>
+<td>Cena sprzedaży teraz</td>
+<td>currency/kWh sell price of the plan interval in force now; moves at each interval boundary</td>
+</tr>
+<tr>
 <td><code>sensor.&lt;name&gt;_flexible_energy_depth</code></td>
 <td>Flexible energy depth</td>
 <td>Głębokość elastycznego zużycia</td>
@@ -1337,7 +1349,11 @@ reloads.</p>
 </tr>
 </tbody>
 </table></section>
-<p>Cost sensors can be disabled with <strong>Presentation → Expose costs</strong>, window timestamps with
+<p>Buy and sell price now read <code>buy_per_kwh</code> and <code>sell_per_kwh</code> of the <code>plan.intervals</code> row whose
+[start, end) contains the current time, whatever the price source (fixed, entity, forecast such as RCE or
+Pstryk, tariff schedule); they are <code>unknown</code> when no row contains now or the plan is neither valid nor
+refreshing, and need no new plan to follow an interval boundary. Cost sensors (including these two)
+can be disabled with <strong>Presentation → Expose costs</strong>, window timestamps with
 <strong>Expose windows</strong>, and flexible depth with <strong>Consumption outlook → Enable flexible energy depth</strong>.
 Battery balance is disabled by default and enabled with the <strong>LFP balance</strong> setting; its
 attributes carry <code>last_completed</code>, <code>next_due</code>, <code>days_overdue</code>, <code>planned_start</code>, <code>planned_end</code>,

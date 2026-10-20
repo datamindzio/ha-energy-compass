@@ -264,6 +264,25 @@ class EnergyCompassEntity(CoordinatorEntity):
         return attrs
 
 
+def price_interval(data, now):
+    """The plan interval whose [start, end) holds `now`, not blindly the first row."""
+    for row in data.get("intervals") or ():
+        if parse_timestamp(row["start"]) <= now < parse_timestamp(row["end"]):
+            return row
+    return None
+
+
+def next_price_boundary(data, now):
+    """The first interval edge after `now`: where a price sensor's state may change."""
+    edges = [
+        edge
+        for row in data.get("intervals") or ()
+        for edge in (parse_timestamp(row["start"]), parse_timestamp(row["end"]))
+        if edge > now
+    ]
+    return min(edges, default=None)
+
+
 def next_change(data):
     """Stop at unknown coverage rather than forecasting through missing advice."""
     rows = data.get("outlook", [])
