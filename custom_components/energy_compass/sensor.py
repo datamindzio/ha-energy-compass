@@ -7,7 +7,6 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.util import dt as dt_util
 
 from .balance_tracker import SENSOR_STATES
@@ -15,7 +14,6 @@ from .controller_entity import DeyeControllerSensor, DeyeRuntimeSensor
 from .entity import (
     EnergyCompassEntity,
     next_change,
-    next_price_boundary,
     price_interval,
 )
 from .settings import DOMAIN
@@ -88,7 +86,6 @@ class EnergyCompassSensor(EnergyCompassEntity, SensorEntity):
 
     def __init__(self, coordinator, key):
         super().__init__(coordinator, key)
-        self._unsub_boundary = None
         if key.startswith("next_") or key == "plan":
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
         if key == "flexible_energy_depth":
@@ -126,40 +123,10 @@ class EnergyCompassSensor(EnergyCompassEntity, SensorEntity):
             )
         return None
 
-    async def async_added_to_hass(self):
-        await super().async_added_to_hass()
-        if self.key in PRICE_NOW_KEYS:
-            self.async_on_remove(self._cancel_boundary)
-            self._schedule_boundary()
-
-    @callback
-    def _cancel_boundary(self):
-        if self._unsub_boundary is not None:
-            self._unsub_boundary()
-            self._unsub_boundary = None
-
-    @callback
-    def _schedule_boundary(self):
-        """Wake at the next interval edge: the price changes there without a new plan."""
-        self._cancel_boundary()
-        edge = next_price_boundary(self.coordinator.data, dt_util.utcnow())
-        if edge is not None:
-            self._unsub_boundary = async_track_point_in_time(
-                self.hass, self._boundary_reached, edge
-            )
-
-    @callback
-    def _boundary_reached(self, _now):
-        self._unsub_boundary = None
-        self.async_write_ha_state()
-        self._schedule_boundary()
-
     @callback
     def _handle_coordinator_update(self):
         self._update_suggested_precision()
         super()._handle_coordinator_update()
-        if self.key in PRICE_NOW_KEYS:
-            self._schedule_boundary()
 
     @property
     def native_value(self):

@@ -11,7 +11,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.energy_compass.config_models import NumericSetting, PriceSource
-from custom_components.energy_compass.entity import next_price_boundary, price_interval
+from custom_components.energy_compass.entity import price_interval
 from custom_components.energy_compass.settings import default_configuration
 from custom_components.energy_compass.sources.bindings import (
     EntityBinding,
@@ -91,10 +91,6 @@ def test_price_interval_is_half_open_and_not_the_first_row():
     )
     assert price_interval(data, datetime(2026, 9, 18, 10, 30, tzinfo=UTC)) is None
     assert price_interval({}, inside) is None
-    assert next_price_boundary(data, inside) == datetime(
-        2026, 9, 18, 10, 30, tzinfo=UTC
-    )
-    assert next_price_boundary(data, datetime(2026, 9, 18, 10, 30, tzinfo=UTC)) is None
 
 
 async def test_fixed_buy_price_and_forecast_rce_sell_price(
