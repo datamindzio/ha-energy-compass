@@ -368,6 +368,7 @@ the module-level snapshot, so the stale check runs in tests with a fixed `now`.
 Band = Literal["peak", "mid_peak", "off_peak"]
 BANDS: tuple[Band, ...] = ("peak", "mid_peak", "off_peak")
 
+
 @dataclass(frozen=True)
 class Window:
     start: int
@@ -377,6 +378,7 @@ class Window:
     valid_until: date | None = None
     param: str | None = None
     band: Band = "off_peak"
+
 
 @dataclass(frozen=True)
 class TariffSpec:
@@ -389,6 +391,7 @@ class TariffSpec:
     choices: Mapping[str, tuple[int, ...]] = MappingProxyType({})
     winter_clause: bool = True
     default_band: Band = "peak"
+
 
 @dataclass(frozen=True)
 class Prefill:
@@ -403,29 +406,43 @@ class Prefill:
     consumption_max_kwh: int | None
     values: Mapping[str, float]
 
+
 @dataclass(frozen=True)
 class TariffSchedule:
     tariff: str
     meter_winter_clock: bool = False
     params: Mapping[str, int] = field(default_factory=dict)
-    prefill: Prefill | None = None       # emitted by to_dict only when set
+    prefill: Prefill | None = None  # emitted by to_dict only when set
 
-BAND_RATE_KEYS = {"peak": "buy_rate", "mid_peak": "buy_mid_peak_rate",
-                  "off_peak": "buy_off_peak_rate"}
-BAND_DISTRIBUTION_KEYS = {"peak": "buy_distribution_rate",
-                          "mid_peak": "buy_distribution_mid_peak_rate",
-                          "off_peak": "buy_distribution_off_peak_rate"}
+
+BAND_RATE_KEYS = {
+    "peak": "buy_rate",
+    "mid_peak": "buy_mid_peak_rate",
+    "off_peak": "buy_off_peak_rate",
+}
+BAND_DISTRIBUTION_KEYS = {
+    "peak": "buy_distribution_rate",
+    "mid_peak": "buy_distribution_mid_peak_rate",
+    "off_peak": "buy_distribution_off_peak_rate",
+}
+
+
 def tariff_bands(tariff: str) -> tuple[Band, ...]: ...
-def local_band(schedule, day, timezone_name, band) -> str: ...   # "none" | "all day" | "HH:MM–HH:MM, …"
+def local_band(
+    schedule, day, timezone_name, band
+) -> str: ...  # "none" | "all day" | "HH:MM–HH:MM, …"
+
+
 # local_off_peak(schedule, day, tz) == local_band(schedule, day, tz, "off_peak") (kept)
+
 
 # sources/rates.py (new)
 @dataclass(frozen=True)
 class PrefillResult:
-    values: Mapping[str, float | bool | str]   # DD-8 keys, ready for settings
+    values: Mapping[str, float | bool | str]  # DD-8 keys, ready for settings
     prefill: Prefill
-    unbound: tuple[str, ...]                   # helper keys popped
-    notes: tuple[str, ...]                     # e.g. VAT kept at 8 %
+    unbound: tuple[str, ...]  # helper keys popped
+    notes: tuple[str, ...]  # e.g. VAT kept at 8 %
 ```
 
 `BAND_RATE_KEYS` and `BAND_DISTRIBUTION_KEYS` live in `tariffs.py`, so the runtime, flow and
