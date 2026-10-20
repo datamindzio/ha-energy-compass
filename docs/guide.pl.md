@@ -784,6 +784,8 @@ witryny), bez restartu jego kolejki wysyłki. **Rekonfiguracja** zawsze przeład
 | --- | --- | --- | --- |
 | `sensor.<name>_consumption_compass` | Consumption compass | Kompas zużycia | `BOOST` / `CHEAP` / `NORMAL` / `LIMIT` |
 | `sensor.<name>_consumption_cost` | Consumption cost | Koszt zużycia | waluta/kWh za jedną kWh więcej teraz |
+| `sensor.<name>_buy_price_now` | Buy price now | Cena zakupu teraz | cena zakupu waluta/kWh z interwału planu obowiązującego teraz; zmienia się na granicy każdego interwału |
+| `sensor.<name>_sell_price_now` | Sell price now | Cena sprzedaży teraz | cena sprzedaży waluta/kWh z interwału planu obowiązującego teraz; zmienia się na granicy każdego interwału |
 | `sensor.<name>_flexible_energy_depth` | Flexible energy depth | Głębokość elastycznego zużycia | kWh |
 | `sensor.<name>_next_change` | Next change | Następna zmiana | znacznik czasu następnej zmiany poziomu |
 | `sensor.<name>_next_boost_start` | Next boost start | Początek zwiększonego zużycia | znacznik czasu |
@@ -804,7 +806,11 @@ witryny), bez restartu jego kolejki wysyłki. **Rekonfiguracja** zawsze przeład
 | `sensor.<name>_deye_controller_runtime` | Deye controller runtime | Stan pracy sterownika Deye | kod przebiegu; tylko przy włączonym sterowniku |
 | `switch.<name>_deye_pause` | Pause inverter writes | Wstrzymaj zapisy do falownika | `on` / `off`; tylko przy silniku natywnym |
 
-Sensory kosztów można wyłączyć opcją **Prezentacja → Włącz encje kosztów**, znaczniki okien —
+Cena zakupu i sprzedaży teraz to `buy_per_kwh` i `sell_per_kwh` z wiersza `plan.intervals`, którego
+[początek, koniec) zawiera bieżący czas, niezależnie od źródła ceny (stała, encja, prognoza jak RCE czy
+Pstryk, taryfa czasowa); mają stan `unknown`, gdy żaden wiersz nie zawiera „teraz” albo plan nie jest
+ani ważny, ani odświeżany, a granicę interwału śledzą bez nowego planu. Sensory kosztów (także te dwa)
+można wyłączyć opcją **Prezentacja → Włącz encje kosztów**, znaczniki okien —
 **Włącz encje okresów**, a głębokość elastycznego zużycia — **Prognoza kosztu zużycia → Włącz
 głębokość elastycznego zużycia**. Balansowanie baterii jest domyślnie wyłączone i włącza się je
 ustawieniem **LFP balance**; jego atrybuty to `last_completed`, `next_due`, `days_overdue`,

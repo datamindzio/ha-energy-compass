@@ -7,18 +7,31 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_point_in_time
+from homeassistant.util import dt as dt_util
 
 from .balance_tracker import SENSOR_STATES
 from .controller_entity import DeyeControllerSensor, DeyeRuntimeSensor
-from .entity import EnergyCompassEntity, next_change
+from .entity import (
+    EnergyCompassEntity,
+    next_change,
+    next_price_boundary,
+    price_interval,
+)
 from .settings import DOMAIN
 from .soc_estimator_config import estimator_active
 from .soc_estimator_ha import RECORDED_ATTRIBUTES
 from .sources.bindings import parse_timestamp
 
+PRICE_NOW_KEYS = {"buy_price_now": "buy_per_kwh", "sell_price_now": "sell_per_kwh"}
+COST_KEYS = ("consumption_cost", "expected_net_cost", "expected_wear_cost")
+COST_GATED_KEYS = COST_KEYS + tuple(PRICE_NOW_KEYS)
+
 SENSOR_KEYS = (
     "consumption_compass",
     "consumption_cost",
+    "buy_price_now",
+    "sell_price_now",
     "flexible_energy_depth",
     "next_change",
     "next_boost_start",
@@ -44,7 +57,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             else settings.get("flexible_load_enabled", True)
             if key == "flexible_energy_depth"
             else settings["expose_costs"]
-            if key in ("consumption_cost", "expected_net_cost", "expected_wear_cost")
+            if key in COST_GATED_KEYS
             else settings["expose_windows"]
             if key.startswith("next_")
             else True
@@ -75,6 +88,7 @@ class EnergyCompassSensor(EnergyCompassEntity, SensorEntity):
 
     def __init__(self, coordinator, key):
         super().__init__(coordinator, key)
+        self._unsub_boundary = None
         if key.startswith("next_") or key == "plan":
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
         if key == "flexible_energy_depth":
@@ -83,10 +97,12 @@ class EnergyCompassSensor(EnergyCompassEntity, SensorEntity):
             self._attr_entity_registry_enabled_default = coordinator.configuration[
                 "settings"
             ].get("flexible_load_enabled", True)
-        if key in ("consumption_cost", "expected_net_cost", "expected_wear_cost"):
+        if key in PRICE_NOW_KEYS:
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+        if key in COST_GATED_KEYS:
             self._attr_native_unit_of_measurement = coordinator.configuration[
                 "currency"
-            ] + ("/kWh" if key == "consumption_cost" else "")
+            ] + ("" if key in ("expected_net_cost", "expected_wear_cost") else "/kWh")
             self._attr_entity_registry_enabled_default = coordinator.configuration[
                 "settings"
             ]["expose_costs"]
@@ -103,17 +119,47 @@ class EnergyCompassSensor(EnergyCompassEntity, SensorEntity):
 
     @property
     def suggested_display_precision(self):
-        if self.key in ("consumption_cost", "expected_net_cost", "expected_wear_cost"):
+        if self.key in COST_GATED_KEYS:
             return self.coordinator.data.get("presentation", {}).get(
                 "cost_precision",
                 self.coordinator.configuration["settings"]["cost_precision"],
             )
         return None
 
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        if self.key in PRICE_NOW_KEYS:
+            self.async_on_remove(self._cancel_boundary)
+            self._schedule_boundary()
+
+    @callback
+    def _cancel_boundary(self):
+        if self._unsub_boundary is not None:
+            self._unsub_boundary()
+            self._unsub_boundary = None
+
+    @callback
+    def _schedule_boundary(self):
+        """Wake at the next interval edge: the price changes there without a new plan."""
+        self._cancel_boundary()
+        edge = next_price_boundary(self.coordinator.data, dt_util.utcnow())
+        if edge is not None:
+            self._unsub_boundary = async_track_point_in_time(
+                self.hass, self._boundary_reached, edge
+            )
+
+    @callback
+    def _boundary_reached(self, _now):
+        self._unsub_boundary = None
+        self.async_write_ha_state()
+        self._schedule_boundary()
+
     @callback
     def _handle_coordinator_update(self):
         self._update_suggested_precision()
         super()._handle_coordinator_update()
+        if self.key in PRICE_NOW_KEYS:
+            self._schedule_boundary()
 
     @property
     def native_value(self):
@@ -129,6 +175,9 @@ class EnergyCompassSensor(EnergyCompassEntity, SensorEntity):
             return data["outlook"][0]["level"]
         if self.key == "consumption_cost":
             return data["outlook"][0]["cost_per_kwh"]
+        if self.key in PRICE_NOW_KEYS:
+            row = price_interval(data, dt_util.utcnow())
+            return row[PRICE_NOW_KEYS[self.key]] if row else None
         if self.key == "energy_compass":
             return data["intervals"][0]["state"]
         if self.key == "plan":

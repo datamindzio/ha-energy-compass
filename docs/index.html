@@ -124,7 +124,7 @@
         <li><a href="#overview">Reading the compass</a></li>
         <li><a href="#inputs">Inputs and assumptions</a></li>
         <li><a href="#calculation">How calculation works</a></li>
-        <li><a href="#entities">All 16 entities</a></li>
+        <li><a href="#entities">All 18 entities</a></li>
         <li><a href="#consumption_compass">Consumption states</a></li>
         <li><a href="#energy_compass">Energy states</a></li>
         <li><a href="#quality">Validity and missing data</a></li>
@@ -240,9 +240,9 @@
     </section>
 
     <section id="entities" aria-labelledby="entities-title">
-      <h2 id="entities-title">All 16 entities</h2>
-      <p>Each installation creates 13 sensor definitions, two binary sensors and one strategy select, plus two sensors and one select when the optional Deye controller is enabled. Actual entity IDs depend on the entry name, language and registry history; use the entity picker or Developer tools → States to find yours. The keys below are stable internal identifiers, not literal entity IDs.</p>
-      <p><strong>Expose costs</strong> controls the three cost sensors. <strong>Expose windows</strong> controls the four <code>next_…</code> sensors. A disabled entity is different from an enabled entity whose value is unavailable.</p>
+      <h2 id="entities-title">All 18 entities</h2>
+      <p>Each installation creates 15 sensor definitions, two binary sensors and one strategy select, plus two sensors and one select when the optional Deye controller is enabled. Actual entity IDs depend on the entry name, language and registry history; use the entity picker or Developer tools → States to find yours. The keys below are stable internal identifiers, not literal entity IDs.</p>
+      <p><strong>Expose costs</strong> controls the five cost and price sensors. <strong>Expose windows</strong> controls the four <code>next_…</code> sensors. A disabled entity is different from an enabled entity whose value is unavailable.</p>
       <section class="table-scroll" aria-label="Entity index" tabindex="0">
         <table>
           <caption>Entity index</caption>
@@ -250,6 +250,8 @@
           <tbody>
             <tr><th scope="row"><a href="#consumption_compass">Consumption compass</a></th><td>BOOST / CHEAP / NORMAL / LIMIT</td><td>How attractive is extra use in this display interval?</td></tr>
             <tr><th scope="row"><a href="#consumption_cost">Consumption cost</a></th><td>Currency/kWh</td><td>What does the extra-energy probe cost per kWh?</td></tr>
+            <tr><th scope="row"><a href="#buy_price_now">Buy price now</a></th><td>Currency/kWh</td><td>What does buying one kWh cost in the plan interval in force now?</td></tr>
+            <tr><th scope="row"><a href="#sell_price_now">Sell price now</a></th><td>Currency/kWh</td><td>What is one exported kWh worth in the plan interval in force now?</td></tr>
             <tr><th scope="row"><a href="#flexible_energy_depth">Flexible energy depth</a></th><td>kWh</td><td>How much flexible energy fits before marginal price degrades materially?</td></tr>
             <tr><th scope="row"><a href="#next_change">Next change</a></th><td>Timestamp</td><td>When does the consumption level next change?</td></tr>
             <tr><th scope="row"><a href="#next_boost_start">Next boost start</a></th><td>Timestamp</td><td>When is the active or next BOOST window?</td></tr>
@@ -299,6 +301,19 @@
         <p>The finite-difference cost of the current display interval: <code>(probe objective − baseline objective) / added kWh</code>. Positive means extra modeled cost; zero means no change; negative means the extra load reduces the modeled objective. This is neither an electricity-meter reading nor the current buy rate.</p>
         <p>Attributes include <code>method: finite_difference</code> and <code>probe_kwh</code>. Display rounding uses <code>cost_precision</code>; classification uses the unrounded value.</p>
         <p><strong>Unavailable:</strong> same gate as Consumption compass. Under the strict unavailable policy, this sensor is unavailable even if a numeric probe result survives in <code>plan.outlook</code> but its level is unknown.</p>
+      </article>
+
+      <article id="buy_price_now">
+        <h3>Buy price now</h3>
+        <p class="entity-meta"><code>buy_price_now</code> · <span lang="pl">Cena zakupu teraz</span> · Currency/kWh</p>
+        <p>The <code>buy_per_kwh</code> of the <code>plan.intervals</code> row whose [start, end) contains the current time, the same price the optimizer used, whatever the source (fixed, entity, forecast such as RCE or Pstryk, tariff schedule). The state moves at each interval boundary without waiting for a new plan.</p>
+        <p><strong>Unknown:</strong> no interval contains now, or the plan is neither valid nor refreshing. Unavailable under the same freshness gate as the other plan sensors. Display rounding uses <code>cost_precision</code>; disabled with <strong>Expose costs</strong>.</p>
+      </article>
+
+      <article id="sell_price_now">
+        <h3>Sell price now</h3>
+        <p class="entity-meta"><code>sell_price_now</code> · <span lang="pl">Cena sprzedaży teraz</span> · Currency/kWh</p>
+        <p>The <code>sell_per_kwh</code> of the <code>plan.intervals</code> row whose [start, end) contains the current time, after the sell source's unit conversion (for example RCE PLN/MWh to PLN/kWh). Same boundary, gate and <strong>Expose costs</strong> behaviour as Buy price now.</p>
       </article>
 
       <article id="flexible_energy_depth">

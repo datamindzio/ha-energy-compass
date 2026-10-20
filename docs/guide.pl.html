@@ -1230,6 +1230,18 @@ witryny), bez restartu jego kolejki wysyłki. <strong>Rekonfiguracja</strong> za
 <td>waluta/kWh za jedną kWh więcej teraz</td>
 </tr>
 <tr>
+<td><code>sensor.&lt;name&gt;_buy_price_now</code></td>
+<td>Buy price now</td>
+<td>Cena zakupu teraz</td>
+<td>cena zakupu waluta/kWh z interwału planu obowiązującego teraz; zmienia się na granicy każdego interwału</td>
+</tr>
+<tr>
+<td><code>sensor.&lt;name&gt;_sell_price_now</code></td>
+<td>Sell price now</td>
+<td>Cena sprzedaży teraz</td>
+<td>cena sprzedaży waluta/kWh z interwału planu obowiązującego teraz; zmienia się na granicy każdego interwału</td>
+</tr>
+<tr>
 <td><code>sensor.&lt;name&gt;_flexible_energy_depth</code></td>
 <td>Flexible energy depth</td>
 <td>Głębokość elastycznego zużycia</td>
@@ -1345,7 +1357,11 @@ witryny), bez restartu jego kolejki wysyłki. <strong>Rekonfiguracja</strong> za
 </tr>
 </tbody>
 </table></section>
-<p>Sensory kosztów można wyłączyć opcją <strong>Prezentacja → Włącz encje kosztów</strong>, znaczniki okien —
+<p>Cena zakupu i sprzedaży teraz to <code>buy_per_kwh</code> i <code>sell_per_kwh</code> z wiersza <code>plan.intervals</code>, którego
+[początek, koniec) zawiera bieżący czas, niezależnie od źródła ceny (stała, encja, prognoza jak RCE czy
+Pstryk, taryfa czasowa); mają stan <code>unknown</code>, gdy żaden wiersz nie zawiera „teraz” albo plan nie jest
+ani ważny, ani odświeżany, a granicę interwału śledzą bez nowego planu. Sensory kosztów (także te dwa)
+można wyłączyć opcją <strong>Prezentacja → Włącz encje kosztów</strong>, znaczniki okien —
 <strong>Włącz encje okresów</strong>, a głębokość elastycznego zużycia — <strong>Prognoza kosztu zużycia → Włącz
 głębokość elastycznego zużycia</strong>. Balansowanie baterii jest domyślnie wyłączone i włącza się je
 ustawieniem <strong>LFP balance</strong>; jego atrybuty to <code>last_completed</code>, <code>next_due</code>, <code>days_overdue</code>,

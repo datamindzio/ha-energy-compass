@@ -776,6 +776,8 @@ reloads.
 | --- | --- | --- | --- |
 | `sensor.<name>_consumption_compass` | Consumption compass | Kompas zużycia | `BOOST` / `CHEAP` / `NORMAL` / `LIMIT` |
 | `sensor.<name>_consumption_cost` | Consumption cost | Koszt zużycia | currency/kWh of one more kWh now |
+| `sensor.<name>_buy_price_now` | Buy price now | Cena zakupu teraz | currency/kWh buy price of the plan interval in force now; moves at each interval boundary |
+| `sensor.<name>_sell_price_now` | Sell price now | Cena sprzedaży teraz | currency/kWh sell price of the plan interval in force now; moves at each interval boundary |
 | `sensor.<name>_flexible_energy_depth` | Flexible energy depth | Głębokość elastycznego zużycia | kWh |
 | `sensor.<name>_next_change` | Next change | Następna zmiana | timestamp of next level change |
 | `sensor.<name>_next_boost_start` | Next boost start | Początek zwiększonego zużycia | timestamp |
@@ -796,7 +798,11 @@ reloads.
 | `sensor.<name>_deye_controller_runtime` | Deye controller runtime | Stan pracy sterownika Deye | runtime code; only with the controller enabled |
 | `switch.<name>_deye_pause` | Pause inverter writes | Wstrzymaj zapisy do falownika | `on` / `off`; only with the native engine |
 
-Cost sensors can be disabled with **Presentation → Expose costs**, window timestamps with
+Buy and sell price now read `buy_per_kwh` and `sell_per_kwh` of the `plan.intervals` row whose
+[start, end) contains the current time, whatever the price source (fixed, entity, forecast such as RCE or
+Pstryk, tariff schedule); they are `unknown` when no row contains now or the plan is neither valid nor
+refreshing, and need no new plan to follow an interval boundary. Cost sensors (including these two)
+can be disabled with **Presentation → Expose costs**, window timestamps with
 **Expose windows**, and flexible depth with **Consumption outlook → Enable flexible energy depth**.
 Battery balance is disabled by default and enabled with the **LFP balance** setting; its
 attributes carry `last_completed`, `next_due`, `days_overdue`, `planned_start`, `planned_end`,
