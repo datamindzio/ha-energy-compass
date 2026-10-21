@@ -867,3 +867,34 @@ async def test_integration_preferences_are_not_clamped(hass):
     await trigger(hass)
 
     assert received and received[0].data["kind"] == "limit"
+
+
+@pytest.mark.freeze_time("2026-09-17T10:00:00+00:00")
+@pytest.mark.parametrize("overrides", [False, True])
+async def test_blueprint_suppressed_when_native_sending_is_active(hass, overrides):
+    """DD-2: the plan publishes `notify_enabled` false once the integration sends."""
+    from custom_components.energy_compass.runtime import compute
+    from custom_components.energy_compass.settings import default_configuration
+
+    now = datetime(2026, 9, 17, 10, tzinfo=UTC)
+    config = default_configuration("EUR", "UTC")
+    config["settings"].update(
+        notify_enabled=True, notify_services=["mobile_app_pixel_8"]
+    )
+    published = compute(config, {}, now)["notification_preferences"]
+    assert published["notify_sender"] == "integration"
+    received = await setup_blueprint(
+        hass,
+        now,
+        favorable=[window(now, now + timedelta(hours=3), ("CHEAP",))],
+        outlook=[row(now, now + timedelta(hours=3), "CHEAP")],
+        preferences=published,
+        inputs={"use_blueprint_overrides": True} if overrides else None,
+    )
+    before = hass.states.get(ENTITIES["last_favorable"]).state
+
+    await trigger(hass)
+
+    assert received == []
+    assert hass.states.get(ENTITIES["daily_count"]).state == "0.0"
+    assert hass.states.get(ENTITIES["last_favorable"]).state == before

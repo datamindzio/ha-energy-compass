@@ -158,6 +158,116 @@ async def test_notification_form_offers_only_dispatchable_events(
     assert entry.data["settings"]["notify_actions"] == [{"event": "legacy_test"}]
 
 
+async def test_notification_step_lists_registered_notify_services(
+    recorder_mock, hass, enable_custom_integrations
+):
+    config = default_configuration("EUR", "UTC")
+    config["settings"]["notify_services"] = ["mobile_app_gone"]
+    entry = MockConfigEntry(
+        domain="energy_compass", data=config, title="Synthetic", version=2
+    )
+    entry.add_to_hass(hass)
+    for name in ("mobile_app_a", "send_message"):
+        hass.services.async_register("notify", name, lambda call: None)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "notifications"}
+    )
+    fields = {
+        str(key): (key, value) for key, value in result["data_schema"].schema.items()
+    }
+
+    marker, services = fields["notify_services"]
+    assert services.config["options"] == ["mobile_app_a", "mobile_app_gone"]
+    assert services.config["custom_value"] is True
+    assert services.config["multiple"] is True
+    assert marker.default() == ["mobile_app_gone"]
+    _, entities = fields["notify_entities"]
+    assert isinstance(entities, selector.EntitySelector)
+    assert entities.config["domain"] == ["notify"]
+    assert entities.config["multiple"] is True
+    _, language = fields["notify_language"]
+    assert language.config["options"] == ["auto", "en", "pl"]
+
+
+async def test_notification_step_rejects_a_bad_target(
+    recorder_mock, hass, enable_custom_integrations
+):
+    entry = MockConfigEntry(
+        domain="energy_compass",
+        data=default_configuration("EUR", "UTC"),
+        title="Synthetic",
+        version=2,
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "notifications"}
+    )
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"notify_services": ["send_message"]}
+    )
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "invalid_notify_target"}
+
+
+async def test_notification_targets_apply_live_without_reload(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2026-09-17T10:00:00+00:00")
+    config = default_configuration("EUR", "UTC")
+    config["settings"].update(
+        horizon_hours=1,
+        display_horizon_hours=1,
+        reference_horizon_hours=1,
+        notify_enabled=True,
+    )
+    entry = MockConfigEntry(
+        domain="energy_compass", data=config, title="Options", version=2
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    before = entry.runtime_data
+    plan = hass.states.get("sensor.options_plan")
+    assert plan.attributes["notification_preferences"]["notify_sender"] == "blueprint"
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    fid = result["flow_id"]
+    await hass.config_entries.options.async_configure(
+        fid, {"next_step_id": "notifications"}
+    )
+    await hass.config_entries.options.async_configure(
+        fid,
+        {
+            "notify_services": ["mobile_app_a"],
+            "notify_entities": ["notify.kitchen"],
+            "notify_language": "pl",
+        },
+    )
+    result = await hass.config_entries.options.async_configure(
+        fid, {"next_step_id": "preview"}
+    )
+    result = await hass.config_entries.options.async_configure(fid, {"confirm": True})
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entry.runtime_data is before
+    settings = entry.runtime_data.configuration["settings"]
+    assert settings["notify_services"] == ["mobile_app_a"]
+    assert settings["notify_entities"] == ["notify.kitchen"]
+    assert settings["notify_language"] == "pl"
+    preferences = hass.states.get("sensor.options_plan").attributes[
+        "notification_preferences"
+    ]
+    assert preferences["notify_sender"] == "integration"
+    assert preferences["notify_enabled"] is False
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 def test_helper_unavailable_and_disabled_age():
     config = default_configuration("EUR", "UTC")
     config["helpers"] = {

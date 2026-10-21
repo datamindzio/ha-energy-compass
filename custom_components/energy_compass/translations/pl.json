@@ -300,9 +300,16 @@
           "notify_enabled": "Włącz powiadomienia",
           "quiet_start": "Początek ciszy nocnej",
           "quiet_end": "Koniec ciszy nocnej",
-          "notify_events": "Zdarzenia powiadomień"
+          "notify_events": "Zdarzenia powiadomień",
+          "notify_services": "Usługi powiadomień (aplikacja mobilna)",
+          "notify_entities": "Encje powiadomień",
+          "notify_language": "Język powiadomień"
         },
-        "description": "Preferencje powiadomień o okresach. Wybierz akcję w schemacie powiadomień. {detail}"
+        "description": "Energy Compass sam wysyła powiadomienia o oknach, gdy Włącz powiadomienia jest włączone i wybrano co najmniej jeden cel. Sprawdź cel akcją energy_compass.send_test_notification. {detail}",
+        "data_description": {
+          "notify_services": "Starsze usługi notify, np. mobile_app_<telefon>. Energy Compass wywołuje każdą z nich.",
+          "notify_entities": "Encje notify, wysyłane przez notify.send_message."
+        }
       },
       "menu": {
         "title": "Energy Compass",
@@ -573,7 +580,8 @@
       "settlement_currency": "Polskie profile rozliczenia wymagają waluty PLN.",
       "buy_tariff_currency": "Wybrana polska taryfa wymaga waluty PLN.",
       "schedule_currency": "Taryfa OSD i taryfa dystrybucyjna wymagają waluty PLN; najpierw zmień źródło ceny zakupu albo usuń taryfę dystrybucyjną.",
-      "soc_estimator_capacity_mode": "Estymator SOC z liczników nie może działać, gdy falownik jest w trybie Capacity: w tym trybie falownik porównuje własne progi SOC programów z SOC z BMS. Najpierw przełącz tryb baterii falownika na Voltage albo zostaw encję SOC jako źródło SOC."
+      "soc_estimator_capacity_mode": "Estymator SOC z liczników nie może działać, gdy falownik jest w trybie Capacity: w tym trybie falownik porównuje własne progi SOC programów z SOC z BMS. Najpierw przełącz tryb baterii falownika na Voltage albo zostaw encję SOC jako źródło SOC.",
+      "invalid_notify_target": "Cel powiadomień nie jest poprawną nazwą usługi notify ani encją notify."
     },
     "abort": {
       "reconfigure_successful": "Zapisano konfigurację."
@@ -871,9 +879,16 @@
           "notify_enabled": "Włącz powiadomienia",
           "quiet_start": "Początek ciszy nocnej",
           "quiet_end": "Koniec ciszy nocnej",
-          "notify_events": "Zdarzenia powiadomień"
+          "notify_events": "Zdarzenia powiadomień",
+          "notify_services": "Usługi powiadomień (aplikacja mobilna)",
+          "notify_entities": "Encje powiadomień",
+          "notify_language": "Język powiadomień"
         },
-        "description": "Preferencje powiadomień o okresach. Wybierz akcję w schemacie powiadomień. {detail}"
+        "description": "Energy Compass sam wysyła powiadomienia o oknach, gdy Włącz powiadomienia jest włączone i wybrano co najmniej jeden cel. Sprawdź cel akcją energy_compass.send_test_notification. {detail}",
+        "data_description": {
+          "notify_services": "Starsze usługi notify, np. mobile_app_<telefon>. Energy Compass wywołuje każdą z nich.",
+          "notify_entities": "Encje notify, wysyłane przez notify.send_message."
+        }
       },
       "menu": {
         "title": "Energy Compass",
@@ -1188,7 +1203,8 @@
       "controller_low_voltage_pack": "Ten sterownik obsługuje pakiety wysokonapięciowe (400–610 V). Zmierzono: {voltage} V. Modele Deye 48 V nie są jeszcze obsługiwane.",
       "controller_voltage_unavailable": "Czujnik napięcia baterii ({entity}) nie ma odczytu liczbowego, więc nie da się odróżnić pakietu od 48 V. Poczekaj, aż falownik poda napięcie, i zapisz ponownie.",
       "controller_limits_required": "Nie da się wyliczyć maksymalnej mocy i prądów (moc ładowania lub rozładowania w ustawieniach baterii albo limit prądu falownika wynosi zero). Wpisz je w grupie Limity i przejęcie.",
-      "soc_estimator_capacity_mode": "Estymator SOC z liczników nie może działać, gdy falownik jest w trybie Capacity: w tym trybie falownik porównuje własne progi SOC programów z SOC z BMS. Najpierw przełącz tryb baterii falownika na Voltage albo zostaw encję SOC jako źródło SOC."
+      "soc_estimator_capacity_mode": "Estymator SOC z liczników nie może działać, gdy falownik jest w trybie Capacity: w tym trybie falownik porównuje własne progi SOC programów z SOC z BMS. Najpierw przełącz tryb baterii falownika na Voltage albo zostaw encję SOC jako źródło SOC.",
+      "invalid_notify_target": "Cel powiadomień nie jest poprawną nazwą usługi notify ani encją notify."
     },
     "abort": {
       "site_not_registered": "Ta witryna została zapomniana w innym oknie; włącz ponownie Energy Atlas, aby zarejestrować nową."
@@ -1691,6 +1707,13 @@
       "options": {
         "entity": "Encja (wskazana w Źródłach danych)",
         "counter_estimator": "Estymator z liczników"
+      }
+    },
+    "notify_language": {
+      "options": {
+        "auto": "Język Home Assistant",
+        "en": "English",
+        "pl": "Polski"
       }
     }
   }

@@ -1088,23 +1088,39 @@ class Editor(SocEstimatorFlow, SourceEditor):
                     )
                 return await self.async_step_menu()
             except InputError as err:
-                errors["base"] = (
-                    "invalid_source" if "throughput" in str(err) else "invalid_input"
-                )
-                detail = (
-                    source_error_detail(err, self.hass.config.language)
-                    if "throughput" in str(err)
-                    else str(err)
-                )
+                if str(err).startswith("invalid notify target"):
+                    errors["base"] = "invalid_notify_target"
+                else:
+                    errors["base"] = (
+                        "invalid_source"
+                        if "throughput" in str(err)
+                        else "invalid_input"
+                    )
+                    detail = (
+                        source_error_detail(err, self.hass.config.language)
+                        if "throughput" in str(err)
+                        else str(err)
+                    )
         return self.async_show_form(
             step_id=step_id or group,
             data_schema=settings_schema(
-                group, self._draft["settings"], self._draft["currency"]
+                group,
+                self._draft["settings"],
+                self._draft["currency"],
+                self._notify_services() if group == "notifications" else (),
             ),
             errors=errors,
             description_placeholders={
                 "detail": detail or (self._values_detail if step_id else "")
             },
+        )
+
+    def _notify_services(self):
+        """Legacy notify services registered now, the mobile app's included (DD-3)."""
+        return sorted(
+            name
+            for name in self.hass.services.async_services_for_domain("notify")
+            if name != "send_message"
         )
 
     async def async_step_battery(self, user_input=None):
