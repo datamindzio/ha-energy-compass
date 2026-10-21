@@ -1619,6 +1619,14 @@
     "soc_estimator_unanchored": {
       "title": "The SOC estimator has gone a long time without an anchor",
       "description": "{name}: the counter SOC estimator has moved more than {cycles} battery capacities of energy since its last anchor (kind: {kind}), so rounding and efficiency errors may have added up. Plans are not affected. To get a fresh anchor, let the pack fill in the sun until charging stops although it could continue (a full anchor), or let it reach the pack voltage that is 0 % (an empty anchor). The SOC estimator sensor shows the anchor history and the full-anchor candidates."
+    },
+    "notify_blueprint_deprecated": {
+      "title": "Notification blueprint is deprecated",
+      "description": "{automation} uses the deprecated notification blueprint. Select a target in Notification preferences and Energy Compass sends the notifications itself; then delete the automation."
+    },
+    "notify_blueprint_suppressed": {
+      "title": "Notification blueprint automation sends nothing",
+      "description": "Energy Compass sends the notifications now, so {automation} sends nothing. Delete it and its five helpers."
     }
   },
   "services": {
@@ -1663,6 +1671,16 @@
           "description": "Import again although the package state was already imported."
         }
       }
+    },
+    "send_test_notification": {
+      "name": "Send test notification",
+      "description": "Send one test message to the notification targets of an Energy Compass entry now, ignoring quiet hours, cooldown and the daily cap.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Entry",
+          "description": "The Energy Compass entry. Needed only when there is more than one."
+        }
+      }
     }
   },
   "exceptions": {
@@ -1698,6 +1716,15 @@
     },
     "controller_native": {
       "message": "The native Deye engine does not use the controller runtime service. Turn off the blueprint automation that called it."
+    },
+    "notify_no_target": {
+      "message": "No notification target is selected; choose one in Options → Notification preferences."
+    },
+    "notify_entry_required": {
+      "message": "Several Energy Compass entries are loaded; choose the entry."
+    },
+    "notify_entry_not_found": {
+      "message": "The Energy Compass entry {entry} is not loaded."
     }
   },
   "selector": {

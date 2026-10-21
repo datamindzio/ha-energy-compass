@@ -11,6 +11,9 @@ from .controller_ha import PROCESS_SESSION, DeyeController, async_auto_enable
 from .controller_services import async_register as async_register_controller_services
 from .coordinator import EnergyCompassCoordinator
 from .notifications_ha import STORE_KEY, WindowNotifier
+from .notifications_ha import (
+    async_register_services as async_register_notification_services,
+)
 from .settings import DOMAIN, default_configuration, explicit_strategy_fields
 
 PLATFORMS = [
@@ -42,6 +45,7 @@ async def async_setup(hass, config) -> bool:
 
     async_register_backfill(hass)
     async_register_controller_services(hass)
+    async_register_notification_services(hass)
     hass.data.setdefault(DOMAIN, {}).setdefault(
         PROCESS_SESSION, float(math.ceil(dt_util.utcnow().timestamp()))
     )
