@@ -8,12 +8,21 @@ editable settings; the runtime never reads it. It is loaded once at import
 
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
+from dataclasses import dataclass
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from .tariffs import BANDS, CATALOG, tariff_bands
+from .tariffs import (
+    BAND_DISTRIBUTION_KEYS,
+    BAND_RATE_KEYS,
+    BANDS,
+    CATALOG,
+    Prefill,
+    tariff_bands,
+)
 
 SNAPSHOT_FORMAT = 1
 SNAPSHOT_PATH = Path(__file__).with_name("tariff_rates.json")
@@ -233,3 +242,256 @@ def operator_for(tariff: str) -> str | None:
             if group["catalog"] == tariff and tariff != "g11":
                 return operator_id
     return None
+
+
+@dataclass(frozen=True)
+class PrefillResult:
+    """Settings a seller offer writes, with the provenance stored on the schedule."""
+
+    values: Mapping[str, float | bool | str]
+    prefill: Prefill
+    unbound: tuple[str, ...]
+    notes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ChargeOptions:
+    """Answers `tariff_charges` offers for one operator and group."""
+
+    billing_months: tuple[int, ...]
+    consumption_edges: tuple[int | None, ...]
+
+
+_DEFAULT_VAT_PERCENT = 0
+_RATE_STEP = Decimal("0.000001")
+_MONEY_STEP = Decimal("0.01")
+_PHASE_KEYS = {"one_phase": "onePhase", "three_phase": "threePhase"}
+_KIND_ORDER = {"ure": 0, "fixed": 1}
+_TEXT = {
+    "en": {
+        "ure": "default seller tariff (URE)",
+        "fixed": "fixed price",
+        "fixed_months": "fixed price {months} months",
+        "fee": "trade fee {fee} PLN/month",
+        "until": "sign by {until}",
+        "gone": "(no longer offered)",
+        "stale": (
+            "Warning: the bundled {year} tariff ended {valid_to}; "
+            "the rates are out of date."
+        ),
+    },
+    "pl": {
+        "ure": "taryfa sprzedawcy z urzędu (URE)",
+        "fixed": "cena stała",
+        "fixed_months": "cena stała {months} mies.",
+        "fee": "opłata handlowa {fee} zł/mies.",
+        "until": "do podpisania do {until}",
+        "gone": "(już niedostępna)",
+        "stale": (
+            "Uwaga: wbudowana taryfa {year} skończyła się {valid_to}; "
+            "stawki są nieaktualne."
+        ),
+    },
+}
+
+
+def _d(value: Any) -> Decimal:
+    """Decimal of a snapshot number, from its shortest text (the JSON literal)."""
+    return Decimal(str(value))
+
+
+def _group(operator: str, group: str) -> Mapping[str, Any]:
+    body = SNAPSHOT["operators"].get(operator, {}).get("groups", {}).get(group)
+    if body is None:
+        raise ValueError(f"operator {operator} has no group {group}")
+    return body
+
+
+def _texts(language: str) -> Mapping[str, str]:
+    return _TEXT["pl" if language.lower().startswith("pl") else "en"]
+
+
+def offers_for(operator: str, group: str) -> tuple[str, ...]:
+    """Offer ids priced for every zone of the group: `ure` first, then `fixed` by name."""
+    zones = {zone["id"] for zone in _group(operator, group)["zones"]}
+    found = [
+        (offer_id, offer)
+        for offer_id, offer in SNAPSHOT["offers"].items()
+        if offer["kind"] in OFFER_KINDS
+        and operator in offer["osdScope"]
+        and zones == set(offer["groups"].get(group, ()))
+    ]
+    found.sort(key=lambda item: (_KIND_ORDER[item[1]["kind"]], item[1]["name"]))
+    return tuple(offer_id for offer_id, _ in found)
+
+
+def charge_options(operator: str, group: str) -> ChargeOptions:
+    """Billing periods and consumption band edges the operator publishes for a group."""
+    charges = _group(operator, group)["charges"]
+    return ChargeOptions(
+        tuple(sorted(int(months) for months in charges["subscriptionPerMonth"])),
+        tuple(row["maxKWh"] for row in charges["capacityPerMonth"]),
+    )
+
+
+def _band_row(rows: list[Mapping[str, Any]], edge: int | None) -> Decimal:
+    """`pln` of the band that holds the consumption band ending at `edge`."""
+    for row in sorted(rows, key=lambda r: (r["maxKWh"] is None, r["maxKWh"] or 0)):
+        limit = row["maxKWh"]
+        if limit is None or (edge is not None and limit >= edge):
+            return _d(row["pln"])
+    raise ValueError(f"no band holds the consumption edge {edge}")
+
+
+def _percent(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def _money(value: Decimal) -> float:
+    return float(value.quantize(_MONEY_STEP, ROUND_HALF_UP))
+
+
+def _rate(value: Decimal) -> float:
+    return float(value.quantize(_RATE_STEP, ROUND_HALF_UP))
+
+
+def compute_prefill(
+    tariff: str,
+    operator: str,
+    offer: str | None,
+    phases: Literal["one_phase", "three_phase"],
+    billing_months: int,
+    consumption_max_kwh: int | None,
+    values: Mapping[str, Any],
+    *,
+    helpers: Collection[str] = (),
+) -> PrefillResult:
+    """Settings of the buy source for an offer (None = distribution only).
+
+    `values` are the current settings (`sell_apply_vat`, `vat_percent`) and
+    `helpers` the setting keys bound to a helper. Net rates come from the snapshot
+    as Decimal; VAT stays in `buy_apply_vat` (DD-8).
+    """
+    spec = CATALOG.get(tariff)
+    if spec is None:
+        raise ValueError(f"unknown tariff {tariff}")
+    body = _group(operator, spec.group)
+    if body["catalog"] != tariff and tariff != "g11":
+        raise ValueError(f"tariff {tariff} is not a group of operator {operator}")
+    if phases not in _PHASE_KEYS:
+        raise ValueError(f"unknown phases {phases}")
+    options = charge_options(operator, spec.group)
+    if billing_months not in options.billing_months:
+        raise ValueError(f"{operator} does not bill every {billing_months} months")
+    if consumption_max_kwh not in options.consumption_edges:
+        raise ValueError(f"{consumption_max_kwh} is not a consumption band edge")
+    seller = None
+    if offer is not None:
+        if offer not in offers_for(operator, spec.group):
+            raise ValueError(f"offer {offer} does not price {operator} {spec.group}")
+        seller = SNAPSHOT["offers"][offer]
+    operator_body = SNAPSHOT["operators"][operator]
+    charges = body["charges"]
+    excise = _d(SNAPSHOT["excise"]["netPerKWh"])
+    extra = sum((_d(charges[key]) for key in _CHARGE_RATES), Decimal(0))
+    bands = tariff_bands(tariff)
+    written: dict[str, float | bool | str] = {}
+    for band in BANDS:
+        energy = distribution = Decimal(0)
+        if band in bands:
+            zone = body["bands"][band]
+            distribution = _d(charges["variablePerKWh"][zone]) + extra
+            if seller is not None:
+                energy = _d(seller["groups"][spec.group][zone]) + excise
+        written[BAND_RATE_KEYS[band]] = _rate(energy)
+        written[BAND_DISTRIBUTION_KEYS[band]] = _rate(distribution)
+    written["buy_distribution_mode"] = "added"
+    written["buy_multiplier"] = 1.0
+    written["buy_addition"] = 0.0
+    written["buy_apply_vat"] = True
+    offered_vat = _d(SNAPSHOT["vatRate"]) * 100
+    vat = offered_vat
+    notes: list[str] = []
+    if not values.get("sell_apply_vat", False) and "vat_percent" not in helpers:
+        written["vat_percent"] = float(vat)
+    else:
+        vat = _d(values.get("vat_percent", _DEFAULT_VAT_PERCENT))
+        if vat != offered_vat:
+            notes.append(
+                f"VAT is {_percent(vat)} % (shared with the sell side); "
+                f"the offer assumes {_percent(offered_vat)} %."
+            )
+    net = (
+        _d(charges["fixedPerMonth"][_PHASE_KEYS[phases]])
+        + _d(charges["subscriptionPerMonth"][str(billing_months)])
+        + _band_row(charges["capacityPerMonth"], consumption_max_kwh)
+        + _band_row(charges["transitionalPerMonth"], consumption_max_kwh)
+        + (_d(seller["tradeFeePerMonth"]) if seller is not None else Decimal(0))
+    )
+    written["monthly_charge"] = _money(net * (1 + vat / 100))
+    unbound = tuple(key for key in written if key in helpers)
+    as_of = max(
+        operator_body["asOf"],
+        SNAPSHOT["excise"]["asOf"],
+        *([seller["asOf"]] if seller is not None else []),
+    )
+    prefill = Prefill(
+        operator,
+        offer,
+        operator_body["tariffYear"],
+        operator_body["validFrom"],
+        operator_body["validTo"],
+        as_of,
+        phases,
+        billing_months,
+        consumption_max_kwh,
+        {
+            key: float(value)
+            for key, value in written.items()
+            if isinstance(value, float)
+        },
+    )
+    return PrefillResult(written, prefill, unbound, tuple(notes))
+
+
+def offer_label(offer: str, language: str, today: date) -> str:
+    """Select-option label of an offer: seller, name, kind, trade fee, sign-by date.
+
+    `today` (the caller's local date) decides whether the offer is marked as gone.
+    """
+    texts = _texts(language)
+    data = SNAPSHOT["offers"][offer]
+    if data["kind"] == "ure":
+        kind = texts["ure"]
+    elif data.get("termMonths"):
+        kind = texts["fixed_months"].format(months=int(data["termMonths"]))
+    else:
+        kind = texts["fixed"]
+    fee = f"{data['tradeFeePerMonth']:.2f}"
+    if texts is _TEXT["pl"]:
+        fee = fee.replace(".", ",")
+    parts = [f"{data['seller']}: {data['name']}", kind, texts["fee"].format(fee=fee)]
+    until = data.get("availableUntil")
+    if until is not None:
+        parts.append(texts["until"].format(until=until))
+    label = " · ".join(parts)
+    if until is not None and today > date.fromisoformat(until):
+        label += f" {texts['gone']}"
+    return label
+
+
+def snapshot_text(operator: str, today: date, language: str) -> dict[str, str]:
+    """Placeholders of the offer step: tariff, year, valid, as_of and the stale note."""
+    body = SNAPSHOT["operators"][operator]
+    stale = today > date.fromisoformat(body["validTo"])
+    return {
+        "tariff": body["name"],
+        "year": str(body["tariffYear"]),
+        "valid": f"{body['validFrom']} – {body['validTo']}",
+        "as_of": body["asOf"],
+        "note": _texts(language)["stale"].format(
+            year=body["tariffYear"], valid_to=body["validTo"]
+        )
+        if stale
+        else "",
+    }
