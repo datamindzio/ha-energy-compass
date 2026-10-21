@@ -57,6 +57,22 @@ class TariffSpec:
 
 
 @dataclass(frozen=True)
+class Prefill:
+    """Provenance of rates pre-filled from the bundled snapshot."""
+
+    operator: str
+    offer: str | None
+    tariff_year: int
+    valid_from: str
+    valid_to: str
+    as_of: str
+    phases: Literal["one_phase", "three_phase"]
+    billing_months: int
+    consumption_max_kwh: int | None
+    values: Mapping[str, float]
+
+
+@dataclass(frozen=True)
 class TariffSchedule:
     tariff: str
     meter_winter_clock: bool = False
