@@ -1031,11 +1031,15 @@ class Editor(SocEstimatorFlow, SourceEditor):
                         candidate, values, states, dt_util.utcnow()
                     )
                 self._draft = candidate
-                return (
-                    await self.async_step_tariffs()
-                    if group == "tariffs"
-                    else await self.async_step_menu()
-                )
+                if group == "tariffs":
+                    self._values_detail = ""
+                    came_from, self._values_return = self._values_return, None
+                    return (
+                        await self.async_step_sources()
+                        if came_from == "sources"
+                        else await self.async_step_tariffs()
+                    )
+                return await self.async_step_menu()
             except InputError as err:
                 errors["base"] = (
                     "invalid_source" if "throughput" in str(err) else "invalid_input"
@@ -1051,7 +1055,9 @@ class Editor(SocEstimatorFlow, SourceEditor):
                 group, self._draft["settings"], self._draft["currency"]
             ),
             errors=errors,
-            description_placeholders={"detail": detail},
+            description_placeholders={
+                "detail": detail or (self._values_detail if step_id else "")
+            },
         )
 
     async def async_step_battery(self, user_input=None):

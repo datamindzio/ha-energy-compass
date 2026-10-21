@@ -420,6 +420,29 @@
           "afternoon_start": "Afternoon zone start hour (2 h within 13-17)"
         }
       },
+      "tariff_operator": {
+        "title": "Distribution operator",
+        "data": {
+          "operator": "Distribution operator"
+        },
+        "description": "G11 is the same tariff at every operator; its distribution charges differ. Pick yours."
+      },
+      "tariff_offer": {
+        "title": "Seller offer",
+        "data": {
+          "offer": "Seller offer"
+        },
+        "description": "Pre-fills the buy and distribution rates from the bundled {tariff} tariff {year} (valid {valid}, rates as of {as_of}). Pick a seller offer, distribution only (you enter the seller's energy price), or enter the rates yourself. Every value stays editable afterwards. {note}"
+      },
+      "tariff_charges": {
+        "title": "Your connection and billing",
+        "data": {
+          "phases": "Connection",
+          "billing_months": "Billing period",
+          "consumption_max_kwh": "Yearly consumption band"
+        },
+        "description": "These set the monthly charge: fixed, subscription and capacity fees. {detail}"
+      },
       "tariff_distribution": {
         "title": "Distribution tariff",
         "data": {
@@ -970,6 +993,29 @@
           "night_start": "Night zone start hour (8 h within 22-7)",
           "afternoon_start": "Afternoon zone start hour (2 h within 13-17)"
         }
+      },
+      "tariff_operator": {
+        "title": "Distribution operator",
+        "data": {
+          "operator": "Distribution operator"
+        },
+        "description": "G11 is the same tariff at every operator; its distribution charges differ. Pick yours."
+      },
+      "tariff_offer": {
+        "title": "Seller offer",
+        "data": {
+          "offer": "Seller offer"
+        },
+        "description": "Pre-fills the buy and distribution rates from the bundled {tariff} tariff {year} (valid {valid}, rates as of {as_of}). Pick a seller offer, distribution only (you enter the seller's energy price), or enter the rates yourself. Every value stays editable afterwards. {note}"
+      },
+      "tariff_charges": {
+        "title": "Your connection and billing",
+        "data": {
+          "phases": "Connection",
+          "billing_months": "Billing period",
+          "consumption_max_kwh": "Yearly consumption band"
+        },
+        "description": "These set the monthly charge: fixed, subscription and capacity fees. {detail}"
       },
       "tariff_distribution": {
         "title": "Distribution tariff",

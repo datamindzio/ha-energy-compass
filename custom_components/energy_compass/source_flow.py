@@ -45,6 +45,7 @@ from .source_management import (
     source_mode_options,
     source_role_options,
 )
+from .sources import rates
 from .sources.bindings import (
     IntervalBinding,
     field_paths,
@@ -53,6 +54,7 @@ from .sources.bindings import (
 )
 from .sources.solar_forecast import solar_forecast_intervals
 from .sources.tariffs import (
+    BAND_RATE_KEYS,
     CATALOG,
     TariffSchedule,
     is_raw_rce_sell,
@@ -87,12 +89,67 @@ TARGETS = (
 )
 
 
+_OFFER_CHOICES = {
+    "distribution_only": {
+        "en": "Distribution only (I enter the seller's energy price)",
+        "pl": "Tylko dystrybucja (cenę energii wpiszę sam)",
+    },
+    "manual": {"en": "Enter the rates myself", "pl": "Stawki wpiszę sam"},
+}
+_PHASE_LABELS = {
+    "one_phase": {"en": "Single phase", "pl": "Jedna faza"},
+    "three_phase": {"en": "Three phases", "pl": "Trzy fazy"},
+}
+_BILLING_LABELS = {
+    1: {"en": "monthly", "pl": "co miesiąc"},
+    2: {"en": "every 2 months", "pl": "co 2 miesiące"},
+    3: {"en": "every 3 months", "pl": "co 3 miesiące"},
+    6: {"en": "every 6 months", "pl": "co 6 miesięcy"},
+    12: {"en": "every 12 months", "pl": "co 12 miesięcy"},
+}
+_CONSUMPTION_LABELS = {
+    "up_to": {"en": "up to {kwh} kWh/year", "pl": "do {kwh} kWh/rok"},
+    "above": {"en": "above {kwh} kWh/year", "pl": "powyżej {kwh} kWh/rok"},
+}
+_PREFILL_TEXT = {
+    "unbound": {
+        "en": "Helper bindings removed for: {keys}.",
+        "pl": "Powiązania z helperami usunięte dla: {keys}.",
+    },
+    "distribution_only": {
+        "en": (
+            "Energy rates are 0 and planning stays blocked until you enter the "
+            "seller's net energy price plus the excise of {excise} PLN/kWh in "
+            "each zone."
+        ),
+        "pl": (
+            "Stawki energii wynoszą 0 i planowanie jest zablokowane, dopóki nie "
+            "wpiszesz netto ceny energii sprzedawcy plus akcyzy {excise} zł/kWh "
+            "w każdej strefie."
+        ),
+    },
+    "note": {"en": "Note: {note}", "pl": "Uwaga: {note}"},
+}
+_NO_OFFERS = {
+    "en": "No seller price for this group: pick distribution only or enter the rates.",
+    "pl": "Brak ceny sprzedawcy dla tej grupy: wybierz samą dystrybucję albo wpisz stawki.",
+}
+_DEFAULT_CONSUMPTION_EDGE = 2800
+
+
+def _lang(hass):
+    return "pl" if (hass.config.language or "").lower().startswith("pl") else "en"
+
+
 class SourceEditor:
     """Share source transactions across setup and post-setup flows."""
 
     _source_ref = None
     _source_original = None
     _schedule_choice = None
+    _tariff_pending = None
+    _values_detail = ""
+    _values_return = None
 
     async def async_step_sources(self, user_input=None):
         self._source = None
@@ -478,9 +535,7 @@ class SourceEditor:
                 self._schedule_choice = (tariff, winter)
                 if CATALOG[tariff].choices:
                     return await self.async_step_tariff_schedule_hours()
-                return await self._save_schedule_source(
-                    TariffSchedule(tariff, winter, {})
-                )
+                return await self._after_schedule(TariffSchedule(tariff, winter, {}))
         default_tariff = stored.tariff if stored else "g11"
         default_winter = stored.meter_winter_clock if stored else False
         if user_input is not None:
@@ -526,7 +581,7 @@ class SourceEditor:
             except InputError, KeyError, TypeError, ValueError:
                 errors["base"] = "invalid_input"
             else:
-                return await self._save_schedule_source(schedule)
+                return await self._after_schedule(schedule)
             defaults.update(
                 {
                     name: user_input[name]
@@ -546,6 +601,265 @@ class SourceEditor:
             ),
             errors=errors,
         )
+
+    def _stored_prefill(self, operator=None):
+        """Provenance of the stored schedule, when it came from this operator."""
+        stored = self._stored_schedule()
+        prefill = stored.prefill if stored else None
+        if prefill is not None and operator not in (None, prefill.operator):
+            return None
+        return prefill
+
+    async def _after_schedule(self, schedule):
+        """Route a chosen schedule to the operator/offer steps, or save it as typed."""
+        operator = (
+            None if schedule.tariff == "g11" else rates.operator_for(schedule.tariff)
+        )
+        if schedule.tariff != "g11" and operator is None:
+            return await self._save_schedule_source(schedule)
+        self._tariff_pending = {"schedule": schedule, "operator": operator}
+        if operator is None:
+            return await self.async_step_tariff_operator()
+        return await self.async_step_tariff_offer()
+
+    async def async_step_tariff_operator(self, user_input=None):
+        if blocked := self._tariff_step_unavailable("tariff_operator", "buy"):
+            return blocked
+        pending = self._tariff_pending
+        if pending is None or pending["schedule"].tariff != "g11":
+            return await self.async_step_tariff_schedule()
+        operators = rates.operators()
+        errors = {}
+        if user_input is not None:
+            operator = user_input["operator"]
+            if operator not in operators:
+                errors["base"] = "invalid_input"
+            else:
+                pending["operator"] = operator
+                return await self.async_step_tariff_offer()
+        prefill = self._stored_prefill()
+        default = (
+            prefill.operator
+            if prefill and prefill.operator in operators
+            else operators[0]
+        )
+        if user_input is not None:
+            default = user_input.get("operator", default)
+        return self.async_show_form(
+            step_id="tariff_operator",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("operator", default=default): select(
+                        [
+                            {
+                                "value": operator,
+                                "label": rates.SNAPSHOT["operators"][operator]["name"],
+                            }
+                            for operator in operators
+                        ]
+                    )
+                }
+            ),
+            errors=errors,
+        )
+
+    def _offer_options(self, operator, group, language, today):
+        options = [
+            {"value": offer, "label": rates.offer_label(offer, language, today)}
+            for offer in rates.offers_for(operator, group)
+        ]
+        options += [
+            {"value": key, "label": labels[language]}
+            for key, labels in _OFFER_CHOICES.items()
+        ]
+        return options
+
+    def _default_offer(self, operator, group):
+        offers = rates.offers_for(operator, group)
+        prefill = self._stored_prefill(operator)
+        if prefill is not None:
+            if prefill.offer is None:
+                return "distribution_only"
+            if prefill.offer in offers:
+                return prefill.offer
+        if (
+            prefill is None
+            and self._stored_schedule() is not None
+            and any(
+                self._draft["settings"].get(key, 0)
+                for key in (
+                    *BAND_RATE_KEYS.values(),
+                    "buy_distribution_rate",
+                    "buy_distribution_mid_peak_rate",
+                    "buy_distribution_off_peak_rate",
+                )
+            )
+        ):
+            return "manual"
+        for offer in offers:
+            if rates.SNAPSHOT["offers"][offer]["kind"] == "ure":
+                return offer
+        return "distribution_only"
+
+    async def async_step_tariff_offer(self, user_input=None):
+        if blocked := self._tariff_step_unavailable("tariff_offer", "buy"):
+            return blocked
+        pending = self._tariff_pending
+        if pending is None or pending["operator"] is None:
+            return await self.async_step_tariff_schedule()
+        schedule, operator = pending["schedule"], pending["operator"]
+        group = CATALOG[schedule.tariff].group
+        language = _lang(self.hass)
+        today = dt_util.now().date()
+        options = self._offer_options(operator, group, language, today)
+        errors = {}
+        if user_input is not None:
+            offer = user_input["offer"]
+            if offer not in {option["value"] for option in options}:
+                errors["base"] = "invalid_input"
+            elif offer == "manual":
+                return await self._save_schedule_source(schedule)
+            else:
+                pending["offer"] = None if offer == "distribution_only" else offer
+                return await self.async_step_tariff_charges()
+        default = self._default_offer(operator, group)
+        if user_input is not None:
+            default = user_input.get("offer", default)
+        text = rates.snapshot_text(operator, today, language)
+        if not rates.offers_for(operator, group):
+            text["note"] = " ".join(filter(None, (text["note"], _NO_OFFERS[language])))
+        return self.async_show_form(
+            step_id="tariff_offer",
+            data_schema=vol.Schema(
+                {vol.Required("offer", default=default): select(options)}
+            ),
+            errors=errors,
+            description_placeholders=text,
+        )
+
+    def _charge_choices(self, operator, group, language):
+        options = rates.charge_options(operator, group)
+        billing = [
+            {"value": str(months), "label": _BILLING_LABELS[months][language]}
+            for months in options.billing_months
+        ]
+        edges = options.consumption_edges
+        finite = [edge for edge in edges if edge is not None]
+        bands = [
+            {
+                "value": "above" if edge is None else str(edge),
+                "label": _CONSUMPTION_LABELS["above" if edge is None else "up_to"][
+                    language
+                ].format(kwh=finite[-1] if edge is None else edge),
+            }
+            for edge in edges
+        ]
+        return billing, bands
+
+    async def async_step_tariff_charges(self, user_input=None):
+        if blocked := self._tariff_step_unavailable("tariff_charges", "buy"):
+            return blocked
+        pending = self._tariff_pending
+        if pending is None or "offer" not in pending:
+            return await self.async_step_tariff_offer()
+        schedule, operator = pending["schedule"], pending["operator"]
+        group = CATALOG[schedule.tariff].group
+        language = _lang(self.hass)
+        billing, bands = self._charge_choices(operator, group, language)
+        errors = {}
+        detail = ""
+        if user_input is not None:
+            try:
+                phases = user_input["phases"]
+                months = int(user_input["billing_months"])
+                edge = user_input["consumption_max_kwh"]
+                edge = None if edge == "above" else int(edge)
+                result = rates.compute_prefill(
+                    schedule.tariff,
+                    operator,
+                    pending["offer"],
+                    phases,
+                    months,
+                    edge,
+                    self._draft["settings"],
+                    helpers=self._draft["helpers"],
+                )
+                self._store_schedule_source(schedule, result)
+            except InputError as err:
+                errors["base"] = "invalid_input"
+                detail = str(err)
+            except KeyError, TypeError, ValueError:
+                errors["base"] = "invalid_input"
+            else:
+                self._values_detail = self._prefill_detail(result, language)
+                self._values_return = (
+                    "tariffs"
+                    if self._source.get("return_to") == "tariffs"
+                    else "sources"
+                )
+                self._tariff_pending = None
+                return await self.async_step_tariff_values()
+        prefill = self._stored_prefill(operator)
+        default_phases = prefill.phases if prefill else "one_phase"
+        default_months = str(prefill.billing_months) if prefill else "1"
+        default_edge = (
+            (
+                "above"
+                if prefill.consumption_max_kwh is None
+                else str(prefill.consumption_max_kwh)
+            )
+            if prefill
+            else str(_DEFAULT_CONSUMPTION_EDGE)
+        )
+        if default_months not in {option["value"] for option in billing}:
+            default_months = billing[0]["value"]
+        if default_edge not in {option["value"] for option in bands}:
+            default_edge = str(_DEFAULT_CONSUMPTION_EDGE)
+        if user_input is not None:
+            default_phases = user_input.get("phases", default_phases)
+            default_months = user_input.get("billing_months", default_months)
+            default_edge = user_input.get("consumption_max_kwh", default_edge)
+        return self.async_show_form(
+            step_id="tariff_charges",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("phases", default=default_phases): select(
+                        [
+                            {"value": key, "label": labels[language]}
+                            for key, labels in _PHASE_LABELS.items()
+                        ]
+                    ),
+                    vol.Required("billing_months", default=default_months): select(
+                        billing
+                    ),
+                    vol.Required("consumption_max_kwh", default=default_edge): select(
+                        bands
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={"detail": detail},
+        )
+
+    def _prefill_detail(self, result, language):
+        """Text of the values screen after a prefill: source, removed helpers, caveats."""
+        lines = [rates.prefill_summary(result.prefill, language) + "."]
+        if result.unbound:
+            lines.append(
+                _PREFILL_TEXT["unbound"][language].format(
+                    keys=", ".join(result.unbound)
+                )
+            )
+        if result.prefill.offer is None:
+            lines.append(
+                _PREFILL_TEXT["distribution_only"][language].format(
+                    excise=f"{rates.excise_per_kwh():g}"
+                )
+            )
+        lines += [
+            _PREFILL_TEXT["note"][language].format(note=note) for note in result.notes
+        ]
+        return "\n\n".join(lines)
 
     def _stored_distribution(self):
         stored = self._draft["sources"]["buy"].get("distribution_schedule")
@@ -794,7 +1108,12 @@ class SourceEditor:
         )
 
     async def _save_schedule_source(self, schedule, result=None):
-        """Store a schedule buy source; `result` (a `PrefillResult`) also writes its rates.
+        """Store a schedule buy source and leave the editor (see `_store_schedule_source`)."""
+        self._store_schedule_source(schedule, result)
+        return await self._after_source_save()
+
+    def _store_schedule_source(self, schedule, result=None):
+        """Put a schedule buy source in the draft; `result` (a `PrefillResult`) also writes its rates.
 
         Without `result` the schedule keeps no provenance and the rate settings and helpers
         stay as they are (DD-12). With it, the DD-8 values replace the settings, the helper
@@ -830,7 +1149,6 @@ class SourceEditor:
                 sources=False,
             )
         self._draft = candidate
-        return await self._after_source_save()
 
     async def _save_rce_source(self, binding):
         candidate = deepcopy(self._draft)

@@ -420,6 +420,29 @@
           "afternoon_start": "Początek strefy popołudniowej (2 h w przedziale 13-17)"
         }
       },
+      "tariff_operator": {
+        "title": "Operator dystrybucyjny",
+        "data": {
+          "operator": "Operator dystrybucyjny"
+        },
+        "description": "G11 to ta sama taryfa u każdego operatora, ale opłaty dystrybucyjne się różnią. Wybierz swojego."
+      },
+      "tariff_offer": {
+        "title": "Oferta sprzedawcy",
+        "data": {
+          "offer": "Oferta sprzedawcy"
+        },
+        "description": "Wypełnia stawki zakupu i dystrybucji z wbudowanej taryfy {tariff} {year} (ważna {valid}, stan na {as_of}). Wybierz ofertę sprzedawcy, samą dystrybucję (cenę energii wpiszesz sam) albo wpisz stawki ręcznie. Każdą wartość można potem zmienić. {note}"
+      },
+      "tariff_charges": {
+        "title": "Twoje przyłącze i rozliczenie",
+        "data": {
+          "phases": "Przyłącze",
+          "billing_months": "Okres rozliczeniowy",
+          "consumption_max_kwh": "Przedział rocznego zużycia"
+        },
+        "description": "Z tego wynika opłata miesięczna: stała, abonamentowa i mocowa. {detail}"
+      },
       "tariff_distribution": {
         "title": "Taryfa dystrybucyjna",
         "data": {
@@ -970,6 +993,29 @@
           "night_start": "Początek strefy nocnej (8 h w przedziale 22-7)",
           "afternoon_start": "Początek strefy popołudniowej (2 h w przedziale 13-17)"
         }
+      },
+      "tariff_operator": {
+        "title": "Operator dystrybucyjny",
+        "data": {
+          "operator": "Operator dystrybucyjny"
+        },
+        "description": "G11 to ta sama taryfa u każdego operatora, ale opłaty dystrybucyjne się różnią. Wybierz swojego."
+      },
+      "tariff_offer": {
+        "title": "Oferta sprzedawcy",
+        "data": {
+          "offer": "Oferta sprzedawcy"
+        },
+        "description": "Wypełnia stawki zakupu i dystrybucji z wbudowanej taryfy {tariff} {year} (ważna {valid}, stan na {as_of}). Wybierz ofertę sprzedawcy, samą dystrybucję (cenę energii wpiszesz sam) albo wpisz stawki ręcznie. Każdą wartość można potem zmienić. {note}"
+      },
+      "tariff_charges": {
+        "title": "Twoje przyłącze i rozliczenie",
+        "data": {
+          "phases": "Przyłącze",
+          "billing_months": "Okres rozliczeniowy",
+          "consumption_max_kwh": "Przedział rocznego zużycia"
+        },
+        "description": "Z tego wynika opłata miesięczna: stała, abonamentowa i mocowa. {detail}"
       },
       "tariff_distribution": {
         "title": "Taryfa dystrybucyjna",

@@ -1599,6 +1599,7 @@ async def test_existing_installation_saves_never_touch_profiles(
         await manager.async_configure(
             fid, {"tariff": "pge_g12", "meter_winter_clock": False}
         )
+        await manager.async_configure(fid, {"offer": "manual"})
         for spy in (assignments, reconcile, apply, schedule):
             assert not spy.called
     draft = manager._progress[fid]._draft
