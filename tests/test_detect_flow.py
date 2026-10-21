@@ -234,7 +234,7 @@ async def test_quick_path_binds_defaults_and_opens_preview(
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY, result
     data = result["data"]
-    assert data["setup_profiles"]["revision"] == 3
+    assert data["setup_profiles"]["revision"] == 4
     assert data["settings"]["sell_multiplier"] == 1
     sources = data["sources"]
     assert sources["pv"]["arrays"] == []

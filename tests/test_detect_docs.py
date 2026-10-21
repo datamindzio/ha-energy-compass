@@ -80,10 +80,10 @@ def test_expert_sections_name_every_expert_label():
         assert "`show_expert`" in text
 
 
-def test_setup_profiles_sections_state_revision_three():
-    assert "revision 3 of the setup profiles" in GUIDE_EN
+def test_setup_profiles_sections_state_the_current_revision():
+    assert "revision 4 of the setup profiles" in GUIDE_EN
     assert "Revision 3 adds one rule" in GUIDE_EN
-    assert "To wersja 3" in GUIDE_PL
+    assert "To wersja 4" in GUIDE_PL
     assert "Wersja 3 dodaje do tego jedną regułę" in GUIDE_PL
 
 

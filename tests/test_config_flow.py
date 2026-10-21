@@ -847,7 +847,7 @@ async def test_pl_net_billing_deye_prefills_new_entry(
             "limit_floor": 0.8,
         }
         assert result["data"]["setup_profiles"] == {
-            "revision": 3,
+            "revision": 4,
             "settlement": "pl_net_billing",
             "buy_tariff": "generic",
             "inverter": "deye_hybrid",
@@ -880,7 +880,7 @@ async def test_generic_profiles_are_a_no_op(
     assert result["type"] == "create_entry"
     assert result["data"]["settings"] == default_configuration("EUR", "UTC")["settings"]
     assert result["data"]["setup_profiles"] == {
-        "revision": 3,
+        "revision": 4,
         "settlement": "generic",
         "buy_tariff": "generic",
         "inverter": "generic",
@@ -1449,7 +1449,7 @@ async def test_user_step_offers_the_buy_tariff_axis(
     assert defaults["buy_tariff"] == "generic"
     fields = {str(key): value for key, value in result["data_schema"].schema.items()}
     options = [o["value"] for o in fields["buy_tariff"].config["options"]]
-    assert options[0] == "generic" and "pge_g12w" in options and len(options) == 12
+    assert options[0] == "generic" and "pge_g12w" in options and len(options) == 14
     assert list(fields).index("buy_tariff") == list(fields).index("settlement") + 1
 
 

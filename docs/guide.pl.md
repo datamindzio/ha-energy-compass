@@ -258,8 +258,8 @@ ją włączyć.
 Trzy osie na pierwszym formularzu (**Użytkownik**), **Rozliczenie prosumenckie**, **Polska taryfa
 dystrybucyjna** (`buy_tariff`) i **Falownik**, jednorazowo wypełniają edytowalne strojenie nowej
 instalacji. Każda oś jest wybierana raz; wszystkie domyślnie mają wartość **Ogólne** lub **Brak**
-(brak przypisań), a wybór profilu od razu stosuje jego przypisania do wersji roboczej. To wersja 3
-profili startowych; wpis utworzony w wersji 1 lub 2 zachowuje swój zapis i nigdy nie jest
+(brak przypisań), a wybór profilu od razu stosuje jego przypisania do wersji roboczej. To wersja 4
+profili startowych; wpis utworzony we wcześniejszej wersji zachowuje swój zapis i nigdy nie jest
 ponownie wyliczany. Wartości przypięte poniżej (0,20, 0,60, 0,13) zostały zmierzone lub wyznaczone
 na jednej instalacji — taryfa zakupu G12, sprzedaż RCE w net-billingu i bateria LFP Deye — i są
 punktem startowym, nie uniwersalnym domyślnym ustawieniem.
@@ -291,6 +291,8 @@ zostają na 0, dopóki ich nie wpiszesz. Każdy profil katalogowy wymaga waluty 
 | `energa_g12w` | PLN | harmonogram G12w | Energa-Operator |
 | `stoen_g12` | PLN | harmonogram G12 | Stoen Operator |
 | `stoen_g12w` | PLN | harmonogram G12w | Stoen Operator |
+| `tauron_g13` | PLN | harmonogram G13 (trzy strefy) | Tauron Dystrybucja |
+| `enea_g13active` | PLN | harmonogram G13active (trzy strefy) | Enea Operator |
 
 **Oś falownika:**
 

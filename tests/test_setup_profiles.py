@@ -39,6 +39,8 @@ TARIFF_KEYS = (
     "energa_g12w",
     "stoen_g12",
     "stoen_g12w",
+    "tauron_g13",
+    "enea_g13active",
 )
 SETTLEMENTS = ("generic", "pl_net_billing", "pl_net_metering_80", "pl_net_metering_70")
 
@@ -156,7 +158,7 @@ def test_revision_1_is_frozen():
 
 def test_revisions_are_append_only_and_immutable():
     assert sorted(sp.REVISIONS) == list(range(1, sp.SETUP_PROFILES_REVISION + 1))
-    assert sp.SETUP_PROFILES_REVISION == max(sp.REVISIONS) == 3
+    assert sp.SETUP_PROFILES_REVISION == max(sp.REVISIONS) == 4
     assert sp.CURRENT is sp.REVISIONS[sp.SETUP_PROFILES_REVISION]
 
     with pytest.raises(TypeError):
@@ -488,13 +490,13 @@ def test_selection_record():
             "inverter": "deye_hybrid",
         }
     ) == {
-        "revision": 3,
+        "revision": 4,
         "settlement": "pl_net_billing",
         "buy_tariff": "pge_g12",
         "inverter": "deye_hybrid",
     }
     assert sp.selection_record({}) == {
-        "revision": 3,
+        "revision": 4,
         "settlement": "generic",
         "buy_tariff": "generic",
         "inverter": "generic",
@@ -1313,7 +1315,8 @@ def test_raw_rce_gate_is_preset_or_source(preset, raw, expected):
 def test_buy_tariff_profiles_assign_nothing_and_name_a_catalog_key():
     from custom_components.energy_compass.sources.tariffs import CATALOG
 
-    for key, profile in sp.REVISIONS[2].axes["buy_tariff"].items():
+    assert len(sp.REVISIONS[4].axes["buy_tariff"]) == 1 + 13
+    for key, profile in sp.REVISIONS[4].axes["buy_tariff"].items():
         if key == "generic":
             assert profile.buy_tariff is None
             continue
@@ -1414,8 +1417,56 @@ def test_revision_3_is_frozen():
     assert rev3.raw_rce_presets == frozenset({"pse", "pse_solcast"})
     assert rev3.raw_rce_sources is True
     assert rev3.settled_sell_sources is True
-    assert sp.CURRENT is rev3
-    assert sp.SETUP_PROFILES_REVISION == 3
+    assert sp.CURRENT is sp.REVISIONS[4]
+    assert sp.SETUP_PROFILES_REVISION == 4
+
+
+EXPECTED_REVISION_4_BUY_TARIFF = {
+    **EXPECTED_REVISION_2_BUY_TARIFF,
+    "tauron_g13": (
+        "tauron_g13",
+        "PLN",
+        "Tauron Dystrybucja G13",
+        "Tauron Dystrybucja G13",
+    ),
+    "enea_g13active": (
+        "enea_g13active",
+        "PLN",
+        "Enea Operator G13active",
+        "Enea Operator G13active",
+    ),
+}
+
+
+def _buy_tariff_labels(revision):
+    return {
+        profile: (prof.buy_tariff, prof.currency, prof.labels["en"], prof.labels["pl"])
+        for profile, prof in revision.axes["buy_tariff"].items()
+    }
+
+
+def test_revision_4_adds_g13_buy_tariffs():
+    rev3, rev4 = sp.REVISIONS[3], sp.REVISIONS[4]
+    labels3 = _buy_tariff_labels(rev3)
+    labels4 = _buy_tariff_labels(rev4)
+    assert list(labels4) == [*labels3, "tauron_g13", "enea_g13active"]
+    assert {k: v for k, v in labels4.items() if k in labels3} == labels3
+    assert labels4["tauron_g13"] == EXPECTED_REVISION_4_BUY_TARIFF["tauron_g13"]
+    assert labels4["enea_g13active"] == EXPECTED_REVISION_4_BUY_TARIFF["enea_g13active"]
+    assert rev4.axes["settlement"] is rev3.axes["settlement"]
+    assert rev4.axes["inverter"] is rev3.axes["inverter"]
+
+
+def test_revision_4_is_frozen():
+    """Frozen once published: revision 4 is persisted in new entries."""
+    rev4 = sp.REVISIONS[4]
+    assert _buy_tariff_labels(rev4) == EXPECTED_REVISION_4_BUY_TARIFF
+    assert rev4.raw_rce_presets == frozenset({"pse", "pse_solcast"})
+    assert rev4.raw_rce_sources is True
+    assert rev4.settled_sell_sources is True
+    assert sp.CURRENT is rev4
+    assert sp.SETUP_PROFILES_REVISION == 4
+    assert sp.REVISIONS[3].axes is sp.REVISIONS[2].axes
 
 
 def test_revisions_1_2_have_no_settled_semantics():
