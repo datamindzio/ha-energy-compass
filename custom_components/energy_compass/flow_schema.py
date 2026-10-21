@@ -33,7 +33,9 @@ def number(low, high, unit="", step=0.01):
     )
 
 
-def settings_schema(group: str, values: dict, currency="EUR") -> vol.Schema:
+def settings_schema(
+    group: str, values: dict, currency="EUR", notify_services=()
+) -> vol.Schema:
     """Group fixed values so accepting defaults takes one form per topic."""
     fields = {}
     for key, (section, default, low, high, unit) in NUMBERS.items():
@@ -54,7 +56,10 @@ def settings_schema(group: str, values: dict, currency="EUR") -> vol.Schema:
             current = values.get(key, choices[0])
             fields[
                 vol.Optional(key, default=current if current in choices else choices[0])
-            ] = select(choices)
+            ] = select(
+                choices,
+                **({"translation_key": key} if key == "notify_language" else {}),
+            )
     if group == "notifications":
         for key in ("quiet_start", "quiet_end"):
             fields[vol.Optional(key, default=values[key])] = selector.TimeSelector()
@@ -68,6 +73,17 @@ def settings_schema(group: str, values: dict, currency="EUR") -> vol.Schema:
                 ],
             )
         ] = select(["favorable", "limit"], multiple=True)
+        saved = list(values.get("notify_services", []))
+        fields[vol.Optional("notify_services", default=saved)] = select(
+            sorted({*notify_services, *saved}), multiple=True, custom_value=True
+        )
+        fields[
+            vol.Optional(
+                "notify_entities", default=list(values.get("notify_entities", []))
+            )
+        ] = selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="notify", multiple=True)
+        )
     if group == "presentation":
         for key in (
             "window_label",

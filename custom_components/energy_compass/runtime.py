@@ -60,7 +60,7 @@ from .engine.peak_reserve import (
     peak_reserve_weight,
 )
 from .engine.strategy import resolve_flags, strategy_weights
-from .settings import validate_configuration
+from .settings import native_notifications_active, validate_configuration
 from .settlement import resolve_settlement
 from .soc_estimator_config import ESTIMATE_KEY, balance_lead_minutes
 from .sources.battery import SocSettings, validate_soc
@@ -1242,6 +1242,13 @@ def _log_released_rung(read: Problem, plan, solved: Problem) -> None:
     )
 
 
+def _notify_sender(values: dict) -> str:
+    """Who sends the window notifications: published so only one sender passes (DD-2)."""
+    if native_notifications_active(values):
+        return "integration"
+    return "blueprint" if values["notify_enabled"] else "off"
+
+
 def compute(
     config: dict,
     states: dict,
@@ -1491,7 +1498,6 @@ def compute(
             **{
                 key: values[key]
                 for key in (
-                    "notify_enabled",
                     "notify_events",
                     "notify_minimum_hours",
                     "notify_limit_lead_minutes",
@@ -1502,6 +1508,11 @@ def compute(
                 )
             },
             "actions_configured": bool(values["notify_actions"]),
+            # DD-2: one sender. `notify_enabled` here means "the blueprint may
+            # send": every shipped blueprint copy sends only while it is true.
+            "notify_sender": _notify_sender(values),
+            "notify_enabled": values["notify_enabled"]
+            and not native_notifications_active(values),
         },
     }
     if atlas_solve_builder is not None:

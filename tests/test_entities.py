@@ -181,6 +181,7 @@ async def test_helper_precision_and_blueprint_preferences(
     assert plan.attributes["presentation"]["boost_color"] == "#123456"
     assert plan.attributes["notification_preferences"]["notify_minimum_hours"] == 3
     assert plan.attributes["notification_preferences"]["notify_enabled"] is False
+    assert plan.attributes["notification_preferences"]["notify_sender"] == "off"
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 

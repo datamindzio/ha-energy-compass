@@ -162,6 +162,7 @@ CHOICES = {
     "short_coverage": ("compass", ["absolute_fallback", "unavailable"]),
     "forecast_method": ("forecast", ["bucketed_history"]),
     "strategy": ("planning", list(STRATEGIES)),
+    "notify_language": ("notifications", ["auto", "en", "pl"]),
 }
 GROUPS = (
     "battery",
@@ -177,6 +178,14 @@ GROUPS = (
 EXPERT_GROUPS = ("planning", "compass", "performance", "presentation")
 
 
+def native_notifications_active(values: Mapping[str, object]) -> bool:
+    """True when Energy Compass itself sends the window notifications (DD-1)."""
+    return bool(
+        values.get("notify_enabled")
+        and (values.get("notify_services") or values.get("notify_entities"))
+    )
+
+
 def default_configuration(currency: str, timezone: str) -> dict:
     """Build visible generic defaults without provider or household assumptions."""
     settings = {key: spec[1] for key, spec in NUMBERS.items()}
@@ -187,6 +196,8 @@ def default_configuration(currency: str, timezone: str) -> dict:
         quiet_end="08:00:00",
         notify_actions=[],
         notify_events=["favorable", "limit"],
+        notify_services=[],
+        notify_entities=[],
         window_label="Energy Compass",
         boost_color="#2e7d32",
         cheap_color="#66bb6a",
@@ -289,6 +300,28 @@ def stamp_strategy_change(
         draft["strategy_changed_at"] = previous.get("strategy_changed_at")
 
 
+def _validate_notify_targets(values: dict) -> None:
+    """Shape of the notification targets; existence is checked at send time (DD-3)."""
+    services = values.setdefault("notify_services", [])
+    entities = values.setdefault("notify_entities", [])
+    if not isinstance(services, list) or not isinstance(entities, list):
+        raise InputError("invalid notify target: targets must be lists")
+    for name in services:
+        if (
+            not isinstance(name, str)
+            or not re.fullmatch("[a-z0-9_]+", name)
+            or name == "send_message"
+        ):
+            raise InputError(f"invalid notify target: service {name!r}")
+    for entity_id in entities:
+        if not isinstance(entity_id, str) or not re.fullmatch(
+            "notify\\.[a-z0-9_]+", entity_id
+        ):
+            raise InputError(f"invalid notify target: entity {entity_id!r}")
+    if len(set(services)) != len(services) or len(set(entities)) != len(entities):
+        raise InputError("invalid notify target: duplicate")
+
+
 def validate_configuration(
     config: dict, states: dict, now: datetime, *, sources: bool = True
 ) -> dict:
@@ -345,6 +378,7 @@ def validate_configuration(
         values.setdefault(key, choices[0])
         if values[key] not in choices:
             raise InputError(f"invalid {key}")
+    _validate_notify_targets(values)
     if (
         not values["hardware_floor"]
         <= values["operating_floor"]
