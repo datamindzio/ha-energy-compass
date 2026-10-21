@@ -307,7 +307,7 @@
         },
         "description": "Energy Compass sends window notifications itself when Notify enabled is on and at least one target is selected. Try a target with the action energy_compass.send_test_notification. {detail}",
         "data_description": {
-          "notify_services": "Legacy notify services, e.g. mobile_app_<phone>. Energy Compass calls each one.",
+          "notify_services": "Legacy notify services, e.g. mobile_app_phone. Energy Compass calls each one.",
           "notify_entities": "Notify entities, sent with notify.send_message."
         }
       },
@@ -886,7 +886,7 @@
         },
         "description": "Energy Compass sends window notifications itself when Notify enabled is on and at least one target is selected. Try a target with the action energy_compass.send_test_notification. {detail}",
         "data_description": {
-          "notify_services": "Legacy notify services, e.g. mobile_app_<phone>. Energy Compass calls each one.",
+          "notify_services": "Legacy notify services, e.g. mobile_app_phone. Energy Compass calls each one.",
           "notify_entities": "Notify entities, sent with notify.send_message."
         }
       },

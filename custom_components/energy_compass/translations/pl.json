@@ -307,7 +307,7 @@
         },
         "description": "Energy Compass sam wysyła powiadomienia o oknach, gdy Włącz powiadomienia jest włączone i wybrano co najmniej jeden cel. Sprawdź cel akcją energy_compass.send_test_notification. {detail}",
         "data_description": {
-          "notify_services": "Starsze usługi notify, np. mobile_app_<telefon>. Energy Compass wywołuje każdą z nich.",
+          "notify_services": "Starsze usługi notify, np. mobile_app_telefon. Energy Compass wywołuje każdą z nich.",
           "notify_entities": "Encje notify, wysyłane przez notify.send_message."
         }
       },
@@ -886,7 +886,7 @@
         },
         "description": "Energy Compass sam wysyła powiadomienia o oknach, gdy Włącz powiadomienia jest włączone i wybrano co najmniej jeden cel. Sprawdź cel akcją energy_compass.send_test_notification. {detail}",
         "data_description": {
-          "notify_services": "Starsze usługi notify, np. mobile_app_<telefon>. Energy Compass wywołuje każdą z nich.",
+          "notify_services": "Starsze usługi notify, np. mobile_app_telefon. Energy Compass wywołuje każdą z nich.",
           "notify_entities": "Encje notify, wysyłane przez notify.send_message."
         }
       },
