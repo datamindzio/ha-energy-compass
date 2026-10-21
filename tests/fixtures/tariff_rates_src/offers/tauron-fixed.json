@@ -1,0 +1,37 @@
+{
+  "id": "tauron-fixed",
+  "seller": {
+    "id": "tauron-sprzedaz",
+    "name": "Tauron Sprzedaż"
+  },
+  "name": "Taryfa G Tauron Sprzedaż 2026 (sprzedawca z urzędu)",
+  "kind": "fixed",
+  "osdScope": [
+    "tauron"
+  ],
+  "groups": {
+    "G11": {
+      "energyPricePerKWh": {
+        "all": 0.497
+      }
+    },
+    "G13": {
+      "energyPricePerKWh": {
+        "morning": 0.4668,
+        "afternoon": 0.778,
+        "offpeak": 0.421
+      }
+    }
+  },
+  "tradeFeePerMonth": 5,
+  "contract": {
+    "termMonths": 12,
+    "earlyTerminationFee": 0
+  },
+  "asOf": "2026-10-06",
+  "source": {
+    "title": "Tauron Sprzedaż: Decyzja Prezesa URE z 17.12.2025, DRE.WRE.4211.53.10.2025.ASa1, z treścią Taryfy G TAURON Sprzedaż (Biuletyn Branżowy URE Nr 265 (4795)), rozdz. 5, s. 10",
+    "url": "https://bip.ure.gov.pl/download/3/20340/TauronSprzedaz.pdf"
+  },
+  "availableUntil": "2026-12-31"
+}

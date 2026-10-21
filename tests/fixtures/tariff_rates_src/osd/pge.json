@@ -1,0 +1,184 @@
+{
+  "id": "pge",
+  "name": "PGE Dystrybucja",
+  "area": "m.in. Lubelskie, Łódzkie, Podkarpackie, Mazowsze poza Warszawą",
+  "order": 1,
+  "tariffYear": 2026,
+  "validFrom": "2026-01-01",
+  "validTo": "2026-12-31",
+  "zoneClock": "standard",
+  "asOf": "2026-10-06",
+  "source": {
+    "title": "Taryfa PGE Dystrybucja na 2026 r. — decyzja Prezesa URE DRE.WRE.4211.50.7.2025.JTr z 17.12.2025; stawka jakościowa 0,0332 zł/kWh od 1.02.2026 (zmiana taryfy PSE)",
+    "url": "https://pgedystrybucja.pl/content/download/15f0a79cad0e85c168cd6b8430b4a2e9/file/tekst-jednolity-od-01.02.2026_taryfa-pge-dystrybucja-na-rok-2026.pdf?inLanguage=pol-PL&version=3&contentId=27274"
+  },
+  "groups": {
+    "G11": {
+      "zones": [
+        {
+          "id": "all",
+          "label": "cała doba",
+          "default": true
+        }
+      ],
+      "charges": {
+        "variablePerKWh": {
+          "all": 0.3469
+        },
+        "qualityPerKWh": 0.0332,
+        "ozePerKWh": 0.0073,
+        "cogenerationPerKWh": 0.003,
+        "fixedPerMonth": {
+          "onePhase": 5.5,
+          "threePhase": 9.98
+        },
+        "transitionalPerMonth": [
+          {
+            "maxKWh": null,
+            "pln": 0
+          }
+        ],
+        "subscriptionPerMonth": {
+          "1": 4.5,
+          "2": 2.25,
+          "6": 0.75
+        },
+        "capacityPerMonth": [
+          {
+            "maxKWh": 500,
+            "pln": 4.29
+          },
+          {
+            "maxKWh": 1200,
+            "pln": 10.31
+          },
+          {
+            "maxKWh": 2800,
+            "pln": 17.18
+          },
+          {
+            "maxKWh": null,
+            "pln": 24.05
+          }
+        ]
+      }
+    },
+    "G12": {
+      "zones": [
+        {
+          "id": "day",
+          "label": "strefa dzienna",
+          "rules": [
+            {
+              "months": [
+                4,
+                5,
+                6,
+                7,
+                8,
+                9
+              ],
+              "days": [
+                "mon",
+                "tue",
+                "wed",
+                "thu",
+                "fri",
+                "sat",
+                "sun"
+              ],
+              "hours": [
+                [
+                  6,
+                  15
+                ],
+                [
+                  17,
+                  22
+                ]
+              ],
+              "holidays": true
+            },
+            {
+              "months": [
+                1,
+                2,
+                3,
+                10,
+                11,
+                12
+              ],
+              "days": [
+                "mon",
+                "tue",
+                "wed",
+                "thu",
+                "fri",
+                "sat",
+                "sun"
+              ],
+              "hours": [
+                [
+                  6,
+                  13
+                ],
+                [
+                  15,
+                  22
+                ]
+              ],
+              "holidays": true
+            }
+          ]
+        },
+        {
+          "id": "night",
+          "label": "strefa nocna",
+          "default": true
+        }
+      ],
+      "charges": {
+        "variablePerKWh": {
+          "day": 0.4014,
+          "night": 0.0765
+        },
+        "qualityPerKWh": 0.0332,
+        "ozePerKWh": 0.0073,
+        "cogenerationPerKWh": 0.003,
+        "fixedPerMonth": {
+          "onePhase": 8.5,
+          "threePhase": 14.4
+        },
+        "transitionalPerMonth": [
+          {
+            "maxKWh": null,
+            "pln": 0
+          }
+        ],
+        "subscriptionPerMonth": {
+          "1": 4.5,
+          "2": 2.25,
+          "6": 0.75
+        },
+        "capacityPerMonth": [
+          {
+            "maxKWh": 500,
+            "pln": 4.29
+          },
+          {
+            "maxKWh": 1200,
+            "pln": 10.31
+          },
+          {
+            "maxKWh": 2800,
+            "pln": 17.18
+          },
+          {
+            "maxKWh": null,
+            "pln": 24.05
+          }
+        ]
+      }
+    }
+  }
+}
