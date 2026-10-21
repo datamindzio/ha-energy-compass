@@ -350,10 +350,10 @@ async def test_reverse_mapping_defaults_and_inventory_label(
     en = dict(source_inventory(config, None, "en"))
     labels = {ref.role: label for ref, label in en.items()}
     assert labels["buy"] == (
-        "Buy · Polish tariff schedule (G11/G12/G12w) · PGE Dystrybucja G12"
+        "Buy · Polish tariff schedule (G11/G12/G12w/G13) · PGE Dystrybucja G12"
     )
     pl = {ref.role: label for ref, label in source_inventory(config, None, "pl")}
-    assert pl["buy"] == "Zakup · Taryfa OSD (G11/G12/G12w) · PGE Dystrybucja G12"
+    assert pl["buy"] == "Zakup · Taryfa OSD (G11/G12/G12w/G13) · PGE Dystrybucja G12"
 
 
 async def test_source_edit_on_schedule_buy_opens_the_schedule_step(
@@ -678,6 +678,77 @@ def test_preview_tauron_g12w_lists_holidays_and_all_day_windows():
     assert "statutory holidays in horizon: none;" in quiet
     plain = _preview(_schedule_preview_config("pge_g12"), now)
     assert "statutory holidays" not in plain
+
+
+def _g13_preview_config(tariff, *, hours=12):
+    config = _schedule_preview_config(tariff, hours=hours)
+    config["settings"].update(buy_mid_peak_rate=0.6)
+    return config
+
+
+def test_preview_tauron_g13_three_lines():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)  # a Wednesday
+    text = _preview(_g13_preview_config("tauron_g13"), now)
+    assert text == (
+        "Buy source: tariff schedule Tauron Dystrybucja G13; clock local time "
+        "(Europe/Warsaw); peak today 2026-07-01 (Europe/Warsaw): 19:00–22:00; "
+        "mid-peak today 2026-07-01 (Europe/Warsaw): 07:00–13:00; "
+        "off-peak today 2026-07-01 (Europe/Warsaw): "
+        f"00:00–07:00, 13:00–19:00, 22:00–24:00; {HINT}; statutory holidays in "
+        "horizon: none; peak 0.8, mid-peak 0.6, off-peak 0.4 PLN/kWh before "
+        "multiplier" + SUFFIX.format(first=0.6)
+    )
+
+
+def test_preview_enea_g13active_saturday():
+    now = datetime(2026, 7, 4, 10, tzinfo=UTC)  # a Saturday, no weekend rule
+    text = _preview(_g13_preview_config("enea_g13active"), now)
+    assert "tariff schedule Enea Operator G13active; " in text
+    assert (
+        "peak today 2026-07-04 (Europe/Warsaw): 06:00–09:00, 18:00–23:00; "
+        "mid-peak today 2026-07-04 (Europe/Warsaw): 00:00–06:00, 17:00–18:00, "
+        "23:00–24:00; off-peak today 2026-07-04 (Europe/Warsaw): "
+        "09:00–17:00;"
+    ) in text
+    assert "; peak 0.8, mid-peak 0.6, off-peak 0.4 PLN/kWh before multiplier" in text
+    assert "statutory holidays" not in text
+
+
+def test_distribution_preview_three_zones():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    config = _g13_preview_config("tauron_g13")
+    config["settings"].update(
+        buy_distribution_mode="added",
+        buy_distribution_rate=0.3,
+        buy_distribution_mid_peak_rate=0.2,
+        buy_distribution_off_peak_rate=0.1,
+    )
+    text = _preview(config, now)
+    assert " Distribution: added on top of the buy source; " in text
+    assert "zones of the buy tariff Tauron Dystrybucja G13; " in text
+    assert "peak 0.3, mid-peak 0.2, off-peak 0.1 PLN/kWh" in text
+    two = _preview(_distribution_config(buy_distribution_mode="added"), now)
+    assert "peak 0.3, off-peak 0.1 PLN/kWh" in two
+    assert "mid-peak" not in two
+
+
+def test_source_list_g13_labels_en_pl():
+    config = _g13_preview_config("tauron_g13")
+    config["settings"].update(
+        buy_distribution_mode="added",
+        buy_distribution_rate=0.3,
+        buy_distribution_mid_peak_rate=0.2,
+        buy_distribution_off_peak_rate=0.1,
+    )
+    config["sources"]["buy"]["schedule"] = TariffSchedule.default(
+        "tauron_g13"
+    ).to_dict()
+    en = {ref.role: label for ref, label in source_inventory(config, None, "en")}
+    pl = {ref.role: label for ref, label in source_inventory(config, None, "pl")}
+    assert en["buy"].startswith("Buy · Polish tariff schedule (G11/G12/G12w/G13) · ")
+    assert "peak 0.3, mid-peak 0.2, off-peak 0.1 PLN/kWh" in en["buy"]
+    assert pl["buy"].startswith("Zakup · Taryfa OSD (G11/G12/G12w/G13) · ")
+    assert "szczyt 0.3, strefa pośrednia 0.2, poza szczytem 0.1 PLN/kWh" in pl["buy"]
 
 
 def test_preview_g11_is_a_single_rate_line():

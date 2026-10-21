@@ -84,13 +84,16 @@ from .source_management import (
 )
 from .sources.bindings import IntervalBinding
 from .sources.tariffs import (
+    BAND_DISTRIBUTION_KEYS,
+    BAND_RATE_KEYS,
     CATALOG,
     TariffSchedule,
     clock_text,
     enea_text,
     holidays_between,
     is_raw_rce_sell,
-    local_off_peak,
+    local_band,
+    tariff_bands,
 )
 from .sources.throughput import resolve_daily_throughput
 
@@ -189,6 +192,9 @@ def _preview_assumptions(config, problem, values, quality):
     return text
 
 
+_BAND_NAMES = {"peak": "peak", "mid_peak": "mid-peak", "off_peak": "off-peak"}
+
+
 def _schedule_preview(config, problem, values):
     schedule = TariffSchedule.from_dict(config["sources"]["buy"]["schedule"])
     spec = CATALOG[schedule.tariff]
@@ -205,29 +211,38 @@ def _schedule_preview(config, problem, values):
     text += f"clock {clock_text(schedule, zone)}"
     if (enea := enea_text(schedule)) is not None:
         text += f"; {enea}"
+    bands = tariff_bands(schedule.tariff)
+    shown = bands if len(bands) > 2 else ("off_peak",)
+    for band in shown:
+        text += (
+            f"; {_BAND_NAMES[band]} today {today.isoformat()} ({zone}): "
+            f"{local_band(schedule, today, zone, band)}"
+        )
     text += (
-        f"; off-peak today {today.isoformat()} ({zone}): "
-        f"{local_off_peak(schedule, today, zone)}; to verify, compare your "
-        "invoice's monthly day/night kWh with your hourly import data split by "
-        "these windows; if summer months are off by about one hour, enable the "
-        "old-meter winter clock"
+        "; to verify, compare your invoice's monthly day/night kWh with your "
+        "hourly import data split by these windows; if summer months are off by "
+        "about one hour, enable the old-meter winter clock"
     )
-    if spec.group == "G12w":
+    if spec.free_days:
         holidays = holidays_between(today, last)
         listed = ", ".join(day.isoformat() for day in holidays) or "none"
         text += f"; statutory holidays in horizon: {listed}"
-    return (
-        f"{text}; peak {values['buy_rate']:g}, off-peak "
-        f"{values['buy_off_peak_rate']:g} {currency}/kWh before multiplier"
+    rates = ", ".join(
+        f"{_BAND_NAMES[band]} {values[BAND_RATE_KEYS[band]]:g}" for band in bands
     )
+    return f"{text}; {rates} {currency}/kWh before multiplier"
 
 
 def _distribution_preview(config, problem, values):
     """Both parts of the buy price per zone, or '' when distribution is not configured."""
     buy = config["sources"]["buy"]
-    rates = (values["buy_distribution_rate"], values["buy_distribution_off_peak_rate"])
+    rates = {band: values[key] for band, key in BAND_DISTRIBUTION_KEYS.items()}
     mode = values["buy_distribution_mode"]
-    if mode == "included" and not any(rates) and not buy.get("distribution_schedule"):
+    if (
+        mode == "included"
+        and not any(rates.values())
+        and not buy.get("distribution_schedule")
+    ):
         return ""
     currency = config["currency"]
     vat = 1 + values["vat_percent"] / 100 if values["buy_apply_vat"] else 1
@@ -238,14 +253,17 @@ def _distribution_preview(config, problem, values):
     )
     if zones is None or zones["tariff"] == "g11":
         where = "single zone"
-        rate_text = f"{rates[0] * vat:g}"
+        rate_text = f"{rates['peak'] * vat:g}"
     else:
         label = CATALOG[zones["tariff"]].labels["en"]
         origin = (
             "the buy tariff" if buy["mode"] == "schedule" else "the distribution tariff"
         )
         where = f"zones of {origin} {label}"
-        rate_text = f"peak {rates[0] * vat:g}, off-peak {rates[1] * vat:g}"
+        rate_text = ", ".join(
+            f"{_BAND_NAMES[band]} {rates[band] * vat:g}"
+            for band in tariff_bands(zones["tariff"])
+        )
     slot = problem.slots[0]
     meaning = (
         "added on top of the buy source"

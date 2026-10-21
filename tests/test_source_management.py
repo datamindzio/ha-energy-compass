@@ -1115,7 +1115,7 @@ def test_buy_summary_takes_distribution_zones_from_a_schedule_source():
 
     assert _buy_label(config) == [
         (
-            "Buy · Polish tariff schedule (G11/G12/G12w) · PGE Dystrybucja G12"
+            "Buy · Polish tariff schedule (G11/G12/G12w/G13) · PGE Dystrybucja G12"
             " · distribution inside the price · PGE Dystrybucja G12"
             " · peak 0.4, off-peak 0.1 PLN/kWh"
         )
