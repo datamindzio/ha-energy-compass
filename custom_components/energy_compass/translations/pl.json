@@ -1608,6 +1608,10 @@
       "title": "Przebiegi sterownika Deye kończą się błędem",
       "description": "Ostatnie przebiegi sterownika Deye zakończyły się błędem albo nie mogły odczytać stanu sterownika, więc nastawy falownika nie są prowadzone. Powód widać na czujniku runtime, szczegóły są w dzienniku Home Assistanta. Zgłoszenie zniknie po następnym udanym przebiegu."
     },
+    "notify_send_failed": {
+      "title": "Powiadomienia o oknach nie są wysyłane",
+      "description": "Ostatnich {count} powiadomień o oknach nie udało się wysłać do {targets}: {error}. Sprawdź cel w Ustawieniach powiadomień i wypróbuj go akcją energy_compass.send_test_notification. Zgłoszenie zniknie po następnym udanym powiadomieniu."
+    },
     "source_removed": {
       "title": "Źródło zostało usunięte",
       "description": "Zmień źródła instalacji {name}."

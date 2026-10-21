@@ -1608,6 +1608,10 @@
       "title": "Deye controller runs are failing",
       "description": "The last runs of the Deye controller failed or could not read the controller state, so the inverter settings are not being managed. The runtime sensor shows the reason and the Home Assistant log has the details. This issue clears after the next successful run."
     },
+    "notify_send_failed": {
+      "title": "Window notifications are failing",
+      "description": "The last {count} window notifications could not be sent to {targets}: {error}. Check the target in Notification preferences and try it with energy_compass.send_test_notification. This clears after the next successful notification."
+    },
     "source_removed": {
       "title": "Source removed",
       "description": "Reconfigure the selected sources for {name}."
