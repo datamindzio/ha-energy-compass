@@ -4,6 +4,7 @@ import json
 import logging
 from copy import deepcopy
 from datetime import date, timedelta
+from decimal import Decimal
 from types import MappingProxyType
 from zoneinfo import ZoneInfo
 
@@ -319,9 +320,8 @@ def _prefill_preview(config, problem, values):
         )
     offered = round(snapshot["vatRate"] * 100, 6)
     if "vat_percent" not in prefill.values and values["vat_percent"] != offered:
-        text += (
-            f" Note: VAT is {values['vat_percent']:g} % (shared with the sell "
-            f"side); the offer assumes {offered:g} %."
+        text += " Note: " + tariff_rates.vat_kept_note(
+            Decimal(str(values["vat_percent"])), Decimal(str(offered))
         )
     return text
 

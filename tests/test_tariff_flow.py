@@ -1690,3 +1690,39 @@ def test_preview_without_prefill_unchanged():
     text = _preview(_g13_preview_config("tauron_g13"), now)
     assert "pre-filled" not in text and "Note:" not in text
     assert text.endswith(SUFFIX.format(first=0.6))
+
+
+def test_preview_survives_offer_dropped_from_snapshot(monkeypatch):
+    import copy
+
+    from custom_components.energy_compass.sources import rates
+
+    config, _ = _prefilled_preview_config()
+    snapshot = copy.deepcopy(rates.SNAPSHOT)
+    del snapshot["offers"]["pge-ure-2026"]
+    snapshot["operators"]["pge"]["tariffYear"] = 2027
+    monkeypatch.setattr(rates, "SNAPSHOT", snapshot)
+    text = _preview(config, datetime(2026, 7, 1, 10, tzinfo=UTC))
+    assert (
+        "Rates pre-filled from pge-ure-2026 (PGE Dystrybucja tariff 2026, "
+        "valid 2026-01-01–2026-12-31, as of "
+    ) in text
+    assert "newer rates are bundled (tariff 2027)" in text
+
+
+def test_preview_survives_operator_dropped_from_snapshot(monkeypatch):
+    import copy
+
+    from custom_components.energy_compass.sources import rates
+
+    config, _ = _prefilled_preview_config()
+    snapshot = copy.deepcopy(rates.SNAPSHOT)
+    del snapshot["offers"]["pge-ure-2026"]
+    del snapshot["operators"]["pge"]
+    monkeypatch.setattr(rates, "SNAPSHOT", snapshot)
+    text = _preview(config, datetime(2026, 7, 1, 10, tzinfo=UTC))
+    assert (
+        "Rates pre-filled from pge-ure-2026 (pge tariff 2026, "
+        "valid 2026-01-01–2026-12-31, as of "
+    ) in text
+    assert "newer rates are bundled" not in text
