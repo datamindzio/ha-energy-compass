@@ -43,6 +43,9 @@ async def async_get_config_entry_diagnostics(hass, entry):
         "deye_controller": coordinator.controller.diagnostics()
         if coordinator.controller is not None
         else {"enabled": False},
+        "notifications": coordinator.notifier.diagnostics
+        if coordinator.notifier is not None
+        else {"enabled": False},
         "setup_profiles": coordinator.configuration.get("setup_profiles"),
         **({"measured_calibration": measured} if measured is not None else {}),
     }

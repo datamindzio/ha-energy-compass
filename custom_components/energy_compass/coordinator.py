@@ -126,6 +126,8 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         self.atlas = None
         # Set by async_setup_entry only when options["controller"]["enabled"].
         self.controller = None
+        # Set by async_setup_entry for every entry (window notifications, DD-5).
+        self.notifier = None
         # Serializes async_apply_atlas against itself (ADR-0019 §B3, amendment T-411):
         # a save that starts a new bridge must fully stop the old one first.
         self._atlas_lock = asyncio.Lock()
