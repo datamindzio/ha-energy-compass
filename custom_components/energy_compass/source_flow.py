@@ -676,6 +676,8 @@ class SourceEditor:
 
     def _default_offer(self, operator, group):
         offers = rates.offers_for(operator, group)
+        stored = self._stored_schedule()
+        has_prefill = stored is not None and stored.prefill is not None
         prefill = self._stored_prefill(operator)
         if prefill is not None:
             if prefill.offer is None:
@@ -683,8 +685,8 @@ class SourceEditor:
             if prefill.offer in offers:
                 return prefill.offer
         if (
-            prefill is None
-            and self._stored_schedule() is not None
+            not has_prefill
+            and stored is not None
             and any(
                 self._draft["settings"].get(key, 0)
                 for key in (
