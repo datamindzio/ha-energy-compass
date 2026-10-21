@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from .engine.models import InputError
-from .sources.tariffs import CATALOG
+from .sources.tariffs import BAND_DISTRIBUTION_KEYS, CATALOG, tariff_bands
 
 _LABELS = {
     "en": {
@@ -33,7 +33,7 @@ _LABELS = {
         "fixed": "Fixed rate",
         "entity": "Numeric entity",
         "forecast": "Interval forecast",
-        "schedule": "Polish tariff schedule (G11/G12/G12w)",
+        "schedule": "Polish tariff schedule (G11/G12/G12w/G13)",
         "rce": "RCE market price (PSE)",
         "distribution": "Distribution tariff (zones for the distribution rates)",
         "none": "None (single zone)",
@@ -41,6 +41,7 @@ _LABELS = {
         "distribution_added": "distribution added",
         "single_zone": "single zone",
         "peak": "peak",
+        "mid_peak": "mid-peak",
         "off_peak": "off-peak",
         "measurement": "Measurement",
         "statistic": "Recorder statistic",
@@ -84,7 +85,7 @@ _LABELS = {
         "fixed": "Stała stawka",
         "entity": "Encja liczbowa",
         "forecast": "Prognoza przedziałowa",
-        "schedule": "Taryfa OSD (G11/G12/G12w)",
+        "schedule": "Taryfa OSD (G11/G12/G12w/G13)",
         "rce": "Cena rynkowa RCE (PSE)",
         "distribution": "Taryfa dystrybucyjna (strefy stawek dystrybucji)",
         "none": "Brak (jedna strefa)",
@@ -92,6 +93,7 @@ _LABELS = {
         "distribution_added": "dystrybucja doliczana",
         "single_zone": "jedna strefa",
         "peak": "szczyt",
+        "mid_peak": "strefa pośrednia",
         "off_peak": "poza szczytem",
         "measurement": "Pomiar",
         "statistic": "Statystyka rejestratora",
@@ -198,25 +200,24 @@ def _distribution_label(config, labels, language_key):
     """Distribution part of the buy price per zone, or '' when it is not configured."""
     buy = config["sources"]["buy"]
     values = config.get("settings", {})
-    rates = (
-        values.get("buy_distribution_rate", 0),
-        values.get("buy_distribution_off_peak_rate", 0),
-    )
+    rates = {band: values.get(key, 0) for band, key in BAND_DISTRIBUTION_KEYS.items()}
     mode = values.get("buy_distribution_mode", "included")
     stored = buy.get("distribution_schedule")
-    if mode == "included" and not any(rates) and not stored:
+    if mode == "included" and not any(rates.values()) and not stored:
         return ""
     vat = 1 + values.get("vat_percent", 0) / 100 if values.get("buy_apply_vat") else 1
     zones = buy.get("schedule") if buy["mode"] == "schedule" else stored
     tariff = CATALOG.get(zones["tariff"]) if zones else None
     if zones is None or zones["tariff"] == "g11":
         where = labels["single_zone"]
-        rate_text = f"{rates[0] * vat:g}"
+        rate_text = f"{rates['peak'] * vat:g}"
     else:
         where = tariff.labels[language_key] if tariff else zones["tariff"]
-        rate_text = (
-            f"{labels['peak']} {rates[0] * vat:g}, "
-            f"{labels['off_peak']} {rates[1] * vat:g}"
+        rate_text = ", ".join(
+            f"{labels[band]} {rates[band] * vat:g}"
+            for band in (
+                tariff_bands(zones["tariff"]) if tariff else ("peak", "off_peak")
+            )
         )
     return (
         f" · {labels[f'distribution_{mode}']} · {where} · "
