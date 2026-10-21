@@ -252,8 +252,8 @@ reproduced on the household's own recorder with the command above; set 5 to turn
 Three axes on the first (**User**) setup form, **Prosumer settlement**, **Polish distribution
 tariff** (`buy_tariff`) and **Inverter**, pre-fill editable tuning for a brand-new installation.
 Each axis is chosen once; all default to **Generic** or **None** (no assignments), and picking a
-profile applies its assignments to the draft immediately. This is revision 3 of the setup profiles;
-an entry created under revision 1 or 2 keeps its record and is never re-resolved. The
+profile applies its assignments to the draft immediately. This is revision 4 of the setup profiles;
+an entry created under an earlier revision keeps its record and is never re-resolved. The
 pinned values below (0.20, 0.60, 0.13) were measured or backtested on one site — a G12 buy tariff,
 net-billing RCE sell and a Deye LFP battery — and are a starting point, not a universal default.
 
@@ -284,6 +284,8 @@ rates stay at 0 until you type them. Every catalog profile requires PLN.
 | `energa_g12w` | PLN | schedule G12w | Energa-Operator |
 | `stoen_g12` | PLN | schedule G12 | Stoen Operator |
 | `stoen_g12w` | PLN | schedule G12w | Stoen Operator |
+| `tauron_g13` | PLN | schedule G13 (three zones) | Tauron Dystrybucja |
+| `enea_g13active` | PLN | schedule G13active (three zones) | Enea Operator |
 
 **Inverter axis:**
 

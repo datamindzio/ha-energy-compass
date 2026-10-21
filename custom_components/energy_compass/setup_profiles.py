@@ -218,8 +218,33 @@ _REVISION_3 = ProfileRevision(
     settled_sell_sources=True,
 )
 
+_REVISION_4 = ProfileRevision(
+    axes=MappingProxyType(
+        {
+            "settlement": _REVISION_3.axes["settlement"],
+            "buy_tariff": MappingProxyType(
+                {
+                    **_REVISION_3.axes["buy_tariff"],
+                    "tauron_g13": _tariff_profile(
+                        "tauron_g13", "Tauron Dystrybucja G13", "Tauron Dystrybucja G13"
+                    ),
+                    "enea_g13active": _tariff_profile(
+                        "enea_g13active",
+                        "Enea Operator G13active",
+                        "Enea Operator G13active",
+                    ),
+                }
+            ),
+            "inverter": _REVISION_3.axes["inverter"],
+        }
+    ),
+    raw_rce_presets=_REVISION_3.raw_rce_presets,
+    raw_rce_sources=True,
+    settled_sell_sources=True,
+)
+
 REVISIONS: Mapping[int, ProfileRevision] = MappingProxyType(
-    {1: _REVISION_1, 2: _REVISION_2, 3: _REVISION_3}
+    {1: _REVISION_1, 2: _REVISION_2, 3: _REVISION_3, 4: _REVISION_4}
 )
 SETUP_PROFILES_REVISION: int = max(REVISIONS)
 CURRENT: ProfileRevision = REVISIONS[SETUP_PROFILES_REVISION]
