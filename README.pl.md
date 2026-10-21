@@ -7,7 +7,7 @@
   <img src="custom_components/energy_compass/brand/icon@2x.png" alt="Logo Energy Compass" width="160" height="160">
 </picture>
 
-Energy Compass to doradcza integracja Home Assistant. Szacuje koszt krańcowy jednej kWh więcej zużycia domowego względem zoptymalizowanego planu pracy baterii i sieci, klasyfikuje najbliższe zużycie jako `BOOST`, `CHEAP`, `NORMAL` lub `LIMIT` i udostępnia nadchodzące okna jako natywne encje. Sama nie wysyła powiadomień, a ustawienia falownika zapisuje tylko po włączeniu opcjonalnego sterownika Deye (domyślnie wyłączony), przez integrację Solarman.
+Energy Compass to doradcza integracja Home Assistant. Szacuje koszt krańcowy jednej kWh więcej zużycia domowego względem zoptymalizowanego planu pracy baterii i sieci, klasyfikuje najbliższe zużycie jako `BOOST`, `CHEAP`, `NORMAL` lub `LIMIT` i udostępnia nadchodzące okna jako natywne encje. Wysyła powiadomienia tylko po ich włączeniu, a ustawienia falownika zapisuje tylko po włączeniu opcjonalnego sterownika Deye (domyślnie wyłączony), przez integrację Solarman.
 
 ## Instalacja
 
@@ -41,7 +41,7 @@ Błędy wejść lub obliczeń włączają **Alert** z atrybutami `code`, `reason
 
 Aktualizacje koordynatora pomijają zapis stanu encji, których wartość, dostępność i atrybuty się nie zmieniły. Zmiany poprawności prognozy, atrybutów planu, stanu odświeżania lub czasu okien są publikowane nawet przy niezmienionej wartości głównej.
 
-Powiadomienia o oknach wymagają **Włącz powiadomienia** w opcjach integracji i niepustej akcji w [opcjonalnym blueprincie](docs/installation.md#opt-in-notifications) (EN). Blueprint korzysta z bieżących preferencji integracji, chyba że włączono jego przełącznik nadpisania. Obsługuje okna korzystne i `LIMIT`, nic nie wysyła przy włączonym Alercie lub gdy optymalizator nie jest gotowy, a tytuł i treść pisze po angielsku lub po polsku. Integracja sama nie wykonuje akcji.
+Powiadomienia o oknach są domyślnie wyłączone. Wybierz telefon (`notify_services`) albo encję notify (`notify_entities`) w **Ustawienia powiadomień** i włącz **Włącz powiadomienia**, a Energy Compass sam wyśle wiadomości o oknach korzystnych i `LIMIT`, po angielsku lub po polsku (**Język powiadomień**), nigdy przy włączonym Alercie ani gdy optymalizator nie jest gotowy. Sprawdź cel akcją `energy_compass.send_test_notification`. Starszy [blueprint powiadomień](docs/installation.md#blueprint-deprecated) (EN) jest wycofywany: milknie, gdy ustawisz cel, zob. [migracja z blueprintu](docs/guide.pl.md#migracja-z-blueprintu). Konfiguracja: [Opt-in notifications](docs/installation.md#opt-in-notifications) (EN).
 
 Szacunek kosztu dodatkowej kWh zakłada plan zaproponowany przez optymalizator. Dopóki żaden sterownik go nie wykonuje, rzeczywiste oszczędności mogą różnić się przy istniejącej automatyce. Rekomendacja zależna od prognozy nie jest pomiarem oszczędności. Bilans energii, pokrycie, założenia baterii i zachowanie solvera opisuje [model i ograniczenia](docs/model.md) (EN).
 

@@ -9,10 +9,10 @@ installation is described in the [Installation](#installation) section, and dash
 [installation guide](installation.md).
 
 Energy Compass is **advisory**. It computes a plan and publishes it as Home Assistant entities. It
-sends no messages by itself, and it writes inverter settings only when you enable the optional Deye
-controller (off by default), which does so through the Solarman integration; notification blueprints
-and other controllers decide for themselves whether to act on the plan. See
-[Deye inverter controller](#deye-inverter-controller-solarman).
+sends notifications only when you turn them on (see [Window notifications](#window-notifications)),
+and it writes inverter settings only when you enable the optional Deye controller (off by default),
+which does so through the Solarman integration; other controllers decide for themselves whether to
+act on the plan. See [Deye inverter controller](#deye-inverter-controller-solarman).
 
 ## Contents
 
@@ -132,9 +132,9 @@ button on the integration's page in **Settings → Devices & services**.
 - **Deye inverter controller.** To let Energy Compass write the plan to a Deye inverter through
   Solarman, open **Options → Deye controller**. Off by default; see
   [Enabling the controller](#enabling-the-controller).
-- **Notifications.** Turn on **Notify enabled** in **Notification preferences**, then copy the notification
-  blueprint, which lives outside the HACS-installed folder. See
-  [Window notifications](#window-notifications) and
+- **Notifications.** In **Notification preferences** select a phone or notify entity and turn on
+  **Notify enabled**; Energy Compass then sends the window notifications itself. Try the target with
+  `energy_compass.send_test_notification`. See [Window notifications](#window-notifications) and
   [Opt-in notifications](installation.md#opt-in-notifications).
 - **Automatic strategy switching.** The `strategy_switch` blueprint picks one dispatch strategy per day. See [Automatic strategy switching](#automatic-strategy-switching) and
   [Import the strategy switch blueprint](installation.md#import-the-strategy-switch-blueprint).
@@ -1913,10 +1913,149 @@ details: [installation guide](installation.md#import-the-strategy-switch-bluepri
 
 ## Window notifications
 
+Energy Compass tells the household when extra use is cheap (a favorable window) or when an
+expensive `LIMIT` window is starting. It sends notifications only when you turn them on:
+**Notify enabled** in **Options → Notification preferences** is the master switch, and the
+notification targets say where the messages go. Setup:
+[installation guide](installation.md#opt-in-notifications).
+
+### Turning them on
+
+1. Open **Options → Notification preferences**, select at least one target and turn on
+   **Notify enabled**. Energy Compass sends from the next published plan on.
+2. Run **energy_compass.send_test_notification** in **Developer tools → Actions** and check the
+   device.
+
+| Setting | Meaning |
+| --- | --- |
+| `notify_enabled` (**Notify enabled**) | the master switch, off by default. On without a target the integration sends nothing, and an installed notification blueprint keeps working as before (see [Migrating from the blueprint](#migrating-from-the-blueprint)) |
+| `notify_services` (**Notification services (mobile app)**) | legacy notify service names without the domain, for example `mobile_app_pixel_8`. Each is called as `notify.<name>` with a title and a message. The Home Assistant mobile app still registers this kind |
+| `notify_entities` (**Notification entities**) | notify entity ids, for example `notify.kitchen_display`. Each is called with `notify.send_message` |
+| `notify_language` (**Notification language**) | `auto` (default) follows the Home Assistant language: Polish when it starts with `pl`, otherwise English; `en` and `pl` fix it |
+| `notify_events` | `favorable`, `limit` or both |
+| `notify_minimum_hours` | minimum time left in a favorable window (default 2 h) |
+| `notify_limit_lead_minutes` | how far ahead a `LIMIT` window is announced (default 30 min) |
+| `quiet_start`, `quiet_end` | quiet hours in the Home Assistant time zone (default 22:00–08:00); equal times mean no quiet hours |
+| `notify_cooldown_minutes` | minimum time between two attempts (default 60 min) |
+| `notify_daily_max` | notifications per local day (default 3) |
+
+With **Notify enabled** on, the first target you save makes Energy Compass the sender. A target is
+one entry of either list. The integration calls every target at once; a target that fails, or does
+not answer within 30 seconds, does not stop the others. Clearing the targets stops the
+notifications immediately.
+
+### How a notification is decided
+
+The integration looks at the published plan on every plan update and once a minute.
+
+```mermaid
+flowchart TD
+    T([minute tick / coordinator update]) --> R{evaluation running?}
+    R -- yes --> D[drop]
+    R -- no --> G{forecast valid, Alert off,<br/>optimizer ready, plan valid?}
+    G -- no --> X[nothing]
+    G -- yes --> P{published sender is<br/>integration and a target set?}
+    P -- no --> X
+    P -- yes --> L{LIMIT running or<br/>starting within the lead?}
+    L -- yes --> K[event limit]
+    L -- no --> F{favorable running with<br/>the minimum time left?}
+    F -- no --> X
+    F -- yes --> K2[event favorable]
+    K --> S{overlaps the stored window?}
+    K2 --> S
+    S -- yes --> E[extend the stored window<br/>no message]
+    S -- no --> C{quiet hours, daily cap,<br/>cooldown allow it?}
+    C -- no --> X
+    C -- yes --> W[save window, count, time]
+    W --> Q{gates, sender, target,<br/>plan unchanged, not quiet?}
+    Q -- no --> X
+    Q -- yes --> N[call every target<br/>logbook; 3 failed attempts → repair issue]
+```
+
+- When both a `LIMIT` and a favorable window qualify, `LIMIT` wins.
+- A window that overlaps the stored one is the same window: recalculations and BOOST/CHEAP changes
+  extend it instead of notifying again, so a new message needs a window that does not overlap.
+- The window, the day's count and the attempt time are saved **before** the call, so a restart or an
+  options reload never repeats a message and a crash at the wrong moment loses at most one. The
+  store survives restarts; a store that cannot be read starts fresh.
+- Just before the call the gates, the sender, the target, the quiet hours and the plan are checked
+  again; a new plan published in between stops the call (the window stays spent).
+- The cap and the cooldown count attempts, including failed ones. A failed attempt is not retried
+  for the same window.
+- Each message is also written to the logbook on the Plan sensor.
+
+| Message | When |
+| --- | --- |
+| **Use the cheap energy** / *Wykorzystaj tanią energię* | a favorable window is running and the whole rest of it is `BOOST` |
+| **A good time for household appliances** / *Dobry moment na domowe urządzenia* | a favorable window is running, not all `BOOST` |
+| **Plan heavy use for later** / *Zaplanuj większe zużycie na później* | a `LIMIT` window starts within the lead time, or is already running |
+| **Energy Compass test** / *Test Energy Compass* | only the test action |
+
+The message names the window's local times (`HH:MM–HH:MM`, or `dd.mm HH:MM–dd.mm HH:MM` when the
+window crosses midnight) and suggests moving laundry, the dishwasher or car charging.
+
+### Test action
+
+`energy_compass.send_test_notification` sends one fixed message to every target of an entry now. It
+ignores the gates, the quiet hours, the cooldown, the daily cap and the stored window, and it does
+not change them. The answer lists `results`: one `target`, `ok` and `error` per target.
+
+| Field | Meaning |
+| --- | --- |
+| `config_entry_id` | the Energy Compass entry; needed only when more than one is loaded |
+
+The action refuses when no target is selected. A test that reaches every target also clears the
+failure count below.
+
+### Notification preferences attribute
+
+The Plan sensor publishes `notification_preferences`, and that is what decides who sends.
+
+| Key | Meaning |
+| --- | --- |
+| `notify_events`, `notify_minimum_hours`, `notify_limit_lead_minutes`, `notify_cooldown_minutes`, `notify_daily_max`, `quiet_start`, `quiet_end` | the settings above as the plan was computed with them |
+| `notify_sender` | who sends: `"integration"` when **Notify enabled** is on and a target is set, `"blueprint"` when it is on without a target, `"off"` when it is off |
+| `notify_enabled` | **not** the setting: it means "the blueprint may send". It is `true` only while `notify_sender` is `"blueprint"`, so the deprecated blueprint, which sends only while it is true, goes silent as soon as the integration is the sender |
+| `actions_configured` | a saved legacy action list exists; the native sender does not use it |
+
+After you save options, the sender changes with the next published plan, not before. While an old
+plan is retained, the blueprint keeps sending until the new plan arrives and the integration waits
+for it, so the two never send together.
+
+### Repair issues
+
+| Issue | When | What to do |
+| --- | --- | --- |
+| `notify_send_failed` | three attempts in a row reached no target or only some of them; the text names the targets and the last error | fix the target in **Notification preferences** and run the test action. It clears after the next successful notification or test, and starts over when you change the targets |
+| `notify_blueprint_deprecated` | an automation made from the notification blueprint is on while **Notify enabled** is on and the blueprint is still the sender | follow [Migrating from the blueprint](#migrating-from-the-blueprint) |
+| `notify_blueprint_suppressed` | the same automation is on but the integration now sends, so the automation sends nothing | delete the automation and its five helpers |
+
+### Migrating from the blueprint
+
+1. Update Energy Compass. Nothing changes yet: with no target selected the blueprint keeps sending,
+   and a repair issue says it is deprecated.
+2. In **Options → Notification preferences** select your phone's `mobile_app_…` service (the one the
+   blueprint's action called) or a notify entity. Save.
+3. Set **Notification language** if the blueprint's `language` differed from Home Assistant's.
+4. Run **energy_compass.send_test_notification** in **Developer tools → Actions** and check the
+   phone.
+5. From the next plan on, Energy Compass sends and the blueprint goes silent. The repair issue now
+   says the automation is suppressed.
+6. Delete the automation and the five helpers (two Text, one Number, two Date/time).
+
+The integration starts with no remembered window. A favorable or `LIMIT` window that is running at
+the moment of the switch and that the blueprint already announced may be announced once more. This
+happens at most once per running window, and only within the cap and the cooldown, which also start
+fresh. Blueprint overrides (`use_blueprint_overrides`) have no native counterpart: copy their values
+into Notification preferences before step 2.
+
+### Blueprint (deprecated)
+
 The optional blueprint [`notifications.yaml`](../blueprints/automation/energy_compass/notifications.yaml)
-tells the household when extra use is cheap (favorable window) or when an expensive `LIMIT` window
-is starting. Energy Compass itself never sends anything; **Notify enabled** in the integration
-options is the master switch. Setup: [installation guide](installation.md#opt-in-notifications).
+is deprecated and will be removed in a later release. It still works while the integration is not
+the sender; once the integration sends it is silent, because it sends only while the plan's
+`notification_preferences.notify_enabled` is `true`. Setup:
+[installation guide](installation.md#blueprint-deprecated).
 
 ```mermaid
 flowchart TD
@@ -1935,14 +2074,7 @@ flowchart TD
     C -- yes --> A[store window, count, time<br/>re-check gates, run the action]
 ```
 
-| Message | When |
-| --- | --- |
-| **Use the cheap energy** / *Wykorzystaj tanią energię* | a favorable window is running and the whole rest of it is `BOOST` |
-| **A good time for household appliances** / *Dobry moment na domowe urządzenia* | a favorable window is running, not all `BOOST` |
-| **Plan heavy use for later** / *Zaplanuj większe zużycie na później* | a `LIMIT` window starts within the lead time, or is already running |
-
-The message names the window's local times and suggests moving laundry, the dishwasher or car
-charging. The action receives `notification_title`, `notification_message` and `event_kind`.
+The action receives `notification_title`, `notification_message` and `event_kind`.
 
 | Input | Meaning |
 | --- | --- |
