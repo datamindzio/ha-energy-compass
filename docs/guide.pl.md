@@ -85,10 +85,11 @@ kreator; nic nie jest zapisywane przed jego ostatnim krokiem.
    PV może też korzystać z [prognozy PV z panelu Energia](#prognoza-pv-z-panelu-energia).
 3. **Menu główne.** Przejdź przez potrzebne grupy; każdą możesz później otworzyć ponownie w
    **Konfiguruj**.
-   - **Taryfy → Źródło ceny zakupu** — cena zakupu. Dla polskich G11/G12/G12w wybierz **Taryfa OSD**,
-     która nie wymaga YAML: wskaż operatora i grupę, a następnie wpisz stawkę szczytową (*Cena zakupu*)
-     i, dla G12/G12w, *Cena zakupu poza szczytem* w **Taryfy → Stałe stawki i przeliczenia**. Strefy,
-     zegar i święta opisują [Wbudowane taryfy OSD](#wbudowane-taryfy-osd).
+   - **Taryfy → Źródło ceny zakupu** — cena zakupu. Dla polskich G11/G12/G12w/G13 wybierz **Taryfa OSD**,
+     która nie wymaga YAML: wskaż operatora i grupę, a następnie ofertę sprzedawcy (albo *Tylko
+     dystrybucja*, albo *Stawki wpiszę sam*), by wypełnić stawki w **Taryfy → Stałe stawki i
+     przeliczenia**, gdzie każdą wartość można zmienić. Strefy, zegar, święta i wypełnione stawki opisują
+     [Wbudowane taryfy OSD](#wbudowane-taryfy-osd).
    - **Taryfy → Źródło ceny sprzedaży** — cena sprzedaży. W Polsce wybierz **Cena rynkowa RCE (PSE)**,
      która używa sensora integracji `rce_pse`.
    - **Prognoza zużycia** — liczby stojące za prognozą zużycia domu. Nowa instalacja startuje od
@@ -275,7 +276,11 @@ punktem startowym, nie uniwersalnym domyślnym ustawieniem.
 
 **Oś polskiej taryfy dystrybucyjnej (`buy_tariff`):** profil tylko wstępnie wybiera **Taryfy → Źródło
 ceny zakupu → Taryfa OSD** dla danej taryfy; nie przypisuje żadnego ustawienia ani ceny, a stawki
-zostają na 0, dopóki ich nie wpiszesz. Każdy profil katalogowy wymaga waluty PLN.
+zostają na 0, dopóki ich [nie wypełnisz](#wypełnione-stawki) albo nie wpiszesz. Każdy profil katalogowy
+wymaga waluty PLN. Wiersz Podglądu dla profilu taryfy brzmi: „Buy source pre-selected by buy_tariff
+*profil*: tariff schedule; pick the seller offer in Tariffs → Buy source to pre-fill the rates, or
+enter them in Tariffs → Values.” (tekst angielski w obu językach); wybór oferty to osobny krok
+przepływu, nie część profilu.
 
 | Profil | Waluta | Skutek | Podstawa |
 | --- | --- | --- | --- |
@@ -310,8 +315,9 @@ zapisie; Podgląd oznacza ten klucz jako zmieniony, podając pomocnika i jego ef
 
 Polskie profile rozliczenia i taryf wymagają waluty PLN; wybór takiego profilu z inną walutą jest
 odrzucany, przy polu, które go wywołało. Profile startowe nigdy nie ustawiają ceny taryfy
-(`buy_rate`, `buy_off_peak_rate`, `buy_distribution_rate`, `buy_distribution_off_peak_rate`, `sell_rate`,
-`buy_addition`, `sell_addition`, `monthly_charge`) i nigdy nie dotykają ustawienia należącego do
+(`buy_rate`, `buy_mid_peak_rate`, `buy_off_peak_rate`, `buy_distribution_rate`,
+`buy_distribution_mid_peak_rate`, `buy_distribution_off_peak_rate`, `sell_rate`, `buy_addition`,
+`sell_addition`, `monthly_charge`) i nigdy nie dotykają ustawienia należącego do
 strategii. Nie włączają też [modelu depozytu](#wartość-depozytu-w-net-billingu): każda instalacja
 startuje z nim wyłączonym.
 
@@ -387,12 +393,14 @@ konfiguracji (`setup_profiles`) i trafia do diagnostyki.
 
 ### Wbudowane taryfy OSD
 
-Dla polskiego gospodarstwa **Taryfy → Źródło ceny zakupu → Taryfa OSD (G11/G12/G12w)** zastępuje YAML
+Dla polskiego gospodarstwa **Taryfy → Źródło ceny zakupu → Taryfa OSD (G11/G12/G12w/G13)** zastępuje YAML
 pomocnika taryfy (jego [przykład YAML](tariff-helper.md) zostaje rozwiązaniem zapasowym). Wybierz
-jedną z jedenastu pozycji katalogu; strefy pochodzą z taryfy dystrybutora na 2026 rok, a **stawki
-wpisujesz sam**: **Taryfy → Stałe stawki i przeliczenia** zawiera *Cena zakupu* (G11 albo stawka
-szczytowa) i *Cena zakupu poza szczytem* (G12/G12w). Obie stawki muszą być większe od zera, inaczej
-obliczenie kończy się błędem z komunikatem wskazującym te pola. Cena slotu to `stawka × mnożnik ×
+jedną z trzynastu pozycji katalogu; strefy pochodzą z taryfy dystrybutora na 2026 rok. Stawki można
+[wypełnić](#wypełnione-stawki) z wbudowanych taryf operatorów i ofert sprzedawców na 2026 rok albo
+wpisać: **Taryfy → Stałe stawki i przeliczenia** zawiera *Cena zakupu* (G11 albo stawka szczytowa),
+*Cena zakupu w strefie pośredniej (taryfa OSD G13)* (tylko G13) i *Cena zakupu poza szczytem*
+(G12/G12w/G13). Każda stawka używana przez taryfę musi być większa od zera, inaczej obliczenie
+kończy się błędem z komunikatem wskazującym te pola. Cena slotu to `stawka × mnożnik ×
 współczynnik VAT + dodatek`, tak jak dla stałej stawki. Harmonogram nie wymaga encji i nie ogranicza
 horyzontu planowania. Wymaga waluty PLN.
 
@@ -409,6 +417,23 @@ horyzontu planowania. Wymaga waluty PLN.
 | `energa_g12w` | Energa-Operator, G12w | 13–15 i 22–6 | cała doba | to samo |
 | `stoen_g12` | Stoen Operator, G12 | 13–15 i 22–6 | jak dni robocze | taryfa 2026 §2.2.5/2.2.6/2.2.11 |
 | `stoen_g12w` | Stoen Operator, G12w | tylko 22–6 | cała doba | to samo |
+| `tauron_g13` | Tauron Dystrybucja, G13 | trzy strefy, zob. niżej | cała doba | taryfa 2026 §2.2.6/2.2.7/2.2.9 |
+| `enea_g13active` | Enea Operator, G13active | trzy strefy, zob. niżej | jak dni robocze | wyciąg z taryfy 2026 §2.2.5/2.2.7/2.2.12 |
+
+**Strefy G13.** G13 i G13active mają trzy pasma, a kluczem ceny jest pasmo: **szczyt** używa *Cena
+zakupu*, **strefa pośrednia** *Cena zakupu w strefie pośredniej (taryfa OSD G13)*, **poza szczytem**
+*Cena zakupu poza szczytem* (dystrybucja: *Stawka dystrybucji (strefa szczytowa lub jedna strefa)*,
+*Stawka dystrybucji w strefie pośredniej*, *Stawka dystrybucji poza szczytem*). Tauron G13: strefa
+pośrednia 7–13 w dni robocze; szczyt 19–22 od kwietnia do września i 16–21 od października do marca;
+każda inna godzina dnia roboczego jest poza szczytem, a soboty, niedziele i święta ustawowe są poza
+szczytem przez całą dobę. Enea G13active: tabela Enea godzin ograniczonych i pozostałych na każdy
+miesiąc, przy czym godziny ograniczone to szczyt, pozostałe to strefa pośrednia, a zalecane to poza
+szczytem; dni wolnych nie ma. Nazwy stref przypisano do pasm według znaczenia u Taurona i Enei
+(Tauron *szczyt popołudniowy* → szczyt, *szczyt przedpołudniowy* → strefa pośrednia, *pozaszczytowa* →
+poza szczytem; Enea *ograniczone* → szczyt, *pozostałe* → strefa pośrednia, *zalecane* → poza
+szczytem), a nie według ceny. Komunikaty trzech pasm to „tariff schedule needs positive buy rates: set
+Buy rate, Mid-peak buy rate and Off-peak buy rate” oraz „distribution with three zones needs all three
+rates or none” (teksty angielskie). Komunikaty i ceny jednego i dwóch pasm są bez zmian.
 
 Dniami wolnymi G12w są soboty, niedziele i święta ustawowe (1 i 6 stycznia, niedziela i poniedziałek
 wielkanocny, 1 i 3 maja, Zielone Świątki, Boże Ciało, 15 sierpnia, 1 i 11 listopada, 24 grudnia od
@@ -432,9 +457,10 @@ pyta o obie, więc sprawdź licznik lub fakturę.
 **Taryfa dystrybucyjna.** Źródło ceny zakupu, które nie jest harmonogramem taryfy (stała stawka,
 encja albo dynamiczna cena energii z prognozy), też może dostać strefy dystrybutora: **Taryfy →
 Źródło ceny zakupu → Taryfa dystrybucyjna (strefy stawek dystrybucji)** (waluta PLN) oferuje ten sam
-katalog, flagę zegara zimowego i godziny Enea albo *Brak (jedna strefa)*. Strefy dotyczą dwóch stawek
+katalog, flagę zegara zimowego i godziny Enea albo *Brak (jedna strefa)*. Strefy dotyczą stawek
 dystrybucji [modelu depozytu](#wartość-depozytu-w-net-billingu) (`buy_distribution_rate`,
-`buy_distribution_off_peak_rate`); granice pasm stają się granicami interwałów dla planera, tak jak w
+`buy_distribution_off_peak_rate` oraz `buy_distribution_mid_peak_rate` dla kluczy G13, które dają
+trzy strefy); granice pasm stają się granicami interwałów dla planera, tak jak w
 harmonogramie. Nie zmieniają samego źródła ceny zakupu. Źródło-harmonogram zachowuje własne strefy,
 więc wybór harmonogramu taryfy usuwa zapisaną taryfę dystrybucyjną. Podgląd pokazuje obie części ceny
 zakupu pierwszego interwału: część energetyczną i część dystrybucyjną. Wiersz zakupu w **Źródła danych →
@@ -447,6 +473,76 @@ mnożnikiem, VAT i dodatkiem (`max(RCE, 0) × 1,23` z mnożnikiem net-billingu).
 i znika przy przełączeniu źródła z prognozy lub gdy po edycji nie jest już surowym źródłem RCE w PLN/MWh. W nowej instalacji profil PL net-billing przypisuje
 potem mnożnik 1,23; w Konfiguruj i Rekonfiguruj ustaw mnożnik sprzedaży samodzielnie. Bez integracji
 `rce_pse` użyj [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml).
+
+#### Wypełnione stawki
+
+Zamiast wpisywać każdą stawkę, pozwól integracji wyliczyć ją z wbudowanych taryf operatorów i ofert
+sprzedawców na 2026 rok (`custom_components/energy_compass/sources/tariff_rates.json`, odświeżane przez
+opiekuna raz w roku; plik jest czytany raz przy starcie, więc przepływ nie wymaga sieci). Ścieżka:
+**Taryfy → Źródło ceny zakupu → Taryfa OSD**, w nowym wpisie, w Konfiguruj i w Rekonfiguruj:
+
+1. **Taryfa.** Wybierz pozycję katalogu (a dla Enea G12/G12w godziny) jak dotąd.
+2. **Operator dystrybucyjny.** Pytanie tylko dla G11, bo to ta sama taryfa u każdego operatora, a opłaty
+   dystrybucyjne się różnią: PGE, Tauron, Enea, Energa albo Stoen. Każdy inny klucz sam wskazuje operatora.
+3. **Oferta sprzedawcy.** Taryfa sprzedawcy z urzędu (URE) i oferty o stałej cenie wycenione dla każdej
+   strefy grupy, *Tylko dystrybucja (cenę energii wpiszę sam)* albo *Stawki wpiszę sam*. Krok pokazuje
+   rok taryfy, jej ważność i datę, na którą stawki obowiązują. W wbudowanych danych Enea G13active nie ma
+   oferty wycenionej dla wszystkich trzech stref, więc oferuje tylko samą dystrybucję albo wpisanie
+   ręczne.
+4. **Twoje przyłącze i rozliczenie** (oferta i sama dystrybucja): *Przyłącze* (jedna albo trzy fazy),
+   *Okres rozliczeniowy* (co miesiąc albo co 2, 3, 6 lub 12 miesięcy, zgodnie z publikacją operatora) i
+   *Przedział rocznego zużycia* (do 500 kWh/rok … powyżej 2800 kWh/rok), który wybiera opłatę mocową i
+   przejściową. Domyślnie zapisany wybór, a w przeciwnym razie jedna faza, rozliczenie co miesiąc i
+   przedział do 2800 kWh/rok.
+5. **Stałe stawki i przeliczenia** otwiera się z wyliczonymi wartościami i wierszem wskazującym ich
+   źródło; każdą wartość można zmienić, a nic nie jest później nadpisywane.
+
+*Stawki wpiszę sam* zapisuje harmonogram jak dotąd, bez wypełniania. Wybór oferty zapisuje te
+ustawienia (wszystko netto, z `buy_apply_vat` włączonym i VAT doliczanym przez wzór ceny):
+
+| Ustawienie | Wartość |
+| --- | --- |
+| `buy_rate`, `buy_mid_peak_rate`, `buy_off_peak_rate` | cena energii oferty w danej strefie **plus akcyza** 0,005 PLN/kWh; pasmo, którego taryfa nie ma, to 0 (G11 zapisuje `buy_off_peak_rate` 0) |
+| `buy_distribution_rate`, `buy_distribution_mid_peak_rate`, `buy_distribution_off_peak_rate` | zmienna stawka operatora w danej strefie + opłata jakościowa + OZE + kogeneracyjna za kWh; pasmo, którego taryfa nie ma, to 0 |
+| `buy_distribution_mode`, `buy_multiplier`, `buy_addition`, `buy_apply_vat` | `added`, `1`, `0`, włączone |
+| `vat_percent` | 23, tylko gdy `sell_apply_vat` (*Dolicz VAT przy sprzedaży*) jest wyłączone, a `vat_percent` nie jest powiązane z pomocnikiem; w przeciwnym razie zostaje bez zmian, a Podgląd dodaje „Note: VAT is 8 % (shared with the sell side); the offer assumes 23 %.” (pierwsza liczba to Twoja wartość) |
+| `monthly_charge` | (opłata stała dla liczby faz + abonament za okres rozliczeniowy + opłata mocowa + opłata przejściowa dla przedziału + opłata handlowa sprzedawcy) × (1 + `vat_percent` / 100, gdy `buy_apply_vat` jest włączone), zaokrąglone do 0,01 PLN. Tylko do raportowania |
+
+Akcyza jest w stawce energii, bo część energetyczna modelu depozytu to cena zakupu minus część
+dystrybucyjna. Tak wyliczona cena równa się cenie z kalkulatora, `(energia + akcyza + dystrybucja) ×
+(1 + VAT)`, z dokładnością do 0,001 PLN/kWh.
+
+**Tylko dystrybucja** zapisuje stawki dystrybucji, tryb, VAT i opłatę miesięczną (bez opłaty
+handlowej), a stawki energii ustawia na 0; jest dostępna także dla grup, które mają oferty.
+Obliczenie kończy się wtedy błędem z komunikatem o dodatniej cenie, dopóki nie wpiszesz netto ceny
+energii sprzedawcy plus akcyzy dla każdej strefy: użyj tego, gdy Twojego sprzedawcy nie ma na
+wbudowanej liście.
+
+**Co jest zapisywane.** Harmonogram przechowuje pochodzenie (operator, oferta, rok taryfy, ważność,
+data stawek, fazy, okres rozliczeniowy, przedział zużycia i wyliczone wartości); poza tym nic w
+działaniu się nie zmienia, bo wypełnione wartości to zwykłe ustawienia. Powiązanie wypełnionego
+klucza z pomocnikiem nadal go nadpisuje, a wypełnienie usuwa powiązanie z encją (pomocnikiem) każdego
+ustawienia stawki, które zapisuje (krok wartości wymienia je jako „Powiązania z helperami usunięte
+dla: …”; `vat_percent` nigdy nie jest odpinane): powiązany pomocnik nie wygrywa po cichu z ofertą.
+[Pomocnik taryfy w YAML](tariff-helper.md) zostaje przydatny tam, gdzie katalog i wbudowane oferty nie
+sięgają: inny operator lub grupa, sprzedawca spoza listy, własne daty.
+
+**Podgląd** (tekst po angielsku) wypisuje „Rates pre-filled from *sprzedawca*: *oferta* (*operator*
+tariff *rok*, valid *od*–*do*, as of *data*)” (dla samej dystrybucji: „Distribution rates pre-filled
+from the *operator* tariff *rok* (…); energy rates are 0”), a potem „; N values edited since”, gdy
+zmieniłeś którąś z nich. Mogą po nim wystąpić dwie uwagi, żadna nie zmienia wartości: po końcu
+ważności „the pre-filled rates are out of date (the 2026 tariff ended 2026-12-31); values are
+unchanged — pick the offer again or edit Tariffs → Values”, a gdy wbudowane dane mają nowszy rok
+taryfy operatora, „newer rates are bundled (tariff 2027): pick the offer again in Tariffs → Buy
+source”. Krok oferty ostrzega podobnie po końcu ważności wbudowanej taryfy (po polsku: „Uwaga:
+wbudowana taryfa 2026 skończyła się 2026-12-31; stawki są nieaktualne.”). Wbudowane stawki to jedna
+migawka na rok (nowe decyzje URE ukazują się co grudzień, a większość ofert kończy się 31 grudnia):
+następne wydanie przynosi kolejną, a zapisane wartości nigdy nie zmieniają się same.
+
+**Powrót do starszej wersji.** Starsza wersja ignoruje dwa ustawienia strefy pośredniej i zapisane
+pochodzenie, a klucz G13 zgłasza „unknown tariff; reconfigure the buy source” i kończy się
+błędem zamiast wyceniać dwie strefy. Przed powrotem do starszego wydania zrekonfiguruj źródło ceny
+zakupu na pozycję G12.
 
 ### Wykryte źródła (nowe instalacje)
 
@@ -501,7 +597,7 @@ falownika.
   skończoną wartością od 0 do 100 (SOC ze stanu wymaga jednostki %); statystyka zużycia wymaga klasy
   stanu skumulowanej i kWh lub Wh. Kandydat nieużywalny nie jest oferowany; uwagi podają go z powodem.
 - **Szablon sprzedaży.** Jego powiązanie ustawia mnożnik sprzedaży na 1, bo szablon sam stosuje
-  próg i mnożnik. Profile startowe w wersji 3 nie dodają wtedy ponownie 1,23 (zob. [Profile
+  próg i mnożnik. Profile startowe nie dodają wtedy ponownie 1,23 (zob. [Profile
   startowe](#profile-startowe-nowe-instalacje)). Nieaktualny szablon nie jest oferowany.
 - **`rce_pse`.** Czujnik musi podawać PLN/MWh (ustawienie domyślne integracji); opcja jednostki
   `PLN/kWh` jest tu odrzucana, podobnie jak w **Taryfy → Źródło ceny sprzedaży → Cena rynkowa RCE
@@ -1317,7 +1413,7 @@ Ujemna cena energii zostaje rzeczywistą ceną i nie ma części energetycznej d
 | `deposit_refund_percent` | 30 | ρ, limit zwrotu jako udział wartości eksportu z miesiąca. 20 przy miesięcznym rozliczeniu RCEm. Sprzedawca zwracający udział depozytu (który zawiera współczynnik 1,23) ma tu 36,9 / 24,6. |
 | `export_value_factor` | 1,0 | Tylko `manual`: ile jest warta kolejna jednostka eksportu (0–1). |
 | `buy_distribution_mode` | `included` | `included` albo `added`, jak wyżej. |
-| `buy_distribution_rate`, `buy_distribution_off_peak_rate` | 0 | Wszystko, co dystrybutor nalicza za kWh (stawka sieciowa, opłata jakościowa, OZE i kogeneracyjna), wpisywane jak cena zakupu; pierwsza to strefa szczytowa albo jedyna, druga strefa poza szczytem. VAT obowiązuje, gdy `buy_apply_vat` jest włączone; `buy_multiplier`, `buy_addition` i próg prognozy dotyczą tylko źródła ceny zakupu. Strefy pochodzą z harmonogramu taryfy źródła zakupu albo z [taryfy dystrybucyjnej](#wbudowane-taryfy-osd); bez żadnej z nich albo przy G11 pierwsza stawka obowiązuje całą dobę. Przy dwóch strefach ustaw obie stawki albo żadną: dokładnie jedna stawka równa 0 kończy obliczenie błędem. Opłata miesięczna należy do `monthly_charge`. |
+| `buy_distribution_rate`, `buy_distribution_mid_peak_rate`, `buy_distribution_off_peak_rate` | 0 | Wszystko, co dystrybutor nalicza za kWh (stawka sieciowa, opłata jakościowa, OZE i kogeneracyjna), wpisywane jak cena zakupu albo [wypełnione](#wypełnione-stawki); pierwsza to strefa szczytowa albo jedyna, druga strefa pośrednia (tylko G13), trzecia strefa poza szczytem. VAT obowiązuje, gdy `buy_apply_vat` jest włączone; `buy_multiplier`, `buy_addition` i próg prognozy dotyczą tylko źródła ceny zakupu. Strefy pochodzą z harmonogramu taryfy źródła zakupu albo z [taryfy dystrybucyjnej](#wbudowane-taryfy-osd); bez żadnej z nich albo przy G11 pierwsza stawka obowiązuje całą dobę. Przy dwóch strefach ustaw obie stawki albo żadną, przy trzech wszystkie trzy albo żadną: częściowo ustawiona grupa kończy obliczenie błędem. Opłata miesięczna należy do `monthly_charge`. |
 
 Presja limitu π (0 = depozytu brakuje albo mieści się pod limitem, 1 = limit wiąże) daje dwa
 współczynniki, które istnieją tylko wewnątrz optymalizatora:
@@ -2564,8 +2660,8 @@ większa niż `max(buy, 0)`, a gdy ujemna, nie większa niż `buy`; puste lub br
 `max(buy_energy, 0)` (ograniczonego do `max(buy, 0)`, jak silnik). Ma znaczenie tylko z
 [modelem depozytu](#wartość-depozytu-w-net-billingu), który włączasz przez `--set
 deposit_model=manual --set export_value_factor=0.3` (eksperymentalny).
-`buy` zostaje ceną z faktury, więc `buy_distribution_mode`, `buy_distribution_rate` i
-`buy_distribution_off_peak_rate` nie są czytane — ceny pochodzą z pliku — a ostrzeżenie o tym
+`buy` zostaje ceną z faktury, więc `buy_distribution_mode`, `buy_distribution_rate`,
+`buy_distribution_mid_peak_rate` i `buy_distribution_off_peak_rate` nie są czytane — ceny pochodzą z pliku — a ostrzeżenie o tym
 informuje. Koszty są raportowane w cenach z pliku niezależnie od współczynników.
 
 Dni są niezależne: każdy jest planowany i mierzony osobno i kończy się na ostatnim interwale, nawet
