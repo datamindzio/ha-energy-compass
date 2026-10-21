@@ -27,6 +27,7 @@ STORE_KEY = "{domain}.{entry_id}.notifications"
 ISSUE_FAILED = "notify_send_failed_{entry_id}"
 ERROR_LIMIT = 200
 _EXPECTED = (ServiceNotFound, HomeAssistantError, vol.Invalid, TimeoutError)
+UNKNOWN_ERROR = "—"
 
 
 def _cut(value: object) -> str:
@@ -134,7 +135,9 @@ class WindowNotifier:
         self._seen = targets(self._settings)
         if self.state.failures >= FAILED_ATTEMPTS_FOR_ISSUE:
             self._failed_targets = list(self._seen)
-            self._last_error = "see the Home Assistant log"
+            # The errors of the failed attempts are not stored; the issue is shown in the
+            # user's language, so the placeholder carries no words.
+            self._last_error = UNKNOWN_ERROR
             self._raise_issue()
         self._unsub_update = self.coordinator.async_add_listener(self._schedule)
         self._unsub_tick = async_track_time_change(self.hass, self._tick, second=0)
@@ -146,9 +149,6 @@ class WindowNotifier:
                 unsubscribe()
         self._unsub_update = self._unsub_tick = None
         ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
-
-    async def async_remove_store(self) -> None:
-        await self._store.async_remove()
 
     @callback
     def _tick(self, _now: datetime) -> None:

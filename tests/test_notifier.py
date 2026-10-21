@@ -89,6 +89,7 @@ class Phones:
         self.hass = hass
         self.calls: list[tuple[str, dict]] = []
         self.gate: asyncio.Event | None = None
+        self.gated: set[str] | None = None
         self.delay = 0.0
 
     def register(self, *names):
@@ -96,7 +97,7 @@ class Phones:
 
             async def handler(call, name=name):
                 self.calls.append((name, dict(call.data)))
-                if self.gate is not None:
+                if self.gate is not None and (self.gated is None or name in self.gated):
                     await self.gate.wait()
                 if self.delay:
                     await asyncio.sleep(self.delay)
@@ -245,6 +246,48 @@ async def test_new_plan_between_save_and_send_stops(make, hass):
     assert phones.calls == []
 
 
+async def test_targets_cleared_between_save_and_send_stops(make, hass, hass_storage):
+    load, phones = make
+    entry = await load()
+    phones.register("mobile_app_a", "mobile_app_b")
+    real = Store.async_save
+
+    async def save(self, data, *args, **kwargs):
+        await real(self, data, *args, **kwargs)
+        if self.key == key_of(entry):
+            settings_of(entry)["notify_services"] = []
+
+    with patch.object(Store, "async_save", save):
+        publish(entry, eligible())
+        await settle(hass)
+
+    assert phones.calls == []
+    assert entry.runtime_data.notifier.last_code == "rechecked"
+    assert stored(hass_storage, entry)["count"] == 1
+
+
+async def test_quiet_hours_set_between_save_and_send_stops(make, hass, hass_storage):
+    load, phones = make
+    entry = await load()
+    phones.register("mobile_app_a", "mobile_app_b")
+    real = Store.async_save
+    # 10:00 UTC is 12:00 in Europe/Warsaw
+    quiet_now = {"quiet_start": "11:00:00", "quiet_end": "13:00:00"}
+
+    async def save(self, data, *args, **kwargs):
+        await real(self, data, *args, **kwargs)
+        if self.key == key_of(entry):
+            publish(entry, eligible(prefs=quiet_now))
+
+    with patch.object(Store, "async_save", save):
+        publish(entry, eligible())
+        await settle(hass)
+
+    assert phones.calls == []
+    assert entry.runtime_data.notifier.last_code == "rechecked"
+    assert stored(hass_storage, entry)["count"] == 1
+
+
 async def test_save_happens_before_call(make, hass):
     load, phones = make
     entry = await load()
@@ -390,9 +433,10 @@ async def test_one_failed_target_others_sent(make, hass, hass_storage):
 
 async def test_target_timeout_counts_as_failure(make, hass, freezer):
     load, phones = make
-    entry = await load(services=["mobile_app_a"])
-    phones.register("mobile_app_a")
+    entry = await load()
+    phones.register("mobile_app_a", "mobile_app_b")
     phones.gate = asyncio.Event()
+    phones.gated = {"mobile_app_a"}
 
     with patch.object(notifications_ha, "SEND_TIMEOUT_S", 0.01):
         publish(entry, eligible())
@@ -402,6 +446,8 @@ async def test_target_timeout_counts_as_failure(make, hass, freezer):
             async_fire_time_changed(hass)
         await settle(hass)
 
+    assert len(phones.to("mobile_app_a")) == 1
+    assert len(phones.to("mobile_app_b")) == 1
     assert entry.runtime_data.notifier.state.failures == 1
 
 
@@ -465,7 +511,10 @@ async def test_failures_survive_restart(make, hass, freezer, hass_storage):
 
     assert entry.runtime_data.notifier.state.failures == 3
     issue = ("energy_compass", f"notify_send_failed_{entry.entry_id}")
-    assert ir.async_get(hass).async_get_issue(*issue) is not None
+    raised = ir.async_get(hass).async_get_issue(*issue)
+    assert raised is not None
+    assert raised.translation_placeholders["targets"] == "notify.mobile_app_a"
+    assert raised.translation_placeholders["error"] == notifications_ha.UNKNOWN_ERROR
 
 
 async def test_targets_change_resets_failures_and_issue(make, hass, freezer):
@@ -567,21 +616,64 @@ async def test_send_logs_no_warning(make, hass, caplog):
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
+async def send_blocked_in_call(entry, phones):
+    """Publish a favorable window and wait until its notify call is parked on the gate."""
+    phones.gate = asyncio.Event()
+    publish(entry, eligible())
+    for _ in range(200):
+        if phones.calls:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("the notify call was never made")
+
+
+def limit_window_now():
+    """A LIMIT window that would send on its own: it starts inside the lead time."""
+    return {
+        "limit": [
+            {
+                "start": (NOW + timedelta(minutes=10)).isoformat(),
+                "end": (NOW + timedelta(hours=2)).isoformat(),
+            }
+        ]
+    }
+
+
 async def test_single_flight_drops_overlapping_evaluation(make, hass):
     load, phones = make
     entry = await load(services=["mobile_app_a"])
     phones.register("mobile_app_a")
-    phones.gate = asyncio.Event()
+    await send_blocked_in_call(entry, phones)
 
-    publish(entry, eligible())
-    for _ in range(5):
-        await asyncio.sleep(0)
-    publish(entry, eligible(generated=NOW + timedelta(seconds=1)))
-    for _ in range(5):
+    # A second plan arrives while the first send is in flight; alone it would send a LIMIT.
+    publish(entry, eligible(windows=limit_window_now()))
+    for _ in range(10):
         await asyncio.sleep(0)
     phones.gate.set()
     await settle(hass)
 
+    notifier = entry.runtime_data.notifier
+    assert len(phones.to("mobile_app_a")) == 1
+    assert notifier.state.count == 1
+    assert notifier.state.limit is None
+
+
+async def test_single_flight_drops_direct_evaluation(make, hass):
+    load, phones = make
+    entry = await load(services=["mobile_app_a"])
+    phones.register("mobile_app_a")
+    await send_blocked_in_call(entry, phones)
+    entry.runtime_data.data = eligible(windows=limit_window_now())
+
+    # Unguarded, this evaluation would send the LIMIT and park on the gate too.
+    evaluation = hass.async_create_task(entry.runtime_data.notifier.async_evaluate())
+    for _ in range(10):
+        await asyncio.sleep(0)
+    dropped = evaluation.done()
+    phones.gate.set()
+    await settle(hass)
+
+    assert dropped
     assert len(phones.to("mobile_app_a")) == 1
     assert entry.runtime_data.notifier.state.count == 1
 

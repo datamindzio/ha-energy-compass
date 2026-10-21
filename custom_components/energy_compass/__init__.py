@@ -10,7 +10,7 @@ from homeassistant.util import dt as dt_util
 from .controller_ha import PROCESS_SESSION, DeyeController, async_auto_enable
 from .controller_services import async_register as async_register_controller_services
 from .coordinator import EnergyCompassCoordinator
-from .notifications_ha import WindowNotifier
+from .notifications_ha import STORE_KEY, WindowNotifier
 from .settings import DOMAIN, default_configuration, explicit_strategy_fields
 
 PLATFORMS = [
@@ -112,7 +112,9 @@ async def async_remove_entry(hass, entry) -> None:
 
     await hass.async_add_executor_job(forget_entry, hass, entry.entry_id)
     await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.controller").async_remove()
-    await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.notifications").async_remove()
+    await Store(
+        hass, 1, STORE_KEY.format(domain=DOMAIN, entry_id=entry.entry_id)
+    ).async_remove()
     hass.data.get(DOMAIN, {}).get("controller_sessions", {}).pop(entry.entry_id, None)
 
 
