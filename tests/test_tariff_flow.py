@@ -1407,6 +1407,19 @@ async def test_flow_defaults_from_stored_prefill(
     assert default_of(offer, "offer") == "distribution_only"
 
 
+async def test_flow_prefill_of_another_operator_does_not_force_manual(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    flow = await open_flow(hass, "options")
+    await flow.prefill("pge_g12", "pge-ure-2026")
+    await flow.configure({})
+    assert flow.draft["sources"]["buy"]["schedule"]["prefill"]["operator"] == "pge"
+    offer = await reopen_schedule(flow, "tauron_g12")
+    assert offer["step_id"] == "tariff_offer"
+    assert default_of(offer, "offer") == "tauron-ure-2026"
+
+
 async def test_flow_existing_schedule_without_prefill_defaults_to_manual(
     recorder_mock, hass, enable_custom_integrations, freezer
 ):
