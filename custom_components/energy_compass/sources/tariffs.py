@@ -1,4 +1,4 @@
-"""Polish distribution tariff catalog: clock, calendar and off-peak band evaluator.
+"""Polish distribution tariff catalog: clock, calendar and zone band evaluator.
 
 Pure module, no Home Assistant imports. Rates are never shipped; only the zone
 schedule of each tariff group is modelled.
@@ -14,7 +14,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..engine.models import InputError
 
-Band = Literal["peak", "off_peak"]
+Band = Literal["peak", "mid_peak", "off_peak"]
+BANDS: tuple[Band, ...] = ("peak", "mid_peak", "off_peak")
 
 CET: tzinfo = timezone(timedelta(hours=1))
 
@@ -33,6 +34,7 @@ class Window:
     valid_from: date | None = None
     valid_until: date | None = None
     param: str | None = None
+    band: Band = "off_peak"
 
     @property
     def length(self) -> int:
@@ -42,7 +44,7 @@ class Window:
 
 @dataclass(frozen=True)
 class TariffSpec:
-    group: Literal["G11", "G12", "G12w"]
+    group: Literal["G11", "G12", "G12w", "G13", "G13active"]
     operator: str | None
     windows: tuple[Window, ...]
     free_days: bool
@@ -50,6 +52,7 @@ class TariffSpec:
     labels: Mapping[str, str]
     choices: Mapping[str, tuple[int, ...]] = MappingProxyType({})
     winter_clause: bool = True
+    default_band: Band = "peak"
 
 
 @dataclass(frozen=True)
@@ -93,6 +96,22 @@ class BandRow:
     band: Band
 
 
+BAND_RATE_KEYS: Mapping[Band, str] = MappingProxyType(
+    {
+        "peak": "buy_rate",
+        "mid_peak": "buy_mid_peak_rate",
+        "off_peak": "buy_off_peak_rate",
+    }
+)
+BAND_DISTRIBUTION_KEYS: Mapping[Band, str] = MappingProxyType(
+    {
+        "peak": "buy_distribution_rate",
+        "mid_peak": "buy_distribution_mid_peak_rate",
+        "off_peak": "buy_distribution_off_peak_rate",
+    }
+)
+
+
 def _labels(operator: str | None, group: str) -> Mapping[str, str]:
     if operator is None:
         return MappingProxyType(
@@ -103,23 +122,26 @@ def _labels(operator: str | None, group: str) -> Mapping[str, str]:
 
 
 def _spec_row(
-    group: Literal["G11", "G12", "G12w"],
+    group: Literal["G11", "G12", "G12w", "G13", "G13active"],
     operator: str | None,
     windows: tuple[Window, ...],
     reference: str,
     *,
     choices: Mapping[str, tuple[int, ...]] | None = None,
     winter_clause: bool = True,
+    free_days: bool | None = None,
+    default_band: Band = "peak",
 ) -> TariffSpec:
     return TariffSpec(
         group,
         operator,
         windows,
-        group == "G12w",
+        group == "G12w" if free_days is None else free_days,
         reference,
         _labels(operator, group),
         MappingProxyType(dict(choices or {})),
         winter_clause,
+        default_band,
     )
 
 
@@ -140,6 +162,35 @@ _ENEA_G12_WINDOWS = (
     Window(13, 15, param="afternoon_start"),
 )
 _ENEA_CHOICES = {"night_start": (22, 23), "afternoon_start": (13, 14, 15)}
+
+_TAURON_G13_WINDOWS = (
+    Window(7, 13, band="mid_peak"),
+    Window(19, 22, months=_SUMMER, band="peak"),
+    Window(16, 21, months=_WINTER, band="peak"),
+)
+
+
+def _enea_g13_windows() -> tuple[Window, ...]:
+    """Restricted (peak) and remaining (mid_peak) hours per month, standard clock."""
+    # (months, restricted ranges, remaining ranges); every other hour is recommended.
+    table = (
+        ((1,), ((7, 10), (15, 20)), ((6, 7), (10, 15), (20, 23))),
+        ((2,), ((7, 9), (16, 21)), ((6, 7), (9, 16), (21, 23))),
+        ((3,), ((6, 9), (16, 23)), ((9, 10), (23, 24), (0, 6))),
+        ((4,), ((6, 9), (18, 23)), ((9, 10), (16, 18), (23, 24), (0, 6))),
+        ((5, 6, 7, 8), ((6, 9), (18, 23)), ((17, 18), (23, 24), (0, 6))),
+        ((9,), ((6, 9), (17, 23)), ((9, 10), (16, 17), (23, 24), (0, 6))),
+        ((10,), ((7, 9), (16, 23)), ((9, 10), (23, 24), (0, 7))),
+        ((11,), ((7, 9), (14, 21)), ((6, 7), (9, 14), (21, 23))),
+        ((12,), ((7, 10), (13, 20)), ((6, 7), (10, 13), (20, 23))),
+    )
+    return tuple(
+        Window(start, end, months=frozenset(months), band=band)
+        for months, restricted, remaining in table
+        for band, ranges in (("peak", restricted), ("mid_peak", remaining))
+        for start, end in ranges
+    )
+
 
 CATALOG: Mapping[str, TariffSpec] = MappingProxyType(
     {
@@ -174,6 +225,22 @@ CATALOG: Mapping[str, TariffSpec] = MappingProxyType(
             "G12", "Stoen Operator", (_NIGHT, _AFTERNOON), _STOEN_REF
         ),
         "stoen_g12w": _spec_row("G12w", "Stoen Operator", (_NIGHT,), _STOEN_REF),
+        "tauron_g13": _spec_row(
+            "G13",
+            "Tauron Dystrybucja",
+            _TAURON_G13_WINDOWS,
+            _TAURON_REF,
+            free_days=True,
+            default_band="off_peak",
+        ),
+        "enea_g13active": _spec_row(
+            "G13active",
+            "Enea Operator",
+            _enea_g13_windows(),
+            _ENEA_REF,
+            free_days=False,
+            default_band="off_peak",
+        ),
     }
 )
 
@@ -285,8 +352,17 @@ def _band_on_clock(spec: TariffSpec, schedule: TariffSchedule, local: datetime) 
             else window.start
         )
         if _in_window(local.hour, start, window.length):
-            return "off_peak"
-    return "peak"
+            return window.band
+    return spec.default_band
+
+
+def tariff_bands(tariff: str) -> tuple[Band, ...]:
+    """Bands a tariff can produce, in BANDS order."""
+    spec = _spec(tariff)
+    produced = {spec.default_band, *(window.band for window in spec.windows)}
+    if spec.free_days:
+        produced.add("off_peak")
+    return tuple(band for band in BANDS if band in produced)
 
 
 def band_at(schedule: TariffSchedule, instant: datetime, timezone_name: str) -> Band:
@@ -320,8 +396,10 @@ def band_rows(
     return tuple(rows)
 
 
-def local_off_peak(schedule: TariffSchedule, day: date, timezone_name: str) -> str:
-    """Off-peak intervals of one local calendar day as 'HH:MM–HH:MM, ...'."""
+def local_band(
+    schedule: TariffSchedule, day: date, timezone_name: str, band: Band
+) -> str:
+    """Intervals of one band on a local calendar day: 'none', 'all day' or 'HH:MM–HH:MM, ...'."""
     try:
         zone = ZoneInfo(timezone_name)
     except (ZoneInfoNotFoundError, TypeError, ValueError) as err:
@@ -331,7 +409,7 @@ def local_off_peak(schedule: TariffSchedule, day: date, timezone_name: str) -> s
     rows = [
         row
         for row in band_rows(schedule, day_start, day_end, timezone_name)
-        if row.band == "off_peak"
+        if row.band == band
     ]
     if not rows:
         return "none"
@@ -346,6 +424,11 @@ def local_off_peak(schedule: TariffSchedule, day: date, timezone_name: str) -> s
         return moment.astimezone(zone).strftime("%H:%M")
 
     return ", ".join(f"{label(row.start)}–{label(row.end)}" for row in rows)
+
+
+def local_off_peak(schedule: TariffSchedule, day: date, timezone_name: str) -> str:
+    """Off-peak intervals of one local calendar day as 'HH:MM–HH:MM, ...'."""
+    return local_band(schedule, day, timezone_name, "off_peak")
 
 
 def clock_text(schedule: TariffSchedule, timezone_name: str) -> str:

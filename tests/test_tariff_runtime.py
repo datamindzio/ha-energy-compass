@@ -253,3 +253,101 @@ def test_schedule_price_for_slots_requires_complete_input():
 def test_effective_settings_include_off_peak_rate():
     config = schedule_config()
     assert effective_settings(config, {}, NOW)["buy_off_peak_rate"] == 0.4
+
+
+G13_BUY_MESSAGE = (
+    "tariff schedule needs positive buy rates: "
+    "set Buy rate, Mid-peak buy rate and Off-peak buy rate in Tariffs → Values"
+)
+G13_DISTRIBUTION_MESSAGE = (
+    "distribution with three zones needs all three rates or none: "
+    "set Distribution rate, Mid-peak distribution rate and "
+    "Off-peak distribution rate in Tariffs → Values"
+)
+G12_DISTRIBUTION_MESSAGE = (
+    "distribution with two zones needs both rates or neither: "
+    "set Distribution rate and Off-peak distribution rate in Tariffs → Values"
+)
+
+
+def g13_config(tariff="tauron_g13", **settings):
+    config = schedule_config(tariff, hours=24)
+    config["settings"].update(buy_mid_peak_rate=0.6, **settings)
+    return config
+
+
+def test_g13_three_band_transform():
+    config = g13_config(
+        buy_multiplier=1.1, buy_apply_vat=True, vat_percent=23, buy_addition=0.05
+    )
+    problem, _, _ = build_problem(config, {}, NOW)
+    factor = 1.1 * 1.23
+    # 2026-07-01 is a Wednesday; Warsaw is UTC+2.
+    morning = price_at(problem, datetime(2026, 7, 1, 7, tzinfo=UTC))  # 09:00 mid
+    noon = price_at(problem, datetime(2026, 7, 1, 12, tzinfo=UTC))  # 14:00 off
+    evening = price_at(problem, datetime(2026, 7, 1, 18, tzinfo=UTC))  # 20:00 peak
+    assert morning == pytest.approx(0.6 * factor + 0.05)
+    assert noon == pytest.approx(0.4 * factor + 0.05)
+    assert evening == pytest.approx(0.8 * factor + 0.05)
+
+
+def test_g13_distribution_is_added_per_band():
+    config = g13_config(
+        buy_distribution_mode="added",
+        buy_distribution_rate=0.3,
+        buy_distribution_mid_peak_rate=0.2,
+        buy_distribution_off_peak_rate=0.1,
+    )
+    problem, _, _ = build_problem(config, {}, NOW)
+    assert price_at(problem, datetime(2026, 7, 1, 7, tzinfo=UTC)) == pytest.approx(0.8)
+    assert price_at(problem, datetime(2026, 7, 1, 12, tzinfo=UTC)) == pytest.approx(0.5)
+    assert price_at(problem, datetime(2026, 7, 1, 18, tzinfo=UTC)) == pytest.approx(1.1)
+
+
+@pytest.mark.parametrize("key", ["buy_rate", "buy_mid_peak_rate", "buy_off_peak_rate"])
+def test_g13_missing_mid_peak_rate_fails_closed(key):
+    config = g13_config()
+    config["settings"][key] = 0
+    with pytest.raises(InputError) as raised:
+        build_problem(config, {}, NOW)
+    assert str(raised.value) == G13_BUY_MESSAGE
+    config["settings"][key] = -0.1
+    with pytest.raises(InputError) as raised:
+        build_problem(config, {}, NOW)
+    assert str(raised.value) == G13_BUY_MESSAGE
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"buy_distribution_rate": 0.3},
+        {"buy_distribution_rate": 0.3, "buy_distribution_off_peak_rate": 0.1},
+        {"buy_distribution_mid_peak_rate": 0.2},
+        {"buy_distribution_off_peak_rate": 0.1, "buy_distribution_mid_peak_rate": 0.2},
+    ],
+)
+def test_g13_distribution_all_or_none(settings):
+    config = g13_config(**settings)
+    with pytest.raises(InputError) as raised:
+        build_problem(config, {}, NOW)
+    assert str(raised.value) == G13_DISTRIBUTION_MESSAGE
+    config = g13_config()
+    problem, _, _ = build_problem(config, {}, NOW)
+    assert problem.slots
+
+
+def test_g12_messages_unchanged():
+    config = schedule_config()
+    config["settings"]["buy_off_peak_rate"] = 0
+    with pytest.raises(InputError) as raised:
+        build_problem(config, {}, NOW)
+    assert str(raised.value) == PEAK_MESSAGE
+    config = schedule_config()
+    config["settings"].update(buy_distribution_rate=0.3)
+    with pytest.raises(InputError) as raised:
+        build_problem(config, {}, NOW)
+    assert str(raised.value) == G12_DISTRIBUTION_MESSAGE
+    # A stray mid-peak value does not matter for a two-band group.
+    config = schedule_config()
+    config["settings"].update(buy_mid_peak_rate=0, buy_distribution_mid_peak_rate=0.5)
+    build_problem(config, {}, NOW)
