@@ -446,7 +446,8 @@ def preview_lines(
     if "buy_tariff" in labels and record.get("buy_tariff", "generic") != "generic":
         tariff_lines.append(
             f"Buy source pre-selected by buy_tariff {labels['buy_tariff']}: "
-            "tariff schedule; rates are entered by you (Tariffs → Values)."
+            "tariff schedule; pick the seller offer in Tariffs → Buy source to "
+            "pre-fill the rates, or enter them in Tariffs → Values."
         )
     if not assignments:
         return [f"Setup profiles: {summary}; no values pre-filled.", *tariff_lines]

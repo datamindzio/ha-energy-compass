@@ -3,10 +3,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from homeassistant import config_entries
 from homeassistant.data_entry_flow import InvalidData
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.energy_compass import config_flow
+from custom_components.energy_compass.engine.models import InputError
 from custom_components.energy_compass.presets import PRESETS
 from custom_components.energy_compass.runtime import build_problem
 from custom_components.energy_compass.settings import (
@@ -69,11 +71,25 @@ def default_of(result, name):
     return result["data_schema"]({})[name]
 
 
+async def skip_offer(hass, fid, result):
+    """Answer the operator and offer steps of the prefill flow with `manual`."""
+    if result["step_id"] == "tariff_operator":
+        result = await configure(
+            hass, fid, {"operator": default_of(result, "operator")}
+        )
+    if result["step_id"] == "tariff_offer":
+        result = await configure(hass, fid, {"offer": "manual"})
+    return result
+
+
 async def save_schedule(hass, fid, tariff="pge_g12", winter=False):
     await to_tariff(hass, fid, "buy")
     result = await configure(hass, fid, {"mode": "schedule"})
     assert result["step_id"] == "tariff_schedule"
-    return await configure(hass, fid, {"tariff": tariff, "meter_winter_clock": winter})
+    result = await configure(
+        hass, fid, {"tariff": tariff, "meter_winter_clock": winter}
+    )
+    return await skip_offer(hass, fid, result)
 
 
 async def save_rce(hass, fid, entity="sensor.rce"):
@@ -158,6 +174,8 @@ async def test_enea_schedule_routes_through_hours_and_stores_ints(
     assert default_of(result, "night_start") == "22"
     assert default_of(result, "afternoon_start") == "13"
     result = await configure(hass, fid, {"night_start": "23", "afternoon_start": "15"})
+    assert result["step_id"] == "tariff_offer"
+    result = await skip_offer(hass, fid, result)
     assert result["step_id"] == "tariffs"
     assert draft(hass, fid)["sources"]["buy"]["schedule"] == {
         "tariff": "enea_g12",
@@ -418,6 +436,15 @@ STEP_KEYS = {
         ("data", "night_start"),
         ("data", "afternoon_start"),
     ),
+    "tariff_operator": ("title", ("data", "operator"), "description"),
+    "tariff_offer": ("title", ("data", "offer"), "description"),
+    "tariff_charges": (
+        "title",
+        ("data", "phases"),
+        ("data", "billing_months"),
+        ("data", "consumption_max_kwh"),
+        "description",
+    ),
     "tariff_rce": ("title", ("data", "entity"), "description"),
     "tariff_distribution": (
         "title",
@@ -552,7 +579,10 @@ async def test_switching_the_buy_source_to_a_schedule_drops_the_distribution(
     await configure(hass, fid, {"next_step_id": "tariff_buy"})
     result = await configure(hass, fid, {"mode": "schedule"})
     assert result["step_id"] == "tariff_schedule"
-    await configure(hass, fid, {"tariff": "pge_g12", "meter_winter_clock": False})
+    offer = await configure(
+        hass, fid, {"tariff": "pge_g12", "meter_winter_clock": False}
+    )
+    await skip_offer(hass, fid, offer)
     buy = draft(hass, fid)["sources"]["buy"]
     assert buy["schedule"] == SCHEDULE_PGE
     assert "distribution_schedule" not in buy
@@ -997,8 +1027,6 @@ async def test_prefill_that_the_configuration_rejects_leaves_the_draft_untouched
 ):
     import dataclasses
 
-    from custom_components.energy_compass.engine.models import InputError
-
     freezer.move_to(NOW)
     _, fid = await start(hass, pln_config())
     result, _ = await save_prefill(hass, fid)
@@ -1060,3 +1088,493 @@ async def test_fixed_after_prefill_drops_schedule_and_prefill(
     assert "schedule" not in buy
     assert "prefill" not in json.dumps(buy)
     assert saved["settings"]["buy_rate"] == result.values["buy_rate"]
+
+
+# --- operator, offer and charges steps (tariff rates, flow §1.5) -----------------
+
+
+class Flow:
+    """One flow of any kind (new entry, Options, Reconfigure) at the Tariffs menu."""
+
+    def __init__(self, hass, manager, fid):
+        self.hass, self.manager, self.fid = hass, manager, fid
+
+    async def configure(self, data):
+        return await self.manager.async_configure(self.fid, data)
+
+    @property
+    def draft(self):
+        return self.manager._progress[self.fid]._draft
+
+    async def to_schedule(self, tariff, winter=False):
+        await self.configure({"next_step_id": "tariffs"})
+        await self.configure({"next_step_id": "tariff_buy"})
+        result = await self.configure({"mode": "schedule"})
+        assert result["step_id"] == "tariff_schedule"
+        return await self.configure({"tariff": tariff, "meter_winter_clock": winter})
+
+    async def prefill(
+        self, tariff, offer, *, phases="one_phase", months="1", band="2800"
+    ):
+        result = await self.to_schedule(tariff)
+        if result["step_id"] == "tariff_operator":
+            result = await self.configure({"operator": "pge"})
+        assert result["step_id"] == "tariff_offer"
+        result = await self.configure({"offer": offer})
+        assert result["step_id"] == "tariff_charges"
+        return await self.configure(
+            {"phases": phases, "billing_months": months, "consumption_max_kwh": band}
+        )
+
+
+async def open_flow(hass, kind, config=None):
+    if kind == "new":
+        manager = hass.config_entries.flow
+        result = await manager.async_init(
+            "energy_compass", context={"source": config_entries.SOURCE_USER}
+        )
+        fid = result["flow_id"]
+        await manager.async_configure(
+            fid,
+            {
+                "name": "Fresh",
+                "currency": "PLN",
+                "timezone": "Europe/Warsaw",
+                "preset": "generic",
+                "settlement": "generic",
+                "inverter": "generic",
+                "pv_enabled": False,
+                "battery_enabled": False,
+            },
+        )
+        return Flow(hass, manager, fid)
+    entry = MockConfigEntry(
+        domain="energy_compass", data=config or pln_config(), version=3
+    )
+    entry.add_to_hass(hass)
+    if kind == "options":
+        manager = hass.config_entries.options
+        result = await manager.async_init(entry.entry_id)
+    else:
+        manager = hass.config_entries.flow
+        result = await manager.async_init(
+            "energy_compass",
+            context={
+                "source": config_entries.SOURCE_RECONFIGURE,
+                "entry_id": entry.entry_id,
+            },
+        )
+    return Flow(hass, manager, result["flow_id"])
+
+
+KINDS = pytest.mark.parametrize("kind", ["new", "options", "reconfigure"])
+
+
+def field_options(result, name):
+    for marker, field in result["data_schema"].schema.items():
+        if str(marker) == name:
+            return field.config["options"]
+    raise AssertionError(f"no field {name}")
+
+
+def option_values(result, name):
+    return [option["value"] for option in field_options(result, name)]
+
+
+@KINDS
+async def test_flow_pge_g12_ure_prefills_and_shows_values(
+    recorder_mock, hass, enable_custom_integrations, freezer, kind
+):
+    freezer.move_to(NOW)
+    flow = await open_flow(hass, kind)
+    result = await flow.prefill("pge_g12", "pge-ure-2026")
+    assert result["step_id"] == "tariff_values"
+    settings = flow.draft["settings"]
+    assert settings["buy_rate"] == 0.5706
+    assert settings["buy_off_peak_rate"] == 0.3768
+    assert settings["buy_distribution_rate"] == 0.4449
+    assert settings["buy_distribution_off_peak_rate"] == 0.12
+    assert settings["buy_distribution_mode"] == "added"
+    assert settings["monthly_charge"] == 37.12
+    detail = result["description_placeholders"]["detail"]
+    assert detail.startswith("Rates pre-filled from PGE Obrót: Taryfa G PGE Obrót 2026")
+    assert "PGE Dystrybucja tariff 2026, valid 2026-01-01–2026-12-31" in detail
+    prefill = flow.draft["sources"]["buy"]["schedule"]["prefill"]
+    assert prefill["offer"] == "pge-ure-2026" and prefill["operator"] == "pge"
+    # The values screen is the editable next step; submitting it keeps the values.
+    done = await flow.configure({})
+    assert done["step_id"] == "tariffs"
+    assert flow.draft["settings"]["buy_rate"] == 0.5706
+
+
+async def test_flow_from_the_source_list_returns_there_after_the_values(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["sources"]["buy"].update(mode="schedule", fixed=None, schedule=SCHEDULE_PGE)
+    flow = await open_flow(hass, "options", config)
+    await flow.configure({"next_step_id": "sources"})
+    inventory = await flow.configure({"next_step_id": "source_inventory"})
+    selector_field = next(
+        v for k, v in inventory["data_schema"].schema.items() if str(k) == "source"
+    )
+    index = next(
+        o["value"]
+        for o in selector_field.config["options"]
+        if o["label"].startswith("Buy")
+    )
+    await flow.configure({"source": index})
+    result = await flow.configure({"next_step_id": "source_edit"})
+    assert result["step_id"] == "tariff_schedule"
+    await flow.configure({"tariff": "pge_g12", "meter_winter_clock": False})
+    await flow.configure({"offer": "pge-ure-2026"})
+    values = await flow.configure(
+        {"phases": "one_phase", "billing_months": "1", "consumption_max_kwh": "2800"}
+    )
+    assert values["step_id"] == "tariff_values"
+    assert (await flow.configure({}))["step_id"] == "sources"
+
+
+async def test_flow_values_screen_lists_the_helpers_it_unbound(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["helpers"] = {"buy_rate": HELPER, "monthly_charge": HELPER}
+    hass.states.async_set("sensor.rate", "1")
+    flow = await open_flow(hass, "options", config)
+    result = await flow.prefill("pge_g12", "pge-ure-2026")
+    assert (
+        "Helper bindings removed for: buy_rate, monthly_charge."
+        in (result["description_placeholders"]["detail"])
+    )
+    assert flow.draft["helpers"] == {}
+
+
+@KINDS
+async def test_flow_g11_asks_operator(
+    recorder_mock, hass, enable_custom_integrations, freezer, kind
+):
+    freezer.move_to(NOW)
+    flow = await open_flow(hass, kind)
+    result = await flow.to_schedule("g11")
+    assert result["step_id"] == "tariff_operator"
+    assert option_values(result, "operator") == [
+        "pge",
+        "tauron",
+        "enea",
+        "energa",
+        "stoen",
+    ]
+    assert default_of(result, "operator") == "pge"
+    assert field_options(result, "operator")[0]["label"] == "PGE Dystrybucja"
+    offer = await flow.configure({"operator": "tauron"})
+    assert offer["step_id"] == "tariff_offer"
+    offers = option_values(offer, "offer")
+    assert offers[0] == "tauron-ure-2026"
+    assert "pge-ure-2026" not in offers
+    assert offers[-2:] == ["distribution_only", "manual"]
+    assert default_of(offer, "offer") == "tauron-ure-2026"
+    charges = await flow.configure({"offer": "tauron-ure-2026"})
+    values = await flow.configure(
+        {"phases": "one_phase", "billing_months": "1", "consumption_max_kwh": "2800"}
+    )
+    assert charges["step_id"] == "tariff_charges"
+    assert values["step_id"] == "tariff_values"
+    assert flow.draft["settings"]["buy_rate"] == 0.502
+    assert flow.draft["settings"]["buy_distribution_rate"] == 0.2899
+    assert flow.draft["sources"]["buy"]["schedule"]["tariff"] == "g11"
+
+
+@KINDS
+async def test_flow_tauron_g13_three_rates(
+    recorder_mock, hass, enable_custom_integrations, freezer, kind
+):
+    freezer.move_to(NOW)
+    flow = await open_flow(hass, kind)
+    result = await flow.prefill("tauron_g13", "tauron-ure-2026")
+    assert result["step_id"] == "tariff_values"
+    settings = flow.draft["settings"]
+    assert (
+        settings["buy_rate"],
+        settings["buy_mid_peak_rate"],
+        settings["buy_off_peak_rate"],
+    ) == (0.783, 0.4718, 0.426)
+    assert (
+        settings["buy_distribution_rate"],
+        settings["buy_distribution_mid_peak_rate"],
+        settings["buy_distribution_off_peak_rate"],
+    ) == (0.4333, 0.2638, 0.0827)
+    assert settings["monthly_charge"] == 35.82
+    build_problem(flow.draft, {}, datetime.fromisoformat(NOW))
+
+
+async def test_flow_enea_g13active_distribution_only_fails_closed_until_typed(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    flow = await open_flow(hass, "options")
+    offer = await flow.to_schedule("enea_g13active")
+    assert offer["step_id"] == "tariff_offer"
+    assert option_values(offer, "offer") == ["distribution_only", "manual"]
+    assert default_of(offer, "offer") == "distribution_only"
+    assert "No seller price for this group" in offer["description_placeholders"]["note"]
+    await flow.configure({"offer": "distribution_only"})
+    result = await flow.configure(
+        {"phases": "one_phase", "billing_months": "1", "consumption_max_kwh": "2800"}
+    )
+    assert result["step_id"] == "tariff_values"
+    settings = flow.draft["settings"]
+    assert (
+        settings["buy_rate"],
+        settings["buy_mid_peak_rate"],
+        settings["buy_off_peak_rate"],
+    ) == (0.0, 0.0, 0.0)
+    assert (
+        settings["buy_distribution_rate"],
+        settings["buy_distribution_mid_peak_rate"],
+        settings["buy_distribution_off_peak_rate"],
+    ) == (0.3467, 0.2891, 0.1165)
+    assert settings["monthly_charge"] == 37.65
+    detail = result["description_placeholders"]["detail"]
+    assert "Distribution rates pre-filled from the Enea Operator tariff 2026" in detail
+    assert "net energy price plus the excise of 0.005 PLN/kWh" in detail
+    assert flow.draft["sources"]["buy"]["schedule"]["prefill"]["offer"] is None
+    with pytest.raises(InputError, match="tariff schedule needs positive buy rates"):
+        build_problem(flow.draft, {}, datetime.fromisoformat(NOW))
+    typed = await flow.configure(
+        {"buy_rate": 0.7, "buy_mid_peak_rate": 0.5, "buy_off_peak_rate": 0.4}
+    )
+    assert typed["step_id"] == "tariffs"
+    build_problem(flow.draft, {}, datetime.fromisoformat(NOW))
+    prefill = flow.draft["sources"]["buy"]["schedule"]["prefill"]
+    assert prefill["values"]["buy_rate"] == 0.0
+
+
+@KINDS
+async def test_flow_manual_keeps_today_behaviour(
+    recorder_mock, hass, enable_custom_integrations, freezer, kind
+):
+    freezer.move_to(NOW)
+    flow = await open_flow(hass, kind)
+    before = dict(flow.draft["settings"])
+    offer = await flow.to_schedule("pge_g12")
+    assert offer["step_id"] == "tariff_offer"
+    result = await flow.configure({"offer": "manual"})
+    assert result["step_id"] == "tariffs"
+    assert flow.draft["sources"]["buy"]["schedule"] == SCHEDULE_PGE
+    assert flow.draft["settings"] == before
+
+
+async def reopen_schedule(flow, tariff):
+    await flow.configure({"next_step_id": "tariff_buy"})
+    await flow.configure({"mode": "schedule"})
+    return await flow.configure({"tariff": tariff, "meter_winter_clock": False})
+
+
+async def test_flow_defaults_from_stored_prefill(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    flow = await open_flow(hass, "options")
+    await flow.prefill(
+        "tauron_g12",
+        "energa-podstawowa-2-lata",
+        phases="three_phase",
+        months="2",
+        band="1200",
+    )
+    await flow.configure({})
+    offer = await reopen_schedule(flow, "tauron_g12")
+    assert default_of(offer, "offer") == "energa-podstawowa-2-lata"
+    charges = await flow.configure({"offer": "energa-podstawowa-2-lata"})
+    assert default_of(charges, "phases") == "three_phase"
+    assert default_of(charges, "billing_months") == "2"
+    assert default_of(charges, "consumption_max_kwh") == "1200"
+    # A distribution-only prefill is offered again as distribution only.
+    await flow.configure(
+        {"phases": "one_phase", "billing_months": "1", "consumption_max_kwh": "2800"}
+    )
+    await flow.configure({})
+    await reopen_schedule(flow, "tauron_g12")
+    await flow.configure({"offer": "distribution_only"})
+    await flow.configure(
+        {"phases": "one_phase", "billing_months": "1", "consumption_max_kwh": "2800"}
+    )
+    await flow.configure({})
+    offer = await reopen_schedule(flow, "tauron_g12")
+    assert default_of(offer, "offer") == "distribution_only"
+
+
+async def test_flow_existing_schedule_without_prefill_defaults_to_manual(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["sources"]["buy"].update(mode="schedule", fixed=None, schedule=SCHEDULE_PGE)
+    config["settings"].update(buy_rate=0.8, buy_off_peak_rate=0.4)
+    flow = await open_flow(hass, "options", config)
+    await flow.configure({"next_step_id": "tariffs"})
+    await flow.configure({"next_step_id": "tariff_buy"})
+    await flow.configure({"mode": "schedule"})
+    offer = await flow.configure({"tariff": "pge_g12", "meter_winter_clock": False})
+    assert default_of(offer, "offer") == "manual"
+
+
+async def test_flow_enea_g12_hours_then_offer(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    flow = await open_flow(hass, "options")
+    hours = await flow.to_schedule("enea_g12")
+    assert hours["step_id"] == "tariff_schedule_hours"
+    offer = await flow.configure({"night_start": "22", "afternoon_start": "13"})
+    assert offer["step_id"] == "tariff_offer"
+    assert default_of(offer, "offer") == "enea-ure-2026"
+    await flow.configure({"offer": "enea-ure-2026"})
+    result = await flow.configure(
+        {"phases": "one_phase", "billing_months": "1", "consumption_max_kwh": "2800"}
+    )
+    assert result["step_id"] == "tariff_values"
+    schedule = flow.draft["sources"]["buy"]["schedule"]
+    assert schedule["params"] == {"night_start": 22, "afternoon_start": 13}
+    assert schedule["prefill"]["operator"] == "enea"
+    assert flow.draft["settings"]["buy_rate"] == 0.5829
+    assert flow.draft["settings"]["monthly_charge"] == 37.65
+
+
+async def test_offer_step_shows_year_and_stale_note(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2027-01-05T10:00:00+00:00")
+    flow = await open_flow(hass, "options")
+    offer = await flow.to_schedule("pge_g12")
+    text = offer["description_placeholders"]
+    assert text["tariff"] == "PGE Dystrybucja"
+    assert text["year"] == "2026"
+    assert text["valid"] == "2026-01-01 – 2026-12-31"
+    assert text["as_of"]
+    assert text["note"] == (
+        "Warning: the bundled 2026 tariff ended 2026-12-31; the rates are out of date."
+    )
+    labels = {o["value"]: o["label"] for o in field_options(offer, "offer")}
+    assert labels["energa-podstawowa-2-lata"].endswith("(no longer offered)")
+    assert not labels["pge-ure-2026"].endswith("(no longer offered)")
+    # Values are still written as they are in the snapshot.
+    await flow.configure({"offer": "pge-ure-2026"})
+    await flow.configure(
+        {"phases": "one_phase", "billing_months": "1", "consumption_max_kwh": "2800"}
+    )
+    assert flow.draft["settings"]["buy_rate"] == 0.5706
+
+
+async def test_offer_step_is_labelled_in_polish(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to("2027-01-05T10:00:00+00:00")
+    hass.config.language = "pl"
+    flow = await open_flow(hass, "options")
+    offer = await flow.to_schedule("pge_g12")
+    labels = {o["value"]: o["label"] for o in field_options(offer, "offer")}
+    assert labels["manual"] == "Stawki wpiszę sam"
+    assert "taryfa sprzedawcy z urzędu (URE)" in labels["pge-ure-2026"]
+    assert offer["description_placeholders"]["note"].startswith("Uwaga:")
+    await flow.configure({"offer": "manual"})
+
+
+@pytest.mark.parametrize(
+    ("tariff", "months", "edges"),
+    [
+        ("pge_g12", ["1", "2", "6"], ["500", "1200", "2800", "above"]),
+        ("tauron_g12", ["1", "2", "6", "12"], ["500", "1200", "2800", "above"]),
+        ("enea_g12", ["1", "2", "6", "12"], ["499", "1200", "2800", "above"]),
+        ("energa_g12", ["1", "2"], ["499", "1200", "2800", "above"]),
+        ("stoen_g12", ["1", "6", "12"], ["500", "1200", "2800", "above"]),
+    ],
+)
+async def test_billing_options_follow_operator(
+    recorder_mock, hass, enable_custom_integrations, freezer, tariff, months, edges
+):
+    freezer.move_to(NOW)
+    flow = await open_flow(hass, "options")
+    offer = await flow.to_schedule(tariff)
+    if tariff == "enea_g12":
+        offer = await flow.configure({"night_start": "22", "afternoon_start": "13"})
+    offer_id = option_values(offer, "offer")[0]
+    charges = await flow.configure({"offer": offer_id})
+    assert charges["step_id"] == "tariff_charges"
+    assert option_values(charges, "billing_months") == months
+    assert option_values(charges, "consumption_max_kwh") == edges
+    assert option_values(charges, "phases") == ["one_phase", "three_phase"]
+    assert default_of(charges, "phases") == "one_phase"
+    assert default_of(charges, "billing_months") == "1"
+    assert default_of(charges, "consumption_max_kwh") == "2800"
+    labels = [o["label"] for o in field_options(charges, "consumption_max_kwh")]
+    assert labels[0] == f"up to {edges[0]} kWh/year"
+    assert labels[-1] == "above 2800 kWh/year"
+    assert field_options(charges, "billing_months")[0]["label"] == "monthly"
+
+
+async def test_charges_labels_in_polish(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    hass.config.language = "pl"
+    flow = await open_flow(hass, "options")
+    await flow.to_schedule("tauron_g12")
+    charges = await flow.configure({"offer": "tauron-ure-2026"})
+    assert [o["label"] for o in field_options(charges, "billing_months")] == [
+        "co miesiąc",
+        "co 2 miesiące",
+        "co 6 miesięcy",
+        "co 12 miesięcy",
+    ]
+    assert field_options(charges, "consumption_max_kwh")[-1]["label"] == (
+        "powyżej 2800 kWh/rok"
+    )
+    assert [o["label"] for o in field_options(charges, "phases")] == [
+        "Jedna faza",
+        "Trzy fazy",
+    ]
+
+
+async def test_charges_with_a_rejected_prefill_re_show_the_form(
+    recorder_mock, hass, enable_custom_integrations, freezer, monkeypatch
+):
+    from custom_components.energy_compass import source_flow
+
+    freezer.move_to(NOW)
+    flow = await open_flow(hass, "options")
+    await flow.to_schedule("pge_g12")
+    await flow.configure({"offer": "pge-ure-2026"})
+    before = flow.draft
+
+    def reject(*args, **kwargs):
+        raise InputError("monthly_charge must be positive")
+
+    monkeypatch.setattr(source_flow.SourceEditor, "_store_schedule_source", reject)
+    result = await flow.configure(
+        {"phases": "one_phase", "billing_months": "1", "consumption_max_kwh": "2800"}
+    )
+    assert result["step_id"] == "tariff_charges"
+    assert result["errors"] == {"base": "invalid_input"}
+    assert (
+        "monthly_charge must be positive"
+        in (result["description_placeholders"]["detail"])
+    )
+    assert flow.draft is before
+
+
+def test_new_strings_in_every_translation_file_cover_the_placeholders():
+    for file in ("strings.json", "translations/en.json", "translations/pl.json"):
+        doc = json.loads((COMPONENT_DIR / file).read_text())
+        for section in ("config", "options"):
+            steps = doc[section]["step"]
+            for placeholder in ("{tariff}", "{year}", "{valid}", "{as_of}", "{note}"):
+                assert placeholder in steps["tariff_offer"]["description"], (
+                    file,
+                    section,
+                )
+            assert "{detail}" in steps["tariff_charges"]["description"]
+            assert "{detail}" in steps["tariff_values"]["description"]

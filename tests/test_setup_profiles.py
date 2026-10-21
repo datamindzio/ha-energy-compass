@@ -1358,7 +1358,8 @@ def test_tariff_preview_line_and_creation_summary():
         ),
         (
             "Buy source pre-selected by buy_tariff PGE Dystrybucja G12: tariff "
-            "schedule; rates are entered by you (Tariffs → Values)."
+            "schedule; pick the seller offer in Tariffs → Buy source to pre-fill "
+            "the rates, or enter them in Tariffs → Values."
         ),
     ]
     selections = {"settlement": "pl_net_billing", "buy_tariff": "g11"}
@@ -1370,11 +1371,23 @@ def test_tariff_preview_line_and_creation_summary():
     )
     assert lines[-1] == (
         "Buy source pre-selected by buy_tariff G11 (any operator): tariff "
-        "schedule; rates are entered by you (Tariffs → Values)."
+        "schedule; pick the seller offer in Tariffs → Buy source to pre-fill "
+        "the rates, or enter them in Tariffs → Values."
     )
     assert not any("Edited after" in line for line in lines)
     not_new = sp.preview_lines(record, (), {}, {}, {}, new_entry=False)
     assert len(not_new) == 1 and "pre-selected" not in not_new[0]
+
+
+def test_profile_provenance_points_to_offer():
+    selections = {"settlement": "generic", "buy_tariff": "tauron_g13"}
+    record = sp.selection_record(selections)
+    lines = sp.preview_lines(record, (), {}, {}, {}, new_entry=True)
+    assert lines[-1] == (
+        "Buy source pre-selected by buy_tariff Tauron Dystrybucja G13: tariff "
+        "schedule; pick the seller offer in Tariffs → Buy source to pre-fill the "
+        "rates, or enter them in Tariffs → Values."
+    )
 
 
 def test_note_rce_floor_variants():

@@ -275,6 +275,14 @@ _TEXT = {
         "fee": "trade fee {fee} PLN/month",
         "until": "sign by {until}",
         "gone": "(no longer offered)",
+        "filled": (
+            "Rates pre-filled from {offer} ({operator} tariff {year}, "
+            "valid {valid_from}–{valid_to}, as of {as_of})"
+        ),
+        "filled_distribution": (
+            "Distribution rates pre-filled from the {operator} tariff {year} "
+            "(valid {valid_from}–{valid_to}, as of {as_of}); energy rates are 0"
+        ),
         "stale": (
             "Warning: the bundled {year} tariff ended {valid_to}; "
             "the rates are out of date."
@@ -287,6 +295,14 @@ _TEXT = {
         "fee": "opłata handlowa {fee} zł/mies.",
         "until": "do podpisania do {until}",
         "gone": "(już niedostępna)",
+        "filled": (
+            "Stawki wypełnione z oferty {offer} (taryfa {operator} {year}, "
+            "ważna {valid_from}–{valid_to}, stan na {as_of})"
+        ),
+        "filled_distribution": (
+            "Stawki dystrybucji wypełnione z taryfy {operator} {year} "
+            "(ważna {valid_from}–{valid_to}, stan na {as_of}); stawki energii to 0"
+        ),
         "stale": (
             "Uwaga: wbudowana taryfa {year} skończyła się {valid_to}; "
             "stawki są nieaktualne."
@@ -478,6 +494,27 @@ def offer_label(offer: str, language: str, today: date) -> str:
     if until is not None and today > date.fromisoformat(until):
         label += f" {texts['gone']}"
     return label
+
+
+def prefill_summary(prefill: Prefill, language: str) -> str:
+    """One line naming where pre-filled rates came from (seller offer or distribution only)."""
+    texts = _texts(language)
+    fields = {
+        "operator": SNAPSHOT["operators"][prefill.operator]["name"],
+        "year": prefill.tariff_year,
+        "valid_from": prefill.valid_from,
+        "valid_to": prefill.valid_to,
+        "as_of": prefill.as_of,
+    }
+    if prefill.offer is None:
+        return texts["filled_distribution"].format(**fields)
+    offer = SNAPSHOT["offers"][prefill.offer]
+    return texts["filled"].format(offer=f"{offer['seller']}: {offer['name']}", **fields)
+
+
+def excise_per_kwh() -> float:
+    """Net excise (PLN/kWh) a seller's energy rate carries on top of its price."""
+    return float(SNAPSHOT["excise"]["netPerKWh"])
 
 
 def snapshot_text(operator: str, today: date, language: str) -> dict[str, str]:
