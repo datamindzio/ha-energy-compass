@@ -1619,6 +1619,14 @@
     "soc_estimator_unanchored": {
       "title": "Estymator SOC długo działa bez kotwicy",
       "description": "{name}: estymator SOC z liczników przeniósł więcej niż {cycles} pojemności baterii energii od ostatniej kotwicy (rodzaj: {kind}), więc błędy zaokrągleń i sprawności mogły się zsumować. Plany nie są zmieniane. Aby uzyskać nową kotwicę, pozwól pakietowi napełnić się na słońcu, aż ładowanie ustanie, choć mogłoby trwać (kotwica pełna), albo osiągnąć napięcie pakietu odpowiadające 0 % (kotwica pusta). Czujnik estymatora SOC pokazuje historię kotwic i kandydatów na kotwicę pełną."
+    },
+    "notify_blueprint_deprecated": {
+      "title": "Blueprint powiadomień jest wycofywany",
+      "description": "Automatyzacja {automation} używa wycofywanego blueprintu powiadomień. Wybierz cel w Ustawieniach powiadomień, a Energy Compass będzie sam wysyłać powiadomienia; potem usuń automatyzację."
+    },
+    "notify_blueprint_suppressed": {
+      "title": "Automatyzacja z blueprintu powiadomień nic nie wysyła",
+      "description": "Powiadomienia wysyła teraz Energy Compass, więc {automation} niczego nie wysyła. Usuń ją razem z pięcioma pomocnikami."
     }
   },
   "services": {
@@ -1663,6 +1671,16 @@
           "description": "Importuj ponownie, mimo że stan pakietu został już zaimportowany."
         }
       }
+    },
+    "send_test_notification": {
+      "name": "Wyślij powiadomienie testowe",
+      "description": "Wysyła teraz jedną wiadomość testową do celów powiadomień wpisu Energy Compass, z pominięciem godzin ciszy, przerwy i dziennego limitu.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Wpis",
+          "description": "Wpis Energy Compass. Potrzebny tylko, gdy jest więcej niż jeden."
+        }
+      }
     }
   },
   "exceptions": {
@@ -1698,6 +1716,15 @@
     },
     "controller_native": {
       "message": "Natywny silnik Deye nie używa usługi stanu pracy sterownika. Wyłącz automatyzację blueprintu, która ją wywołała."
+    },
+    "notify_no_target": {
+      "message": "Nie wybrano celu powiadomień; wybierz go w Opcje → Ustawienia powiadomień."
+    },
+    "notify_entry_required": {
+      "message": "Wczytano kilka wpisów Energy Compass; wybierz wpis."
+    },
+    "notify_entry_not_found": {
+      "message": "Wpis Energy Compass {entry} nie jest wczytany."
     }
   },
   "selector": {

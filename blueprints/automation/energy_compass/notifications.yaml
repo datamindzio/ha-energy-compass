@@ -1,7 +1,9 @@
 blueprint:
   name: Energy Compass window notifications
   description: >-
-    Opt-in household alerts for favorable use and approaching LIMIT windows, in
+    Deprecated: Energy Compass now sends these notifications itself (Options →
+    Notification preferences). This blueprint will be removed in a future
+    release. Opt-in household alerts for favorable use and approaching LIMIT windows, in
     English or Polish. Select entities from one Energy Compass installation, five
     dedicated persistent helpers and your notification action. Nothing is sent
     unless Notify enabled is on in the integration, the forecast is valid, the
