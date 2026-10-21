@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from homeassistant import config_entries
@@ -1578,3 +1579,114 @@ def test_new_strings_in_every_translation_file_cover_the_placeholders():
                 )
             assert "{detail}" in steps["tariff_charges"]["description"]
             assert "{detail}" in steps["tariff_values"]["description"]
+
+
+def _prefilled_preview_config(**settings):
+    """A G11 buy schedule carrying the provenance PGE's URE offer would store."""
+    from custom_components.energy_compass.sources import rates
+
+    config = pln_config()
+    config["settings"].update(settings)
+    result = rates.compute_prefill(
+        "g11",
+        "pge",
+        "pge-ure-2026",
+        "one_phase",
+        1,
+        2800,
+        values=config["settings"],
+    )
+    config["settings"].update(result.values)
+    config["sources"]["buy"].update(
+        mode="schedule",
+        fixed=None,
+        schedule=TariffSchedule("g11", prefill=result.prefill).to_dict(),
+    )
+    return config, result
+
+
+PREFILL_LINE = (
+    "Rates pre-filled from PGE Obrót: Taryfa G PGE Obrót 2026 (sprzedawca z "
+    "urzędu) (PGE Dystrybucja tariff 2026, "
+    "valid 2026-01-01–2026-12-31, as of "
+)
+
+
+def test_preview_prefill_line():
+    config, result = _prefilled_preview_config()
+    text = _preview(config, datetime(2026, 7, 1, 10, tzinfo=UTC))
+    assert PREFILL_LINE in text
+    assert f"as of {result.prefill.as_of})" in text
+    assert "edited since" not in text
+    assert "Note:" not in text
+    assert text.index("before multiplier") < text.index("Rates pre-filled")
+
+
+def test_preview_counts_edited_values():
+    config, _ = _prefilled_preview_config()
+    config["settings"]["buy_rate"] += 0.1
+    config["settings"]["buy_distribution_rate"] += 0.1
+    text = _preview(config, datetime(2026, 7, 1, 10, tzinfo=UTC))
+    assert "; 2 values edited since" in text
+    config["settings"]["buy_distribution_rate"] -= 0.1
+    text = _preview(config, datetime(2026, 7, 1, 10, tzinfo=UTC))
+    assert "; 1 values edited since" in text
+
+
+def test_preview_stale_after_valid_to():
+    config, _ = _prefilled_preview_config()
+    before = config["settings"].copy()
+    now = datetime(2027, 1, 1, 0, 30, tzinfo=ZoneInfo("Europe/Warsaw"))
+    text = _preview(config, now)
+    assert (
+        "Note: the pre-filled rates are out of date (the 2026 tariff ended "
+        "2026-12-31); values are unchanged — pick the offer again or edit "
+        "Tariffs → Values."
+    ) in text
+    assert config["settings"] == before
+    fresh = _preview(
+        config, datetime(2026, 12, 31, 22, tzinfo=ZoneInfo("Europe/Warsaw"))
+    )
+    assert "out of date" not in fresh
+
+
+def test_preview_newer_snapshot_note(monkeypatch):
+    import copy
+
+    from custom_components.energy_compass.sources import rates
+
+    config, _ = _prefilled_preview_config()
+    snapshot = copy.deepcopy(rates.SNAPSHOT)
+    snapshot["operators"]["pge"]["tariffYear"] = 2027
+    monkeypatch.setattr(rates, "SNAPSHOT", snapshot)
+    text = _preview(config, datetime(2026, 7, 1, 10, tzinfo=UTC))
+    assert (
+        "Note: newer rates are bundled (tariff 2027): pick the offer again in "
+        "Tariffs → Buy source."
+    ) in text
+    assert "out of date" not in text
+
+
+def test_preview_vat_kept_note():
+    config, result = _prefilled_preview_config(sell_apply_vat=True, vat_percent=8.0)
+    assert "vat_percent" not in result.values
+    text = _preview(config, datetime(2026, 7, 1, 10, tzinfo=UTC))
+    assert (
+        "Note: VAT is 8 % (shared with the sell side); the offer assumes 23 %."
+    ) in text
+    # A written VAT (23) gives no note.
+    config, result = _prefilled_preview_config()
+    assert result.values["vat_percent"] == 23.0
+    assert "VAT is" not in _preview(config, datetime(2026, 7, 1, 10, tzinfo=UTC))
+
+
+def test_preview_without_prefill_unchanged():
+    now = datetime(2026, 7, 1, 10, tzinfo=UTC)
+    text = _preview(_schedule_preview_config("g11"), now)
+    assert text == (
+        "Buy source: tariff schedule G11 (any operator); single rate 0.8 "
+        "PLN/kWh before multiplier" + SUFFIX.format(first=0.8)
+    )
+    text = _preview(_g13_preview_config("tauron_g13"), now)
+    assert "pre-filled" not in text and "Note:" not in text
+    assert text.endswith(SUFFIX.format(first=0.6))
