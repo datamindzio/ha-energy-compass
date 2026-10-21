@@ -87,10 +87,11 @@ nothing is saved until its last step.
    [Detected sources](#detected-sources-new-installations); PV can also use the
    [Energy dashboard solar forecast](#energy-dashboard-solar-forecast).
 3. **Main menu.** Work through the groups you need; each can be revisited later in **Configure**.
-   - **Tariffs → Buy source** for the buy price. For Polish G11/G12/G12w choose **Polish tariff
-     schedule**, which needs no YAML: pick the operator and group, then type the peak rate (*Buy rate*)
-     and, for G12/G12w, the *Off-peak buy rate* in **Tariffs → Fixed rates and transformations**. Zones,
-     clock and holidays are in [Built-in Polish tariffs](#built-in-polish-tariffs).
+   - **Tariffs → Buy source** for the buy price. For Polish G11/G12/G12w/G13 choose **Polish tariff
+     schedule**, which needs no YAML: pick the operator and group, then a seller offer (or *distribution
+     only*, or *Enter the rates myself*) to pre-fill the rates in **Tariffs → Fixed rates and
+     transformations**, where every value stays editable. Zones, clock, holidays and the pre-filled
+     rates are in [Built-in Polish tariffs](#built-in-polish-tariffs).
    - **Tariffs → Sell source** for the sell price. For Poland choose **RCE market price (PSE)**, which
      takes the sensor of the `rce_pse` integration.
    - **Load forecasting** holds the numbers behind the household consumption forecast. A new
@@ -268,7 +269,10 @@ net-billing RCE sell and a Deye LFP battery — and are a starting point, not a 
 
 **Polish distribution tariff axis (`buy_tariff`):** the profile only pre-selects **Tariffs → Buy
 source → Polish tariff schedule** for the chosen tariff; it assigns no setting and no price, and the
-rates stay at 0 until you type them. Every catalog profile requires PLN.
+rates stay at 0 until you [pre-fill](#pre-filled-rates) or type them. Every catalog profile requires
+PLN. The Preview line for a tariff profile reads: "Buy source pre-selected by buy_tariff *profile*:
+tariff schedule; pick the seller offer in Tariffs → Buy source to pre-fill the rates, or enter them in
+Tariffs → Values."; picking the offer is a separate step in the flow, not part of the profile.
 
 | Profile | Currency | Effect | Basis |
 | --- | --- | --- | --- |
@@ -304,8 +308,8 @@ effective value.
 
 Polish settlement and tariff profiles require currency PLN; choosing one with another currency is
 rejected, on the field that caused it. Setup profiles never set a tariff price (`buy_rate`,
-`buy_off_peak_rate`, `buy_distribution_rate`, `buy_distribution_off_peak_rate`, `sell_rate`, `buy_addition`,
-`sell_addition`, `monthly_charge`) and never touch a strategy-owned setting. They never enable the
+`buy_mid_peak_rate`, `buy_off_peak_rate`, `buy_distribution_rate`, `buy_distribution_mid_peak_rate`,
+`buy_distribution_off_peak_rate`, `sell_rate`, `buy_addition`, `sell_addition`, `monthly_charge`) and never touch a strategy-owned setting. They never enable the
 [deposit model](#net-billing-deposit-value) either: every installation starts with it off.
 
 **Sell only PV** (`limit_export_to_pv`) stays on with every settlement profile — a Polish prosumer may
@@ -376,13 +380,15 @@ entry (`setup_profiles`) and included in diagnostics.
 
 ### Built-in Polish tariffs
 
-For a Polish household, **Tariffs → Buy source → Polish tariff schedule (G11/G12/G12w)** replaces the
-tariff helper YAML (the [YAML example](tariff-helper.md) stays the fallback). Pick one of eleven
-catalog entries; the zones come from the distributor's 2026 tariff, and **you type the rates**: **Tariffs →
-Fixed rates and transformations** holds *Buy rate* (G11, or the peak rate) and *Off-peak buy rate*
-(G12/G12w). Both rates must be above zero or the calculation fails closed with a message naming
-those fields. The price of a slot is `rate × multiplier × VAT factor + addition`, as for a fixed
-rate. The schedule needs no entity and does not limit the planning horizon. It requires currency PLN.
+For a Polish household, **Tariffs → Buy source → Polish tariff schedule (G11/G12/G12w/G13)** replaces the
+tariff helper YAML (the [YAML example](tariff-helper.md) stays the fallback). Pick one of thirteen
+catalog entries; the zones come from the distributor's 2026 tariff. The rates can be
+[pre-filled](#pre-filled-rates) from the bundled 2026 operator tariffs and seller offers, or typed:
+**Tariffs → Fixed rates and transformations** holds *Buy rate* (G11, or the peak rate), *Mid-peak buy
+rate* (G13 only) and *Off-peak buy rate* (G12/G12w/G13). Every rate the tariff uses must be above zero
+or the calculation fails closed with a message naming those fields. The price of a slot is
+`rate × multiplier × VAT factor + addition`, as for a fixed rate. The schedule needs no entity and
+does not limit the planning horizon. It requires currency PLN.
 
 | Key | Operator and group | Weekday off-peak (tariff clock) | Free days | Source |
 | --- | --- | --- | --- | --- |
@@ -397,6 +403,21 @@ rate. The schedule needs no entity and does not limit the planning horizon. It r
 | `energa_g12w` | Energa-Operator, G12w | 13–15 and 22–6 | all day | same |
 | `stoen_g12` | Stoen Operator, G12 | 13–15 and 22–6 | as weekdays | tariff 2026 §2.2.5/2.2.6/2.2.11 |
 | `stoen_g12w` | Stoen Operator, G12w | 22–6 only | all day | same |
+| `tauron_g13` | Tauron Dystrybucja, G13 | three zones, see below | all day | tariff 2026 §2.2.6/2.2.7/2.2.9 |
+| `enea_g13active` | Enea Operator, G13active | three zones, see below | as weekdays | tariff extract 2026 §2.2.5/2.2.7/2.2.12 |
+
+**G13 zones.** G13 and G13active have three bands, and the band is the price key: **peak** uses
+*Buy rate*, **mid-peak** *Mid-peak buy rate*, **off-peak** *Off-peak buy rate* (distribution:
+*Distribution rate*, *Mid-peak distribution rate*, *Off-peak distribution rate*). Tauron G13: mid-peak
+7–13 on weekdays; peak 19–22 from April to September and 16–21 from October to March; every other
+weekday hour is off-peak, and Saturdays, Sundays and statutory holidays are off-peak all day. Enea
+G13active: Enea's table of restricted and remaining hours per month, with the restricted hours as
+peak, the remaining hours as mid-peak and the recommended hours as off-peak; there are no free days.
+The zone names map to bands by Enea's and Tauron's own meaning (Tauron *afternoon peak* → peak,
+*morning peak* → mid-peak, *off-peak* → off-peak; Enea *restricted* → peak, *remaining* → mid-peak,
+*recommended* → off-peak), not by price. The three-band rate messages are "tariff schedule needs
+positive buy rates: set Buy rate, Mid-peak buy rate and Off-peak buy rate" and "distribution with three
+zones needs all three rates or none". The one- and two-band messages and prices are unchanged.
 
 Free days of G12w are Saturdays, Sundays and statutory holidays (1 and 6 January, Easter Sunday and
 Monday, 1 and 3 May, Pentecost, Corpus Christi, 15 August, 1 and 11 November, 24 December from
@@ -422,7 +443,8 @@ dynamic energy price from a forecast) can still take the distributor's zones: **
 Distribution tariff (zones for the distribution rates)** (currency PLN) offers the same catalog,
 winter-clock flag and Enea hours, or *None (single zone)*. The zones apply to the two distribution
 rates of the [deposit model](#net-billing-deposit-value) (`buy_distribution_rate`,
-`buy_distribution_off_peak_rate`); their band edges become interval boundaries for the planner, as for
+`buy_distribution_off_peak_rate`, and `buy_distribution_mid_peak_rate` for the G13 keys, which give
+three zones); their band edges become interval boundaries for the planner, as for
 a schedule. They do not change the buy source. A schedule source keeps its own zones, so choosing a
 tariff schedule drops a stored distribution tariff. Preview shows both parts of the first interval's
 buy price, the energy part and the distribution part. The buy row of **Sources → Review and edit
@@ -436,6 +458,73 @@ is dropped when the source is switched away from forecast or edited so that it i
 net-billing profile then assigns the 1.23 multiplier; in Configure and Reconfigure set the sell
 multiplier yourself. Without the `rce_pse` integration use
 [`examples/rce-sell-price.yaml`](../examples/rce-sell-price.yaml).
+
+#### Pre-filled rates
+
+Instead of typing every rate, let the integration compute them from the 2026 operator tariffs and
+seller offers it bundles (`custom_components/energy_compass/sources/tariff_rates.json`, regenerated by the
+maintainer once a year; it is read once at start-up, so the flow needs no network). Reached from **Tariffs
+→ Buy source → Polish tariff schedule** in a new entry, Configure and Reconfigure alike:
+
+1. **Tariff.** Pick the catalog entry (and, for Enea G12/G12w, the hours) as before.
+2. **Distribution operator.** Asked only for G11, which is the same tariff at every operator while its
+   distribution charges differ: PGE, Tauron, Enea, Energa or Stoen. Every other key already names its
+   operator.
+3. **Seller offer.** The seller's default tariff (URE) and fixed-price offers priced for every zone of
+   the group, *Distribution only (I enter the seller's energy price)* or *Enter the rates myself*. The step shows the tariff year, its
+   validity and the date the rates are as of. In the bundled data, Enea G13active has no offer priced for
+   all three zones, so it offers distribution only or manual entry.
+4. **Your connection and billing** (offer and distribution only): *Connection* (single or three
+   phases), *Billing period* (monthly, or every 2, 3, 6 or 12 months, as the operator publishes) and
+   *Yearly consumption band* (up to 500 kWh/year … above 2800 kWh/year), which selects the capacity and
+   transitional fees. The defaults are the stored choice, otherwise a single phase, monthly billing and the
+   band up to 2800 kWh/year.
+5. **Fixed rates and transformations** opens with the computed values in place and a line naming
+   the source; every value stays editable and nothing is written back later.
+
+*Enter the rates myself* saves the schedule as before, with no pre-filling. Choosing an offer
+writes these settings (all net of VAT, with `buy_apply_vat` on and VAT added by the price formula):
+
+| Setting | Value |
+| --- | --- |
+| `buy_rate`, `buy_mid_peak_rate`, `buy_off_peak_rate` | the offer's energy price of the zone **plus the excise** of 0.005 PLN/kWh; a band the tariff does not have is 0 (G11 writes `buy_off_peak_rate` 0) |
+| `buy_distribution_rate`, `buy_distribution_mid_peak_rate`, `buy_distribution_off_peak_rate` | the operator's variable rate of the zone + quality + RES + cogeneration fee per kWh; a band the tariff does not have is 0 |
+| `buy_distribution_mode`, `buy_multiplier`, `buy_addition`, `buy_apply_vat` | `added`, `1`, `0`, on |
+| `vat_percent` | 23, only when `sell_apply_vat` (*Sell apply vat*) is off and `vat_percent` is not bound to a helper; otherwise it is kept and Preview adds "Note: VAT is 8 % (shared with the sell side); the offer assumes 23 %." (the first number is your value) |
+| `monthly_charge` | (fixed fee for the phases + subscription for the billing period + capacity fee + transitional fee for the band + the seller's trade fee) × (1 + `vat_percent` / 100 when `buy_apply_vat` is on), rounded to 0.01 PLN. Reporting only |
+
+The excise sits in the energy rate because the deposit model's energy part is the buy price minus the
+distribution part. A price computed this way equals the calculator's price,
+`(energy + excise + distribution) × (1 + VAT)`, to within 0.001 PLN/kWh.
+
+**Distribution only** writes the distribution rates, mode, VAT and monthly charge (without a trade fee)
+and sets the energy rates to 0, and is offered for groups that have offers too. The calculation then
+fails closed with the positivity message until you type the seller's net energy price plus the excise
+for each zone: use it when your seller is not in the bundled list.
+
+**What is recorded.** The schedule keeps the provenance (operator, offer, tariff year, validity, date
+of the rates, phases, billing period, consumption band and the computed values); nothing else in the
+runtime changes, since the pre-filled values are ordinary settings. Binding a pre-filled key to a helper
+afterwards still overrides it, and pre-filling in turn removes the entity binding (helper) of every
+rate setting it writes (the values step lists them as "Helper bindings removed for: …"; `vat_percent`
+is never unbound): a bound helper does not silently win over the offer. The
+[tariff helper YAML](tariff-helper.md) stays useful for what the catalog and the bundled offers do not
+cover: another operator or group, a seller that is not listed, custom dates.
+
+**Preview** prints "Rates pre-filled from *seller*: *offer* (*operator* tariff *year*, valid
+*from*–*to*, as of *date*)" (for distribution only: "Distribution rates pre-filled from the *operator*
+tariff *year* (…); energy rates are 0"), then "; N values edited since" when you changed any of them.
+Two notes can follow, and neither changes a value: after the end of validity, "the pre-filled rates are
+out of date (the 2026 tariff ended 2026-12-31); values are unchanged — pick the offer again or edit
+Tariffs → Values", and when the bundled data holds a newer tariff year for the operator, "newer rates
+are bundled (tariff 2027): pick the offer again in Tariffs → Buy source". The offer step warns the
+same way when the bundled tariff has ended. The bundled rates are one snapshot per year (new URE
+decisions are published every December, and most offers end on 31 December): a release brings the
+next one, and the values you saved never change on their own.
+
+**Downgrade.** An older build ignores the two mid-peak settings and the stored provenance, and a G13
+key reads "unknown tariff; reconfigure the buy source" and fails closed rather than pricing two zones.
+Reconfigure the buy source to a G12 entry before going back to an older release.
 
 ### Detected sources (new installations)
 
@@ -489,7 +578,7 @@ dashboard's two grid meters resolve to the inverter's counter.
   unit %); a load statistic needs a cumulative state class and kWh or Wh. An unusable candidate is
   not offered; the notes list it with the reason.
 - **Sell template.** Binding it sets the sell multiplier to 1, because the template already applies
-  its floor and multiplier. Setup profiles revision 3 then does not add 1.23 again (see [Setup
+  its floor and multiplier. Setup profiles then do not add 1.23 again (see [Setup
   profiles](#setup-profiles-new-installations)). A stale template is not offered.
 - **`rce_pse`.** The sensor must report PLN/MWh (the integration default); the `PLN/kWh` price
   unit option is rejected here and in **Tariffs → Sell source → RCE market price (PSE)**, because it
@@ -1288,7 +1377,7 @@ negative energy price keeps its real price and has no energy part to waive.
 | `deposit_refund_percent` | 30 | ρ, the refund cap as a share of a month's export value. 20 for monthly RCEm settlement. A seller that refunds a share of the deposit (which contains the 1.23 coefficient) has 36.9 / 24.6 here. |
 | `export_value_factor` | 1.0 | `manual` only: what one more unit of export is worth (0–1). |
 | `buy_distribution_mode` | `included` | `included` or `added`, as above. |
-| `buy_distribution_rate`, `buy_distribution_off_peak_rate` | 0 | Everything the distributor bills per kWh (network rate, quality, RES and cogeneration fees), typed like the buy rate; the first is the peak or single zone, the second the off-peak zone. VAT applies when `buy_apply_vat` is on; `buy_multiplier`, `buy_addition` and a forecast floor apply to the buy source only. The zones come from the tariff schedule of the buy source or from a [distribution tariff](#built-in-polish-tariffs); with neither, or with G11, the first rate applies all day. With two zones set both rates or neither: exactly one zero rate fails the calculation closed. The monthly fee belongs in `monthly_charge`. |
+| `buy_distribution_rate`, `buy_distribution_mid_peak_rate`, `buy_distribution_off_peak_rate` | 0 | Everything the distributor bills per kWh (network rate, quality, RES and cogeneration fees), typed like the buy rate or [pre-filled](#pre-filled-rates); the first is the peak or single zone, the second the mid-peak zone (G13 only), the third the off-peak zone. VAT applies when `buy_apply_vat` is on; `buy_multiplier`, `buy_addition` and a forecast floor apply to the buy source only. The zones come from the tariff schedule of the buy source or from a [distribution tariff](#built-in-polish-tariffs); with neither, or with G11, the first rate applies all day. With two zones set both rates or neither, with three zones all three or none: a partly set group fails the calculation closed. The monthly fee belongs in `monthly_charge`. |
 
 The cap pressure π (0 = deposit short or within the cap, 1 = cap binding) gives two factors that
 exist only inside the optimizer:
@@ -2523,8 +2612,8 @@ negative (a draw at a negative energy price, dynamic offer without an index floo
 `max(buy_energy, 0)` (capped at `max(buy, 0)`, as the engine does). It matters only with the
 [deposit model](#net-billing-deposit-value), which you switch on with `--set deposit_model=manual
 --set export_value_factor=0.3` (experimental). `buy` stays the invoice
-price, so `buy_distribution_mode`, `buy_distribution_rate` and `buy_distribution_off_peak_rate` are
-not read — prices come from the file — and a warning says so. Costs are reported at the file's prices
+price, so `buy_distribution_mode`, `buy_distribution_rate`, `buy_distribution_mid_peak_rate` and
+`buy_distribution_off_peak_rate` are not read — prices come from the file — and a warning says so. Costs are reported at the file's prices
 whatever the factors are.
 
 Days are independent: each is planned and measured on its own and ends at its last interval, even
