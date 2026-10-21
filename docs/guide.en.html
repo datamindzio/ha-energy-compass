@@ -159,10 +159,10 @@ conditions that produce each state, and the six dispatch strategies. It describe
 installation is described in the <a href="#installation">Installation</a> section, and dashboards in the
 <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">installation guide</a>.</p>
 <p>Energy Compass is <strong>advisory</strong>. It computes a plan and publishes it as Home Assistant entities. It
-sends no messages by itself, and it writes inverter settings only when you enable the optional Deye
-controller (off by default), which does so through the Solarman integration; notification blueprints
-and other controllers decide for themselves whether to act on the plan. See
-<a href="#deye-inverter-controller-solarman">Deye inverter controller</a>.</p>
+sends notifications only when you turn them on (see <a href="#window-notifications">Window notifications</a>),
+and it writes inverter settings only when you enable the optional Deye controller (off by default),
+which does so through the Solarman integration; other controllers decide for themselves whether to
+act on the plan. See <a href="#deye-inverter-controller-solarman">Deye inverter controller</a>.</p>
 <h2 id="contents">Contents</h2>
 <ol>
 <li><a href="#installation">Installation</a></li>
@@ -261,9 +261,9 @@ button on the integration's page in <strong>Settings → Devices &amp; services<
 <li><strong>Deye inverter controller.</strong> To let Energy Compass write the plan to a Deye inverter through
   Solarman, open <strong>Options → Deye controller</strong>. Off by default; see
   <a href="#enabling-the-controller">Enabling the controller</a>.</li>
-<li><strong>Notifications.</strong> Turn on <strong>Notify enabled</strong> in <strong>Notification preferences</strong>, then copy the notification
-  blueprint, which lives outside the HACS-installed folder. See
-  <a href="#window-notifications">Window notifications</a> and
+<li><strong>Notifications.</strong> In <strong>Notification preferences</strong> select a phone or notify entity and turn on
+  <strong>Notify enabled</strong>; Energy Compass then sends the window notifications itself. Try the target with
+  <code>energy_compass.send_test_notification</code>. See <a href="#window-notifications">Window notifications</a> and
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">Opt-in notifications</a>.</li>
 <li><strong>Automatic strategy switching.</strong> The <code>strategy_switch</code> blueprint picks one dispatch strategy per day. See <a href="#automatic-strategy-switching">Automatic strategy switching</a> and
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#import-the-strategy-switch-blueprint">Import the strategy switch blueprint</a>.</li>
@@ -2825,11 +2825,88 @@ Assistant start.</p>
 run; the alert rule is never blocked. <code>max_export</code> and <code>grid_friendly</code> are manual-only. Setup
 details: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#import-the-strategy-switch-blueprint">installation guide</a>.</p>
 <h2 id="window-notifications">Window notifications</h2>
-<p>The optional blueprint <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/notifications.yaml"><code>notifications.yaml</code></a>
-tells the household when extra use is cheap (favorable window) or when an expensive <code>LIMIT</code> window
-is starting. Energy Compass itself never sends anything; <strong>Notify enabled</strong> in the integration
-options is the master switch. Setup: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">installation guide</a>.</p>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-4bd0c2bb82d5-dark.svg"><img src="assets/diagrams/diagram-4bd0c2bb82d5.svg" alt="Diagram 13" loading="lazy"></picture></figure>
+<p>Energy Compass tells the household when extra use is cheap (a favorable window) or when an
+expensive <code>LIMIT</code> window is starting. It sends notifications only when you turn them on:
+<strong>Notify enabled</strong> in <strong>Options → Notification preferences</strong> is the master switch, and the
+notification targets say where the messages go. Setup:
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">installation guide</a>.</p>
+<h3 id="turning-them-on">Turning them on</h3>
+<ol>
+<li>Open <strong>Options → Notification preferences</strong>, select at least one target and turn on
+   <strong>Notify enabled</strong>. Energy Compass sends from the next published plan on.</li>
+<li>Run <strong>energy_compass.send_test_notification</strong> in <strong>Developer tools → Actions</strong> and check the
+   device.</li>
+</ol>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>notify_enabled</code> (<strong>Notify enabled</strong>)</td>
+<td>the master switch, off by default. On without a target the integration sends nothing, and an installed notification blueprint keeps working as before (see <a href="#migrating-from-the-blueprint">Migrating from the blueprint</a>)</td>
+</tr>
+<tr>
+<td><code>notify_services</code> (<strong>Notification services (mobile app)</strong>)</td>
+<td>legacy notify service names without the domain, for example <code>mobile_app_pixel_8</code>. Each is called as <code>notify.&lt;name&gt;</code> with a title and a message. The Home Assistant mobile app still registers this kind</td>
+</tr>
+<tr>
+<td><code>notify_entities</code> (<strong>Notification entities</strong>)</td>
+<td>notify entity ids, for example <code>notify.kitchen_display</code>. Each is called with <code>notify.send_message</code></td>
+</tr>
+<tr>
+<td><code>notify_language</code> (<strong>Notification language</strong>)</td>
+<td><code>auto</code> (default) follows the Home Assistant language: Polish when it starts with <code>pl</code>, otherwise English; <code>en</code> and <code>pl</code> fix it</td>
+</tr>
+<tr>
+<td><code>notify_events</code></td>
+<td><code>favorable</code>, <code>limit</code> or both</td>
+</tr>
+<tr>
+<td><code>notify_minimum_hours</code></td>
+<td>minimum time left in a favorable window (default 2 h)</td>
+</tr>
+<tr>
+<td><code>notify_limit_lead_minutes</code></td>
+<td>how far ahead a <code>LIMIT</code> window is announced (default 30 min)</td>
+</tr>
+<tr>
+<td><code>quiet_start</code>, <code>quiet_end</code></td>
+<td>quiet hours in the Home Assistant time zone (default 22:00–08:00); equal times mean no quiet hours</td>
+</tr>
+<tr>
+<td><code>notify_cooldown_minutes</code></td>
+<td>minimum time between two attempts (default 60 min)</td>
+</tr>
+<tr>
+<td><code>notify_daily_max</code></td>
+<td>notifications per local day (default 3)</td>
+</tr>
+</tbody>
+</table></section>
+<p>With <strong>Notify enabled</strong> on, the first target you save makes Energy Compass the sender. A target is
+one entry of either list. The integration calls every target at once; a target that fails, or does
+not answer within 30 seconds, does not stop the others. Clearing the targets stops the
+notifications immediately.</p>
+<h3 id="how-a-notification-is-decided">How a notification is decided</h3>
+<p>The integration looks at the published plan on every plan update and once a minute.</p>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-6e9207c85032-dark.svg"><img src="assets/diagrams/diagram-6e9207c85032.svg" alt="Diagram 13" loading="lazy"></picture></figure>
+<ul>
+<li>When both a <code>LIMIT</code> and a favorable window qualify, <code>LIMIT</code> wins.</li>
+<li>A window that overlaps the stored one is the same window: recalculations and BOOST/CHEAP changes
+  extend it instead of notifying again, so a new message needs a window that does not overlap.</li>
+<li>The window, the day's count and the attempt time are saved <strong>before</strong> the call, so a restart or an
+  options reload never repeats a message and a crash at the wrong moment loses at most one. The
+  store survives restarts; a store that cannot be read starts fresh.</li>
+<li>Just before the call the gates, the sender, the target, the quiet hours and the plan are checked
+  again; a new plan published in between stops the call (the window stays spent).</li>
+<li>The cap and the cooldown count attempts, including failed ones. A failed attempt is not retried
+  for the same window.</li>
+<li>Each message is also written to the logbook on the Plan sensor.</li>
+</ul>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2850,10 +2927,118 @@ options is the master switch. Setup: <a href="https://github.com/datamindzio/ha-
 <td><strong>Plan heavy use for later</strong> / <em>Zaplanuj większe zużycie na później</em></td>
 <td>a <code>LIMIT</code> window starts within the lead time, or is already running</td>
 </tr>
+<tr>
+<td><strong>Energy Compass test</strong> / <em>Test Energy Compass</em></td>
+<td>only the test action</td>
+</tr>
 </tbody>
 </table></section>
-<p>The message names the window's local times and suggests moving laundry, the dishwasher or car
-charging. The action receives <code>notification_title</code>, <code>notification_message</code> and <code>event_kind</code>.</p>
+<p>The message names the window's local times (<code>HH:MM–HH:MM</code>, or <code>dd.mm HH:MM–dd.mm HH:MM</code> when the
+window crosses midnight) and suggests moving laundry, the dishwasher or car charging.</p>
+<h3 id="test-action">Test action</h3>
+<p><code>energy_compass.send_test_notification</code> sends one fixed message to every target of an entry now. It
+ignores the gates, the quiet hours, the cooldown, the daily cap and the stored window, and it does
+not change them. The answer lists <code>results</code>: one <code>target</code>, <code>ok</code> and <code>error</code> per target.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>config_entry_id</code></td>
+<td>the Energy Compass entry; needed only when more than one is loaded</td>
+</tr>
+</tbody>
+</table></section>
+<p>The action refuses when no target is selected. A test that reaches every target also clears the
+failure count below.</p>
+<h3 id="notification-preferences-attribute">Notification preferences attribute</h3>
+<p>The Plan sensor publishes <code>notification_preferences</code>, and that is what decides who sends.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>notify_events</code>, <code>notify_minimum_hours</code>, <code>notify_limit_lead_minutes</code>, <code>notify_cooldown_minutes</code>, <code>notify_daily_max</code>, <code>quiet_start</code>, <code>quiet_end</code></td>
+<td>the settings above as the plan was computed with them</td>
+</tr>
+<tr>
+<td><code>notify_sender</code></td>
+<td>who sends: <code>"integration"</code> when <strong>Notify enabled</strong> is on and a target is set, <code>"blueprint"</code> when it is on without a target, <code>"off"</code> when it is off</td>
+</tr>
+<tr>
+<td><code>notify_enabled</code></td>
+<td><strong>not</strong> the setting: it means "the blueprint may send". It is <code>true</code> only while <code>notify_sender</code> is <code>"blueprint"</code>, so the deprecated blueprint, which sends only while it is true, goes silent as soon as the integration is the sender</td>
+</tr>
+<tr>
+<td><code>actions_configured</code></td>
+<td>a saved legacy action list exists; the native sender does not use it</td>
+</tr>
+</tbody>
+</table></section>
+<p>After you save options, the sender changes with the next published plan, not before. While an old
+plan is retained, the blueprint keeps sending until the new plan arrives and the integration waits
+for it, so the two never send together.</p>
+<h3 id="repair-issues">Repair issues</h3>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Issue</th>
+<th>When</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>notify_send_failed</code></td>
+<td>three attempts in a row reached no target or only some of them; the text names the targets and the last error</td>
+<td>fix the target in <strong>Notification preferences</strong> and run the test action. It clears after the next successful notification or test, and starts over when you change the targets</td>
+</tr>
+<tr>
+<td><code>notify_blueprint_deprecated</code></td>
+<td>an automation made from the notification blueprint is on while <strong>Notify enabled</strong> is on and the blueprint is still the sender</td>
+<td>follow <a href="#migrating-from-the-blueprint">Migrating from the blueprint</a></td>
+</tr>
+<tr>
+<td><code>notify_blueprint_suppressed</code></td>
+<td>the same automation is on but the integration now sends, so the automation sends nothing</td>
+<td>delete the automation and its five helpers</td>
+</tr>
+</tbody>
+</table></section>
+<h3 id="migrating-from-the-blueprint">Migrating from the blueprint</h3>
+<ol>
+<li>Update Energy Compass. Nothing changes yet: with no target selected the blueprint keeps sending,
+   and a repair issue says it is deprecated.</li>
+<li>In <strong>Options → Notification preferences</strong> select your phone's <code>mobile_app_…</code> service (the one the
+   blueprint's action called) or a notify entity. Save.</li>
+<li>Set <strong>Notification language</strong> if the blueprint's <code>language</code> differed from Home Assistant's.</li>
+<li>Run <strong>energy_compass.send_test_notification</strong> in <strong>Developer tools → Actions</strong> and check the
+   phone.</li>
+<li>From the next plan on, Energy Compass sends and the blueprint goes silent. The repair issue now
+   says the automation is suppressed.</li>
+<li>Delete the automation and the five helpers (two Text, one Number, two Date/time).</li>
+</ol>
+<p>The integration starts with no remembered window. A favorable or <code>LIMIT</code> window that is running at
+the moment of the switch and that the blueprint already announced may be announced once more. This
+happens at most once per running window, and only within the cap and the cooldown, which also start
+fresh. Blueprint overrides (<code>use_blueprint_overrides</code>) have no native counterpart: copy their values
+into Notification preferences before step 2.</p>
+<h3 id="blueprint-deprecated">Blueprint (deprecated)</h3>
+<p>The optional blueprint <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/notifications.yaml"><code>notifications.yaml</code></a>
+is deprecated and will be removed in a later release. It still works while the integration is not
+the sender; once the integration sends it is silent, because it sends only while the plan's
+<code>notification_preferences.notify_enabled</code> is <code>true</code>. Setup:
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#blueprint-deprecated">installation guide</a>.</p>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-4bd0c2bb82d5-dark.svg"><img src="assets/diagrams/diagram-4bd0c2bb82d5.svg" alt="Diagram 14" loading="lazy"></picture></figure>
+<p>The action receives <code>notification_title</code>, <code>notification_message</code> and <code>event_kind</code>.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -3174,7 +3359,7 @@ refresh of Energy Compass. A logbook entry names the old and new runtime code an
 </tbody>
 </table></section>
 <h3 id="modes">Modes</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-a6c9a3cacd04-dark.svg"><img src="assets/diagrams/diagram-a6c9a3cacd04.svg" alt="Diagram 14" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-a6c9a3cacd04-dark.svg"><img src="assets/diagrams/diagram-a6c9a3cacd04.svg" alt="Diagram 15" loading="lazy"></picture></figure>
 <p><strong>Auto</strong> writes; <strong>Simulation</strong> computes every target and records it in <code>runtime</code> without touching the
 inverter; <strong>Off</strong> releases control. Leaving Auto for Off restores the base profile once, confirms it,
 then leaves later manual settings alone. Disabling the <em>automation</em> skips that restore. A switch to

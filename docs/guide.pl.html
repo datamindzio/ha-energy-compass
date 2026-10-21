@@ -157,10 +157,11 @@
 warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. Dotyczy wersji
 <strong>0.1.44</strong>. Matematyczny kontrakt każdej reguły opisuje <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/model.md">model i ograniczenia</a> (EN), a
 instalację opisuje sekcja <a href="#instalacja">Instalacja</a>, a dashboardy — <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md">przewodnik instalacji</a> (EN).</p>
-<p>Energy Compass jest <strong>doradczy</strong>. Liczy plan i publikuje go jako encje Home Assistant. Sam nie wysyła
-powiadomień, a ustawienia falownika zapisuje tylko wtedy, gdy włączysz opcjonalny sterownik Deye
-(domyślnie wyłączony), i robi to przez integrację Solarman; blueprinty powiadomień i inne sterowniki same
-decydują, czy wykonać plan. Zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika Deye</a>.</p>
+<p>Energy Compass jest <strong>doradczy</strong>. Liczy plan i publikuje go jako encje Home Assistant. Wysyła
+powiadomienia tylko po ich włączeniu (zob. <a href="#powiadomienia-o-oknach">Powiadomienia o oknach</a>), a
+ustawienia falownika zapisuje tylko wtedy, gdy włączysz opcjonalny sterownik Deye (domyślnie
+wyłączony), i robi to przez integrację Solarman; inne sterowniki same decydują, czy wykonać plan.
+Zob. <a href="#sterownik-falownika-deye-solarman">Sterownik falownika Deye</a>.</p>
 <h2 id="spis-treści">Spis treści</h2>
 <ol>
 <li><a href="#instalacja">Instalacja</a></li>
@@ -260,9 +261,9 @@ przycisk na stronie integracji w <strong>Ustawienia → Urządzenia i usługi</s
 <ul>
 <li><strong>Sterownik Deye.</strong> Aby Energy Compass zapisywał plan na falowniku Deye przez Solarman, otwórz
   <strong>Opcje → Sterownik Deye</strong>. Domyślnie wyłączony; zob. <a href="#włączenie-sterownika">Włączenie sterownika</a>.</li>
-<li><strong>Powiadomienia.</strong> Włącz <strong>Włącz powiadomienia</strong> w <strong>Ustawienia powiadomień</strong>, a potem skopiuj
-  blueprint powiadomień, który leży poza folderem instalowanym przez HACS. Zob.
-  <a href="#powiadomienia-o-oknach">Powiadomienia o oknach</a> i
+<li><strong>Powiadomienia.</strong> W <strong>Ustawienia powiadomień</strong> wybierz telefon lub encję notify i włącz
+  <strong>Włącz powiadomienia</strong>; Energy Compass sam wysyła wtedy powiadomienia o oknach. Sprawdź cel akcją
+  <code>energy_compass.send_test_notification</code>. Zob. <a href="#powiadomienia-o-oknach">Powiadomienia o oknach</a> i
   <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">Opt-in notifications</a> (EN).</li>
 <li><strong>Automatyczne przełączanie strategii.</strong> Blueprint <code>strategy_switch</code> wybiera jedną strategię
   dyspozycji na dobę. Zob. <a href="#automatyczne-przełączanie-strategii">Automatyczne przełączanie strategii</a> i
@@ -2869,12 +2870,87 @@ planowego; reguła alertu nigdy nie jest blokowana. <code>max_export</code> i <c
 wyłącznie ręcznie. Konfiguracja: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#import-the-strategy-switch-blueprint">przewodnik instalacji</a>
 (EN).</p>
 <h2 id="powiadomienia-o-oknach">Powiadomienia o oknach</h2>
-<p>Opcjonalny blueprint <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/notifications.yaml"><code>notifications.yaml</code></a>
-informuje domowników, kiedy dodatkowe zużycie jest tanie (okno korzystne) albo kiedy zaczyna się
-drogie okno <code>LIMIT</code>. Sam Energy Compass niczego nie wysyła; głównym przełącznikiem jest
-<strong>Włącz powiadomienia</strong> w opcjach integracji. Konfiguracja:
-<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">przewodnik instalacji</a> (EN).</p>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-d7f8dd1c26f0-dark.svg"><img src="assets/diagrams/diagram-d7f8dd1c26f0.svg" alt="Diagram 13" loading="lazy"></picture></figure>
+<p>Energy Compass informuje domowników, kiedy dodatkowe zużycie jest tanie (okno korzystne) albo kiedy
+zaczyna się drogie okno <code>LIMIT</code>. Wysyła powiadomienia tylko po ich włączeniu: głównym przełącznikiem
+jest <strong>Włącz powiadomienia</strong> w <strong>Opcje → Ustawienia powiadomień</strong>, a cele powiadomień mówią, dokąd
+trafiają wiadomości. Konfiguracja: <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#opt-in-notifications">przewodnik instalacji</a> (EN).</p>
+<h3 id="włączenie">Włączenie</h3>
+<ol>
+<li>Otwórz <strong>Opcje → Ustawienia powiadomień</strong>, wybierz co najmniej jeden cel i włącz
+   <strong>Włącz powiadomienia</strong>. Energy Compass zaczyna wysyłać od najbliższego opublikowanego planu.</li>
+<li>Uruchom <strong>energy_compass.send_test_notification</strong> w <strong>Narzędzia deweloperskie → Akcje</strong> i sprawdź
+   urządzenie.</li>
+</ol>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Ustawienie</th>
+<th>Znaczenie</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>notify_enabled</code> (<strong>Włącz powiadomienia</strong>)</td>
+<td>główny przełącznik, domyślnie wyłączony. Włączony bez celu: integracja nic nie wysyła, a zainstalowany blueprint powiadomień działa jak dotąd (zob. <a href="#migracja-z-blueprintu">Migracja z blueprintu</a>)</td>
+</tr>
+<tr>
+<td><code>notify_services</code> (<strong>Usługi powiadomień (aplikacja mobilna)</strong>)</td>
+<td>nazwy starszych usług notify bez domeny, np. <code>mobile_app_pixel_8</code>. Każda jest wywoływana jako <code>notify.&lt;nazwa&gt;</code> z tytułem i treścią. Aplikacja mobilna Home Assistant nadal rejestruje takie usługi</td>
+</tr>
+<tr>
+<td><code>notify_entities</code> (<strong>Encje powiadomień</strong>)</td>
+<td>identyfikatory encji notify, np. <code>notify.kitchen_display</code>. Każda jest wywoływana przez <code>notify.send_message</code></td>
+</tr>
+<tr>
+<td><code>notify_language</code> (<strong>Język powiadomień</strong>)</td>
+<td><code>auto</code> (domyślnie) idzie za językiem Home Assistant: polski, gdy zaczyna się od <code>pl</code>, w przeciwnym razie angielski; <code>en</code> i <code>pl</code> ustawiają go na stałe</td>
+</tr>
+<tr>
+<td><code>notify_events</code></td>
+<td><code>favorable</code>, <code>limit</code> albo oba</td>
+</tr>
+<tr>
+<td><code>notify_minimum_hours</code></td>
+<td>minimalny pozostały czas okna korzystnego (domyślnie 2 h)</td>
+</tr>
+<tr>
+<td><code>notify_limit_lead_minutes</code></td>
+<td>z jakim wyprzedzeniem zapowiadane jest okno <code>LIMIT</code> (domyślnie 30 min)</td>
+</tr>
+<tr>
+<td><code>quiet_start</code>, <code>quiet_end</code></td>
+<td>godziny ciszy w strefie czasowej Home Assistant (domyślnie 22:00–08:00); równe godziny oznaczają brak ciszy</td>
+</tr>
+<tr>
+<td><code>notify_cooldown_minutes</code></td>
+<td>minimalna przerwa między dwiema próbami (domyślnie 60 min)</td>
+</tr>
+<tr>
+<td><code>notify_daily_max</code></td>
+<td>powiadomienia na lokalną dobę (domyślnie 3)</td>
+</tr>
+</tbody>
+</table></section>
+<p>Przy włączonym <strong>Włącz powiadomienia</strong> pierwszy zapisany cel czyni Energy Compass nadawcą. Cel to
+jeden wpis którejkolwiek listy. Integracja wywołuje wszystkie cele naraz; cel, który zawodzi albo
+nie odpowiada przez 30 sekund, nie wstrzymuje pozostałych. Usunięcie celów natychmiast zatrzymuje
+powiadomienia.</p>
+<h3 id="jak-zapada-decyzja-o-powiadomieniu">Jak zapada decyzja o powiadomieniu</h3>
+<p>Integracja ogląda opublikowany plan przy każdej jego aktualizacji i raz na minutę.</p>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-369d0ef66ec0-dark.svg"><img src="assets/diagrams/diagram-369d0ef66ec0.svg" alt="Diagram 13" loading="lazy"></picture></figure>
+<ul>
+<li>Gdy kwalifikują się i <code>LIMIT</code>, i okno korzystne, wygrywa <code>LIMIT</code>.</li>
+<li>Okno nakładające się na zapamiętane to to samo okno: przeliczenia i zmiany BOOST/CHEAP je
+  rozszerzają zamiast powiadamiać ponownie, więc nowa wiadomość wymaga okna, które się nie nakłada.</li>
+<li>Okno, licznik doby i czas próby są zapisywane <strong>przed</strong> wywołaniem, więc restart ani przeładowanie
+  opcji nie powtarzają wiadomości, a awaria w złym momencie kosztuje najwyżej jedną. Zapis
+  przetrwa restart; zapis, którego nie da się odczytać, zaczyna się od nowa.</li>
+<li>Tuż przed wywołaniem warunki, nadawca, cel, godziny ciszy i plan są sprawdzane jeszcze raz; nowy
+  plan opublikowany w międzyczasie zatrzymuje wywołanie (okno pozostaje zużyte).</li>
+<li>Limit i przerwa liczą próby, także nieudane. Nieudana próba nie jest ponawiana dla tego samego
+  okna.</li>
+<li>Każda wiadomość trafia też do dziennika zdarzeń przy sensorze Plan.</li>
+</ul>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -2895,10 +2971,118 @@ drogie okno <code>LIMIT</code>. Sam Energy Compass niczego nie wysyła; główny
 <td><strong>Zaplanuj większe zużycie na później</strong> / <em>Plan heavy use for later</em></td>
 <td>okno <code>LIMIT</code> zaczyna się w czasie wyprzedzenia albo już trwa</td>
 </tr>
+<tr>
+<td><strong>Test Energy Compass</strong> / <em>Energy Compass test</em></td>
+<td>tylko akcja testowa</td>
+</tr>
 </tbody>
 </table></section>
-<p>Treść podaje lokalne godziny okna i proponuje przełożenie prania, zmywarki lub ładowania auta.
-Akcja dostaje <code>notification_title</code>, <code>notification_message</code> i <code>event_kind</code>.</p>
+<p>Treść podaje lokalne godziny okna (<code>HH:MM–HH:MM</code>, a gdy okno przechodzi przez północ,
+<code>dd.mm HH:MM–dd.mm HH:MM</code>) i proponuje przełożenie prania, zmywarki lub ładowania auta.</p>
+<h3 id="akcja-testowa">Akcja testowa</h3>
+<p><code>energy_compass.send_test_notification</code> wysyła teraz jedną stałą wiadomość do każdego celu wpisu.
+Pomija warunki, godziny ciszy, przerwę, dzienny limit i zapamiętane okno i niczego z tego nie zmienia.
+Odpowiedź zawiera <code>results</code>: dla każdego celu <code>target</code>, <code>ok</code> i <code>error</code>.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Pole</th>
+<th>Znaczenie</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>config_entry_id</code></td>
+<td>wpis Energy Compass; potrzebny tylko, gdy wczytano więcej niż jeden</td>
+</tr>
+</tbody>
+</table></section>
+<p>Akcja odmawia, gdy nie wybrano celu. Test, który dotrze do każdego celu, zeruje też licznik
+niepowodzeń opisany niżej.</p>
+<h3 id="atrybut-preferencji-powiadomień">Atrybut preferencji powiadomień</h3>
+<p>Sensor Plan publikuje <code>notification_preferences</code> i to ten atrybut rozstrzyga, kto wysyła.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Klucz</th>
+<th>Znaczenie</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>notify_events</code>, <code>notify_minimum_hours</code>, <code>notify_limit_lead_minutes</code>, <code>notify_cooldown_minutes</code>, <code>notify_daily_max</code>, <code>quiet_start</code>, <code>quiet_end</code></td>
+<td>ustawienia powyżej w wartościach, z którymi policzono plan</td>
+</tr>
+<tr>
+<td><code>notify_sender</code></td>
+<td>kto wysyła: <code>"integration"</code>, gdy <strong>Włącz powiadomienia</strong> jest włączone i jest cel, <code>"blueprint"</code>, gdy włączone bez celu, <code>"off"</code>, gdy wyłączone</td>
+</tr>
+<tr>
+<td><code>notify_enabled</code></td>
+<td><strong>nie</strong> jest to ustawienie: znaczy „blueprint może wysyłać”. Jest <code>true</code> tylko przy <code>notify_sender</code> równym <code>"blueprint"</code>, więc wycofywany blueprint, który wysyła tylko przy <code>true</code>, milknie, gdy tylko nadawcą zostaje integracja</td>
+</tr>
+<tr>
+<td><code>actions_configured</code></td>
+<td>istnieje zapisana starsza lista akcji; nadawca natywny jej nie używa</td>
+</tr>
+</tbody>
+</table></section>
+<p>Po zapisaniu opcji nadawca zmienia się dopiero z najbliższym opublikowanym planem. Dopóki trwa
+zachowany stary plan, blueprint wysyła aż do nowego planu, a integracja na niego czeka, więc oba nie
+wysyłają razem.</p>
+<h3 id="zgłoszenia-naprawy">Zgłoszenia naprawy</h3>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Zgłoszenie</th>
+<th>Kiedy</th>
+<th>Co zrobić</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>notify_send_failed</code></td>
+<td>trzy próby z rzędu nie dotarły do żadnego celu albo tylko do części; tekst wymienia cele i ostatni błąd</td>
+<td>popraw cel w <strong>Ustawienia powiadomień</strong> i uruchom akcję testową. Znika po następnym udanym powiadomieniu lub teście i zaczyna od nowa po zmianie celów</td>
+</tr>
+<tr>
+<td><code>notify_blueprint_deprecated</code></td>
+<td>automatyzacja z blueprintu powiadomień jest włączona, <strong>Włącz powiadomienia</strong> też, a nadawcą wciąż jest blueprint</td>
+<td>wykonaj <a href="#migracja-z-blueprintu">Migrację z blueprintu</a></td>
+</tr>
+<tr>
+<td><code>notify_blueprint_suppressed</code></td>
+<td>ta sama automatyzacja jest włączona, ale wysyła już integracja, więc automatyzacja nic nie wysyła</td>
+<td>usuń automatyzację i jej pięciu pomocników</td>
+</tr>
+</tbody>
+</table></section>
+<h3 id="migracja-z-blueprintu">Migracja z blueprintu</h3>
+<ol>
+<li>Zaktualizuj Energy Compass. Na razie nic się nie zmienia: bez wybranego celu blueprint dalej
+   wysyła, a zgłoszenie naprawy informuje, że jest wycofywany.</li>
+<li>W <strong>Opcje → Ustawienia powiadomień</strong> wybierz usługę <code>mobile_app_…</code> swojego telefonu (tę, którą
+   wywoływała akcja blueprintu) albo encję notify. Zapisz.</li>
+<li>Ustaw <strong>Język powiadomień</strong>, jeśli <code>language</code> w blueprincie różnił się od języka Home Assistant.</li>
+<li>Uruchom <strong>energy_compass.send_test_notification</strong> w <strong>Narzędzia deweloperskie → Akcje</strong> i sprawdź
+   telefon.</li>
+<li>Od następnego planu wysyła Energy Compass, a blueprint milknie. Zgłoszenie naprawy mówi teraz, że
+   automatyzacja jest wyciszona.</li>
+<li>Usuń automatyzację i pięciu pomocników (dwa Tekst, jeden Liczba, dwa Data/czas).</li>
+</ol>
+<p>Integracja startuje bez zapamiętanego okna. Okno korzystne lub <code>LIMIT</code>, które trwa w chwili
+przełączenia i które blueprint już zapowiedział, może zostać ogłoszone jeszcze raz. Zdarza się to
+najwyżej raz na trwające okno i tylko w granicach limitu i przerwy, które też zaczynają się od
+zera. Nadpisania blueprintu (<code>use_blueprint_overrides</code>) nie mają natywnego odpowiednika: przepisz ich
+wartości do Ustawień powiadomień przed krokiem 2.</p>
+<h3 id="blueprint-wycofywany">Blueprint (wycofywany)</h3>
+<p>Opcjonalny blueprint <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/blueprints/automation/energy_compass/notifications.yaml"><code>notifications.yaml</code></a>
+jest wycofywany i zostanie usunięty w późniejszym wydaniu. Działa, dopóki nadawcą nie jest
+integracja; gdy wysyła integracja, milknie, bo wysyła tylko wtedy, gdy
+<code>notification_preferences.notify_enabled</code> w planie jest <code>true</code>. Konfiguracja:
+<a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#blueprint-deprecated">przewodnik instalacji</a> (EN).</p>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-d7f8dd1c26f0-dark.svg"><img src="assets/diagrams/diagram-d7f8dd1c26f0.svg" alt="Diagram 14" loading="lazy"></picture></figure>
+<p>Akcja dostaje <code>notification_title</code>, <code>notification_message</code> i <code>event_kind</code>.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -3217,7 +3401,7 @@ działa przy każdym odświeżeniu Energy Compass. Wpis w dzienniku zdarzeń pod
 </tbody>
 </table></section>
 <h3 id="tryby">Tryby</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-ac9c2721d676-dark.svg"><img src="assets/diagrams/diagram-ac9c2721d676.svg" alt="Diagram 14" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-ac9c2721d676-dark.svg"><img src="assets/diagrams/diagram-ac9c2721d676.svg" alt="Diagram 15" loading="lazy"></picture></figure>
 <p><strong>Auto</strong> zapisuje; <strong>Simulation</strong> oblicza wszystkie cele i zapisuje je w <code>runtime</code>, nie dotykając
 falownika; <strong>Off</strong> zwalnia sterowanie. Przejście z Auto do Off raz przywraca profil bazowy, potwierdza
 go i zostawia późniejsze ręczne nastawy. Wyłączenie samej <em>automatyzacji</em> pomija to przywrócenie.

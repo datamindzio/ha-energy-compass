@@ -7,10 +7,11 @@ warunki, w których każdy stan występuje, oraz sześć strategii dyspozycji. D
 **0.1.44**. Matematyczny kontrakt każdej reguły opisuje [model i ograniczenia](model.md) (EN), a
 instalację opisuje sekcja [Instalacja](#instalacja), a dashboardy — [przewodnik instalacji](installation.md) (EN).
 
-Energy Compass jest **doradczy**. Liczy plan i publikuje go jako encje Home Assistant. Sam nie wysyła
-powiadomień, a ustawienia falownika zapisuje tylko wtedy, gdy włączysz opcjonalny sterownik Deye
-(domyślnie wyłączony), i robi to przez integrację Solarman; blueprinty powiadomień i inne sterowniki same
-decydują, czy wykonać plan. Zob. [Sterownik falownika Deye](#sterownik-falownika-deye-solarman).
+Energy Compass jest **doradczy**. Liczy plan i publikuje go jako encje Home Assistant. Wysyła
+powiadomienia tylko po ich włączeniu (zob. [Powiadomienia o oknach](#powiadomienia-o-oknach)), a
+ustawienia falownika zapisuje tylko wtedy, gdy włączysz opcjonalny sterownik Deye (domyślnie
+wyłączony), i robi to przez integrację Solarman; inne sterowniki same decydują, czy wykonać plan.
+Zob. [Sterownik falownika Deye](#sterownik-falownika-deye-solarman).
 
 ## Spis treści
 
@@ -131,9 +132,9 @@ przycisk na stronie integracji w **Ustawienia → Urządzenia i usługi**.
 
 - **Sterownik Deye.** Aby Energy Compass zapisywał plan na falowniku Deye przez Solarman, otwórz
   **Opcje → Sterownik Deye**. Domyślnie wyłączony; zob. [Włączenie sterownika](#włączenie-sterownika).
-- **Powiadomienia.** Włącz **Włącz powiadomienia** w **Ustawienia powiadomień**, a potem skopiuj
-  blueprint powiadomień, który leży poza folderem instalowanym przez HACS. Zob.
-  [Powiadomienia o oknach](#powiadomienia-o-oknach) i
+- **Powiadomienia.** W **Ustawienia powiadomień** wybierz telefon lub encję notify i włącz
+  **Włącz powiadomienia**; Energy Compass sam wysyła wtedy powiadomienia o oknach. Sprawdź cel akcją
+  `energy_compass.send_test_notification`. Zob. [Powiadomienia o oknach](#powiadomienia-o-oknach) i
   [Opt-in notifications](installation.md#opt-in-notifications) (EN).
 - **Automatyczne przełączanie strategii.** Blueprint `strategy_switch` wybiera jedną strategię
   dyspozycji na dobę. Zob. [Automatyczne przełączanie strategii](#automatyczne-przełączanie-strategii) i
@@ -1957,11 +1958,148 @@ wyłącznie ręcznie. Konfiguracja: [przewodnik instalacji](installation.md#impo
 
 ## Powiadomienia o oknach
 
+Energy Compass informuje domowników, kiedy dodatkowe zużycie jest tanie (okno korzystne) albo kiedy
+zaczyna się drogie okno `LIMIT`. Wysyła powiadomienia tylko po ich włączeniu: głównym przełącznikiem
+jest **Włącz powiadomienia** w **Opcje → Ustawienia powiadomień**, a cele powiadomień mówią, dokąd
+trafiają wiadomości. Konfiguracja: [przewodnik instalacji](installation.md#opt-in-notifications) (EN).
+
+### Włączenie
+
+1. Otwórz **Opcje → Ustawienia powiadomień**, wybierz co najmniej jeden cel i włącz
+   **Włącz powiadomienia**. Energy Compass zaczyna wysyłać od najbliższego opublikowanego planu.
+2. Uruchom **energy_compass.send_test_notification** w **Narzędzia deweloperskie → Akcje** i sprawdź
+   urządzenie.
+
+| Ustawienie | Znaczenie |
+| --- | --- |
+| `notify_enabled` (**Włącz powiadomienia**) | główny przełącznik, domyślnie wyłączony. Włączony bez celu: integracja nic nie wysyła, a zainstalowany blueprint powiadomień działa jak dotąd (zob. [Migracja z blueprintu](#migracja-z-blueprintu)) |
+| `notify_services` (**Usługi powiadomień (aplikacja mobilna)**) | nazwy starszych usług notify bez domeny, np. `mobile_app_pixel_8`. Każda jest wywoływana jako `notify.<nazwa>` z tytułem i treścią. Aplikacja mobilna Home Assistant nadal rejestruje takie usługi |
+| `notify_entities` (**Encje powiadomień**) | identyfikatory encji notify, np. `notify.kitchen_display`. Każda jest wywoływana przez `notify.send_message` |
+| `notify_language` (**Język powiadomień**) | `auto` (domyślnie) idzie za językiem Home Assistant: polski, gdy zaczyna się od `pl`, w przeciwnym razie angielski; `en` i `pl` ustawiają go na stałe |
+| `notify_events` | `favorable`, `limit` albo oba |
+| `notify_minimum_hours` | minimalny pozostały czas okna korzystnego (domyślnie 2 h) |
+| `notify_limit_lead_minutes` | z jakim wyprzedzeniem zapowiadane jest okno `LIMIT` (domyślnie 30 min) |
+| `quiet_start`, `quiet_end` | godziny ciszy w strefie czasowej Home Assistant (domyślnie 22:00–08:00); równe godziny oznaczają brak ciszy |
+| `notify_cooldown_minutes` | minimalna przerwa między dwiema próbami (domyślnie 60 min) |
+| `notify_daily_max` | powiadomienia na lokalną dobę (domyślnie 3) |
+
+Przy włączonym **Włącz powiadomienia** pierwszy zapisany cel czyni Energy Compass nadawcą. Cel to
+jeden wpis którejkolwiek listy. Integracja wywołuje wszystkie cele naraz; cel, który zawodzi albo
+nie odpowiada przez 30 sekund, nie wstrzymuje pozostałych. Usunięcie celów natychmiast zatrzymuje
+powiadomienia.
+
+### Jak zapada decyzja o powiadomieniu
+
+Integracja ogląda opublikowany plan przy każdej jego aktualizacji i raz na minutę.
+
+```mermaid
+flowchart TD
+    T([co minutę / aktualizacja koordynatora]) --> R{ocena trwa?}
+    R -- tak --> D[odrzuć]
+    R -- nie --> G{prognoza poprawna, Alert wyłączony,<br/>optymalizator gotowy, plan ważny?}
+    G -- nie --> X[nic]
+    G -- tak --> P{opublikowany nadawca to<br/>integracja i jest cel?}
+    P -- nie --> X
+    P -- tak --> L{LIMIT trwa albo<br/>zaczyna się w czasie wyprzedzenia?}
+    L -- tak --> K[zdarzenie limit]
+    L -- nie --> F{okno korzystne trwa<br/>i zostało minimum czasu?}
+    F -- nie --> X
+    F -- tak --> K2[zdarzenie favorable]
+    K --> S{nakłada się na zapamiętane okno?}
+    K2 --> S
+    S -- tak --> E[rozszerz zapamiętane okno<br/>bez wiadomości]
+    S -- nie --> C{godziny ciszy, limit dzienny,<br/>przerwa pozwalają?}
+    C -- nie --> X
+    C -- tak --> W[zapisz okno, licznik, czas]
+    W --> Q{warunki, nadawca, cel,<br/>plan bez zmian, nie cisza?}
+    Q -- nie --> X
+    Q -- tak --> N[wywołaj każdy cel<br/>dziennik; 3 nieudane próby → zgłoszenie naprawy]
+```
+
+- Gdy kwalifikują się i `LIMIT`, i okno korzystne, wygrywa `LIMIT`.
+- Okno nakładające się na zapamiętane to to samo okno: przeliczenia i zmiany BOOST/CHEAP je
+  rozszerzają zamiast powiadamiać ponownie, więc nowa wiadomość wymaga okna, które się nie nakłada.
+- Okno, licznik doby i czas próby są zapisywane **przed** wywołaniem, więc restart ani przeładowanie
+  opcji nie powtarzają wiadomości, a awaria w złym momencie kosztuje najwyżej jedną. Zapis
+  przetrwa restart; zapis, którego nie da się odczytać, zaczyna się od nowa.
+- Tuż przed wywołaniem warunki, nadawca, cel, godziny ciszy i plan są sprawdzane jeszcze raz; nowy
+  plan opublikowany w międzyczasie zatrzymuje wywołanie (okno pozostaje zużyte).
+- Limit i przerwa liczą próby, także nieudane. Nieudana próba nie jest ponawiana dla tego samego
+  okna.
+- Każda wiadomość trafia też do dziennika zdarzeń przy sensorze Plan.
+
+| Wiadomość | Kiedy |
+| --- | --- |
+| **Wykorzystaj tanią energię** / *Use the cheap energy* | trwa okno korzystne i cała jego reszta to `BOOST` |
+| **Dobry moment na domowe urządzenia** / *A good time for household appliances* | trwa okno korzystne, nie w całości `BOOST` |
+| **Zaplanuj większe zużycie na później** / *Plan heavy use for later* | okno `LIMIT` zaczyna się w czasie wyprzedzenia albo już trwa |
+| **Test Energy Compass** / *Energy Compass test* | tylko akcja testowa |
+
+Treść podaje lokalne godziny okna (`HH:MM–HH:MM`, a gdy okno przechodzi przez północ,
+`dd.mm HH:MM–dd.mm HH:MM`) i proponuje przełożenie prania, zmywarki lub ładowania auta.
+
+### Akcja testowa
+
+`energy_compass.send_test_notification` wysyła teraz jedną stałą wiadomość do każdego celu wpisu.
+Pomija warunki, godziny ciszy, przerwę, dzienny limit i zapamiętane okno i niczego z tego nie zmienia.
+Odpowiedź zawiera `results`: dla każdego celu `target`, `ok` i `error`.
+
+| Pole | Znaczenie |
+| --- | --- |
+| `config_entry_id` | wpis Energy Compass; potrzebny tylko, gdy wczytano więcej niż jeden |
+
+Akcja odmawia, gdy nie wybrano celu. Test, który dotrze do każdego celu, zeruje też licznik
+niepowodzeń opisany niżej.
+
+### Atrybut preferencji powiadomień
+
+Sensor Plan publikuje `notification_preferences` i to ten atrybut rozstrzyga, kto wysyła.
+
+| Klucz | Znaczenie |
+| --- | --- |
+| `notify_events`, `notify_minimum_hours`, `notify_limit_lead_minutes`, `notify_cooldown_minutes`, `notify_daily_max`, `quiet_start`, `quiet_end` | ustawienia powyżej w wartościach, z którymi policzono plan |
+| `notify_sender` | kto wysyła: `"integration"`, gdy **Włącz powiadomienia** jest włączone i jest cel, `"blueprint"`, gdy włączone bez celu, `"off"`, gdy wyłączone |
+| `notify_enabled` | **nie** jest to ustawienie: znaczy „blueprint może wysyłać”. Jest `true` tylko przy `notify_sender` równym `"blueprint"`, więc wycofywany blueprint, który wysyła tylko przy `true`, milknie, gdy tylko nadawcą zostaje integracja |
+| `actions_configured` | istnieje zapisana starsza lista akcji; nadawca natywny jej nie używa |
+
+Po zapisaniu opcji nadawca zmienia się dopiero z najbliższym opublikowanym planem. Dopóki trwa
+zachowany stary plan, blueprint wysyła aż do nowego planu, a integracja na niego czeka, więc oba nie
+wysyłają razem.
+
+### Zgłoszenia naprawy
+
+| Zgłoszenie | Kiedy | Co zrobić |
+| --- | --- | --- |
+| `notify_send_failed` | trzy próby z rzędu nie dotarły do żadnego celu albo tylko do części; tekst wymienia cele i ostatni błąd | popraw cel w **Ustawienia powiadomień** i uruchom akcję testową. Znika po następnym udanym powiadomieniu lub teście i zaczyna od nowa po zmianie celów |
+| `notify_blueprint_deprecated` | automatyzacja z blueprintu powiadomień jest włączona, **Włącz powiadomienia** też, a nadawcą wciąż jest blueprint | wykonaj [Migrację z blueprintu](#migracja-z-blueprintu) |
+| `notify_blueprint_suppressed` | ta sama automatyzacja jest włączona, ale wysyła już integracja, więc automatyzacja nic nie wysyła | usuń automatyzację i jej pięciu pomocników |
+
+### Migracja z blueprintu
+
+1. Zaktualizuj Energy Compass. Na razie nic się nie zmienia: bez wybranego celu blueprint dalej
+   wysyła, a zgłoszenie naprawy informuje, że jest wycofywany.
+2. W **Opcje → Ustawienia powiadomień** wybierz usługę `mobile_app_…` swojego telefonu (tę, którą
+   wywoływała akcja blueprintu) albo encję notify. Zapisz.
+3. Ustaw **Język powiadomień**, jeśli `language` w blueprincie różnił się od języka Home Assistant.
+4. Uruchom **energy_compass.send_test_notification** w **Narzędzia deweloperskie → Akcje** i sprawdź
+   telefon.
+5. Od następnego planu wysyła Energy Compass, a blueprint milknie. Zgłoszenie naprawy mówi teraz, że
+   automatyzacja jest wyciszona.
+6. Usuń automatyzację i pięciu pomocników (dwa Tekst, jeden Liczba, dwa Data/czas).
+
+Integracja startuje bez zapamiętanego okna. Okno korzystne lub `LIMIT`, które trwa w chwili
+przełączenia i które blueprint już zapowiedział, może zostać ogłoszone jeszcze raz. Zdarza się to
+najwyżej raz na trwające okno i tylko w granicach limitu i przerwy, które też zaczynają się od
+zera. Nadpisania blueprintu (`use_blueprint_overrides`) nie mają natywnego odpowiednika: przepisz ich
+wartości do Ustawień powiadomień przed krokiem 2.
+
+### Blueprint (wycofywany)
+
 Opcjonalny blueprint [`notifications.yaml`](../blueprints/automation/energy_compass/notifications.yaml)
-informuje domowników, kiedy dodatkowe zużycie jest tanie (okno korzystne) albo kiedy zaczyna się
-drogie okno `LIMIT`. Sam Energy Compass niczego nie wysyła; głównym przełącznikiem jest
-**Włącz powiadomienia** w opcjach integracji. Konfiguracja:
-[przewodnik instalacji](installation.md#opt-in-notifications) (EN).
+jest wycofywany i zostanie usunięty w późniejszym wydaniu. Działa, dopóki nadawcą nie jest
+integracja; gdy wysyła integracja, milknie, bo wysyła tylko wtedy, gdy
+`notification_preferences.notify_enabled` w planie jest `true`. Konfiguracja:
+[przewodnik instalacji](installation.md#blueprint-deprecated) (EN).
 
 ```mermaid
 flowchart TD
@@ -1980,13 +2118,6 @@ flowchart TD
     C -- tak --> A[zapisz okno, licznik, czas<br/>sprawdź warunki ponownie, wykonaj akcję]
 ```
 
-| Wiadomość | Kiedy |
-| --- | --- |
-| **Wykorzystaj tanią energię** / *Use the cheap energy* | trwa okno korzystne i cała jego reszta to `BOOST` |
-| **Dobry moment na domowe urządzenia** / *A good time for household appliances* | trwa okno korzystne, nie w całości `BOOST` |
-| **Zaplanuj większe zużycie na później** / *Plan heavy use for later* | okno `LIMIT` zaczyna się w czasie wyprzedzenia albo już trwa |
-
-Treść podaje lokalne godziny okna i proponuje przełożenie prania, zmywarki lub ładowania auta.
 Akcja dostaje `notification_title`, `notification_message` i `event_kind`.
 
 | Wejście | Znaczenie |

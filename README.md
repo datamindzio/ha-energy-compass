@@ -7,7 +7,7 @@
   <img src="custom_components/energy_compass/brand/icon@2x.png" alt="Energy Compass logo" width="160" height="160">
 </picture>
 
-Energy Compass is an advisory Home Assistant integration. It estimates the incremental cost of one more kWh of household use against an optimized battery and grid plan, classifies near-term use as `BOOST`, `CHEAP`, `NORMAL`, or `LIMIT`, and exposes upcoming windows as native entities. It sends no messages by itself and writes inverter settings only when you enable the optional Deye controller (off by default), through the Solarman integration.
+Energy Compass is an advisory Home Assistant integration. It estimates the incremental cost of one more kWh of household use against an optimized battery and grid plan, classifies near-term use as `BOOST`, `CHEAP`, `NORMAL`, or `LIMIT`, and exposes upcoming windows as native entities. It sends notifications only when you turn them on, and writes inverter settings only when you enable the optional Deye controller (off by default), through the Solarman integration.
 
 ## Install
 
@@ -50,7 +50,7 @@ Input or calculation failures turn **Alert** on with `code`, `reason`, `since`, 
 
 Coordinator updates skip state writes for entities whose value, availability, and attributes are unchanged. Changes to forecast validity, plan attributes, refresh status, or window timing still publish even when the primary sensor value stays the same.
 
-Window alerts require **Notify enabled** in integration options and a nonempty action selected in the [optional blueprint](docs/installation.md#opt-in-notifications). The blueprint uses live integration preferences unless its override toggle is on. It handles favorable and `LIMIT` windows only, sends nothing while the Alert is on or the optimizer is not ready, and writes its title and message in English or Polish. The integration does not execute actions.
+Window notifications are off by default. Select a phone (`notify_services`) or a notify entity (`notify_entities`) in **Notification preferences** and turn on **Notify enabled**, and Energy Compass sends the favorable-window and `LIMIT` messages itself, in English or Polish (**Notification language**), never while the Alert is on or the optimizer is not ready. Try a target with the action `energy_compass.send_test_notification`. The older [notification blueprint](docs/installation.md#blueprint-deprecated) is deprecated: it goes silent once a target is set, see [migrating from the blueprint](docs/guide.en.md#migrating-from-the-blueprint). Setup: [Opt-in notifications](docs/installation.md#opt-in-notifications).
 
 The extra-kWh estimate assumes the optimizer's proposed plan. Until a controller follows that plan, actual consumption savings can differ under existing automation. A forecast-dependent recommendation is not a measurement of savings. See [model and limitations](docs/model.md) for energy balance, coverage, battery assumptions, and solver behavior.
 
