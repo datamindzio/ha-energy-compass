@@ -2659,7 +2659,7 @@ into days by the local date of `start`; settings come only from `--set`.
 - Not replayed: LFP balance windows, the autonomy tail beyond the data, and carried export or
   grid-charge commitments. A warning names the enabled ones. A failed plan solve runs that step as
   self-consumption and is reported under the table and as `solve_failures`; a failed `hindsight`
-  solve or inconsistent settings stop the run with `error: *date*: …`.
+  solve or inconsistent settings stop the run with `error: <date>: …`.
 
 ### Exporting the data from Home Assistant
 

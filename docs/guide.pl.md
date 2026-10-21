@@ -486,7 +486,7 @@ opiekuna raz w roku; plik jest czytany raz przy starcie, więc przepływ nie wym
    dystrybucyjne się różnią: PGE, Tauron, Enea, Energa albo Stoen. Każdy inny klucz sam wskazuje operatora.
 3. **Oferta sprzedawcy.** Taryfa sprzedawcy z urzędu (URE) i oferty o stałej cenie wycenione dla każdej
    strefy grupy, *Tylko dystrybucja (cenę energii wpiszę sam)* albo *Stawki wpiszę sam*. Krok pokazuje
-   rok taryfy, jej ważność i datę, na którą stawki obowiązują. W wbudowanych danych Enea G13active nie ma
+   rok taryfy, jej ważność i datę, na którą stawki obowiązują. We wbudowanych danych Enea G13active nie ma
    oferty wycenionej dla wszystkich trzech stref, więc oferuje tylko samą dystrybucję albo wpisanie
    ręczne.
 4. **Twoje przyłącze i rozliczenie** (oferta i sama dystrybucja): *Przyłącze* (jedna albo trzy fazy),
