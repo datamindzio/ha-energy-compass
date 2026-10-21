@@ -1,0 +1,35 @@
+{
+  "id": "pge-ure",
+  "seller": {
+    "id": "pge-obrot",
+    "name": "PGE Obrót"
+  },
+  "name": "Taryfa G PGE Obrót 2026 (sprzedawca z urzędu)",
+  "kind": "ure",
+  "osdScope": [
+    "pge"
+  ],
+  "groups": {
+    "G11": {
+      "energyPricePerKWh": {
+        "all": 0.4982
+      }
+    },
+    "G12": {
+      "energyPricePerKWh": {
+        "day": 0.5656,
+        "night": 0.3718
+      }
+    }
+  },
+  "tradeFeePerMonth": 0,
+  "contract": {
+    "termMonths": 0,
+    "earlyTerminationFee": 0
+  },
+  "asOf": "2026-10-06",
+  "source": {
+    "title": "PGE Obrót: Taryfa dla energii elektrycznej PGE Obrót S.A. dla grup G od 1.01.2026, rozdz. 5 (s. 7)",
+    "url": "https://www.gkpge.pl/content/download/e81cbcdedf76bd67800e1c39c65dc827/file/a5_taryfa_g_12_2026_web.pdf"
+  }
+}

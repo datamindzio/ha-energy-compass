@@ -61,14 +61,15 @@ passes. State in the PR which docs changed, or why none needed to.
 | `examples/dashboards/*.yaml` | `tools/dashboards/build.py` (+ `state_bands.js`) | `python tools/dashboards/build.py` |
 | `docs/guide.*.html`, `docs/assets/diagrams/*.svg` | `docs/guide.*.md` | `python tools/build_guides.py` |
 | `docs/builder.html`, `docs/assets/builder/templates.js` | `tools/build_builder.py` (renders both generators with `__EC_*__` tokens; style from `docs/index.html`) | `python tools/build_builder.py` |
+| `custom_components/energy_compass/sources/tariff_rates.json` | `tools/build_tariff_rates.py` reading energy-compass `packages/data/src` | `python tools/build_tariff_rates.py --source <energy-compass>/packages/data/src` |
 
 Edit the source, rebuild, and commit source and output together. A change to either generator or to
 `docs/index.html` also requires `python tools/build_builder.py`. `docs/assets/builder/builder.js` is
 hand-written and must only validate and substitute tokens — never re-implement generator logic in it.
-CI runs all four builders with
+CI runs all five builders with
 `--check` and fails on any difference (`tools/build_guides.py --check` compares the guide HTML and the
 diagram SVG names, which are hashes of the Mermaid source; it does not render Mermaid, so edit a diagram
-and rebuild locally with Node). `tools/build_guides.py` needs `markdown`, pinned to 3.8 in two places that must agree (the `docs` extra in `pyproject.toml` and `Dockerfile.test`, whose venv shadows the image's own copy); CI runs `--check` in the `test` job next to the other builders, and `tests/test_build_guides_check.py` runs there too. `tests/test_deye_controller_docs.py` fails when a Deye
+and rebuild locally with Node). `tools/build_guides.py` needs `markdown`, pinned to 3.8 in two places that must agree (the `docs` extra in `pyproject.toml` and `Dockerfile.test`, whose venv shadows the image's own copy); CI runs `--check` in the `test` job next to the other builders, and `tests/test_build_guides_check.py` runs there too. `tools/build_tariff_rates.py --check` in CI validates the committed file only (no energy-compass checkout); `--check --source <path>` is the maintainer's drift check against the data. `tests/test_deye_controller_docs.py` fails when a Deye
 controller input, controller entity key or attribute, service, `plan_reason` or runtime code, a notification blueprint input, a cost-card config
 key or an export value counter input is missing from either guide (card keys and counter inputs also
 from `docs/cost-card.md`), or a dashboard example is not linked from `docs/installation.md` — fix the

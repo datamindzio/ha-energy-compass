@@ -1,0 +1,12 @@
+{
+  "vatRate": 0.23,
+  "excise": {
+    "netPerKWh": 0.005,
+    "asOf": "2026-10-06",
+    "source": {
+      "title": "Ustawa z dnia 6 grudnia 2008 r. o podatku akcyzowym, art. 89 ust. 3 (stawka 5 zł/MWh dla energii elektrycznej)",
+      "url": "https://isap.sejm.gov.pl/isap.nsf/DocDetails.xsp?id=WDU20090030011"
+    }
+  },
+  "priceCaps": []
+}

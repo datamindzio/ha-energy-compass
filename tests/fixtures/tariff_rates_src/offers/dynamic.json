@@ -1,0 +1,57 @@
+{
+  "id": "dynamic",
+  "seller": {
+    "id": "pstryk",
+    "name": "Pstryk"
+  },
+  "name": "Taryfa dynamiczna Pstryk (cena godzinowa)",
+  "kind": "dynamic",
+  "osdScope": [
+    "pge",
+    "tauron"
+  ],
+  "groups": {
+    "G11": {}
+  },
+  "dynamic": {
+    "index": "csdac",
+    "marginPerMWh": 80,
+    "multiplier": 1,
+    "monthlyAverageCaps": [
+      {
+        "label": "Tarcza Pstryk 2026",
+        "covers": "indexAndMargin",
+        "netPerKWh": 0.49593,
+        "validFrom": "2025-01-01",
+        "validTo": "2026-12-31"
+      },
+      {
+        "label": "Tarcza Pstryk 2027",
+        "covers": "index",
+        "netPerKWh": 0.5,
+        "validFrom": "2027-01-01",
+        "validTo": "2027-12-31",
+        "signedBy": "2026-12-31"
+      }
+    ]
+  },
+  "tradeFeePerMonth": 0,
+  "oneOffFees": [
+    {
+      "id": "activation",
+      "label": "Opłata aktywacyjna (Miernik Pstryk)",
+      "net": 243.09
+    }
+  ],
+  "contract": {
+    "termMonths": 0,
+    "earlyTerminationFee": 0,
+    "noticeEndOfMonthAfter": 1
+  },
+  "audience": "consumer",
+  "asOf": "2026-10-18",
+  "source": {
+    "title": "Pstryk (Bankilo Obrót S.A.): Umowa kompleksowa (wzór 2026/02/1) — Regulamin Produktu „Taryfa dynamiczna Pstryk” § 5 i Załącznik nr 5 Cennik Sprzedawcy",
+    "url": "https://pstryk-assets.s3.eu-north-1.amazonaws.com/documents/umowa_kompleksowa_pstryk.pdf"
+  }
+}

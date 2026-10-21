@@ -1,7 +1,8 @@
 """Polish distribution tariff catalog: clock, calendar and zone band evaluator.
 
-Pure module, no Home Assistant imports. Rates are never shipped; only the zone
-schedule of each tariff group is modelled.
+Pure module, no Home Assistant imports. Zone schedules of Polish tariff groups.
+Rates are bundled separately in `tariff_rates.json` and only pre-fill editable
+settings (2026-10-20 reversal, T-100 spec).
 """
 
 from collections.abc import Mapping

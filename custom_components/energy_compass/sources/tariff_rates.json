@@ -1,0 +1,2140 @@
+{
+  "format": 1,
+  "vatRate": 0.23,
+  "excise": {
+    "netPerKWh": 0.005,
+    "asOf": "2026-10-06",
+    "source": "Ustawa z dnia 6 grudnia 2008 r. o podatku akcyzowym, art. 89 ust. 3 (stawka 5 zł/MWh dla energii elektrycznej)"
+  },
+  "operators": {
+    "pge": {
+      "name": "PGE Dystrybucja",
+      "tariffYear": 2026,
+      "validFrom": "2026-01-01",
+      "validTo": "2026-12-31",
+      "asOf": "2026-10-06",
+      "source": "Taryfa PGE Dystrybucja na 2026 r. — decyzja Prezesa URE DRE.WRE.4211.50.7.2025.JTr z 17.12.2025; stawka jakościowa 0,0332 zł/kWh od 1.02.2026 (zmiana taryfy PSE)",
+      "zoneClock": "standard",
+      "groups": {
+        "G11": {
+          "catalog": "g11",
+          "bands": {
+            "peak": "all"
+          },
+          "zones": [
+            {
+              "id": "all",
+              "label": "cała doba",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "all": 0.3469
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 5.5,
+              "threePhase": 9.98
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 4.5,
+              "2": 2.25,
+              "6": 0.75
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 500,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G12": {
+          "catalog": "pge_g12",
+          "bands": {
+            "peak": "day",
+            "off_peak": "night"
+          },
+          "zones": [
+            {
+              "id": "day",
+              "label": "strefa dzienna",
+              "rules": [
+                {
+                  "months": [
+                    4,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      15
+                    ],
+                    [
+                      17,
+                      22
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    1,
+                    2,
+                    3,
+                    10,
+                    11,
+                    12
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      13
+                    ],
+                    [
+                      15,
+                      22
+                    ]
+                  ],
+                  "holidays": true
+                }
+              ]
+            },
+            {
+              "id": "night",
+              "label": "strefa nocna",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "day": 0.4014,
+              "night": 0.0765
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 8.5,
+              "threePhase": 14.4
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 4.5,
+              "2": 2.25,
+              "6": 0.75
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 500,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G12w": {
+          "catalog": "pge_g12w",
+          "bands": {
+            "peak": "peak",
+            "off_peak": "offpeak"
+          },
+          "zones": [
+            {
+              "id": "peak",
+              "label": "strefa szczytowa (dni robocze)",
+              "rules": [
+                {
+                  "months": [
+                    4,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      15
+                    ],
+                    [
+                      17,
+                      22
+                    ]
+                  ],
+                  "holidays": false
+                },
+                {
+                  "months": [
+                    1,
+                    2,
+                    3,
+                    10,
+                    11,
+                    12
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      13
+                    ],
+                    [
+                      15,
+                      22
+                    ]
+                  ],
+                  "holidays": false
+                }
+              ]
+            },
+            {
+              "id": "offpeak",
+              "label": "strefa pozaszczytowa (noc, weekendy, święta)",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "peak": 0.4276,
+              "offpeak": 0.0845
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 9.15,
+              "threePhase": 14.98
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 4.5,
+              "2": 2.25,
+              "6": 0.75
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 500,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        }
+      }
+    },
+    "tauron": {
+      "name": "Tauron Dystrybucja",
+      "tariffYear": 2026,
+      "validFrom": "2026-01-01",
+      "validTo": "2026-12-31",
+      "asOf": "2026-10-06",
+      "source": "Taryfa Tauron Dystrybucja na 2026 r. — decyzja Prezesa URE DRE.WRE.4211.54.8.2025.ASa1 z 17.12.2025; stawka jakościowa 0,0332 zł/kWh od 1.02.2026 (zmiana taryfy PSE)",
+      "zoneClock": "standard",
+      "groups": {
+        "G11": {
+          "catalog": "g11",
+          "bands": {
+            "peak": "all"
+          },
+          "zones": [
+            {
+              "id": "all",
+              "label": "cała doba",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "all": 0.2464
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 7.38,
+              "threePhase": 10.86
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 4.56,
+              "2": 2.28,
+              "6": 0.76,
+              "12": 0.38
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 500,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G12": {
+          "catalog": "tauron_g12",
+          "bands": {
+            "peak": "day",
+            "off_peak": "night"
+          },
+          "zones": [
+            {
+              "id": "day",
+              "label": "strefa dzienna",
+              "rules": [
+                {
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      13
+                    ],
+                    [
+                      15,
+                      22
+                    ]
+                  ],
+                  "holidays": true
+                }
+              ]
+            },
+            {
+              "id": "night",
+              "label": "strefa nocna",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "day": 0.2841,
+              "night": 0.0558
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 7.38,
+              "threePhase": 10.86
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 4.56,
+              "2": 2.28,
+              "6": 0.76,
+              "12": 0.38
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 500,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G12w": {
+          "catalog": "tauron_g12w",
+          "bands": {
+            "peak": "peak",
+            "off_peak": "offpeak"
+          },
+          "zones": [
+            {
+              "id": "peak",
+              "label": "strefa szczytowa (dni robocze)",
+              "rules": [
+                {
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      13
+                    ],
+                    [
+                      15,
+                      22
+                    ]
+                  ],
+                  "holidays": false
+                }
+              ]
+            },
+            {
+              "id": "offpeak",
+              "label": "strefa pozaszczytowa (noc, weekendy, święta)",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "peak": 0.3298,
+              "offpeak": 0.0512
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 7.38,
+              "threePhase": 10.86
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 4.56,
+              "2": 2.28,
+              "6": 0.76,
+              "12": 0.38
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 500,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G13": {
+          "catalog": "tauron_g13",
+          "bands": {
+            "peak": "afternoon",
+            "mid_peak": "morning",
+            "off_peak": "offpeak"
+          },
+          "zones": [
+            {
+              "id": "morning",
+              "label": "szczyt przedpołudniowy",
+              "rules": [
+                {
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri"
+                  ],
+                  "hours": [
+                    [
+                      7,
+                      13
+                    ]
+                  ],
+                  "holidays": false
+                }
+              ]
+            },
+            {
+              "id": "afternoon",
+              "label": "szczyt popołudniowy",
+              "rules": [
+                {
+                  "months": [
+                    4,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri"
+                  ],
+                  "hours": [
+                    [
+                      19,
+                      22
+                    ]
+                  ],
+                  "holidays": false
+                },
+                {
+                  "months": [
+                    1,
+                    2,
+                    3,
+                    10,
+                    11,
+                    12
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri"
+                  ],
+                  "hours": [
+                    [
+                      16,
+                      21
+                    ]
+                  ],
+                  "holidays": false
+                }
+              ]
+            },
+            {
+              "id": "offpeak",
+              "label": "pozostałe godziny, weekendy i święta",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "morning": 0.2203,
+              "afternoon": 0.3898,
+              "offpeak": 0.0392
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 7.38,
+              "threePhase": 10.86
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 4.56,
+              "2": 2.28,
+              "6": 0.76,
+              "12": 0.38
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 500,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        }
+      }
+    },
+    "enea": {
+      "name": "Enea Operator",
+      "tariffYear": 2026,
+      "validFrom": "2026-01-01",
+      "validTo": "2026-12-31",
+      "asOf": "2026-10-06",
+      "source": "Taryfa Enea Operator na 2026 r. — decyzja Prezesa URE DRE.WRE.4211.52.11.2025.TG z 17.12.2025; stawka jakościowa 0,0332 zł/kWh od 1.02.2026 (zmiana taryfy PSE)",
+      "zoneClock": "standard",
+      "groups": {
+        "G11": {
+          "catalog": "g11",
+          "bands": {
+            "peak": "all"
+          },
+          "zones": [
+            {
+              "id": "all",
+              "label": "cała doba",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "all": 0.2456
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 7.45,
+              "threePhase": 10.41
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 3.84,
+              "2": 1.92,
+              "6": 0.64,
+              "12": 0.32
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 499,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G12": {
+          "catalog": "enea_g12",
+          "bands": {
+            "peak": "day",
+            "off_peak": "night"
+          },
+          "zones": [
+            {
+              "id": "day",
+              "label": "strefa dzienna",
+              "rules": [
+                {
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      13
+                    ],
+                    [
+                      15,
+                      22
+                    ]
+                  ],
+                  "holidays": true
+                }
+              ]
+            },
+            {
+              "id": "night",
+              "label": "strefa nocna",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "day": 0.2779,
+              "night": 0.0913
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 9.59,
+              "threePhase": 14.56
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 3.84,
+              "2": 1.92,
+              "6": 0.64,
+              "12": 0.32
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 499,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G12w": {
+          "catalog": "enea_g12w",
+          "bands": {
+            "peak": "peak",
+            "off_peak": "offpeak"
+          },
+          "zones": [
+            {
+              "id": "peak",
+              "label": "strefa szczytowa (dni robocze)",
+              "rules": [
+                {
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      21
+                    ]
+                  ],
+                  "holidays": false
+                }
+              ]
+            },
+            {
+              "id": "offpeak",
+              "label": "strefa pozaszczytowa (noc, weekendy, święta)",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "peak": 0.2702,
+              "offpeak": 0.0813
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 16.85,
+              "threePhase": 26.23
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 3.84,
+              "2": 1.92,
+              "6": 0.64,
+              "12": 0.32
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 499,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G13active": {
+          "catalog": "enea_g13active",
+          "bands": {
+            "peak": "restricted",
+            "mid_peak": "remaining",
+            "off_peak": "recommended"
+          },
+          "zones": [
+            {
+              "id": "restricted",
+              "label": "strefa zalecanego ograniczania",
+              "rules": [
+                {
+                  "months": [
+                    1
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      7,
+                      10
+                    ],
+                    [
+                      15,
+                      20
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    2
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      7,
+                      9
+                    ],
+                    [
+                      16,
+                      21
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    3
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      9
+                    ],
+                    [
+                      16,
+                      23
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    4,
+                    5,
+                    6,
+                    7,
+                    8
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      9
+                    ],
+                    [
+                      18,
+                      23
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    9
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      9
+                    ],
+                    [
+                      17,
+                      23
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    10
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      7,
+                      9
+                    ],
+                    [
+                      16,
+                      23
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    11
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      7,
+                      9
+                    ],
+                    [
+                      14,
+                      21
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    12
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      7,
+                      10
+                    ],
+                    [
+                      13,
+                      20
+                    ]
+                  ],
+                  "holidays": true
+                }
+              ]
+            },
+            {
+              "id": "remaining",
+              "label": "pozostałe godziny doby",
+              "rules": [
+                {
+                  "months": [
+                    1
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      7
+                    ],
+                    [
+                      10,
+                      15
+                    ],
+                    [
+                      20,
+                      23
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    2
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      7
+                    ],
+                    [
+                      9,
+                      16
+                    ],
+                    [
+                      21,
+                      23
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    3
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      9,
+                      10
+                    ],
+                    [
+                      23,
+                      24
+                    ],
+                    [
+                      0,
+                      6
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    4
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      9,
+                      10
+                    ],
+                    [
+                      16,
+                      18
+                    ],
+                    [
+                      23,
+                      24
+                    ],
+                    [
+                      0,
+                      6
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    5,
+                    6,
+                    7,
+                    8
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      17,
+                      18
+                    ],
+                    [
+                      23,
+                      24
+                    ],
+                    [
+                      0,
+                      6
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    9
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      9,
+                      10
+                    ],
+                    [
+                      16,
+                      17
+                    ],
+                    [
+                      23,
+                      24
+                    ],
+                    [
+                      0,
+                      6
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    10
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      9,
+                      10
+                    ],
+                    [
+                      23,
+                      24
+                    ],
+                    [
+                      0,
+                      7
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    11
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      7
+                    ],
+                    [
+                      9,
+                      14
+                    ],
+                    [
+                      21,
+                      23
+                    ]
+                  ],
+                  "holidays": true
+                },
+                {
+                  "months": [
+                    12
+                  ],
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      7
+                    ],
+                    [
+                      10,
+                      13
+                    ],
+                    [
+                      20,
+                      23
+                    ]
+                  ],
+                  "holidays": true
+                }
+              ]
+            },
+            {
+              "id": "recommended",
+              "label": "strefa zalecanego poboru",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "restricted": 0.3032,
+              "remaining": 0.2456,
+              "recommended": 0.073
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 9.59,
+              "threePhase": 14.56
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 3.84,
+              "2": 1.92,
+              "6": 0.64,
+              "12": 0.32
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 499,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        }
+      }
+    },
+    "energa": {
+      "name": "Energa Operator",
+      "tariffYear": 2026,
+      "validFrom": "2026-01-01",
+      "validTo": "2026-12-31",
+      "asOf": "2026-10-06",
+      "source": "Taryfa Energa Operator na 2026 r. — decyzja Prezesa URE DRE.WPR.4211.9.8.2025.JSz z 17.12.2025; stawka jakościowa 0,0332 zł/kWh od 1.02.2026 (zmiana taryfy PSE)",
+      "zoneClock": "standard",
+      "groups": {
+        "G11": {
+          "catalog": "g11",
+          "bands": {
+            "peak": "all"
+          },
+          "zones": [
+            {
+              "id": "all",
+              "label": "cała doba",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "all": 0.3485
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 7.83,
+              "threePhase": 11.77
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 4.64,
+              "2": 2.32
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 499,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G12": {
+          "catalog": "energa_g12",
+          "bands": {
+            "peak": "day",
+            "off_peak": "night"
+          },
+          "zones": [
+            {
+              "id": "day",
+              "label": "strefa dzienna",
+              "rules": [
+                {
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      13
+                    ],
+                    [
+                      15,
+                      22
+                    ]
+                  ],
+                  "holidays": true
+                }
+              ]
+            },
+            {
+              "id": "night",
+              "label": "strefa nocna",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "day": 0.3844,
+              "night": 0.0827
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 14.35,
+              "threePhase": 20.17
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 4.64,
+              "2": 2.32
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 499,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G12w": {
+          "catalog": "energa_g12w",
+          "bands": {
+            "peak": "peak",
+            "off_peak": "offpeak"
+          },
+          "zones": [
+            {
+              "id": "peak",
+              "label": "strefa szczytowa (dni robocze)",
+              "rules": [
+                {
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      13
+                    ],
+                    [
+                      15,
+                      22
+                    ]
+                  ],
+                  "holidays": false
+                }
+              ]
+            },
+            {
+              "id": "offpeak",
+              "label": "strefa pozaszczytowa (noc, weekendy, święta)",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "peak": 0.4017,
+              "offpeak": 0.0851
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 14.35,
+              "threePhase": 20.17
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 4.64,
+              "2": 2.32
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 499,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        }
+      }
+    },
+    "stoen": {
+      "name": "Stoen Operator",
+      "tariffYear": 2026,
+      "validFrom": "2026-01-01",
+      "validTo": "2026-12-31",
+      "asOf": "2026-10-06",
+      "source": "Taryfa Stoen Operator na 2026 r. — decyzja Prezesa URE DRE.WPR.4211.7.6.2025.AMi1 z 17.12.2025; stawka jakościowa 0,0332 zł/kWh od 1.02.2026 (zmiana taryfy PSE)",
+      "zoneClock": "standard",
+      "groups": {
+        "G11": {
+          "catalog": "g11",
+          "bands": {
+            "peak": "all"
+          },
+          "zones": [
+            {
+              "id": "all",
+              "label": "cała doba",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "all": 0.2342
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 11.46,
+              "threePhase": 18.53
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 2.88,
+              "6": 0.48,
+              "12": 0.24
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 500,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G12": {
+          "catalog": "stoen_g12",
+          "bands": {
+            "peak": "day",
+            "off_peak": "night"
+          },
+          "zones": [
+            {
+              "id": "day",
+              "label": "strefa dzienna",
+              "rules": [
+                {
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      13
+                    ],
+                    [
+                      15,
+                      22
+                    ]
+                  ],
+                  "holidays": true
+                }
+              ]
+            },
+            {
+              "id": "night",
+              "label": "strefa nocna",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "day": 0.2545,
+              "night": 0.0555
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 11.46,
+              "threePhase": 18.53
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 2.88,
+              "6": 0.48,
+              "12": 0.24
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 500,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        },
+        "G12w": {
+          "catalog": "stoen_g12w",
+          "bands": {
+            "peak": "peak",
+            "off_peak": "offpeak"
+          },
+          "zones": [
+            {
+              "id": "peak",
+              "label": "strefa szczytowa (dni robocze)",
+              "rules": [
+                {
+                  "days": [
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri"
+                  ],
+                  "hours": [
+                    [
+                      6,
+                      22
+                    ]
+                  ],
+                  "holidays": false
+                }
+              ]
+            },
+            {
+              "id": "offpeak",
+              "label": "strefa pozaszczytowa (noc, weekendy, święta)",
+              "default": true
+            }
+          ],
+          "charges": {
+            "variablePerKWh": {
+              "peak": 0.257,
+              "offpeak": 0.1079
+            },
+            "qualityPerKWh": 0.0332,
+            "ozePerKWh": 0.0073,
+            "cogenerationPerKWh": 0.003,
+            "fixedPerMonth": {
+              "onePhase": 11.46,
+              "threePhase": 18.53
+            },
+            "transitionalPerMonth": [
+              {
+                "maxKWh": null,
+                "pln": 0
+              }
+            ],
+            "subscriptionPerMonth": {
+              "1": 2.88,
+              "6": 0.48,
+              "12": 0.24
+            },
+            "capacityPerMonth": [
+              {
+                "maxKWh": 500,
+                "pln": 4.29
+              },
+              {
+                "maxKWh": 1200,
+                "pln": 10.31
+              },
+              {
+                "maxKWh": 2800,
+                "pln": 17.18
+              },
+              {
+                "maxKWh": null,
+                "pln": 24.05
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "offers": {
+    "enea-ure-2026": {
+      "seller": "Enea",
+      "name": "Taryfa G Enea 2026 (sprzedawca z urzędu)",
+      "kind": "ure",
+      "osdScope": [
+        "enea"
+      ],
+      "groups": {
+        "G11": {
+          "all": 0.498
+        },
+        "G12": {
+          "day": 0.5779,
+          "night": 0.3369
+        },
+        "G12w": {
+          "peak": 0.6518,
+          "offpeak": 0.3465
+        }
+      },
+      "tradeFeePerMonth": 0,
+      "termMonths": 0,
+      "availableUntil": null,
+      "asOf": "2026-10-06",
+      "source": "Enea: Taryfa dla energii elektrycznej ENEA S.A. dla grup G od 1.01.2026, rozdz. 5"
+    },
+    "energa-podstawowa-2-lata": {
+      "seller": "Energa Obrót",
+      "name": "Podstawowa 2 lata (stała cena)",
+      "kind": "fixed",
+      "osdScope": [
+        "pge",
+        "tauron",
+        "enea",
+        "energa",
+        "stoen"
+      ],
+      "groups": {
+        "G11": {
+          "all": 0.495
+        },
+        "G12": {
+          "day": 0.603,
+          "night": 0.3987
+        },
+        "G12w": {
+          "peak": 0.603,
+          "offpeak": 0.3987
+        }
+      },
+      "tradeFeePerMonth": 16.99,
+      "termMonths": 24,
+      "availableUntil": "2026-12-31",
+      "asOf": "2026-10-06",
+      "source": "Energa Obrót: Regulamin oferty Podstawowa 2 lata (od 16.02.2026), Tabela nr 1"
+    },
+    "energa-podstawowa-3-lata": {
+      "seller": "Energa Obrót",
+      "name": "Podstawowa 3 lata (stała cena)",
+      "kind": "fixed",
+      "osdScope": [
+        "pge",
+        "tauron",
+        "enea",
+        "energa",
+        "stoen"
+      ],
+      "groups": {
+        "G11": {
+          "all": 0.4942
+        },
+        "G12": {
+          "day": 0.6021,
+          "night": 0.3981
+        },
+        "G12w": {
+          "peak": 0.6021,
+          "offpeak": 0.3981
+        }
+      },
+      "tradeFeePerMonth": 18.62,
+      "termMonths": 36,
+      "availableUntil": "2026-12-31",
+      "asOf": "2026-10-06",
+      "source": "Energa Obrót: Regulamin oferty Podstawowa 3 lata (od 16.02.2026), Tabela nr 1"
+    },
+    "energa-ure-2026": {
+      "seller": "Energa Obrót",
+      "name": "Taryfa G Energa Obrót 2026 (sprzedawca z urzędu)",
+      "kind": "ure",
+      "osdScope": [
+        "energa"
+      ],
+      "groups": {
+        "G11": {
+          "all": 0.4968
+        },
+        "G12": {
+          "day": 0.5789,
+          "night": 0.3753
+        },
+        "G12w": {
+          "peak": 0.6057,
+          "offpeak": 0.394
+        }
+      },
+      "tradeFeePerMonth": 0,
+      "termMonths": 0,
+      "availableUntil": null,
+      "asOf": "2026-10-06",
+      "source": "Energa Obrót: Taryfa ENERGA-OBRÓT S.A. dla grup G od 1.01.2026, pkt 5.1 (s. 2)"
+    },
+    "eon-taryfa-2026": {
+      "seller": "E.ON Polska",
+      "name": "Taryfa G E.ON Polska 2026 (sprzedawca z urzędu, Stoen)",
+      "kind": "ure",
+      "osdScope": [
+        "stoen"
+      ],
+      "groups": {
+        "G11": {
+          "all": 0.5
+        },
+        "G12": {
+          "day": 0.5344,
+          "night": 0.4245
+        },
+        "G12w": {
+          "peak": 0.5244,
+          "offpeak": 0.4395
+        }
+      },
+      "tradeFeePerMonth": 13.23,
+      "termMonths": 0,
+      "availableUntil": null,
+      "asOf": "2026-10-06",
+      "source": "E.ON Polska: Taryfa dla energii elektrycznej E.ON Polska S.A. dla grup G (Stoen Operator), uchwała Zarządu z 29.10.2025, obowiązuje od 1.01.2026, pkt 3.6"
+    },
+    "pge-prad-z-gwarancjami": {
+      "seller": "PGE Obrót",
+      "name": "Prąd z gwarancjami dla domu (stała cena do 31.12.2028)",
+      "kind": "fixed",
+      "osdScope": [
+        "pge"
+      ],
+      "groups": {
+        "G11": {
+          "all": 0.49
+        },
+        "G12": {
+          "day": 0.55684,
+          "night": 0.36466
+        },
+        "G12w": {
+          "peak": 0.5732,
+          "offpeak": 0.41593
+        }
+      },
+      "tradeFeePerMonth": 21,
+      "termMonths": 0,
+      "availableUntil": "2026-12-31",
+      "asOf": "2026-10-06",
+      "source": "PGE Obrót: Regulamin sprzedaży energii elektrycznej, oferta „Prąd z gwarancjami dla domu”, Tabela cenowa"
+    },
+    "pge-ure-2026": {
+      "seller": "PGE Obrót",
+      "name": "Taryfa G PGE Obrót 2026 (sprzedawca z urzędu)",
+      "kind": "ure",
+      "osdScope": [
+        "pge"
+      ],
+      "groups": {
+        "G11": {
+          "all": 0.4982
+        },
+        "G12": {
+          "day": 0.5656,
+          "night": 0.3718
+        },
+        "G12w": {
+          "peak": 0.5821,
+          "offpeak": 0.4235
+        }
+      },
+      "tradeFeePerMonth": 0,
+      "termMonths": 0,
+      "availableUntil": null,
+      "asOf": "2026-10-06",
+      "source": "PGE Obrót: Taryfa dla energii elektrycznej PGE Obrót S.A. dla grup G od 1.01.2026, rozdz. 5 (s. 7)"
+    },
+    "tauron-ure-2026": {
+      "seller": "Tauron Sprzedaż",
+      "name": "Taryfa G Tauron Sprzedaż 2026 (sprzedawca z urzędu)",
+      "kind": "ure",
+      "osdScope": [
+        "tauron"
+      ],
+      "groups": {
+        "G11": {
+          "all": 0.497
+        },
+        "G12": {
+          "day": 0.543,
+          "night": 0.413
+        },
+        "G12w": {
+          "peak": 0.622,
+          "offpeak": 0.413
+        },
+        "G13": {
+          "morning": 0.4668,
+          "afternoon": 0.778,
+          "offpeak": 0.421
+        }
+      },
+      "tradeFeePerMonth": 0,
+      "termMonths": 0,
+      "availableUntil": null,
+      "asOf": "2026-10-06",
+      "source": "Tauron Sprzedaż: Decyzja Prezesa URE z 17.12.2025, DRE.WRE.4211.53.10.2025.ASa1, z treścią Taryfy G TAURON Sprzedaż (Biuletyn Branżowy URE Nr 265 (4795)), rozdz. 5, s. 10"
+    }
+  }
+}
