@@ -2,6 +2,7 @@
 
 import re
 from copy import deepcopy
+from dataclasses import replace
 
 import voluptuous as vol
 from homeassistant.helpers import entity_registry as er
@@ -792,8 +793,20 @@ class SourceEditor:
             description_placeholders={"detail": detail},
         )
 
-    async def _save_schedule_source(self, schedule):
+    async def _save_schedule_source(self, schedule, result=None):
+        """Store a schedule buy source; `result` (a `PrefillResult`) also writes its rates.
+
+        Without `result` the schedule keeps no provenance and the rate settings and helpers
+        stay as they are (DD-12). With it, the DD-8 values replace the settings, the helper
+        of every key written is unbound and the provenance is stored on the schedule.
+        A prefill the whole configuration rejects raises `InputError`.
+        """
         candidate = deepcopy(self._draft)
+        if result is not None:
+            schedule = replace(schedule, prefill=result.prefill)
+            candidate["settings"].update(result.values)
+            for key in result.unbound:
+                candidate["helpers"].pop(key, None)
         price = candidate["sources"]["buy"]
         previous_mode = price["mode"]
         price.update(
@@ -806,6 +819,16 @@ class SourceEditor:
             candidate["helpers"].pop("buy_rate", None)
         if self._source_ref:
             assert_selected(self._draft, self._source_ref, self._source_original)
+        if result is not None:
+            from .settings import validate_configuration
+
+            validate_schedule(schedule)
+            validate_configuration(
+                candidate,
+                snapshot(self.hass, candidate),
+                dt_util.utcnow(),
+                sources=False,
+            )
         self._draft = candidate
         return await self._after_source_save()
 

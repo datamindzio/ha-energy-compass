@@ -5,6 +5,7 @@ Rates are bundled separately in `tariff_rates.json` and only pre-fill editable
 settings (2026-10-20 reversal, T-100 spec).
 """
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
@@ -71,20 +72,60 @@ class Prefill:
     consumption_max_kwh: int | None
     values: Mapping[str, float]
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the provenance; `values` is copied so the dict is independent."""
+        return {
+            "operator": self.operator,
+            "offer": self.offer,
+            "tariff_year": self.tariff_year,
+            "valid_from": self.valid_from,
+            "valid_to": self.valid_to,
+            "as_of": self.as_of,
+            "phases": self.phases,
+            "billing_months": self.billing_months,
+            "consumption_max_kwh": self.consumption_max_kwh,
+            "values": dict(self.values),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Prefill:
+        """Restore provenance; unknown keys are ignored, a missing field is refused."""
+        if not isinstance(value, Mapping):
+            raise InputError("tariff prefill must be an object")
+        try:
+            return cls(
+                value["operator"],
+                value["offer"],
+                value["tariff_year"],
+                value["valid_from"],
+                value["valid_to"],
+                value["as_of"],
+                value["phases"],
+                value["billing_months"],
+                value["consumption_max_kwh"],
+                dict(value["values"]),
+            )
+        except (KeyError, TypeError, ValueError) as err:
+            raise InputError("tariff prefill is incomplete") from err
+
 
 @dataclass(frozen=True)
 class TariffSchedule:
     tariff: str
     meter_winter_clock: bool = False
     params: Mapping[str, int] = field(default_factory=dict)
+    prefill: Prefill | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the persisted part of a tariff schedule."""
-        return {
+        data: dict[str, Any] = {
             "tariff": self.tariff,
             "meter_winter_clock": self.meter_winter_clock,
             "params": dict(self.params),
         }
+        if self.prefill is not None:
+            data["prefill"] = self.prefill.to_dict()
+        return data
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> TariffSchedule:
@@ -93,6 +134,7 @@ class TariffSchedule:
             value["tariff"],
             value.get("meter_winter_clock", False),
             dict(value.get("params") or {}),
+            Prefill.from_dict(value["prefill"]) if value.get("prefill") else None,
         )
 
     @classmethod
@@ -332,6 +374,60 @@ def validate_schedule(schedule: TariffSchedule) -> None:
     for name, value in params.items():
         if isinstance(value, bool) or value not in spec.choices[name]:
             raise InputError(f"illegal tariff hour for {name}")
+    if schedule.prefill is not None:
+        validate_prefill(schedule.prefill)
+
+
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_iso_date(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def validate_prefill(prefill: Prefill) -> None:
+    """Check the shape and types of stored provenance, never snapshot membership.
+
+    An offer that leaves the bundled snapshot next year must not break a stored entry.
+    """
+    if not isinstance(prefill.operator, str) or not prefill.operator:
+        raise InputError("tariff prefill operator must be text")
+    if prefill.offer is not None and not isinstance(prefill.offer, str):
+        raise InputError("tariff prefill offer must be text or empty")
+    if not _is_int(prefill.tariff_year):
+        raise InputError("tariff prefill year must be an integer")
+    for name in ("valid_from", "valid_to", "as_of"):
+        if not _is_iso_date(getattr(prefill, name)):
+            raise InputError(f"tariff prefill {name} must be an ISO date")
+    if prefill.phases not in ("one_phase", "three_phase"):
+        raise InputError("tariff prefill phases must be one_phase or three_phase")
+    if not _is_int(prefill.billing_months) or prefill.billing_months not in (
+        1,
+        2,
+        3,
+        6,
+        12,
+    ):
+        raise InputError("tariff prefill billing months must be 1, 2, 3, 6 or 12")
+    limit = prefill.consumption_max_kwh
+    if limit is not None and (not _is_int(limit) or limit < 0):
+        raise InputError(
+            "tariff prefill consumption limit must be a non-negative integer"
+        )
+    if not isinstance(prefill.values, Mapping):
+        raise InputError("tariff prefill values must be an object")
+    for key, number in prefill.values.items():
+        if not isinstance(key, str) or isinstance(number, bool):
+            raise InputError("tariff prefill values must map keys to numbers")
+        if not isinstance(number, int | float) or not math.isfinite(number):
+            raise InputError("tariff prefill values must map keys to numbers")
 
 
 def tariff_clock(schedule: TariffSchedule, timezone_name: str) -> tzinfo:
