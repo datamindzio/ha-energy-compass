@@ -230,11 +230,17 @@ def test_a_pack_with_less_room_than_the_minimum_charge_is_not_charged():
     assert with_share == pytest.approx(without, abs=1e-6)
 
 
+class _ModelBuilt(Exception):
+    """Raised in place of the solve once the model rows are built."""
+
+
 def _first_interval_relief(problem, monkeypatch):
     """Whether the model has a `hold_relief` on the first interval and may use it.
 
     The rows `constrain_modes` builds are the contract: the solver's objective also
     carries the later intervals, which hide where the first one starts to be given back.
+    The model is read once it is complete and HiGHS is never run, so the answer cannot
+    depend on how fast the machine solves (a CI runner hit the time limit, T-121).
     """
     built = {}
     original = optimize.constrain_modes
@@ -243,8 +249,13 @@ def _first_interval_relief(problem, monkeypatch):
         original(model, problem, vectors, **kwargs)
         built["model"], built["first"] = model, vectors[0]
 
+    def stop(self, time_limit):
+        raise _ModelBuilt
+
     monkeypatch.setattr(optimize, "constrain_modes", spy)
-    solve(problem)
+    monkeypatch.setattr(optimize._Model, "solve", stop)
+    with pytest.raises(_ModelBuilt):
+        solve(problem)
     first = built["first"]
     return "hold_full" in first and built["model"].upper[first["hold_full"]] > 0
 
