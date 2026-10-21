@@ -13,7 +13,10 @@ from custom_components.energy_compass.settings import (
     default_configuration,
     merged_configuration,
 )
-from custom_components.energy_compass.source_management import source_inventory
+from custom_components.energy_compass.source_management import (
+    selected_source,
+    source_inventory,
+)
 from custom_components.energy_compass.sources.tariffs import CATALOG, TariffSchedule
 
 NOW = "2026-09-18T10:00:00+00:00"
@@ -894,3 +897,166 @@ def test_schedule_currency_error_exists_in_every_file(file):
     doc = json.loads((COMPONENT_DIR / file).read_text())
     for section in ("config", "options"):
         assert doc[section]["error"]["schedule_currency"]
+
+
+HELPER = {
+    "entity": {"entity_id": "sensor.rate"},
+    "unit": "PLN/kWh",
+    "source_unit": "PLN/kWh",
+    "multiplier": 1,
+    "max_age_seconds": None,
+}
+
+
+async def resave(flow, schedule, result=None):
+    """Save again from a flow that already saved: the selection is the saved one."""
+    if flow._source_ref:
+        flow._source_original = selected_source(flow._draft, flow._source_ref)
+    return await flow._save_schedule_source(schedule, result)
+
+
+async def save_prefill(hass, fid, tariff="g11", offer="pge-ure-2026"):
+    """Reach the schedule step, then hand the flow a prefill as the offer step will."""
+    from custom_components.energy_compass.sources import rates
+
+    await to_tariff(hass, fid, "buy")
+    await configure(hass, fid, {"mode": "schedule"})
+    flow = hass.config_entries.options._progress[fid]
+    result = rates.compute_prefill(
+        tariff,
+        "pge",
+        offer,
+        phases="one_phase",
+        billing_months=1,
+        consumption_max_kwh=2800,
+        values=flow._draft["settings"],
+        helpers=flow._draft["helpers"],
+    )
+    return result, await resave(flow, TariffSchedule(tariff), result)
+
+
+async def test_prefill_save_writes_values_and_provenance(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    result, shown = await save_prefill(hass, fid)
+    assert shown["step_id"] == "tariffs"
+    saved = draft(hass, fid)
+    for key, value in result.values.items():
+        assert saved["settings"][key] == value
+    buy = saved["sources"]["buy"]
+    assert buy["mode"] == "schedule"
+    assert buy["schedule"]["tariff"] == "g11"
+    assert buy["schedule"]["prefill"] == result.prefill.to_dict()
+    assert buy["schedule"]["prefill"]["values"]["buy_rate"] == 0.5032
+    assert "distribution_schedule" not in buy
+
+
+async def test_prefill_save_pops_helpers_of_written_keys(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    other = {**HELPER, "entity": {"entity_id": "sensor.other"}}
+    config["helpers"] = {
+        "buy_rate": HELPER,
+        "buy_distribution_rate": HELPER,
+        "monthly_charge": HELPER,
+        "daily_cycles": other,
+    }
+    hass.states.async_set("sensor.other", "1")
+    hass.states.async_set("sensor.rate", "1")
+    _, fid = await start(hass, config)
+    result, _ = await save_prefill(hass, fid)
+    assert set(result.unbound) == {
+        "buy_rate",
+        "buy_distribution_rate",
+        "monthly_charge",
+    }
+    assert draft(hass, fid)["helpers"] == {"daily_cycles": other}
+
+
+async def test_prefill_save_keeps_a_vat_helper(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["helpers"] = {"vat_percent": HELPER}
+    config["settings"]["vat_percent"] = 8.0
+    hass.states.async_set("sensor.rate", "8")
+    _, fid = await start(hass, config)
+    result, _ = await save_prefill(hass, fid)
+    assert "vat_percent" not in result.values
+    assert draft(hass, fid)["helpers"] == {"vat_percent": HELPER}
+    assert draft(hass, fid)["settings"]["vat_percent"] == 8.0
+
+
+async def test_prefill_that_the_configuration_rejects_leaves_the_draft_untouched(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    import dataclasses
+
+    from custom_components.energy_compass.engine.models import InputError
+
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    result, _ = await save_prefill(hass, fid)
+    flow = hass.config_entries.options._progress[fid]
+    before = draft(hass, fid)
+    bad = dataclasses.replace(result, values={**result.values, "monthly_charge": -1.0})
+    with pytest.raises(InputError, match="monthly_charge"):
+        await resave(flow, TariffSchedule("g11"), bad)
+    assert draft(hass, fid) is before
+    assert before["settings"]["monthly_charge"] == result.values["monthly_charge"]
+
+
+async def test_manual_save_drops_prefill_keeps_rates(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["helpers"] = {"buy_rate": HELPER}
+    _, fid = await start(hass, config)
+    result, _ = await save_prefill(hass, fid)
+    assert "prefill" in draft(hass, fid)["sources"]["buy"]["schedule"]
+    flow = hass.config_entries.options._progress[fid]
+    await resave(flow, TariffSchedule("g11"))
+    saved = draft(hass, fid)
+    assert saved["sources"]["buy"]["schedule"] == {
+        "tariff": "g11",
+        "meter_winter_clock": False,
+        "params": {},
+    }
+    for key, value in result.values.items():
+        assert saved["settings"][key] == value
+    assert "buy_rate" not in saved["helpers"]
+
+
+async def test_manual_save_keeps_helpers(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    config = pln_config()
+    config["sources"]["buy"].update(mode="schedule", fixed=None, schedule=SCHEDULE_PGE)
+    config["helpers"] = {"buy_rate": HELPER, "buy_distribution_rate": HELPER}
+    _, fid = await start(hass, config)
+    await save_schedule(hass, fid, "tauron_g12")
+    assert draft(hass, fid)["helpers"] == config["helpers"]
+
+
+async def test_fixed_after_prefill_drops_schedule_and_prefill(
+    recorder_mock, hass, enable_custom_integrations, freezer
+):
+    freezer.move_to(NOW)
+    _, fid = await start(hass, pln_config())
+    result, _ = await save_prefill(hass, fid)
+    flow = hass.config_entries.options._progress[fid]
+    flow._source_original = selected_source(flow._draft, flow._source_ref)
+    await flow._save_fixed_source()
+    saved = draft(hass, fid)
+    buy = saved["sources"]["buy"]
+    assert buy["mode"] == "fixed"
+    assert "schedule" not in buy
+    assert "prefill" not in json.dumps(buy)
+    assert saved["settings"]["buy_rate"] == result.values["buy_rate"]

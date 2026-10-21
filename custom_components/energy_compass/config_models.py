@@ -311,6 +311,8 @@ def validate_sources(config: SourceConfig, own_entity_ids: set[str]) -> None:
                 raise InputError("a tariff schedule source has its own zones")
             if config.currency != "PLN":
                 raise InputError("distribution tariff requires PLN")
+            if price.distribution_schedule.prefill is not None:
+                raise InputError("a distribution tariff carries no prefill")
             validate_schedule(price.distribution_schedule)
         if price.mode == "schedule":
             if role != "buy":

@@ -513,3 +513,129 @@ def test_local_band_text():
     )
     with pytest.raises(InputError, match="invalid timezone"):
         t.local_band(pge, date(2026, 3, 28), "Nowhere/Land", "peak")
+
+
+PREFILL = {
+    "operator": "pge",
+    "offer": "pge-ure-2026",
+    "tariff_year": 2026,
+    "valid_from": "2026-01-01",
+    "valid_to": "2026-12-31",
+    "as_of": "2026-09-30",
+    "phases": "one_phase",
+    "billing_months": 1,
+    "consumption_max_kwh": 2800,
+    "values": {"buy_rate": 0.5032, "monthly_charge": 33.43},
+}
+
+
+def test_schedule_without_prefill_round_trips_byte_identical():
+    stored = {"tariff": "pge_g12", "meter_winter_clock": True, "params": {}}
+    schedule = t.TariffSchedule.from_dict(stored)
+    assert schedule.prefill is None
+    assert schedule.to_dict() == stored
+    assert "prefill" not in schedule.to_dict()
+    enea = {
+        "tariff": "enea_g12",
+        "meter_winter_clock": False,
+        "params": {"night_start": 22, "afternoon_start": 13},
+    }
+    assert t.TariffSchedule.from_dict(enea).to_dict() == enea
+
+
+def test_prefill_round_trip():
+    stored = {
+        "tariff": "g11",
+        "meter_winter_clock": False,
+        "params": {},
+        "prefill": PREFILL,
+    }
+    schedule = t.TariffSchedule.from_dict(stored)
+    assert schedule.prefill == t.Prefill(
+        "pge",
+        "pge-ure-2026",
+        2026,
+        "2026-01-01",
+        "2026-12-31",
+        "2026-09-30",
+        "one_phase",
+        1,
+        2800,
+        {"buy_rate": 0.5032, "monthly_charge": 33.43},
+    )
+    assert schedule.to_dict() == stored
+    t.validate_schedule(schedule)
+    distribution_only = {**PREFILL, "offer": None, "consumption_max_kwh": None}
+    restored = t.TariffSchedule.from_dict({**stored, "prefill": distribution_only})
+    assert restored.to_dict()["prefill"] == distribution_only
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"phases": "two_phase"}, "phases"),
+        ({"billing_months": 5}, "billing months"),
+        ({"billing_months": True}, "billing months"),
+        ({"consumption_max_kwh": -1}, "consumption"),
+        ({"consumption_max_kwh": True}, "consumption"),
+        ({"consumption_max_kwh": 2800.5}, "consumption"),
+        ({"tariff_year": True}, "year"),
+        ({"tariff_year": "2026"}, "year"),
+        ({"valid_to": "31.12.2026"}, "valid_to"),
+        ({"as_of": None}, "as_of"),
+        ({"operator": ""}, "operator"),
+        ({"offer": 3}, "offer"),
+        ({"values": {"buy_rate": True}}, "numbers"),
+        ({"values": {"buy_rate": "0.5"}}, "numbers"),
+        ({"values": {"buy_rate": float("nan")}}, "numbers"),
+        ({"values": [0.5]}, "incomplete"),
+    ],
+)
+def test_validate_prefill_shape(change, message):
+    stored = {
+        "tariff": "g11",
+        "meter_winter_clock": False,
+        "params": {},
+        "prefill": {**PREFILL, **change},
+    }
+    with pytest.raises(InputError, match=message):
+        t.validate_schedule(t.TariffSchedule.from_dict(stored))
+
+
+def test_validate_prefill_shape_missing_field():
+    prefill = dict(PREFILL)
+    del prefill["billing_months"]
+    stored = {
+        "tariff": "g11",
+        "meter_winter_clock": False,
+        "params": {},
+        "prefill": prefill,
+    }
+    with pytest.raises(InputError, match="incomplete"):
+        t.TariffSchedule.from_dict(stored)
+
+
+def test_validate_prefill_never_checks_the_snapshot():
+    stored = {
+        "tariff": "g11",
+        "meter_winter_clock": False,
+        "params": {},
+        "prefill": {**PREFILL, "operator": "gone", "offer": "gone-2019"},
+    }
+    t.validate_schedule(t.TariffSchedule.from_dict(stored))
+
+
+def test_older_reader_ignores_prefill():
+    stored = {
+        "tariff": "g11",
+        "meter_winter_clock": False,
+        "params": {},
+        "prefill": {**PREFILL, "future_field": 1},
+        "future_key": "x",
+    }
+    schedule = t.TariffSchedule.from_dict(stored)
+    assert schedule.to_dict()["prefill"] == PREFILL
+    assert "future_key" not in schedule.to_dict()
+    # An older build knows neither the prefill nor the new keys: only the old three remain.
+    older = {key: stored[key] for key in ("tariff", "meter_winter_clock", "params")}
+    assert t.TariffSchedule.from_dict(older).prefill is None

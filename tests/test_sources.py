@@ -583,3 +583,32 @@ def test_off_peak_rate_setting():
     assert "buy_off_peak_rate" in sp.TARIFF_PRICE_KEYS
     del config["settings"]["buy_off_peak_rate"]
     assert validate_configuration(config, {}, NOW)["buy_off_peak_rate"] == 0
+
+
+def test_prefill_on_distribution_schedule_rejected():
+    from custom_components.energy_compass.config_models import (
+        SourceConfig,
+        validate_sources,
+    )
+    from custom_components.energy_compass.settings import default_configuration
+    from custom_components.energy_compass.sources.tariffs import Prefill, TariffSchedule
+
+    prefill = Prefill(
+        "pge",
+        None,
+        2026,
+        "2026-01-01",
+        "2026-12-31",
+        "2026-09-30",
+        "one_phase",
+        1,
+        None,
+        {"buy_distribution_rate": 0.39},
+    )
+    config = default_configuration("PLN", "Europe/Warsaw")
+    buy = config["sources"]["buy"]
+    buy["distribution_schedule"] = TariffSchedule.default("pge_g12").to_dict()
+    validate_sources(SourceConfig.from_dict(config["sources"]), set())
+    buy["distribution_schedule"]["prefill"] = prefill.to_dict()
+    with pytest.raises(InputError, match="no prefill"):
+        validate_sources(SourceConfig.from_dict(config["sources"]), set())
