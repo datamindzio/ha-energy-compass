@@ -3,7 +3,8 @@
 import json
 import logging
 from copy import deepcopy
-from datetime import timedelta
+from datetime import date, timedelta
+from decimal import Decimal
 from types import MappingProxyType
 from zoneinfo import ZoneInfo
 
@@ -82,6 +83,7 @@ from .source_management import (
     source_error_detail,
     source_mode_options,
 )
+from .sources import rates as tariff_rates
 from .sources.bindings import IntervalBinding
 from .sources.tariffs import (
     BAND_DISTRIBUTION_KEYS,
@@ -280,6 +282,50 @@ def _distribution_preview(config, problem, values):
     )
 
 
+def _prefill_preview(config, problem, values):
+    """Provenance, edits and stale notes of pre-filled rates (DD-15), or ''.
+
+    A pure function of the stored prefill, the resolved settings and the bundled
+    snapshot; values are never changed here.
+    """
+    buy = config["sources"]["buy"]
+    if buy["mode"] != "schedule":
+        return ""
+    prefill = TariffSchedule.from_dict(buy["schedule"]).prefill
+    if prefill is None:
+        return ""
+    text = " " + tariff_rates.prefill_summary(prefill, "en")
+    edited = sum(
+        1
+        for key, number in prefill.values.items()
+        if key in values and abs(values[key] - number) > 1e-9
+    )
+    if edited:
+        text += f"; {edited} values edited since"
+    text += "."
+    local = ZoneInfo(config["timezone"])
+    today = problem.slots[0].start.astimezone(local).date()
+    if today > date.fromisoformat(prefill.valid_to):
+        text += (
+            f" Note: the pre-filled rates are out of date (the {prefill.tariff_year} "
+            f"tariff ended {prefill.valid_to}); values are unchanged — pick the "
+            "offer again or edit Tariffs → Values."
+        )
+    snapshot = tariff_rates.SNAPSHOT
+    year = snapshot["operators"].get(prefill.operator, {}).get("tariffYear")
+    if year is not None and year > prefill.tariff_year:
+        text += (
+            f" Note: newer rates are bundled (tariff {year}): pick the offer "
+            "again in Tariffs → Buy source."
+        )
+    offered = round(snapshot["vatRate"] * 100, 6)
+    if "vat_percent" not in prefill.values and values["vat_percent"] != offered:
+        text += " Note: " + tariff_rates.vat_kept_note(
+            Decimal(str(values["vat_percent"])), Decimal(str(offered))
+        )
+    return text
+
+
 def _price_preview(config, problem, values, role):
     price = config["sources"][role]
     currency = config["currency"]
@@ -341,6 +387,7 @@ def _price_preview(config, problem, values, role):
         f"at {values['vat_percent']:g}%."
     )
     if role == "buy":
+        source += _prefill_preview(config, problem, values)
         source += _distribution_preview(config, problem, values)
     return source
 

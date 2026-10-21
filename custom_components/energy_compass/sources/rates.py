@@ -363,6 +363,14 @@ def _percent(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
+def vat_kept_note(vat: Decimal, offered: Decimal) -> str:
+    """Why the offer's VAT was not written: the shared setting differs from it."""
+    return (
+        f"VAT is {_percent(vat)} % (shared with the sell side); "
+        f"the offer assumes {_percent(offered)} %."
+    )
+
+
 def _money(value: Decimal) -> float:
     return float(value.quantize(_MONEY_STEP, ROUND_HALF_UP))
 
@@ -433,10 +441,7 @@ def compute_prefill(
     else:
         vat = _d(values.get("vat_percent", _DEFAULT_VAT_PERCENT))
         if vat != offered_vat:
-            notes.append(
-                f"VAT is {_percent(vat)} % (shared with the sell side); "
-                f"the offer assumes {_percent(offered_vat)} %."
-            )
+            notes.append(vat_kept_note(vat, offered_vat))
     net = (
         _d(charges["fixedPerMonth"][_PHASE_KEYS[phases]])
         + _d(charges["subscriptionPerMonth"][str(billing_months)])
@@ -497,10 +502,15 @@ def offer_label(offer: str, language: str, today: date) -> str:
 
 
 def prefill_summary(prefill: Prefill, language: str) -> str:
-    """One line naming where pre-filled rates came from (seller offer or distribution only)."""
+    """One line naming where pre-filled rates came from (seller offer or distribution only).
+
+    A stored prefill outlives the snapshot that wrote it: an operator or offer
+    the bundled snapshot no longer has is named by its stored id.
+    """
     texts = _texts(language)
+    operator = SNAPSHOT["operators"].get(prefill.operator)
     fields = {
-        "operator": SNAPSHOT["operators"][prefill.operator]["name"],
+        "operator": operator["name"] if operator else prefill.operator,
         "year": prefill.tariff_year,
         "valid_from": prefill.valid_from,
         "valid_to": prefill.valid_to,
@@ -508,8 +518,9 @@ def prefill_summary(prefill: Prefill, language: str) -> str:
     }
     if prefill.offer is None:
         return texts["filled_distribution"].format(**fields)
-    offer = SNAPSHOT["offers"][prefill.offer]
-    return texts["filled"].format(offer=f"{offer['seller']}: {offer['name']}", **fields)
+    offer = SNAPSHOT["offers"].get(prefill.offer)
+    name = f"{offer['seller']}: {offer['name']}" if offer else prefill.offer
+    return texts["filled"].format(offer=name, **fields)
 
 
 def excise_per_kwh() -> float:
