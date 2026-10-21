@@ -1,3 +1,4 @@
+import hashlib
 from datetime import UTC, date, datetime, timedelta
 from itertools import pairwise
 from zoneinfo import ZoneInfo
@@ -23,7 +24,10 @@ KEYS = (
     "energa_g12w",
     "stoen_g12",
     "stoen_g12w",
+    "tauron_g13",
+    "enea_g13active",
 )
+EXISTING_KEYS = KEYS[:11]
 
 # key -> (weekday off-peak hours in the winter season, in the summer season)
 EXPECTED = {
@@ -65,10 +69,12 @@ def winter(key="pge_g12", **params):
 
 
 def test_catalog_keys_and_order():
+    assert len(t.CATALOG) == 13
     assert tuple(t.CATALOG) == KEYS
+    assert KEYS[-2:] == ("tauron_g13", "enea_g13active")
 
 
-@pytest.mark.parametrize("key", KEYS)
+@pytest.mark.parametrize("key", EXISTING_KEYS)
 def test_catalog_golden(key):
     cold, warm = EXPECTED[key]
     assert hours(key, WINTER_WEEKDAY) == cold
@@ -274,3 +280,236 @@ def test_schedule_round_trip():
         "meter_winter_clock": True,
         "params": {"night_start": 23, "afternoon_start": 14},
     }
+
+
+def test_tariff_bands_per_group():
+    both = ("peak", "off_peak")
+    assert t.BANDS == ("peak", "mid_peak", "off_peak")
+    assert t.tariff_bands("g11") == ("peak",)
+    for key in EXISTING_KEYS[1:]:
+        assert t.tariff_bands(key) == both, key
+    assert t.tariff_bands("tauron_g13") == t.BANDS
+    assert t.tariff_bands("enea_g13active") == t.BANDS
+    with pytest.raises(InputError, match="unknown tariff"):
+        t.tariff_bands("nope")
+    assert t.BAND_RATE_KEYS == {
+        "peak": "buy_rate",
+        "mid_peak": "buy_mid_peak_rate",
+        "off_peak": "buy_off_peak_rate",
+    }
+    assert t.BAND_DISTRIBUTION_KEYS == {
+        "peak": "buy_distribution_rate",
+        "mid_peak": "buy_distribution_mid_peak_rate",
+        "off_peak": "buy_distribution_off_peak_rate",
+    }
+
+
+# sha256[:16] of every (start, end, band) row of 2026 (local midnight to midnight),
+# frozen on main before Window.band existed: (local clock, old meter on winter time).
+BAND_ROWS_2026 = {
+    "g11": ("d4039fa4f3cf73fb", "d4039fa4f3cf73fb", 1),
+    "pge_g12": ("4d5f397500d655dd", "7f4b8c3a68a631ea", 1461),
+    "pge_g12w": ("2123179d21375dba", "5f074f21fa8be5b3", 1013),
+    "tauron_g12": ("bc7edec262347cae", "1a530827df613bc4", 1461),
+    "tauron_g12w": ("bb77f230d084aae4", "2d4a5f9130255de1", 1013),
+    "enea_g12": ("bc7edec262347cae", "1a530827df613bc4", 1461),
+    "enea_g12w": ("d9f6b67ed9d48322", "ab82ff67fa493fb8", 507),
+    "energa_g12": ("bc7edec262347cae", "1a530827df613bc4", 1461),
+    "energa_g12w": ("bb77f230d084aae4", "2d4a5f9130255de1", 1013),
+    "stoen_g12": ("bc7edec262347cae", "1a530827df613bc4", 1461),
+    "stoen_g12w": ("31671f56cbac1289", "e7276406b22a6960", 507),
+}
+
+
+def rows_digest(key: str, old_meter: bool) -> tuple[str, int]:
+    default = t.TariffSchedule.default(key)
+    schedule = t.TariffSchedule(key, old_meter, default.params)
+    zone = ZoneInfo(WARSAW)
+    rows = t.band_rows(
+        schedule,
+        datetime(2026, 1, 1, tzinfo=zone),
+        datetime(2027, 1, 1, tzinfo=zone),
+        WARSAW,
+    )
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(
+            f"{row.start.isoformat()}|{row.end.isoformat()}|{row.band}\n".encode()
+        )
+    return digest.hexdigest()[:16], len(rows)
+
+
+@pytest.mark.parametrize("key", EXISTING_KEYS)
+def test_existing_keys_unchanged_by_band_field(key):
+    local, old, count = BAND_ROWS_2026[key]
+    assert rows_digest(key, False) == (local, count)
+    assert rows_digest(key, True) == (old, count)
+
+
+def band_hour(key, day, hour, *, old_meter=False, tz=None):
+    """Band at hh:30 of the given hour on `tz` (default Warsaw)."""
+    default = t.TariffSchedule.default(key)
+    schedule = t.TariffSchedule(key, old_meter, default.params)
+    moment = datetime(
+        day.year, day.month, day.day, hour, 30, tzinfo=tz or ZoneInfo(WARSAW)
+    )
+    return t.band_at(schedule, moment, WARSAW)
+
+
+def band_map(key, day, **kwargs):
+    return {hour: band_hour(key, day, hour, **kwargs) for hour in range(24)}
+
+
+def expected_map(peak=(), mid=()):
+    """Band per hour from half-open (start, end) hour ranges; the rest is off_peak."""
+    result = dict.fromkeys(range(24), "off_peak")
+    for band, ranges in (("peak", peak), ("mid_peak", mid)):
+        for start, end in ranges:
+            for hour in range(start, end):
+                assert result[hour] == "off_peak", (band, hour)
+                result[hour] = band
+    return result
+
+
+def test_tauron_g13_weekday_summer():
+    day = date(2026, 7, 15)
+    assert band_hour("tauron_g13", day, 7) == "mid_peak"
+    assert band_hour("tauron_g13", day, 13) == "off_peak"
+    assert band_hour("tauron_g13", day, 19) == "peak"
+    assert band_map("tauron_g13", day) == expected_map(peak=[(19, 22)], mid=[(7, 13)])
+    assert band_at_quarter("tauron_g13", day, 21, 45) == "peak"
+    assert band_at_quarter("tauron_g13", day, 22, 0) == "off_peak"
+    assert band_hour("tauron_g13", day, 16) == "off_peak"
+
+
+def band_at_quarter(key, day, hour, minute, **kwargs):
+    schedule = t.TariffSchedule.default(key)
+    moment = datetime(
+        day.year, day.month, day.day, hour, minute, tzinfo=ZoneInfo(WARSAW)
+    )
+    return t.band_at(schedule, moment, WARSAW)
+
+
+def test_tauron_g13_weekday_winter():
+    day = date(2026, 1, 14)
+    assert band_hour("tauron_g13", day, 16) == "peak"
+    assert band_at_quarter("tauron_g13", day, 20, 45) == "peak"
+    assert band_at_quarter("tauron_g13", day, 21, 0) == "off_peak"
+    assert band_hour("tauron_g13", day, 19) == "peak"
+    assert band_map("tauron_g13", day) == expected_map(peak=[(16, 21)], mid=[(7, 13)])
+
+
+@pytest.mark.parametrize("day", [date(2026, 7, 18), date(2026, 5, 1)])
+def test_tauron_g13_saturday_and_holiday_off_peak(day):
+    assert band_map("tauron_g13", day) == expected_map()
+    rows = t.band_rows(
+        t.TariffSchedule.default("tauron_g13"),
+        datetime(day.year, day.month, day.day, tzinfo=ZoneInfo(WARSAW)),
+        datetime(day.year, day.month, day.day + 1, tzinfo=ZoneInfo(WARSAW)),
+        WARSAW,
+    )
+    assert {row.band for row in rows} == {"off_peak"}
+
+
+def test_tauron_g13_winter_clock():
+    # Old meter on CET: the summer peak 19-22 CET is 20-23 on the Warsaw wall clock.
+    schedule = t.TariffSchedule("tauron_g13", True, {})
+    for hour in range(24):
+        local = datetime(2026, 7, 15, hour, 30, tzinfo=ZoneInfo(WARSAW))
+        cet_hour = (hour - 1) % 24
+        expected = expected_map(peak=[(19, 22)], mid=[(7, 13)])[cet_hour]
+        assert t.band_at(schedule, local, WARSAW) == expected, hour
+
+
+# Appendix B of the tariff rates design: month -> (peak ranges, mid_peak ranges), rest off_peak.
+ENEA = {
+    1: ([(7, 10), (15, 20)], [(6, 7), (10, 15), (20, 23)]),
+    2: ([(7, 9), (16, 21)], [(6, 7), (9, 16), (21, 23)]),
+    3: ([(6, 9), (16, 23)], [(9, 10), (23, 24), (0, 6)]),
+    4: ([(6, 9), (18, 23)], [(9, 10), (16, 18), (23, 24), (0, 6)]),
+    5: ([(6, 9), (18, 23)], [(17, 18), (23, 24), (0, 6)]),
+    6: ([(6, 9), (18, 23)], [(17, 18), (23, 24), (0, 6)]),
+    7: ([(6, 9), (18, 23)], [(17, 18), (23, 24), (0, 6)]),
+    8: ([(6, 9), (18, 23)], [(17, 18), (23, 24), (0, 6)]),
+    9: ([(6, 9), (17, 23)], [(9, 10), (16, 17), (23, 24), (0, 6)]),
+    10: ([(7, 9), (16, 23)], [(9, 10), (23, 24), (0, 7)]),
+    11: ([(7, 9), (14, 21)], [(6, 7), (9, 14), (21, 23)]),
+    12: ([(7, 10), (13, 20)], [(6, 7), (10, 13), (20, 23)]),
+}
+
+
+def enea_expected(month):
+    peak, mid = ENEA[month]
+    return expected_map(peak=peak, mid=mid)
+
+
+def test_enea_g13active_months():
+    cet = timezone_cet()
+    for day in (
+        date(2026, 1, 12),
+        date(2026, 3, 10),
+        date(2026, 6, 10),
+        date(2026, 11, 10),
+    ):
+        # Old meter on winter time: the table applies to the CET hour directly.
+        assert band_map("enea_g13active", day, old_meter=True, tz=cet) == enea_expected(
+            day.month
+        ), day
+    # Local clock in June (UTC+2): the same instants read one hour later on the table.
+    june = date(2026, 6, 10)
+    shifted = {hour: enea_expected(6)[(hour + 1) % 24] for hour in range(24)}
+    assert band_map("enea_g13active", june, tz=cet) == shifted
+
+
+def timezone_cet():
+    return t.CET
+
+
+@pytest.mark.parametrize(
+    ("day", "weekday"),
+    [(date(2026, 5, 1), date(2026, 5, 4)), (date(2026, 6, 13), date(2026, 6, 10))],
+)
+def test_enea_g13active_holiday_and_saturday_follow_zones(day, weekday):
+    assert band_map("enea_g13active", day) == band_map("enea_g13active", weekday)
+    assert band_map("enea_g13active", day) == enea_expected(day.month)
+
+
+@pytest.mark.parametrize(
+    ("day", "quarters"), [(date(2026, 3, 29), 92), (date(2026, 10, 25), 100)]
+)
+def test_enea_g13active_dst_days(day, quarters):
+    schedule = t.TariffSchedule.default("enea_g13active")
+    zone = ZoneInfo(WARSAW)
+    start = datetime(day.year, day.month, day.day, tzinfo=zone)
+    end = datetime(day.year, day.month, day.day + 1, tzinfo=zone)
+    rows = t.band_rows(schedule, start, end, WARSAW)
+    assert (
+        sum((row.end - row.start) // timedelta(minutes=15) for row in rows) == quarters
+    )
+    table = enea_expected(day.month)
+    for row in rows:
+        assert row.band == table[row.start.astimezone(zone).hour], row
+
+
+def test_local_band_text():
+    tauron = t.TariffSchedule.default("tauron_g13")
+    weekday = date(2026, 7, 15)
+    assert t.local_band(tauron, weekday, WARSAW, "mid_peak") == "07:00–13:00"
+    assert t.local_band(tauron, weekday, WARSAW, "peak") == "19:00–22:00"
+    assert (
+        t.local_band(tauron, weekday, WARSAW, "off_peak")
+        == "00:00–07:00, 13:00–19:00, 22:00–24:00"
+    )
+    assert t.local_band(tauron, date(2026, 7, 18), WARSAW, "off_peak") == "all day"
+    assert t.local_band(tauron, date(2026, 7, 18), WARSAW, "peak") == "none"
+    assert t.local_band(tauron, date(2026, 7, 18), WARSAW, "mid_peak") == "none"
+    pge = t.TariffSchedule.default("pge_g12")
+    assert t.local_band(pge, date(2026, 3, 28), WARSAW, "off_peak") == t.local_off_peak(
+        pge, date(2026, 3, 28), WARSAW
+    )
+    assert (
+        t.local_band(pge, date(2026, 3, 28), WARSAW, "peak")
+        == "06:00–13:00, 15:00–22:00"
+    )
+    with pytest.raises(InputError, match="invalid timezone"):
+        t.local_band(pge, date(2026, 3, 28), "Nowhere/Land", "peak")

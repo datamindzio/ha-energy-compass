@@ -461,7 +461,17 @@ def test_new_steps_and_rate_labels_exist_in_every_translation_file(file):
         assert data["buy_off_peak_rate"] == (
             "Off-peak buy rate (G12/G12w tariff schedule)"
             if english
-            else "Cena zakupu poza szczytem (taryfa OSD G12/G12w)"
+            else "Cena zakupu poza szczytem (taryfa OSD G12/G12w/G13)"
+        )
+        assert data["buy_mid_peak_rate"] == (
+            "Mid-peak buy rate (G13 tariffs)"
+            if english
+            else "Cena zakupu w strefie pośredniej (taryfa OSD G13)"
+        )
+        assert data["buy_distribution_mid_peak_rate"] == (
+            "Mid-peak distribution rate"
+            if english
+            else "Stawka dystrybucji w strefie pośredniej"
         )
 
 

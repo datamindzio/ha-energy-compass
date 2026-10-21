@@ -75,11 +75,41 @@ from .sources.history import load_for_slots_with_quality
 from .sources.prices import price_for_slots
 from .sources.pv import sum_pv_arrays
 from .sources.solar_forecast import solar_forecast_intervals
-from .sources.tariffs import band_rows
+from .sources.tariffs import (
+    BAND_DISTRIBUTION_KEYS,
+    BAND_RATE_KEYS,
+    band_rows,
+    tariff_bands,
+)
 from .sources.throughput import resolve_daily_throughput
 
 _LOGGER = logging.getLogger(__name__)
 _AUTONOMY_HORIZON_HOURS = 48
+_BUY_ZONES_MESSAGE = {
+    1: (
+        "tariff schedule needs positive buy rates: "
+        "set Buy rate and Off-peak buy rate in Tariffs → Values"
+    ),
+    2: (
+        "tariff schedule needs positive buy rates: "
+        "set Buy rate and Off-peak buy rate in Tariffs → Values"
+    ),
+    3: (
+        "tariff schedule needs positive buy rates: "
+        "set Buy rate, Mid-peak buy rate and Off-peak buy rate in Tariffs → Values"
+    ),
+}
+_DISTRIBUTION_ZONES_MESSAGE = {
+    2: (
+        "distribution with two zones needs both rates or neither: "
+        "set Distribution rate and Off-peak distribution rate in Tariffs → Values"
+    ),
+    3: (
+        "distribution with three zones needs all three rates or none: "
+        "set Distribution rate, Mid-peak distribution rate and "
+        "Off-peak distribution rate in Tariffs → Values"
+    ),
+}
 
 
 def effective_settings(
@@ -448,18 +478,15 @@ def _buy_composition(price, values, config, states, now, intervals, source_price
     """
     vat = _vat_factor(values, "buy")
     peak = values["buy_distribution_rate"] * vat
-    off_peak = values["buy_distribution_off_peak_rate"] * vat
     zones = _buy_zones(price)
     if zones is None or zones.tariff == "g11":
         distribution = (peak,) * len(intervals)
     else:
-        if (values["buy_distribution_rate"] == 0) != (
-            values["buy_distribution_off_peak_rate"] == 0
-        ):
-            raise InputError(
-                "distribution with two zones needs both rates or neither: "
-                "set Distribution rate and Off-peak distribution rate in Tariffs → Values"
-            )
+        bands = tariff_bands(zones.tariff)
+        keys = [BAND_DISTRIBUTION_KEYS[band] for band in bands]
+        unset = [values[key] == 0 for key in keys]
+        if any(unset) and not all(unset):
+            raise InputError(_DISTRIBUTION_ZONES_MESSAGE[len(bands)])
         distribution = price_for_slots(
             PriceSource("schedule", schedule=zones),
             states,
@@ -467,7 +494,7 @@ def _buy_composition(price, values, config, states, now, intervals, source_price
             intervals,
             config["currency"],
             timezone=config["timezone"],
-            schedule_rates={"peak": peak, "off_peak": off_peak},
+            schedule_rates={band: values[key] * vat for band, key in zip(bands, keys)},
         )
     if values["buy_distribution_mode"] == "added":
         buy = tuple(source + part for source, part in zip(source_prices, distribution))
@@ -573,17 +600,12 @@ def build_problem(
                 ),
             )
         elif price.mode == "schedule":
-            single = price.schedule.tariff == "g11"
-            peak = values["buy_rate"]
-            off_peak = peak if single else values["buy_off_peak_rate"]
-            if peak <= 0 or off_peak <= 0:
-                raise InputError(
-                    "tariff schedule needs positive buy rates: "
-                    "set Buy rate and Off-peak buy rate in Tariffs → Values"
-                )
+            bands = tariff_bands(price.schedule.tariff)
+            rates = {band: values[BAND_RATE_KEYS[band]] for band in bands}
+            if any(rate <= 0 for rate in rates.values()):
+                raise InputError(_BUY_ZONES_MESSAGE[len(bands)])
             schedule_rates = {
-                "peak": peak * factor + addition,
-                "off_peak": off_peak * factor + addition,
+                band: rate * factor + addition for band, rate in rates.items()
             }
         elif price.mode == "forecast":
             price = replace(

@@ -97,6 +97,7 @@ async def test_native_power_history_retains_outage_and_unaffected_hours(
 
 MONETARY_VALUES = {
     "buy_rate": 1.3,
+    "buy_mid_peak_rate": 1.0,
     "buy_off_peak_rate": 0.8,
     "sell_rate": 0.7,
     "buy_addition": 0.15,
@@ -119,6 +120,7 @@ MONETARY_VALUES = {
     "import_penalty_per_kwh": 0.12,
     "balance_value": 8.0,
     "buy_distribution_rate": 0.7,
+    "buy_distribution_mid_peak_rate": 0.58,
     "buy_distribution_off_peak_rate": 0.46,
 }
 
