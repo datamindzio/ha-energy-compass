@@ -249,6 +249,8 @@ def test_soc_kwh_above_capacity_clamped_to_100():
         ("pv_energy", "pv_kwh_total"),
         ("grid_import_energy", "import_kwh_total"),
         ("grid_export_energy", "export_kwh_total"),
+        ("battery_charge_energy", "batt_chg_kwh_total"),
+        ("battery_discharge_energy", "batt_dis_kwh_total"),
     ],
 )
 @pytest.mark.parametrize(("reading", "fed"), [("-0.1", None), ("0", 0.0), ("0.1", 0.1)])
@@ -271,6 +273,20 @@ def test_non_finite_readings_not_fed(reading):
         "sensor.load": _state(reading),
     }
     assert resolve_feed(config, states, NOW) == {}
+
+
+def test_battery_counters_are_tracked_and_fed():
+    config = default_configuration("EUR", "UTC")
+    config["measurements"]["battery_charge_energy"] = _energy_setting("sensor.chg")
+    config["measurements"]["battery_discharge_energy"] = _energy_setting("sensor.dis")
+    states = {
+        "sensor.chg": _state("1200.5", "kWh", state_class="total_increasing"),
+        "sensor.dis": _state("1100.25", "kWh", state_class="total"),
+    }
+    assert {"sensor.chg", "sensor.dis"} <= tracked_entity_ids(config)
+    feed = resolve_feed(config, states, NOW)
+    assert feed["batt_chg_kwh_total"] == 1200.5
+    assert feed["batt_dis_kwh_total"] == 1100.25
 
 
 def test_energy_counters_require_total_state_class():

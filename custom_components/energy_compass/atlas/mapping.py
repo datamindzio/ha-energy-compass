@@ -37,6 +37,8 @@ _ENERGY_ATLAS_KEYS = {
     "pv_energy": "pv_kwh_total",
     "grid_import_energy": "import_kwh_total",
     "grid_export_energy": "export_kwh_total",
+    "battery_charge_energy": "batt_chg_kwh_total",
+    "battery_discharge_energy": "batt_dis_kwh_total",
 }
 
 

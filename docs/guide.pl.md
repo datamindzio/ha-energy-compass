@@ -2672,7 +2672,7 @@ oczekuje <n>` (plus `zablokowane: <rodzaje>`, jeśli wysyłka utknęła).
 
 **Co jest wysyłane**, tylko gdy funkcja jest włączona i tylko dla źródeł powiązanych w sekcji Źródła
 danych: moc PV, import/eksport z sieci i moc baterii, moc obciążenia domowego (tylko w trybie
-rejestratora), SOC baterii oraz liczniki energii PV/importu/eksportu (tylko liczniki, których
+rejestratora), SOC baterii oraz liczniki energii PV/importu/eksportu oraz ładowania/rozładowania baterii (tylko liczniki, których
 atrybut Home Assistant `state_class` to `total`/`total_increasing`);
 plan każdego rozwiązania Compass wraz z wejściami cen/PV/zużycia; kilka atrybutów instalacji (moc PV
 w kWp, moc przyłączeniowa w kW, jeśli ją podasz, pojemność baterii nominalna i użyteczna, próg SOC,

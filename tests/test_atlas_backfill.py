@@ -134,6 +134,26 @@ def test_atlas_row_applies_t402_bounds():
     assert "import_kwh_total" not in row  # negative counter reading -> not fed
 
 
+def test_atlas_row_battery_energy_counters():
+    config = _full_config()
+    config["measurements"]["battery_charge_energy"] = _power_setting(
+        "sensor.chg_energy", unit="kWh"
+    )
+    config["measurements"]["battery_discharge_energy"] = _power_setting(
+        "sensor.dis_energy", unit="kWh"
+    )
+    entity_at = {
+        "sensor.chg_energy": {"state": 800.5},
+        "sensor.dis_energy": {"state": 750.25},
+    }
+    row = _atlas_row(config, entity_at)
+    assert row["batt_chg_kwh_total"] == 800.5
+    assert row["batt_dis_kwh_total"] == 750.25
+    assert (
+        schema_errors("HourlyRow", {"hour_start": "2026-09-28T12:00:00Z", **row}) == []
+    )
+
+
 def test_atlas_row_battery_split_pair():
     config = _full_config()
     del config["measurements"]["battery_power"]
