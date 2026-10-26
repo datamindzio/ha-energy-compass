@@ -99,7 +99,7 @@ A new installation opens **Detected sources** after the first form (see [Detecte
 
 | Measurement | Maximum age (seconds) |
 | --- | --- |
-| `battery_power`, `grid_import_power`, `grid_export_power` | 3600 |
+| `battery_power`, `load_power`, `grid_import_power`, `grid_export_power` | 3600 |
 | `pv_power` | 86400 |
 | `pv_energy`, `grid_import_energy`, `grid_export_energy` (lifetime counters), `battery_charge_energy`, `battery_discharge_energy` | 86400 |
 | `pv_energy_today`, `grid_export_energy_today` (daily counters) | 86400 |

@@ -391,7 +391,10 @@ GOLDEN = [
 
 def test_live_site_detection_golden():
     detection = run()
-    assert [item.row for item in detection.offers] == list(detect.ROWS)
+    # The recorded site has no Solarman load power sensor: that row has no candidate.
+    assert [item.row for item in detection.offers] == [
+        row for row in detect.ROWS if row != "load_power"
+    ]
     assert [
         (
             item.row,
@@ -956,6 +959,31 @@ def test_published_tomorrow_rce_counts_its_intervals():
     rce = offer(run(snap), "sell").options[1]
     assert rce.counts == (96, 96)
     assert [target.published for target in rce.targets] == [True, True]
+
+
+def test_solarman_load_power_is_offered_for_the_atlas_measurement():
+    snap = add(
+        snapshot(),
+        site._solarman(
+            "sensor.fx_inv_load_power", "load_power", "420", "W", "measurement"
+        ),
+    )
+    load_power = offer(run(snap), "load_power")
+    assert load_power is not None
+    assert [signature(option) for option in load_power.options] == [
+        (
+            "solarman",
+            "measurement",
+            2,
+            ("sensor.fx_inv_load_power",),
+            (),
+            420.0,
+            None,
+            1.0,
+        )
+    ]
+    assert load_power.default == 0
+    assert offer(run(snap), "load").options[0].source_unit == "kWh"
 
 
 # --- Solarman grouping ---------------------------------------------------------------

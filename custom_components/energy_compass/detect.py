@@ -45,6 +45,7 @@ ROWS: tuple[str, ...] = (
     "bms_soc",
     "battery_power",
     "pv_power",
+    "load_power",
     "grid_import_power",
     "grid_export_power",
     "pv_energy",
@@ -76,6 +77,7 @@ PROVIDER_PLATFORMS: frozenset[str] = frozenset(
 MAX_AGE: Mapping[str, float] = {
     "battery_power": 3600,
     "pv_power": 86400,
+    "load_power": 3600,
     "grid_import_power": 3600,
     "grid_export_power": 3600,
     "pv_energy": 86400,
@@ -178,6 +180,14 @@ SIGNALS: tuple[Signal, ...] = (
         2,
         "measurement",
         translation_key="pv_power",
+        units=POWER_UNITS,
+    ),
+    Signal(
+        "solarman",
+        "load_power",
+        2,
+        "measurement",
+        translation_key="load_power",
         units=POWER_UNITS,
     ),
     Signal(

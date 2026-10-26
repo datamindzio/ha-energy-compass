@@ -523,6 +523,7 @@
           "bms_soc": "SOC z BMS (kontrola zgodności)",
           "battery_power": "Moc baterii",
           "pv_power": "Moc PV",
+          "load_power": "Moc zużycia (tylko telemetria Atlas)",
           "grid_import_power": "Moc importu z sieci",
           "grid_export_power": "Moc eksportu do sieci",
           "pv_energy": "Energia PV",

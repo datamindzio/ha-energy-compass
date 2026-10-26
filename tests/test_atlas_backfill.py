@@ -120,6 +120,29 @@ def test_atlas_row_maps_every_bound_key_with_pv_load_max():
     assert schema_errors("HourlyRow", hourly_payload) == []
 
 
+def test_atlas_row_prefers_the_load_power_measurement_for_load():
+    config = _full_config()
+    config["measurements"]["load_power"] = _power_setting("sensor.house_load")
+    entity_at = {
+        "sensor.load": {"mean": 1.1, "max": 1.5},
+        "sensor.house_load": {"mean": 0.9, "max": 2.0},
+    }
+    row = _atlas_row(config, entity_at)
+    assert row == {"load_w_avg": 900.0, "load_w_max": 2000.0}
+
+
+def test_atlas_row_feeds_load_power_beside_a_statistic_load_source():
+    config = default_configuration("EUR", "UTC")
+    config["sources"]["load"]["mode"] = "recorder"
+    config["sources"]["load"]["statistic_id"] = "sensor.total_load_consumption"
+    config["measurements"]["load_power"] = _power_setting("sensor.house_load")
+    row = _atlas_row(config, {"sensor.house_load": {"mean": 0.9, "max": 2.0}})
+    assert row == {"load_w_avg": 900.0, "load_w_max": 2000.0}
+    assert (
+        schema_errors("HourlyRow", {"hour_start": "2026-09-28T12:00:00Z", **row}) == []
+    )
+
+
 def test_atlas_row_applies_t402_bounds():
     # ADR-0019 Amendment T-402: idle meter -3 W import, BMS 100.4 %, glitching counter.
     config = _full_config()
