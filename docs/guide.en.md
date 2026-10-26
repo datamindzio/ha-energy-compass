@@ -2632,7 +2632,7 @@ never> · waiting <n>` (plus `halted: <kinds>` if delivery is stuck).
 
 **What is sent**, only while enabled and only the entities you have bound in Sources: PV, grid
 import/export and battery power, household load power (recorder mode only), battery SOC, and
-PV/import/export energy counters (only counters
+PV/import/export and battery charge/discharge energy counters (only counters
 whose Home Assistant `state_class` is `total`/`total_increasing`); each Compass solve's plan and
 its price/PV/load inputs; a handful of installation attributes (PV kWp, grid connection power in kW
 if you entered it, battery capacity and usable capacity, SOC floor, the Compass version) and the municipality
