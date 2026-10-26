@@ -27,6 +27,7 @@ _LOAD_POWER_SCALE = {"W": 1.0, "kW": 1000.0}
 
 _POWER_MEASUREMENTS = (
     "pv_power",
+    "load_power",
     "grid_import_power",
     "grid_export_power",
     "battery_power",
@@ -60,8 +61,9 @@ def tracked_entity_ids(config: dict) -> set[str]:
     soc = config.get("sources", {}).get("soc")
     if soc:
         ids.add(soc["entity_id"])
+    # `load_power` shadows the recorder load source for `load_w`, so only one is read.
     load_power = _load_power_binding(config)
-    if load_power:
+    if load_power and _bound(config, "load_power") is None:
         ids.add(load_power["entity_id"])
     return ids
 
@@ -197,7 +199,11 @@ def _resolve_raw(config: dict, states: dict, now) -> dict[str, float]:
     pv_w = _resolve_power_w(config, states, now, "pv_power")
     if pv_w is not None:
         feed["pv_w"] = pv_w
-    load_w = _resolve_load_w(config, states)
+    # The `load_power` measurement wins; without it the recorder `sources.load.power`.
+    if _bound(config, "load_power") is not None:
+        load_w = _resolve_power_w(config, states, now, "load_power")
+    else:
+        load_w = _resolve_load_w(config, states)
     if load_w is not None:
         feed["load_w"] = load_w
     grid_import_w = _resolve_power_w(config, states, now, "grid_import_power")

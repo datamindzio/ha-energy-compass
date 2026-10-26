@@ -523,6 +523,7 @@
           "bms_soc": "BMS SOC (agreement check)",
           "battery_power": "Battery power",
           "pv_power": "PV power",
+          "load_power": "Load power (Atlas telemetry only)",
           "grid_import_power": "Grid import power",
           "grid_export_power": "Grid export power",
           "pv_energy": "PV energy",

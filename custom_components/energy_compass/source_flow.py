@@ -69,6 +69,7 @@ MEASUREMENTS = (
     "battery_energy",
     "pv_power",
     "pv_energy",
+    "load_power",
     "grid_import_power",
     "grid_export_power",
     "grid_import_energy",

@@ -560,6 +560,7 @@ dashboard's two grid meters resolve to the inverter's counter.
 | `soc_estimator` | one Solarman Deye config entry with `total_battery_charge`, `total_battery_discharge`, `battery_voltage` and `battery_current` (and `battery_power` when present); never preselected; see [Counter SOC estimator](#counter-soc-estimator) |
 | `battery_power` | the dashboard battery power; `battery_power` |
 | `pv_power` | the dashboard solar power; `pv_power` |
+| `load_power` | `solarman` `load_power`; used only for [Energy Atlas](#energy-atlas-optional) telemetry, never by the load forecast or the optimizer |
 | `grid_import_power`, `grid_export_power` | the dashboard grid power (sign +1 for import, −1 for export); `grid_power` with the same signs |
 | `pv_energy` | the dashboard solar energy; `total_production` |
 | `grid_import_energy` | the dashboard grid import; `total_energy_import` |
@@ -598,7 +599,7 @@ dashboard's two grid meters resolve to the inverter's counter.
 - **Gates.** `sell` appears only with currency PLN. With PV off there are no `pv`, `pv_power` or
   `pv_energy` rows; with the battery off no `soc`, `bms_soc`, `soc_estimator` or `battery_power` rows. The two daily
   counters are never gated.
-- **Stored age limits** of the measurements: 3600 s for `battery_power`, `grid_import_power` and
+- **Stored age limits** of the measurements: 3600 s for `battery_power`, `load_power`, `grid_import_power` and
   `grid_export_power`; 86400 s for `pv_power`, the lifetime counters, the battery charge and discharge
   energy counters and the daily counters (a constant 0 W at night never updates the state).
 - **Never detected:** `buy`; `throughput_today` (to use `daily_cycles` provide one entity with the
@@ -2656,6 +2657,15 @@ itself is **never stored**, only the site key issued in exchange for it.
 dashboard examples); Atlas receives it as + = charge. Readings outside the collector's ranges are
 corrected, not sent as errors: a negative grid import/export power is sent as 0, SOC below 0 % or
 above 100 % as 0 %/100 %, and a negative energy counter or a non-numeric reading is not sent.
+
+**Household load**: Atlas receives the load power (`load_w`) from the optional **Load power (Atlas telemetry only)** source
+(measurement `load_power`, W or kW, with sign and maximum age like the other power sources), added in
+**Configure → Sources**. It is used only for Atlas, never by the load forecast or the optimizer, so a
+forecast from a long-term statistic (such as Solarman's lifetime consumption) can keep its long
+history and still feed Atlas. Without it Atlas uses the power entity of a **Power history** load
+source, as before. When it is set it is the only load reading sent (an unavailable or
+stale reading is not sent, there is no fallback to the load source). The history backfill follows the
+same rule.
 
 **Where the key lives**: `.storage/energy_compass_atlas/<entry id>/<environment>/` inside your
 Home Assistant config directory, one subdirectory per environment so staging and production never

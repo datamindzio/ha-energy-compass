@@ -68,6 +68,56 @@ def test_load_power_fed_only_in_recorder_mode():
     assert "sensor.load" in tracked_entity_ids(config)
 
 
+def test_load_power_measurement_feeds_load_w_in_watts():
+    config = default_configuration("EUR", "UTC")
+    config["measurements"]["load_power"] = _power_setting("sensor.house_load")
+    states = {"sensor.house_load": _state("0.75", "kW")}
+    assert resolve_feed(config, states, NOW)["load_w"] == 750.0
+    assert "sensor.house_load" in tracked_entity_ids(config)
+
+
+def test_load_power_measurement_applies_unit_multiplier_and_sign():
+    config = default_configuration("EUR", "UTC")
+    config["measurements"]["load_power"] = NumericSetting(
+        entity=EntityBinding("sensor.house_load"),
+        unit="kW",
+        source_unit="W",
+        multiplier=-0.001,
+    ).to_dict()
+    states = {"sensor.house_load": _state("-800", "W")}
+    assert resolve_feed(config, states, NOW)["load_w"] == 800.0
+
+
+def test_load_power_measurement_wins_over_the_recorder_load_power():
+    config = default_configuration("EUR", "UTC")
+    _recorder_load(config, history_unit="kW")
+    config["measurements"]["load_power"] = _power_setting("sensor.house_load")
+    states = {
+        "sensor.load": _state("1.2"),
+        "sensor.house_load": _state("0.5", "kW"),
+    }
+    assert resolve_feed(config, states, NOW)["load_w"] == 500.0
+    assert tracked_entity_ids(config) == {"sensor.house_load"}
+
+
+def test_load_power_measurement_unavailable_is_not_fed_even_with_recorder_power():
+    config = default_configuration("EUR", "UTC")
+    _recorder_load(config, history_unit="kW")
+    config["measurements"]["load_power"] = _power_setting("sensor.house_load")
+    states = {"sensor.load": _state("1.2"), "sensor.house_load": _state("unavailable")}
+    assert "load_w" not in resolve_feed(config, states, NOW)
+
+
+def test_load_power_measurement_feeds_beside_a_statistic_load_source():
+    config = default_configuration("EUR", "UTC")
+    config["sources"]["load"]["mode"] = "recorder"
+    config["sources"]["load"]["statistic_id"] = "sensor.total_load_consumption"
+    config["measurements"]["load_power"] = _power_setting("sensor.house_load")
+    states = {"sensor.house_load": _state("2", "kW")}
+    assert resolve_feed(config, states, NOW)["load_w"] == 2000.0
+    assert config["sources"]["load"]["statistic_id"] == "sensor.total_load_consumption"
+
+
 def test_load_power_not_fed_outside_recorder_mode():
     config = default_configuration("EUR", "UTC")  # default mode is daily_estimate
     states = {}

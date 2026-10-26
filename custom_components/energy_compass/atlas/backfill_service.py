@@ -208,6 +208,15 @@ def _load_stat(
     return row[field] * scale * sign
 
 
+def _load_w_stat(
+    config: dict, entity_at: dict, units: dict[str, str | None], field: str
+) -> float | None:
+    """The `load_power` measurement when set, else `sources.load.power` (as the live feed)."""
+    if _bound(config, "load_power") is not None:
+        return _power_stat(config, entity_at, units, "load_power", field)
+    return _load_stat(config, entity_at, units, field)
+
+
 def _batt_stat(
     config: dict, entity_at: dict, units: dict[str, str | None], field: str
 ) -> float | None:
@@ -314,8 +323,8 @@ def _atlas_row(
         "pv_w",
         _power_stat(config, entity_at, units, "pv_power", "max"),
     )
-    _put(row, "load_w_avg", "load_w", _load_stat(config, entity_at, units, "mean"))
-    _put(row, "load_w_max", "load_w", _load_stat(config, entity_at, units, "max"))
+    _put(row, "load_w_avg", "load_w", _load_w_stat(config, entity_at, units, "mean"))
+    _put(row, "load_w_max", "load_w", _load_w_stat(config, entity_at, units, "max"))
     _put(
         row,
         "grid_import_w_avg",

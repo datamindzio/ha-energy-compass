@@ -937,6 +937,10 @@ falownika.</p>
 <td>moc PV z panelu; <code>pv_power</code></td>
 </tr>
 <tr>
+<td><code>load_power</code></td>
+<td><code>solarman</code> <code>load_power</code>; używana tylko do telemetrii <a href="#energy-atlas-opcjonalnie">Energy Atlas</a>, nigdy przez prognozę zużycia ani optymalizator</td>
+</tr>
+<tr>
 <td><code>grid_import_power</code>, <code>grid_export_power</code></td>
 <td>moc sieci z panelu (znak +1 dla importu, −1 dla eksportu); <code>grid_power</code> z tymi samymi znakami</td>
 </tr>
@@ -993,7 +997,7 @@ falownika.</p>
 <li><strong>Bramki.</strong> <code>sell</code> pojawia się tylko przy walucie PLN. Przy wyłączonym PV nie ma wierszy <code>pv</code>,
   <code>pv_power</code> ani <code>pv_energy</code>; przy wyłączonej baterii nie ma <code>soc</code>, <code>bms_soc</code>, <code>soc_estimator</code> ani <code>battery_power</code>.
   Dwa liczniki dzienne nie podlegają bramkom.</li>
-<li><strong>Zapisywane limity wieku</strong> pomiarów: 3600 s dla <code>battery_power</code>, <code>grid_import_power</code> i
+<li><strong>Zapisywane limity wieku</strong> pomiarów: 3600 s dla <code>battery_power</code>, <code>load_power</code>, <code>grid_import_power</code> i
   <code>grid_export_power</code>; 86400 s dla <code>pv_power</code>, liczników skumulowanych, liczników energii ładowania
   i rozładowania baterii oraz liczników dziennych (stałe 0 W w nocy nigdy nie aktualizuje stanu).</li>
 <li><strong>Nigdy nie wykrywane:</strong> <code>buy</code>; <code>throughput_today</code> (aby użyć <code>daily_cycles</code>, podaj jedną encję z
@@ -4070,6 +4074,14 @@ w przykładowych dashboardach); Atlas otrzymuje ją jako + = ładowanie. Odczyty
 kolektora są korygowane, a nie wysyłane jako błędy: ujemna moc importu/eksportu z sieci jest
 wysyłana jako 0, SOC poniżej 0 % lub powyżej 100 % jako 0 %/100 %, a ujemny licznik energii lub
 odczyt nieliczbowy nie jest wysyłany.</p>
+<p><strong>Zużycie domu</strong>: Atlas otrzymuje moc zużycia (<code>load_w</code>) z opcjonalnego źródła <strong>Moc zużycia (tylko telemetria Atlas)</strong>
+(pomiar <code>load_power</code>, W lub kW, ze znakiem i maksymalnym wiekiem jak inne źródła mocy), dodawanego w
+<strong>Konfiguruj → Źródła danych</strong>. Służy tylko Atlasowi, nigdy prognozie zużycia ani optymalizatorowi, więc
+prognoza ze statystyki długoterminowej (np. skumulowane zużycie Solarman) zachowuje długą historię
+i nadal zasila Atlas. Bez niego Atlas używa encji mocy źródła <strong>Historia mocy</strong>, jak dotąd. Gdy
+będzie ustawione, jest jedynym wysyłanym odczytem zużycia (niedostępny lub nieświeży
+odczyt nie jest wysyłany, bez powrotu do źródła zużycia). Uzupełnianie historii stosuje tę samą
+zasadę.</p>
 <p><strong>Gdzie przechowywany jest klucz</strong>: <code>.storage/energy_compass_atlas/&lt;id wpisu&gt;/&lt;środowisko&gt;/</code> wewnątrz
 katalogu konfiguracyjnego Home Assistant, osobny podkatalog na środowisko, więc staging i produkcja
 nigdy nie współdzielą klucza, witryny ani kolejki. Jest uwzględniany w kopiach zapasowych Home
