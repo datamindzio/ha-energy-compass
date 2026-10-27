@@ -77,7 +77,7 @@ Energy Compass sends the window notifications itself, only when you turn them on
 3. Set **Notification language** (`auto` follows the Home Assistant language, or choose English or Polish).
 4. Run **energy_compass.send_test_notification** in **Developer tools → Actions** and check the device. The test ignores quiet hours, cooldown and the daily cap; it needs the `config_entry_id` field only when more than one Energy Compass entry is loaded.
 
-The same step sets enabled events, minimum favorable duration, LIMIT lead time, quiet hours, cooldown, and daily cap. Defaults are 2 hours, 30 minutes, 22:00–08:00, 60 minutes, and 3 per local day. When several attempts in a row fail, a repair issue names the target and the error; fix the target and run the test action again. See [Window notifications](guide.en.md#window-notifications) for the decision rules, the messages and the repair issues.
+The same step sets enabled events, minimum favorable duration, LIMIT lead time, quiet hours, cooldown, and daily cap. Defaults are 2 hours, 30 minutes, 22:00–08:00, 60 minutes, and 3 per local day. When several attempts in a row fail, a repair issue names the target and the error; fix the target and run the test action again. With the Deye controller on, the same targets also get one message per [inverter clock](guide.en.md#inverter-clock) episode. See [Window notifications](guide.en.md#window-notifications) for the decision rules, the messages and the repair issues.
 
 ### Migrating from the blueprint
 
@@ -134,7 +134,7 @@ The controller runs inside the integration. You need no blueprint, automation, p
 3. **Simulation first.** Set the *Deye mode* select to **Simulation**. Inspect the *Deye controller runtime* sensor: `reason`, `reason_code` and `last_run`, and `runtime` (state, `desired`) against the plan over at least a day. Nothing is written in Simulation; the register layout check already runs, and a mismatch is reported as `layout_mismatch`.
 4. **Auto.** Choose **Auto**. Watch the first writes; the *Pause inverter writes* switch holds every write, and **Off** restores the base profile and releases control.
 
-A failing run shows as the runtime code `error` and, after three in a row, as a repair issue; the logbook records every change of the runtime code. One Solarman device can be controlled by one Energy Compass entry.
+A failing run shows as the runtime code `error` and, after three in a row, as a repair issue; the logbook records every change of the runtime code. If the inverter clock differs from Home Assistant time by more than 5 minutes for 10 minutes (a summer/winter time change it did not follow, or drift), the controller raises the repair issue "Deye inverter clock is off", sets `tou_problem` to `inverter_clock_skew` and turns the **Alert** binary sensor on; set the time on the inverter panel or in the Deye app, see [Inverter clock](guide.en.md#inverter-clock). One Solarman device can be controlled by one Energy Compass entry.
 
 ### Blueprint (deprecated)
 

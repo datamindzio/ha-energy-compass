@@ -47,6 +47,7 @@ class SenderState:
     count: int = 0
     last_sent: float | None = None  # epoch seconds of the last attempt
     failures: int = 0  # consecutive failed attempts
+    clock_since: str | None = None  # start of the inverter clock episode already told
 
 
 @dataclass(frozen=True)
@@ -77,12 +78,14 @@ _TITLES = {
         "boost": "Use the cheap energy",
         "favorable": "A good time for household appliances",
         "test": "Energy Compass test",
+        "clock": "Deye inverter clock is off",
     },
     "pl": {
         "limit": "Zaplanuj większe zużycie na później",
         "boost": "Wykorzystaj tanią energię",
         "favorable": "Dobry moment na domowe urządzenia",
         "test": "Test Energy Compass",
+        "clock": "Zegar falownika Deye jest przestawiony",
     },
 }
 _MESSAGES = {
@@ -106,6 +109,11 @@ _MESSAGES = {
             "A good time for laundry, the dishwasher or car charging."
         ),
         "test": "Notifications from Energy Compass reach this device.",
+        "clock": (
+            "The inverter clock differs from Home Assistant time by {skew} min "
+            "(plus: the inverter is ahead), so its programs run at the wrong "
+            "time. Set the time on the inverter panel or in the Deye app."
+        ),
     },
     "pl": {
         "limit_ongoing": (
@@ -125,6 +133,11 @@ _MESSAGES = {
             "na pranie, zmywarkę lub ładowanie auta."
         ),
         "test": "Powiadomienia z Energy Compass docierają na to urządzenie.",
+        "clock": (
+            "Zegar falownika różni się od czasu Home Assistant o {skew} min "
+            "(plus: falownik jest do przodu), więc jego programy działają o "
+            "złej porze. Ustaw godzinę w panelu falownika albo w aplikacji Deye."
+        ),
     },
 }
 
@@ -262,6 +275,13 @@ def texts(
     return title, _MESSAGES[lang][key].format(label=label)
 
 
+def clock_texts(skew_minutes: int, language: str) -> tuple[str, str]:
+    lang = _language(language)
+    return _TITLES[lang]["clock"], _MESSAGES[lang]["clock"].format(
+        skew=f"{skew_minutes:+d}"
+    )
+
+
 def test_texts(language: str) -> tuple[str, str]:
     lang = _language(language)
     return _TITLES[lang]["test"], _MESSAGES[lang]["test"]
@@ -378,6 +398,49 @@ def evaluate(
     return Decision("send", sent, kind, span, title, message)
 
 
+def evaluate_clock(
+    data: Mapping,
+    state: SenderState,
+    since: str | None,
+    skew_minutes: int | None,
+    clear: bool,
+    now: datetime,
+    tz: tzinfo,
+    *,
+    has_target: bool,
+    language: str,
+) -> Decision:
+    """One message per inverter clock episode.
+
+    `since` and `skew_minutes` are set while the skew is over the threshold and held;
+    `clear` says the clock is known to be fine (or is no longer watched), which ends
+    an episode. Neither (a restart, a hold not yet served) keeps the stored episode,
+    so a reload in the middle of an episode does not send it again.
+
+    Codes: `clock_clear` (the stored episode is forgotten), `clock_told` (nothing to
+    do), `disabled`, `no_target`, `quiet` (try again after the quiet hours, the
+    episode is not spent) and `send`. The window counters, the daily cap and the
+    cooldown are not touched: they belong to window advice.
+    """
+    if since is None or skew_minutes is None:
+        if clear and state.clock_since is not None:
+            return Decision("clock_clear", replace(state, clock_since=None))
+        return Decision("clock_told", state)
+    if state.clock_since is not None:
+        return Decision("clock_told", state)
+    prefs = preferences(data)
+    if prefs is None:
+        return Decision("disabled", state)
+    if not has_target:
+        return Decision("no_target", state)
+    if in_quiet_hours(prefs, now.astimezone(tz).time()):
+        return Decision("quiet", state)
+    title, message = clock_texts(skew_minutes, language)
+    return Decision(
+        "send", replace(state, clock_since=since), None, None, title, message
+    )
+
+
 def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -422,7 +485,11 @@ def load_state(raw: object) -> tuple[SenderState, bool]:
         isinstance(last_sent, bool) or not isinstance(last_sent, (int, float))
     ):
         return fresh
+    clock_since = raw.get("clock_since")
+    if clock_since is not None and not isinstance(clock_since, str):
+        return fresh
     state = SenderState(
+        clock_since=clock_since,
         favorable=favorable,
         limit=limit,
         day=day,
@@ -446,4 +513,5 @@ def dump_state(state: SenderState) -> dict:
         "count": state.count,
         "last_sent": state.last_sent,
         "failures": state.failures,
+        **({"clock_since": state.clock_since} if state.clock_since else {}),
     }

@@ -21,6 +21,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import controller as core
+from . import controller_clock as clock
 from . import controller_hardware as hardware
 from .controller_profile import PACK_VOLTAGE_RANGE
 from .controller_run import ControllerUnavailable
@@ -333,7 +334,9 @@ class DeyeController:
         self.advances = 0
         self._stopped = False
         self._device_sensor: str | None = None
+        self._clock_entity: str | None = None
         self.hardware = hardware.HardwareFacts()
+        self.clock = clock.ClockWatch()
 
     async def async_start(self) -> None:
         """Restore the store, resolve the TOU entities and begin listening."""
@@ -384,6 +387,7 @@ class DeyeController:
             self.host = None
         self._stopped = True
         ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
+        ir.async_delete_issue(self.hass, DOMAIN, self._clock_issue_id)
         for unsubscribe in (
             self._unsub_coordinator,
             self._unsub_tou,
@@ -637,7 +641,8 @@ class DeyeController:
             "enabled": True,
             "device_id": self.device_id,
             "program_prefix": self.resolution.prefix,
-            "tou_problem": self.resolution.problem,
+            "tou_problem": self._tou_problem(),
+            "clock": self._clock_attribute(),
             "engine": self.engine,
             "hardware": self.hardware.as_attribute(),
             "run_history": self.host.history if self.host is not None else [],
@@ -712,6 +717,7 @@ class DeyeController:
         now = now or dt_util.utcnow()
         prefix = self.resolution.prefix
         self._read_hardware()
+        self._read_clock(now)
         times = [
             self._tou_values.get(f"time.{prefix}{number}_time")
             for number in range(1, 7)
@@ -730,9 +736,10 @@ class DeyeController:
                 tou=self._tou_values,
                 device_id=self.device_id,
                 program_prefix=prefix,
-                tou_problem=self.resolution.problem,
+                tou_problem=self._tou_problem(),
                 next_tou_at=self._next_tou,
                 hardware=self.hardware.as_attribute() if self.hardware.known else None,
+                clock=self._clock_attribute(),
             ),
         )
         if self._timer:
@@ -764,17 +771,24 @@ class DeyeController:
     def _resolve(self) -> None:
         resolution = device_resolution(self.hass, self.device_id)
         sensor = self._find_device_sensor()
+        clock_entity = self._find_clock_entity()
         changed = (
             resolution.entities != self.resolution.entities
             or sensor != self._device_sensor
+            or clock_entity != self._clock_entity
         )
         self.resolution = resolution
         self._device_sensor = sensor
+        self._clock_entity = clock_entity
         if changed or self._unsub_tou is None:
             if self._unsub_tou:
                 self._unsub_tou()
                 self._unsub_tou = None
-            watched = [*resolution.entities, *([sensor] if sensor else [])]
+            watched = [
+                *resolution.entities,
+                *([sensor] if sensor else []),
+                *([clock_entity] if clock_entity else []),
+            ]
             if watched:
                 self._unsub_tou = async_track_state_change_event(
                     self.hass, watched, self._tou_changed
@@ -797,9 +811,75 @@ class DeyeController:
             None,
         )
 
+    def _find_clock_entity(self) -> str | None:
+        """The Solarman date and time entity of the device, None when it has none."""
+        if not self.device_id:
+            return None
+        return next(
+            (
+                item.entity_id
+                for item in er.async_entries_for_device(
+                    er.async_get(self.hass), self.device_id
+                )
+                if item.platform == "solarman"
+                and item.domain == "datetime"
+                and (
+                    item.translation_key == clock.ENTITY_KEY
+                    or item.entity_id.endswith(f"_{clock.ENTITY_KEY}")
+                )
+            ),
+            None,
+        )
+
     @property
     def _issue_id(self) -> str:
         return f"deye_hardware_unverified_{self.entry.entry_id}"
+
+    @property
+    def _clock_issue_id(self) -> str:
+        return f"deye_clock_skew_{self.entry.entry_id}"
+
+    @property
+    def clock_watched(self) -> bool:
+        return self._clock_entity is not None
+
+    def _tou_problem(self) -> str | None:
+        return self.resolution.problem or clock.problem(self.clock)
+
+    def _clock_attribute(self) -> dict | None:
+        return self.clock.as_attribute() if self._clock_entity else None
+
+    def _read_clock(self, now: datetime) -> None:
+        """Judge the inverter clock; raise or clear the Repairs issue. Writes nothing."""
+        if not self._clock_entity:
+            self.clock = clock.ClockWatch()
+        else:
+            state = self.hass.states.get(self._clock_entity)
+            self.clock = clock.observe(
+                self.clock,
+                {"state": state.state, "reported": state.last_reported}
+                if state is not None
+                else {},
+                now,
+                dt_util.get_default_time_zone(),
+            )
+        if not self.clock.active:
+            ir.async_delete_issue(self.hass, DOMAIN, self._clock_issue_id)
+            return
+        reading = dt_util.as_local(datetime.fromisoformat(self.clock.inverter_clock))
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._clock_issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="deye_clock_skew",
+            translation_placeholders={
+                "skew": f"{self.clock.skew_minutes:+d}",
+                "inverter_clock": reading.strftime("%Y-%m-%d %H:%M"),
+                "ha_time": dt_util.as_local(now).strftime("%Y-%m-%d %H:%M"),
+            },
+        )
 
     def _read_hardware(self) -> None:
         state = (
@@ -850,7 +930,7 @@ class DeyeController:
             str(event.data.get(key) or "").partition(".")[0]
             for key in ("entity_id", "old_entity_id")
         }
-        if domains & (_TOU_DOMAINS | {"select"}):
+        if domains & (_TOU_DOMAINS | {"select", "datetime"}):
             if self.device_id:
                 self._resolve()
             self._publish()

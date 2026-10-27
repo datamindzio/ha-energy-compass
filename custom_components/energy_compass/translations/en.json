@@ -1597,6 +1597,10 @@
     }
   },
   "issues": {
+    "deye_clock_skew": {
+      "title": "Deye inverter clock is off by {skew} min",
+      "description": "The inverter clock reads {inverter_clock} while Home Assistant time is {ha_time}: the skew is {skew} minutes (plus: the inverter is ahead). The inverter runs its TOU programs by its own clock, so every window Energy Compass writes starts and ends at the wrong time (for example a grid charge that never happens). Likely cause: the clock did not follow the daylight saving change or has drifted, and the logger has no cloud time sync, so Energy Compass cannot set it (the inverter ignores clock writes over Modbus). Fix: set the date and time on the inverter panel or in the Deye app. This issue clears itself once the skew is under 5 minutes. Energy Compass does not change its plan or its writes because of the skew."
+    },
     "deye_hardware_unverified": {
       "title": "Deye inverter not verified",
       "description": "The inverter reports \"{device_type}\" with protocol {protocol}, which Energy Compass has not been verified on. The controller still works: it checks the register layout against the entity states before its first write, and Simulation shows the result. Try Simulation first."

@@ -1709,10 +1709,17 @@ interval produced a known level. Other attributes: <code>coverage_end</code>, <c
 <td>Calculation error / Błąd obliczeń</td>
 <td>Other failure.</td>
 </tr>
+<tr>
+<td><code>inverter_clock_skew</code></td>
+<td>Inverter clock skew / Przesunięty zegar falownika</td>
+<td>Only with the Deye controller: the inverter clock differs from Home Assistant time by more than 5 minutes for 10 minutes (<a href="#inverter-clock">Inverter clock</a>). Not a calculation failure: the plan is unaffected and <code>plan_retained</code> stays as it is.</td>
+</tr>
 </tbody>
 </table></section>
-<p>Attributes: <code>code</code>, <code>reason</code>, <code>since</code>, <code>plan_retained</code>, <code>last_successful_plan_at</code>. A retry does
-not clear the alert; only a successful new plan does.</p>
+<p>Attributes: <code>code</code>, <code>reason</code>, <code>since</code>, <code>plan_retained</code>, <code>last_successful_plan_at</code>, <code>clock_skew_minutes</code>
+(empty unless the inverter clock alert is on). A retry does not clear the alert; only a successful new plan
+does. The inverter clock alert is the exception: it clears when the skew is back under 5 minutes. When a
+calculation failure and a clock skew coincide, <code>code</code> and <code>reason</code> show the calculation failure.</p>
 <h3 id="plan-retention">Plan retention</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-230597e5df17-dark.svg"><img src="assets/diagrams/diagram-230597e5df17.svg" alt="Diagram 7" loading="lazy"></picture></figure>
 <p>A retained plan is never extended beyond its original coverage and is not carried across an
@@ -2939,6 +2946,13 @@ notifications immediately.</p>
 </table></section>
 <p>The message names the window's local times (<code>HH:MM–HH:MM</code>, or <code>dd.mm HH:MM–dd.mm HH:MM</code> when the
 window crosses midnight) and suggests moving laundry, the dishwasher or car charging.</p>
+<h3 id="inverter-clock-message">Inverter clock message</h3>
+<p>With the Deye controller on, the same sender tells you once per episode when the inverter clock is off
+("Deye inverter clock is off": the skew in minutes, plus when the inverter is ahead, and where to set the
+time). An episode starts when the alert of the <a href="#inverter-clock">Inverter clock</a> turns on and ends when the
+skew is back under the threshold; a reload of the entry in the middle of one does not send it again. It uses
+the same targets, language and opt-in as window messages and waits for the end of the quiet hours, but it
+neither counts against the daily cap nor starts the cooldown, and it is sent while the optimizer alert is on.</p>
 <h3 id="test-action">Test action</h3>
 <p><code>energy_compass.send_test_notification</code> sends one fixed message to every target of an entry now. It
 ignores the gates, the quiet hours, the cooldown, the daily cap and the stored window, and it does
@@ -3222,6 +3236,42 @@ also runs in Simulation, so a wrong layout shows before Auto. A passed probe hol
 device and the set of entities read: a changed device or an entity override probes again. Restoring the
 base profile does not wait for the probe, because it writes through Solarman's own entities and only the
 read-back depends on the layout; forcing a profile does.</p>
+<h3 id="inverter-clock">Inverter clock</h3>
+<p>The inverter runs its TOU programs by its own clock, but Energy Compass writes them by Home Assistant
+local time. A clock that disagrees moves every window: on the live site the inverter stayed on summer time
+after the change to winter time and then drifted slow, so it was 49 minutes ahead, switched to the next
+program 49 minutes early and never did the grid charge the controller had written, while every write was
+<code>confirmed</code> and the runtime code was <code>ok</code>. The controller therefore compares the clocks and tells you.
+It only tells you: it changes no write and no plan because of the skew.</p>
+<ul>
+<li><strong>Source.</strong> The Solarman date and time entity of the chosen device (<code>datetime.&lt;prefix&gt;date_time</code>, found
+  by the device like the program entities). A device without it is not checked, silently.</li>
+<li><strong>Skew</strong> is the inverter clock minus Home Assistant time, both read in the Home Assistant time zone;
+  plus means the inverter is ahead. A change between summer and winter time that the inverter did not follow
+  shows as ±60 minutes.</li>
+<li><strong>Threshold.</strong> More than 5 minutes (<code>|skew| &gt; 5 min</code>), held for 10 minutes of fresh readings, so one bad
+  read does not alert. A reading under the threshold starts the hold over; an unreadable or older than
+  5 minutes state changes nothing (nothing is raised and nothing is cleared).</li>
+<li><strong>Reaction</strong> while it holds:</li>
+<li><code>tou_problem</code> on the controller sensor is <code>inverter_clock_skew</code> (a resolution failure keeps its own
+    code) and the attribute <code>clock</code> shows <code>clock_skew_seconds</code>, <code>clock_skew_minutes</code>, <code>inverter_clock</code>,
+    <code>clock_read_at</code>, <code>over_threshold_since</code> and <code>alert</code>;</li>
+<li>the repair issue "Deye inverter clock is off by N min" (a warning, not fixable) gives the skew, the two
+    times, the likely cause and the fix;</li>
+<li><a href="#alert-binary_sensor_alert">Alert</a> turns on with <code>code</code> <code>inverter_clock_skew</code>, <code>reason</code> the skew
+    and <code>clock_skew_minutes</code>;</li>
+<li>with the <a href="#window-notifications">native notifications</a> on, one message per episode is sent.</li>
+<li><strong>Recovery.</strong> A reading back under the threshold clears the issue, the <code>tou_problem</code> and the alert, and
+  ends the episode. The diagnostics (<code>deye_controller.clock</code>) carry the same fields, also while no alert is on.</li>
+</ul>
+<p><strong>TOU windows run at wrong times.</strong> Look at the <em>Deye controller</em> sensor first: <code>tou_problem</code> =
+<code>inverter_clock_skew</code> and the repair issue mean the inverter clock is off, not the plan. Typical causes are
+a change between summer and winter time that the inverter did not follow and drift on a logger that has no
+cloud time sync (the Solarman cloud entity of the logger is unavailable). Energy Compass cannot set the
+clock: this inverter accepts writes to the clock registers (0x003E–0x0040) over Modbus and ignores them. Set
+the date and time on the inverter panel or in the Deye app; the alert clears about a minute after the
+corrected clock is read, or within the poll interval. If <code>tou_problem</code> is empty and the windows are still
+off, compare the <code>tou</code> attribute with the program entities of the device.</p>
 <h3 id="controller-entities">Controller entities</h3>
 <p>Three entities exist only while the controller is enabled, a fourth with the native engine; they sit on
 the Energy Compass device. <code>&lt;name&gt;</code> is the entry title.</p>
@@ -3309,7 +3359,7 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.</p>
 </tr>
 <tr>
 <td><code>device_id</code>, <code>program_prefix</code>, <code>tou_problem</code></td>
-<td>the chosen Solarman device, the TOU entity prefix and why resolution failed (<code>tou_incomplete</code>, <code>tou_prefix</code>)</td>
+<td>the chosen Solarman device, the TOU entity prefix and what is wrong: why resolution failed (<code>tou_incomplete</code>, <code>tou_prefix</code>) or <code>inverter_clock_skew</code> (see <a href="#inverter-clock">Inverter clock</a>)</td>
 </tr>
 <tr>
 <td><code>next_tou</code></td>
@@ -3322,6 +3372,10 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.</p>
 <tr>
 <td><code>tou</code></td>
 <td>state of the 30 TOU entities; a change re-runs the blueprint; not recorded</td>
+</tr>
+<tr>
+<td><code>clock</code></td>
+<td>the inverter clock check (<a href="#inverter-clock">Inverter clock</a>): <code>clock_skew_seconds</code>, <code>clock_skew_minutes</code>, <code>inverter_clock</code>, <code>clock_read_at</code>, <code>over_threshold_since</code> and <code>alert</code>; empty (<code>null</code>) when the device has no date and time entity</td>
 </tr>
 <tr>
 <td><code>hardware</code></td>
@@ -3693,12 +3747,14 @@ the Home Assistant language (Polish for <code>pl</code>, English otherwise); the
 <ul>
 <li>the runtime sensor's <code>reason</code> and <code>reason_code</code>, and its attribute <code>last_run</code> (not recorded): trigger,
   decision, planned commands, each write with its outcome (sent, failed, confirmed, blocked) and how the run ended;</li>
-<li>the integration's diagnostics (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code>, <code>run_history</code>, the last 50 runs, and
+<li>the integration's diagnostics (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code>, <code>clock</code> (<code>clock_skew_seconds</code>, <code>clock_read_at</code>, <code>inverter_clock</code>), <code>run_history</code>, the last 50 runs, and
   <code>run_history_notable</code>, the last 20 that wrote or ended with a code other than <code>ok</code> (both kept in memory, so a restart
   empties them);</li>
 <li>a logbook entry on the runtime sensor whenever the runtime code or the confirmed mode changes;</li>
 <li>the runtime code <code>error</code> and the repair issues "Deye controller runs are failing" and "Deye blueprint
-  automation is still on", so a stopped controller is visible without reading logs.</li>
+  automation is still on", so a stopped controller is visible without reading logs;</li>
+<li>the repair issue "Deye inverter clock is off by N min", when the inverter clock disagrees with Home Assistant
+  time (<a href="#inverter-clock">Inverter clock</a>).</li>
 </ul>
 <h3 id="when-energy-compass-is-unavailable">When Energy Compass is unavailable</h3>
 <p>Without Energy Compass neither the mode nor the runtime can be read, so no write could be proven safe or

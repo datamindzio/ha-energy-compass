@@ -1597,6 +1597,10 @@
     }
   },
   "issues": {
+    "deye_clock_skew": {
+      "title": "Zegar falownika Deye różni się o {skew} min",
+      "description": "Zegar falownika wskazuje {inverter_clock}, a czas Home Assistant to {ha_time}: różnica to {skew} min (plus: falownik jest do przodu). Falownik wykonuje programy TOU według własnego zegara, więc każde okno zapisane przez Energy Compass zaczyna się i kończy o złej porze (na przykład ładowanie z sieci, które nie następuje). Prawdopodobna przyczyna: zegar nie przeszedł na zmianę czasu albo się rozjechał, a rejestrator nie ma synchronizacji czasu z chmurą, więc Energy Compass nie ustawi go sam (falownik ignoruje zapis zegara przez Modbus). Naprawa: ustaw datę i godzinę w panelu falownika albo w aplikacji Deye. To zgłoszenie znika samo, gdy różnica spadnie poniżej 5 minut. Energy Compass nie zmienia planu ani zapisów z powodu tej różnicy."
+    },
     "deye_hardware_unverified": {
       "title": "Falownik Deye niezweryfikowany",
       "description": "Falownik zgłasza \"{device_type}\" z protokołem {protocol}, na którym Energy Compass nie był sprawdzany. Sterownik nadal działa: przed pierwszym zapisem porównuje układ rejestrów ze stanami encji, a Simulation pokazuje wynik. Najpierw wypróbuj Simulation."
