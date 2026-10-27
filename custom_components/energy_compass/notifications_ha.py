@@ -359,6 +359,7 @@ class WindowNotifier:
         language = core.resolve_language(
             str(settings.get("notify_language") or "auto"), self.hass.config.language
         )
+        await self._evaluate_clock(data, now, tz, bool(configured), language)
         decision = core.evaluate(
             data, self.state, now, tz, has_target=bool(configured), language=language
         )
@@ -401,6 +402,78 @@ class WindowNotifier:
                 [result["target"] for result in failed], failed[-1].get("error", "")
             )
             await self._persist()
+
+    def _clock_episode(self) -> tuple[str | None, int | None, bool]:
+        """(start, skew in minutes, known to be fine) of the inverter clock."""
+        controller = self.coordinator.controller
+        watch = getattr(controller, "clock", None)
+        if watch is None or not getattr(controller, "clock_watched", False):
+            return None, None, True
+        if watch.active:
+            return watch.over_since, watch.skew_minutes, False
+        return None, None, watch.settled
+
+    async def _evaluate_clock(
+        self, data: Mapping, now: datetime, tz: Any, has_target: bool, language: str
+    ) -> None:
+        """One message per inverter clock episode, spent before the call like a window."""
+        since, skew, clear = self._clock_episode()
+        decision = core.evaluate_clock(
+            data,
+            self.state,
+            since,
+            skew,
+            clear,
+            now,
+            tz,
+            has_target=has_target,
+            language=language,
+        )
+        if decision.code == "clock_clear":
+            self.state = decision.state
+            await self._persist()
+            return
+        if decision.code != "send":
+            return
+        self.state = decision.state
+        try:
+            await self._store.async_save(core.dump_state(self.state))
+        except Exception as err:
+            _LOGGER.warning(
+                "Could not save the notification state: %s", err, exc_info=True
+            )
+            self._attempt_failed([], _cut(err))
+            return
+        if not self._clock_still_allowed():
+            return
+        results = await async_send(
+            self.hass, self._settings, decision.title, decision.message
+        )
+        sent = sum(1 for result in results if result["ok"])
+        self._log_entry(
+            f"inverter clock {skew:+d} min", f"sent to {sent} of {len(results)} targets"
+        )
+        if sent == len(results):
+            await self._attempt_ok()
+        else:
+            failed = [result for result in results if not result["ok"]]
+            self._attempt_failed(
+                [result["target"] for result in failed], failed[-1].get("error", "")
+            )
+            await self._persist()
+
+    def _clock_still_allowed(self) -> bool:
+        """The final gate of a clock message, on the state and settings of now."""
+        prefs = core.preferences(self.coordinator.data or {})
+        now = dt_util.utcnow()
+        return bool(
+            prefs is not None
+            and targets(self._settings)
+            and self._clock_episode()[0] is not None
+            and not core.in_quiet_hours(
+                prefs, now.astimezone(dt_util.get_default_time_zone()).time()
+            )
+        )
 
     def _still_allowed(self, generation: object) -> bool:
         """The blueprint's final gate, on the data and configuration of now."""

@@ -1050,9 +1050,12 @@ stateDiagram-v2
 | `timeout` | Calculation timeout / Przekroczony czas obliczeń | Solve or worker deadline exceeded. |
 | `infeasible` | No feasible plan / Brak wykonalnego planu | No plan satisfies the hard constraints. |
 | `error` | Calculation error / Błąd obliczeń | Other failure. |
+| `inverter_clock_skew` | Inverter clock skew / Przesunięty zegar falownika | Only with the Deye controller: the inverter clock differs from Home Assistant time by more than 5 minutes for 10 minutes ([Inverter clock](#inverter-clock)). Not a calculation failure: the plan is unaffected and `plan_retained` stays as it is. |
 
-Attributes: `code`, `reason`, `since`, `plan_retained`, `last_successful_plan_at`. A retry does
-not clear the alert; only a successful new plan does.
+Attributes: `code`, `reason`, `since`, `plan_retained`, `last_successful_plan_at`, `clock_skew_minutes`
+(empty unless the inverter clock alert is on). A retry does not clear the alert; only a successful new plan
+does. The inverter clock alert is the exception: it clears when the skew is back under 5 minutes. When a
+calculation failure and a clock skew coincide, `code` and `reason` show the calculation failure.
 
 ### Plan retention
 
@@ -1995,6 +1998,15 @@ flowchart TD
 The message names the window's local times (`HH:MM–HH:MM`, or `dd.mm HH:MM–dd.mm HH:MM` when the
 window crosses midnight) and suggests moving laundry, the dishwasher or car charging.
 
+### Inverter clock message
+
+With the Deye controller on, the same sender tells you once per episode when the inverter clock is off
+("Deye inverter clock is off": the skew in minutes, plus when the inverter is ahead, and where to set the
+time). An episode starts when the alert of the [Inverter clock](#inverter-clock) turns on and ends when the
+skew is back under the threshold; a reload of the entry in the middle of one does not send it again. It uses
+the same targets, language and opt-in as window messages and waits for the end of the quiet hours, but it
+neither counts against the daily cap nor starts the cooldown, and it is sent while the optimizer alert is on.
+
 ### Test action
 
 `energy_compass.send_test_notification` sends one fixed message to every target of an entry now. It
@@ -2193,6 +2205,44 @@ device and the set of entities read: a changed device or an entity override prob
 base profile does not wait for the probe, because it writes through Solarman's own entities and only the
 read-back depends on the layout; forcing a profile does.
 
+### Inverter clock
+
+The inverter runs its TOU programs by its own clock, but Energy Compass writes them by Home Assistant
+local time. A clock that disagrees moves every window: on the live site the inverter stayed on summer time
+after the change to winter time and then drifted slow, so it was 49 minutes ahead, switched to the next
+program 49 minutes early and never did the grid charge the controller had written, while every write was
+`confirmed` and the runtime code was `ok`. The controller therefore compares the clocks and tells you.
+It only tells you: it changes no write and no plan because of the skew.
+
+- **Source.** The Solarman date and time entity of the chosen device (`datetime.<prefix>date_time`, found
+  by the device like the program entities). A device without it is not checked, silently.
+- **Skew** is the inverter clock minus Home Assistant time, both read in the Home Assistant time zone;
+  plus means the inverter is ahead. A change between summer and winter time that the inverter did not follow
+  shows as ±60 minutes.
+- **Threshold.** More than 5 minutes (`|skew| > 5 min`), held for 10 minutes of fresh readings, so one bad
+  read does not alert. A reading under the threshold starts the hold over; an unreadable or older than
+  5 minutes state changes nothing (nothing is raised and nothing is cleared).
+- **Reaction** while it holds:
+  - `tou_problem` on the controller sensor is `inverter_clock_skew` (a resolution failure keeps its own
+    code) and the attribute `clock` shows `clock_skew_seconds`, `clock_skew_minutes`, `inverter_clock`,
+    `clock_read_at`, `over_threshold_since` and `alert`;
+  - the repair issue "Deye inverter clock is off by N min" (a warning, not fixable) gives the skew, the two
+    times, the likely cause and the fix;
+  - [Alert](#alert-binary_sensor_alert) turns on with `code` `inverter_clock_skew`, `reason` the skew
+    and `clock_skew_minutes`;
+  - with the [native notifications](#window-notifications) on, one message per episode is sent.
+- **Recovery.** A reading back under the threshold clears the issue, the `tou_problem` and the alert, and
+  ends the episode. The diagnostics (`deye_controller.clock`) carry the same fields, also while no alert is on.
+
+**TOU windows run at wrong times.** Look at the *Deye controller* sensor first: `tou_problem` =
+`inverter_clock_skew` and the repair issue mean the inverter clock is off, not the plan. Typical causes are
+a change between summer and winter time that the inverter did not follow and drift on a logger that has no
+cloud time sync (the Solarman cloud entity of the logger is unavailable). Energy Compass cannot set the
+clock: this inverter accepts writes to the clock registers (0x003E–0x0040) over Modbus and ignores them. Set
+the date and time on the inverter panel or in the Deye app; the alert clears about a minute after the
+corrected clock is read, or within the poll interval. If `tou_problem` is empty and the windows are still
+off, compare the `tou` attribute with the program entities of the device.
+
 ### Controller entities
 
 Three entities exist only while the controller is enabled, a fourth with the native engine; they sit on
@@ -2221,10 +2271,11 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.
 | `generation`, `valid_until`, `coverage_end`, `accepted_at` | the accepted plan: `generated_at`, original deadline, end of the last interval and acceptance time |
 | `revoked_generation`, `revoked_at`, `revoked_reason` | the last revocation |
 | `capacity_kwh`, `eta_charge`, `eta_discharge`, `charge_kw`, `discharge_kw` | battery parameters of the accepted generation (current settings while nothing is accepted) |
-| `device_id`, `program_prefix`, `tou_problem` | the chosen Solarman device, the TOU entity prefix and why resolution failed (`tou_incomplete`, `tou_prefix`) |
+| `device_id`, `program_prefix`, `tou_problem` | the chosen Solarman device, the TOU entity prefix and what is wrong: why resolution failed (`tou_incomplete`, `tou_prefix`) or `inverter_clock_skew` (see [Inverter clock](#inverter-clock)) |
 | `next_tou` | next local TOU program boundary |
 | `accepted` | the accepted plan snapshot (rows, dispatch policy, battery); not recorded |
 | `tou` | state of the 30 TOU entities; a change re-runs the blueprint; not recorded |
+| `clock` | the inverter clock check ([Inverter clock](#inverter-clock)): `clock_skew_seconds`, `clock_skew_minutes`, `inverter_clock`, `clock_read_at`, `over_threshold_since` and `alert`; empty (`null`) when the device has no date and time entity |
 | `hardware` | the inverter as the Solarman `device` sensor reports it: device type, protocol, control and communication board firmware, rated power, registry model and `verified` (the type and protocol pair is on the [tested list](#supported-hardware)); no serial number |
 
 The runtime sensor carries the recorded attributes `restore_pending`, `reason`, `state`, `requested_mode`,
@@ -2444,12 +2495,14 @@ The blueprint left an automation trace per run; the native engine replaces it wi
 
 - the runtime sensor's `reason` and `reason_code`, and its attribute `last_run` (not recorded): trigger,
   decision, planned commands, each write with its outcome (sent, failed, confirmed, blocked) and how the run ended;
-- the integration's diagnostics (`deye_controller`): `engine`, `hardware`, `run_history`, the last 50 runs, and
+- the integration's diagnostics (`deye_controller`): `engine`, `hardware`, `clock` (`clock_skew_seconds`, `clock_read_at`, `inverter_clock`), `run_history`, the last 50 runs, and
   `run_history_notable`, the last 20 that wrote or ended with a code other than `ok` (both kept in memory, so a restart
   empties them);
 - a logbook entry on the runtime sensor whenever the runtime code or the confirmed mode changes;
 - the runtime code `error` and the repair issues "Deye controller runs are failing" and "Deye blueprint
-  automation is still on", so a stopped controller is visible without reading logs.
+  automation is still on", so a stopped controller is visible without reading logs;
+- the repair issue "Deye inverter clock is off by N min", when the inverter clock disagrees with Home Assistant
+  time ([Inverter clock](#inverter-clock)).
 
 ### When Energy Compass is unavailable
 

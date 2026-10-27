@@ -1728,10 +1728,17 @@ przedziału dała znany poziom. Pozostałe atrybuty: <code>coverage_end</code>, 
 <td>Calculation error / Błąd obliczeń</td>
 <td>Inny błąd.</td>
 </tr>
+<tr>
+<td><code>inverter_clock_skew</code></td>
+<td>Inverter clock skew / Przesunięty zegar falownika</td>
+<td>Tylko ze sterownikiem Deye: zegar falownika różni się od czasu Home Assistant o więcej niż 5 minut przez 10 minut (<a href="#zegar-falownika">Zegar falownika</a>). To nie błąd obliczeń: plan się nie zmienia, a <code>plan_retained</code> zostaje, jak był.</td>
+</tr>
 </tbody>
 </table></section>
-<p>Atrybuty: <code>code</code>, <code>reason</code>, <code>since</code>, <code>plan_retained</code>, <code>last_successful_plan_at</code>. Ponowna próba
-nie gasi alertu; gasi go dopiero udany nowy plan.</p>
+<p>Atrybuty: <code>code</code>, <code>reason</code>, <code>since</code>, <code>plan_retained</code>, <code>last_successful_plan_at</code>, <code>clock_skew_minutes</code>
+(puste, dopóki alert zegara falownika jest wyłączony). Ponowna próba nie gasi alertu; gasi go dopiero udany
+nowy plan. Wyjątkiem jest alert zegara falownika: gaśnie, gdy przesunięcie spadnie poniżej 5 minut. Gdy błąd
+obliczeń i przesunięcie zegara zdarzą się razem, <code>code</code> i <code>reason</code> pokazują błąd obliczeń.</p>
 <h3 id="zachowanie-planu">Zachowanie planu</h3>
 <figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-22d3cdeb80e2-dark.svg"><img src="assets/diagrams/diagram-22d3cdeb80e2.svg" alt="Diagram 7" loading="lazy"></picture></figure>
 <p>Zachowany plan nigdy nie jest wydłużany poza pierwotne pokrycie i nie przetrwa przeładowania
@@ -2983,6 +2990,13 @@ powiadomienia.</p>
 </table></section>
 <p>Treść podaje lokalne godziny okna (<code>HH:MM–HH:MM</code>, a gdy okno przechodzi przez północ,
 <code>dd.mm HH:MM–dd.mm HH:MM</code>) i proponuje przełożenie prania, zmywarki lub ładowania auta.</p>
+<h3 id="wiadomość-o-zegarze-falownika">Wiadomość o zegarze falownika</h3>
+<p>Przy włączonym sterowniku Deye ten sam nadawca daje znać raz na epizod, gdy zegar falownika jest przestawiony
+(„Zegar falownika Deye jest przestawiony”: przesunięcie w minutach, plus gdy falownik wyprzedza, i gdzie ustawić
+czas). Epizod zaczyna się, gdy włączy się alert z <a href="#zegar-falownika">Zegar falownika</a>, a kończy, gdy przesunięcie
+spadnie poniżej progu; przeładowanie wpisu w trakcie epizodu nie wysyła go ponownie. Używa tych samych celów, języka
+i zgody co wiadomości o oknach i czeka na koniec godzin ciszy, ale nie liczy się do dziennego limitu ani nie
+uruchamia przerwy, a wysyłana jest także przy włączonym alercie optymalizatora.</p>
 <h3 id="akcja-testowa">Akcja testowa</h3>
 <p><code>energy_compass.send_test_notification</code> wysyła teraz jedną stałą wiadomość do każdego celu wpisu.
 Pomija warunki, godziny ciszy, przerwę, dzienny limit i zapamiętane okno i niczego z tego nie zmienia.
@@ -3264,6 +3278,42 @@ Kontrola działa też w Simulation, więc zły układ widać przed Auto. Zaliczo
 urządzenia i zestawu odczytywanych encji: zmiana urządzenia lub nadpisanie encji uruchamia ją od nowa. Przywrócenie
 profilu bazowego nie czeka na kontrolę, bo zapisuje przez własne encje Solarman, a od układu zależy tylko odczyt
 potwierdzający; wymuszenie profilu czeka.</p>
+<h3 id="zegar-falownika">Zegar falownika</h3>
+<p>Falownik wykonuje programy TOU według własnego zegara, a Energy Compass zapisuje je według czasu lokalnego
+Home Assistant. Zegar, który się rozjeżdża, przesuwa każde okno: na żywej instalacji falownik został na czasie
+letnim po zmianie na zimowy, a potem się spóźniał, więc wyprzedzał o 49 minut, przełączył się na następny program
+49 minut za wcześnie i nigdy nie wykonał ładowania z sieci zapisanego przez sterownik, choć każdy zapis był
+<code>confirmed</code>, a kod stanu pracy to <code>ok</code>. Dlatego sterownik porównuje zegary i daje znać. Tylko daje znać: z powodu
+przesunięcia nie zmienia ani zapisów, ani planu.</p>
+<ul>
+<li><strong>Źródło.</strong> Encja daty i godziny Solarman wybranego urządzenia (<code>datetime.&lt;prefix&gt;date_time</code>, znajdowana po
+  urządzeniu tak jak encje programów). Urządzenie bez niej nie jest sprawdzane, po cichu.</li>
+<li><strong>Przesunięcie</strong> to zegar falownika minus czas Home Assistant, oba w strefie czasowej Home Assistant;
+  plus oznacza, że falownik wyprzedza. Zmiana czasu letniego i zimowego, za którą falownik nie poszedł,
+  daje ±60 minut.</li>
+<li><strong>Próg.</strong> Więcej niż 5 minut (<code>|przesunięcie| &gt; 5 min</code>) utrzymane przez 10 minut świeżych odczytów, więc
+  jeden zły odczyt nie alarmuje. Odczyt poniżej progu zaczyna odliczanie od nowa; stan nieczytelny albo starszy
+  niż 5 minut niczego nie zmienia (nic nie jest zgłaszane ani czyszczone).</li>
+<li><strong>Reakcja</strong> po utrzymaniu:</li>
+<li><code>tou_problem</code> sensora sterownika to <code>inverter_clock_skew</code> (błąd rozpoznania urządzenia zachowuje własny
+    kod), a atrybut <code>clock</code> pokazuje <code>clock_skew_seconds</code>, <code>clock_skew_minutes</code>, <code>inverter_clock</code>,
+    <code>clock_read_at</code>, <code>over_threshold_since</code> i <code>alert</code>;</li>
+<li>zgłoszenie w Naprawach „Zegar falownika Deye różni się o N min” (ostrzeżenie, bez naprawy w jednym
+    kliknięciu) podaje różnicę, oba czasy, prawdopodobną przyczynę i sposób naprawy;</li>
+<li><a href="#alert-binary_sensor_alert">Alert</a> włącza się z <code>code</code> <code>inverter_clock_skew</code>, <code>reason</code> równym
+    różnicy i <code>clock_skew_minutes</code>;</li>
+<li>przy włączonych <a href="#powiadomienia-o-oknach">powiadomieniach wbudowanych</a> wysyłana jest jedna wiadomość na epizod.</li>
+<li><strong>Powrót.</strong> Odczyt poniżej progu gasi zgłoszenie, <code>tou_problem</code> i alert oraz kończy epizod. Diagnostyka
+  (<code>deye_controller.clock</code>) ma te same pola, także gdy alert jest wyłączony.</li>
+</ul>
+<p><strong>Okna TOU działają o złych porach.</strong> Najpierw spójrz na sensor <em>Sterownik Deye</em>: <code>tou_problem</code> =
+<code>inverter_clock_skew</code> i zgłoszenie w Naprawach oznaczają, że winny jest zegar falownika, nie plan. Typowe
+przyczyny to zmiana czasu letniego i zimowego, za którą falownik nie poszedł, oraz dryf rejestratora bez
+synchronizacji czasu z chmurą (encja chmury Solarman rejestratora jest niedostępna). Energy Compass nie ustawi
+zegara: ten falownik przyjmuje zapisy rejestrów zegara (0x003E–0x0040) przez Modbus i je ignoruje. Ustaw datę
+i godzinę w panelu falownika albo w aplikacji Deye; alert gaśnie po odczycie poprawionego zegara, w ciągu
+interwału odpytywania. Jeśli <code>tou_problem</code> jest pusty, a okna nadal są przesunięte, porównaj atrybut <code>tou</code> z
+encjami programów urządzenia.</p>
 <h3 id="encje-sterownika">Encje sterownika</h3>
 <p>Trzy encje istnieją tylko przy włączonym sterowniku, czwarta przy silniku natywnym; należą do urządzenia
 Energy Compass. <code>&lt;name&gt;</code> to tytuł wpisu.</p>
@@ -3351,7 +3401,7 @@ sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.</p>
 </tr>
 <tr>
 <td><code>device_id</code>, <code>program_prefix</code>, <code>tou_problem</code></td>
-<td>wybrane urządzenie Solarman, prefiks encji TOU i powód niepowodzenia (<code>tou_incomplete</code>, <code>tou_prefix</code>)</td>
+<td>wybrane urządzenie Solarman, prefiks encji TOU i co jest nie tak: powód niepowodzenia rozpoznania (<code>tou_incomplete</code>, <code>tou_prefix</code>) albo <code>inverter_clock_skew</code> (zobacz <a href="#zegar-falownika">Zegar falownika</a>)</td>
 </tr>
 <tr>
 <td><code>next_tou</code></td>
@@ -3364,6 +3414,10 @@ sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.</p>
 <tr>
 <td><code>tou</code></td>
 <td>stany 30 encji TOU; zmiana uruchamia blueprint ponownie; nie jest zapisywany w historii</td>
+</tr>
+<tr>
+<td><code>clock</code></td>
+<td>kontrola zegara falownika (<a href="#zegar-falownika">Zegar falownika</a>): <code>clock_skew_seconds</code>, <code>clock_skew_minutes</code>, <code>inverter_clock</code>, <code>clock_read_at</code>, <code>over_threshold_since</code> i <code>alert</code>; puste (<code>null</code>), gdy urządzenie nie ma encji daty i godziny</td>
 </tr>
 <tr>
 <td><code>hardware</code></td>
@@ -3736,12 +3790,14 @@ Assistant (po polsku dla <code>pl</code>, w pozostałych przypadkach po angielsk
 <ul>
 <li><code>reason</code> i <code>reason_code</code> sensora stanu pracy oraz jego atrybut <code>last_run</code> (nie jest zapisywany w historii): wyzwalacz,
   decyzja, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony, zablokowany) i jak przebieg się zakończył;</li>
-<li>diagnostyka integracji (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code>, <code>run_history</code>, ostatnie 50 przebiegów, oraz
+<li>diagnostyka integracji (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code>, <code>clock</code> (<code>clock_skew_seconds</code>, <code>clock_read_at</code>, <code>inverter_clock</code>), <code>run_history</code>, ostatnie 50 przebiegów, oraz
   <code>run_history_notable</code>, ostatnie 20, które zapisały lub zakończyły się kodem innym niż <code>ok</code> (oba w pamięci, więc
   restart je czyści);</li>
 <li>wpis w dzienniku zdarzeń sensora stanu pracy za każdym razem, gdy zmieni się kod stanu pracy lub potwierdzony tryb;</li>
 <li>kod <code>error</code> oraz problemy w Naprawach „Przebiegi sterownika Deye kończą się błędem” i „Automatyzacja blueprintu
-  Deye nadal działa”, więc zatrzymany sterownik widać bez czytania logów.</li>
+  Deye nadal działa”, więc zatrzymany sterownik widać bez czytania logów;</li>
+<li>zgłoszenie w Naprawach „Zegar falownika Deye różni się o N min”, gdy zegar falownika nie zgadza się z czasem
+  Home Assistant (<a href="#zegar-falownika">Zegar falownika</a>).</li>
 </ul>
 <h3 id="gdy-energy-compass-jest-niedostępny">Gdy Energy Compass jest niedostępny</h3>
 <p>Bez Energy Compass nie da się odczytać ani trybu, ani stanu pracy, więc żadnego zapisu nie można uznać
