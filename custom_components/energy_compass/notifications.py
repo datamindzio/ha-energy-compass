@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import date, datetime, time, tzinfo
+from datetime import UTC, date, datetime, time, tzinfo
 
 EVENTS = ("favorable", "limit")
 PREFERENCE_KEYS = (
@@ -22,6 +22,8 @@ PREFERENCE_KEYS = (
     "quiet_start",
     "quiet_end",
 )
+OUTAGE_FLOOR_PERCENT = 10  # the inverter keeps this much; it is not runtime
+OUTAGE_MIN_LOAD_KW = 0.05
 FAILED_ATTEMPTS_FOR_ISSUE = 3
 SEND_TIMEOUT_S = 30
 STORE_FORMAT = 1
@@ -48,6 +50,16 @@ class SenderState:
     last_sent: float | None = None  # epoch seconds of the last attempt
     failures: int = 0  # consecutive failed attempts
     clock_since: str | None = None  # start of the inverter clock episode already told
+    outage_since: str | None = None  # grid outage whose start is told, its end is not
+
+
+@dataclass(frozen=True)
+class OutageFacts:
+    """What the message says about the battery; any part may be unknown."""
+
+    soc: float | None = None  # percent
+    load_kw: float | None = None  # house load now
+    capacity_kwh: float | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +91,8 @@ _TITLES = {
         "favorable": "A good time for household appliances",
         "test": "Energy Compass test",
         "clock": "Deye inverter clock is off",
+        "outage": "Grid outage: the house runs on the battery",
+        "outage_end": "Grid is back",
     },
     "pl": {
         "limit": "Zaplanuj większe zużycie na później",
@@ -86,6 +100,8 @@ _TITLES = {
         "favorable": "Dobry moment na domowe urządzenia",
         "test": "Test Energy Compass",
         "clock": "Zegar falownika Deye jest przestawiony",
+        "outage": "Awaria sieci: dom działa na baterii",
+        "outage_end": "Sieć wróciła",
     },
 }
 _MESSAGES = {
@@ -114,6 +130,13 @@ _MESSAGES = {
             "(plus: the inverter is ahead), so its programs run at the wrong "
             "time. Set the time on the inverter panel or in the Deye app."
         ),
+        "outage": "Grid lost at {time}.",
+        "outage_battery": " Battery {soc} %.",
+        "outage_runtime": " Battery {soc} %, about {runtime} at the current {load} kW.",
+        "outage_end": "Grid back at {time} after {duration}.",
+        "hours": "{hours} h {minutes} min",
+        "whole_hours": "{hours} h",
+        "minutes": "{minutes} min",
     },
     "pl": {
         "limit_ongoing": (
@@ -138,6 +161,15 @@ _MESSAGES = {
             "(plus: falownik jest do przodu), więc jego programy działają o "
             "złej porze. Ustaw godzinę w panelu falownika albo w aplikacji Deye."
         ),
+        "outage": "Sieć zanikła o {time}.",
+        "outage_battery": " Bateria {soc} %.",
+        "outage_runtime": (
+            " Bateria {soc} %, wystarczy na ok. {runtime} przy obecnym poborze {load} kW."
+        ),
+        "outage_end": "Sieć wróciła o {time} po {duration}.",
+        "hours": "{hours} godz. {minutes} min",
+        "whole_hours": "{hours} godz.",
+        "minutes": "{minutes} min",
     },
 }
 
@@ -280,6 +312,66 @@ def clock_texts(skew_minutes: int, language: str) -> tuple[str, str]:
     return _TITLES[lang]["clock"], _MESSAGES[lang]["clock"].format(
         skew=f"{skew_minutes:+d}"
     )
+
+
+def _span(minutes: int, lang: str) -> str:
+    hours, rest = divmod(max(minutes, 0), 60)
+    if not hours:
+        return _MESSAGES[lang]["minutes"].format(minutes=rest)
+    if not rest:
+        return _MESSAGES[lang]["whole_hours"].format(hours=hours)
+    return _MESSAGES[lang]["hours"].format(hours=hours, minutes=rest)
+
+
+def _percent(value: float) -> str:
+    return f"{value:.0f}"
+
+
+def outage_runtime_minutes(facts: OutageFacts) -> int | None:
+    """How long the usable battery lasts at the present load, None when unknown."""
+    if facts.soc is None or facts.load_kw is None or facts.capacity_kwh is None:
+        return None
+    if facts.load_kw < OUTAGE_MIN_LOAD_KW or facts.capacity_kwh <= 0:
+        return None
+    usable = facts.capacity_kwh * max(facts.soc - OUTAGE_FLOOR_PERCENT, 0) / 100
+    return round(usable / facts.load_kw * 60) if usable > 0 else None
+
+
+def outage_start_texts(
+    lost_at: datetime, facts: OutageFacts, tz: tzinfo, language: str
+) -> tuple[str, str]:
+    lang = _language(language)
+    messages = _MESSAGES[lang]
+    message = messages["outage"].format(time=lost_at.astimezone(tz).strftime("%H:%M"))
+    runtime = outage_runtime_minutes(facts)
+    if runtime is not None:
+        message += messages["outage_runtime"].format(
+            soc=_percent(facts.soc),
+            runtime=_span(runtime, lang),
+            load=f"{facts.load_kw:.1f}",
+        )
+    elif facts.soc is not None:
+        message += messages["outage_battery"].format(soc=_percent(facts.soc))
+    return _TITLES[lang]["outage"], message
+
+
+def outage_end_texts(
+    lost_at: datetime,
+    restored_at: datetime,
+    facts: OutageFacts,
+    tz: tzinfo,
+    language: str,
+) -> tuple[str, str]:
+    lang = _language(language)
+    messages = _MESSAGES[lang]
+    minutes = round((restored_at - lost_at).total_seconds() / 60)
+    message = messages["outage_end"].format(
+        time=restored_at.astimezone(tz).strftime("%H:%M"),
+        duration=_span(minutes, lang),
+    )
+    if facts.soc is not None:
+        message += messages["outage_battery"].format(soc=_percent(facts.soc))
+    return _TITLES[lang]["outage_end"], message
 
 
 def test_texts(language: str) -> tuple[str, str]:
@@ -441,6 +533,64 @@ def evaluate_clock(
     )
 
 
+def _moment(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def evaluate_outage(
+    data: Mapping,
+    state: SenderState,
+    *,
+    active: bool,
+    since: str | None,
+    lost_at: str | None,
+    restored_at: str | None,
+    facts: OutageFacts,
+    now: datetime,
+    tz: tzinfo,
+    has_target: bool,
+    language: str,
+) -> Decision:
+    """One message when a grid outage starts and one when it ends.
+
+    `since` identifies the running outage. The start is told once per `since` (kept in
+    `outage_since`, so a restart does not tell it again) and the end only when the start
+    was. Unlike window advice an outage is not held back by quiet hours, the daily cap
+    or the cooldown, and it leaves their counters alone.
+
+    Codes: `outage_told` (nothing to do), `disabled`, `no_target` (the start is not
+    spent, the end is forgotten as `outage_clear`) and `send`.
+    """
+    if active:
+        if since is None or state.outage_since == since:
+            return Decision("outage_told", state)
+        started = _moment(lost_at) or _moment(since)
+        if started is None:
+            return Decision("outage_told", state)
+        if preferences(data) is None:
+            return Decision("disabled", state)
+        if not has_target:
+            return Decision("no_target", state)
+        title, message = outage_start_texts(started, facts, tz, language)
+        return Decision(
+            "send", replace(state, outage_since=since), None, None, title, message
+        )
+    if state.outage_since is None:
+        return Decision("outage_told", state)
+    cleared = replace(state, outage_since=None)
+    started, back = _moment(lost_at), _moment(restored_at)
+    if started is None or back is None or preferences(data) is None or not has_target:
+        return Decision("outage_clear", cleared)
+    title, message = outage_end_texts(started, back, facts, tz, language)
+    return Decision("send", cleared, None, None, title, message)
+
+
 def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -488,8 +638,12 @@ def load_state(raw: object) -> tuple[SenderState, bool]:
     clock_since = raw.get("clock_since")
     if clock_since is not None and not isinstance(clock_since, str):
         return fresh
+    outage_since = raw.get("outage_since")
+    if outage_since is not None and not isinstance(outage_since, str):
+        return fresh
     state = SenderState(
         clock_since=clock_since,
+        outage_since=outage_since,
         favorable=favorable,
         limit=limit,
         day=day,
@@ -514,4 +668,5 @@ def dump_state(state: SenderState) -> dict:
         "last_sent": state.last_sent,
         "failures": state.failures,
         **({"clock_since": state.clock_since} if state.clock_since else {}),
+        **({"outage_since": state.outage_since} if state.outage_since else {}),
     }

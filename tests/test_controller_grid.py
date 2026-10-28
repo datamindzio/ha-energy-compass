@@ -98,8 +98,10 @@ def test_the_outage_ends_after_five_minutes_of_grid():
     assert grid.observe(back, PRESENT, at(399)).active
     ended = grid.observe(back, PRESENT, at(400))
     assert not ended.active
-    assert ended.restored_at == at(400).isoformat()
-    assert ended.since is None and ended.lost_at is None and ended.on_since is None
+    assert ended.restored_at == at(100).isoformat()
+    assert ended.lost_at == at(0).isoformat()
+    assert ended.since is None and ended.on_since is None
+    assert ended.as_attribute()["lost_at"] is None
 
 
 def test_a_dip_while_restoring_restarts_the_stable_period():

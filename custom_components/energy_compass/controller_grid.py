@@ -42,7 +42,8 @@ class GridWatch:
     `off_since` is the start of the current continuous absence and `on_since` the start
     of the current continuous presence during an outage; both are UTC ISO strings so the
     watch survives a restart. `since` is when the outage was declared and `lost_at` the
-    first absent reading behind it.
+    first absent reading behind it. When the outage ends `lost_at` stays and `restored_at`
+    is when the grid came back (the start of the stable presence), so the end can be told.
     """
 
     source: str | None = None
@@ -63,7 +64,7 @@ class GridWatch:
             "present": self.present,
             "outage": self.active,
             "since": self.since,
-            "lost_at": self.lost_at,
+            "lost_at": self.lost_at if self.active else None,
             "off_since": self.off_since,
             "restored_pending_since": self.on_since,
             "restored_at": self.restored_at,
@@ -113,7 +114,7 @@ def from_dict(raw: Any) -> GridWatch:
         present=present if isinstance(present, bool) else None,
         active=active,
         since=since,
-        lost_at=_stamp(raw.get("lost_at")) if active else None,
+        lost_at=_stamp(raw.get("lost_at")),
         off_since=_stamp(raw.get("off_since")),
         on_since=_stamp(raw.get("on_since")) if active else None,
         restored_at=_stamp(raw.get("restored_at")),
@@ -228,10 +229,9 @@ def _tick(
                 **watch.to_dict(),
                 "active": False,
                 "since": None,
-                "lost_at": None,
                 "off_since": None,
                 "on_since": None,
-                "restored_at": _iso(now),
+                "restored_at": watch.on_since,
             }
         )
     return watch

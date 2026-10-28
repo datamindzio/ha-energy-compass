@@ -170,7 +170,7 @@ class DeyeGridOutageSensor(DeyeControllerEntity, BinarySensorEntity):
         watch = self.controller.state.grid
         return {
             "since": watch.since,
-            "lost_at": watch.lost_at,
+            "lost_at": watch.lost_at if watch.active else None,
             "restored_pending_since": watch.on_since,
             "source": watch.source,
             "source_state": watch.raw,
