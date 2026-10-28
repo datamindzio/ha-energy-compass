@@ -1127,7 +1127,7 @@
           "max_current": "Maximum battery current (A)",
           "relinquish_current": "Relinquish current (A)",
           "max_grid_current": "Maximum grid charging current (A)",
-          "hold_grid_current": "Grid charging current in HOLD (A)",
+          "hold_grid_current": "HOLD/CURTAIL minimum charge current (A)",
           "reached_discharge_current": "Discharge current after a target is reached (A)",
           "min_buffer_current": "Minimum buffer current (A)",
           "balance_grid_current": "Balance grid current (A)",

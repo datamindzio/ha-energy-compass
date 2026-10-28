@@ -92,7 +92,8 @@ def test_the_closed_profiles_without_a_candidate_are_what_the_candidate_opens():
 def test_hold_with_a_candidate_never_opens_grid_charging_the_plan_did_not_ask_for():
     h = _site("HOLD")
     open_, plain = _decide(h, True), _decide(h, False)
-    assert _grid(h, open_) == _grid(h, plain) == h.ctx["hold_grid_current"]
+    # The TOU floor holds the SOC: no grid charge current (DD-2).
+    assert _grid(h, open_) == _grid(h, plain) == 0
     assert _program(open_) == _program(plain)
     for state in ("CHARGE_PV", "SELF_CONSUME"):
         site = _site(state, soc="100", operation="Voltage")

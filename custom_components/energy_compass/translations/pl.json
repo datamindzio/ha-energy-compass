@@ -1127,7 +1127,7 @@
           "max_current": "Maksymalny prąd baterii (A)",
           "relinquish_current": "Prąd przy zwolnieniu (A)",
           "max_grid_current": "Maksymalny prąd ładowania z sieci (A)",
-          "hold_grid_current": "Prąd ładowania z sieci w HOLD (A)",
+          "hold_grid_current": "Minimalny prąd ładowania w HOLD/CURTAIL (A)",
           "reached_discharge_current": "Prąd rozładowania po osiągnięciu celu (A)",
           "min_buffer_current": "Minimalny prąd bufora (A)",
           "balance_grid_current": "Prąd sieci przy balansowaniu (A)",

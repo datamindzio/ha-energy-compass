@@ -202,6 +202,7 @@ class Decision:
     warning_code: str = ""
     buffer_current: float = 0.0
     grid_outage: bool = False
+    hold_level: Mapping[str, float] | None = None
 
 
 class Command(NamedTuple):
@@ -468,6 +469,9 @@ def decide(
                 max(0, charge_kwh - surplus) / h * 1000 * eta_charge / v,
             )
             charge = charge_cap
+            # On-grid the charge target blocks discharge (DD-3); islanded the battery
+            # must be free to feed the house.
+            discharge = discharge_cap
             direction = "Grid" if grid >= 1 and planned >= 1 else "Disabled"
             if balance:
                 grid = max(limits.balance_grid_current, grid)
@@ -511,6 +515,7 @@ def decide(
     # (the SOC ends where the plan says, the rest stays curtailed). The planned current
     # is rounded up to the charge step, so a row at charge_kw x h gets the whole cap.
     # Every other HOLD/CURTAIL row holds the SOC.
+    hold_level: Mapping[str, float] | None = None
     curtail_charges = (
         state == "CURTAIL"
         and bool(row)
@@ -530,19 +535,57 @@ def decide(
         )
         discharge = 0
     elif state in ("HOLD", "CURTAIL") and row:
-        target_soc = _round(
+        # DD-2: hold by the TOU floor, not by 0 A. The program stays active in direction
+        # Grid with its target at the plan's SOC, but never above the level the pack is at
+        # now (2026-09-21: a floor above the SOC makes the inverter charge from the grid).
+        # The level is latched while the state stays HOLD/CURTAIL, so the target does not
+        # creep with the SOC and retrigger the protective steps of `diff`.
+        plan_soc = _round(
             min(100, max(10, _float(row.get("end_soc_kwh")) / capacity_kwh * 100)),
             0,
             "floor",
         )
+        latched = (
+            rt.get("hold_level") if rt.get("state") in ("HOLD", "CURTAIL") else None
+        )
+        if (
+            isinstance(latched, Mapping)
+            and _is_number(latched.get("soc"))
+            and _is_number(latched.get("voltage"))
+        ):
+            hold_level = {
+                "soc": _float(latched["soc"]),
+                "voltage": _float(latched["voltage"]),
+            }
+        else:
+            level_soc = min(100, max(10, _round(soc, 0, "floor")))
+            hold_level = {
+                "soc": level_soc,
+                "voltage": max(
+                    BASE_VOLTAGE,
+                    min(
+                        _knot_voltage(level_soc, DISCHARGE_KNOTS, "floor"),
+                        _round(v / 10, 1, "floor"),
+                    ),
+                ),
+            }
+        target_soc = max(10, min(plan_soc, hold_level["soc"]))
         target_voltage = _knot_voltage(target_soc, DISCHARGE_KNOTS, "floor")
+        if operation == "Voltage":
+            target_voltage = max(
+                BASE_VOLTAGE,
+                min(
+                    _knot_voltage(plan_soc, DISCHARGE_KNOTS, "floor"),
+                    hold_level["voltage"],
+                ),
+            )
         charge = (
             charge_cap
             if snapshot.full_candidate and state == "HOLD"
-            else limits.hold_grid_current
+            else max(limits.hold_grid_current, limits.min_buffer_current)
         )
-        discharge = 0
-        grid = limits.hold_grid_current
+        discharge = discharge_cap
+        grid = 0
         direction = "Grid"
 
     if (
@@ -552,7 +595,7 @@ def decide(
     ):
         charge = charge_cap if state == "CHARGE_GRID" else 0
         grid = 0
-        discharge = reached_discharge if state == "DISCHARGE_GRID" else 0
+        discharge = discharge_cap if state == "CHARGE_GRID" else reached_discharge
         direction = "Disabled"
         reached = True
 
@@ -710,6 +753,7 @@ def decide(
         else "",
         buffer_current=buffer,
         grid_outage=snapshot.grid_outage,
+        hold_level=hold_level,
     )
 
 

@@ -8,7 +8,7 @@ that blueprint holds every CURTAIL row, which is the divergence pinned here.
 from pathlib import Path
 
 import pytest
-from deye_engines import Harness, use
+from deye_engines import Harness, hold_discharge, hold_grid, use
 from deye_harness import INPUTS, P
 
 from custom_components.energy_compass.controller_profile import CURTAIL_CHARGE_MIN_KWH
@@ -124,7 +124,7 @@ def test_solver_noise_in_charge_kwh_holds_the_planned_soc(charge_kwh):
     d = decide(h, state="CURTAIL", charge_kwh=charge_kwh, **QUARTER)
     band = h.ctx["hold_grid_current"]
     assert d["desired"][h.ctx["charge_entity"]] == band
-    assert d["desired"][h.ctx["grid_entity"]] == band
+    assert d["desired"][h.ctx["grid_entity"]] == hold_grid(h)
     assert program(d, "select:charging") == "Grid"
     assert d["warning"] == HOLD_WARNING
 
@@ -149,8 +149,8 @@ def test_a_curtail_that_does_not_charge_holds_the_planned_soc():
     band = h.ctx["hold_grid_current"]
     assert d["valid"] and d["state"] == "CURTAIL"
     assert d["desired"][h.ctx["charge_entity"]] == band
-    assert d["desired"][h.ctx["grid_entity"]] == band
-    assert d["desired"][h.ctx["discharge_entity"]] == floor(h)
+    assert d["desired"][h.ctx["grid_entity"]] == hold_grid(h)
+    assert d["desired"][h.ctx["discharge_entity"]] == hold_discharge(h, floor(h))
     assert program(d, "select:charging") == "Grid"
     assert d["warning"] == HOLD_WARNING
 

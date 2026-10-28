@@ -62,6 +62,7 @@ RUNTIME_KEYS = frozenset(
         "since",
         "battery_mode_commissioned",
         "reached_key",
+        "hold_level",
         "slot_energy",
         "owned_session",
         "uncertain",

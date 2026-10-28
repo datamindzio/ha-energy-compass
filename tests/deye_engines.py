@@ -76,3 +76,22 @@ def Harness(*args, **kwargs):
 
 def Runner(harness):
     return _runner_class(_active[0])(harness)
+
+
+def is_native(harness):
+    """True for the native harness: only its context carries the buffer limit."""
+    return "min_buffer_current" in harness.ctx
+
+
+# The full-pack current cap of the sample inverter (the harness entities' ceiling).
+CURRENT_CAP = 14
+
+
+def hold_grid(harness):
+    """Grid charge current of a HOLD/CURTAIL row: the TOU floor holds natively (0 A)."""
+    return 0 if is_native(harness) else harness.ctx["hold_grid_current"]
+
+
+def hold_discharge(harness, blueprint=0):
+    """Discharge limit of a HOLD/CURTAIL row (and of CHARGE_GRID): the cap natively."""
+    return CURRENT_CAP if is_native(harness) else blueprint
