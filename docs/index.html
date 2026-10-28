@@ -271,6 +271,7 @@
             <tr><th scope="row"><a href="#deye_mode">Deye mode</a></th><td>Off / Simulation / Auto</td><td>Is the Deye controller allowed to write?</td></tr>
             <tr><th scope="row"><a href="#deye_runtime">Deye controller runtime</a></th><td>Runtime code</td><td>What did the Deye controller last decide and confirm?</td></tr>
             <tr><th scope="row"><a href="#deye_pause">Pause inverter writes</a></th><td>On / off</td><td>Is every inverter write held?</td></tr>
+            <tr><th scope="row"><a href="#grid_outage">Grid outage</a></th><td>On / off</td><td>Is the grid out, so the battery runs the house?</td></tr>
           </tbody>
         </table>
       </section>
@@ -444,7 +445,7 @@
             <thead><tr><th scope="col">State</th><th scope="col">Meaning and next check</th></tr></thead>
             <tbody>
               <tr><th scope="row"><code>ready</code></th><td>A baseline result was published. Check Forecast valid for freshness and current guidance validity for the consumption probe; ready does not promise complete reference coverage.</td></tr>
-              <tr><th scope="row"><code>calculating</code></th><td>Setup, changed inputs or a time boundary triggered a new calculation. Previously published values remain visible with <code>refreshing=true</code> while a replacement is queued or running; Forecast valid remains on while that plan covers now. An existing alert stays on until successful replacement.</td></tr>
+              <tr><th scope="row"><code>calculating</code></th><td>Setup, changed inputs or a time boundary triggered a new calculation. Previously published values remain visible with <code>refreshing=true</code> while a replacement is queued or running; Forecast valid remains on while that plan covers now. An existing alert stays on until successful replacement. Reason <code>grid_outage</code> means the grid is out and no calculation starts until it is back.</td></tr>
               <tr><th scope="row"><code>invalid_input</code></th><td>A required input or configuration failed validation. Inspect <code>reason</code> for missing/stale sources, units, SOC checks, history coverage or invalid settings.</td></tr>
               <tr><th scope="row"><code>timeout</code></th><td>The base solve or overall calculation exceeded its budget. Check timing, model size and hardware. A single failed probe can instead leave a ready baseline with incomplete guidance.</td></tr>
               <tr><th scope="row"><code>infeasible</code></th><td>No baseline plan satisfies all constraints. Check demand/generation, SOC, reserve, power/export limits, terminal requirements and allowed capabilities.</td></tr>
@@ -564,6 +565,12 @@
         <p class="entity-meta"><code>deye_pause</code> · <span lang="pl">Wstrzymaj zapisy do falownika</span> · Switch, only with the native Deye engine</p>
         <p>While on, the controller computes and publishes the decision but sends no write. <code>restore_pending</code> and the uncertain registers stay as they are and the runtime code is <code>paused</code>. A run in flight stops before its next write; turning the switch off requests a run, and the usual rules decide between continuing and restoring the base profile. Mode <code>Off</code> with nothing to restore reports released even when paused; with a restore pending the pause wins. The flag is saved at once and is cleared when the engine is switched to <code>blueprint</code>.</p>
       </article>
+
+      <article id="grid_outage">
+        <h3>Grid outage</h3>
+        <p class="entity-meta"><code>grid_outage</code> · <span lang="pl">Awaria sieci</span> · Binary sensor (problem), only with the controller enabled and a grid presence entity or phase voltage found; either engine</p>
+        <p>On while the grid is out: the grid presence entity (the option <code>grid_presence_entity</code>, else the Solarman <code>grid</code> binary sensor) or, when it cannot be read, the phase voltages (every numeric phase under 100 V) has reported it absent for <code>outage_enter_seconds</code> (15 s by default). It turns off after the grid has been present for <code>outage_stable_minutes</code> (5 min by default). Attributes: <code>since</code>, <code>lost_at</code>, <code>restored_pending_since</code>, <code>source</code> and <code>source_state</code>. With the native engine the controller writes the <code>BACKUP</code> state meanwhile (both battery currents at their caps, all programs Disabled) and the planner starts no solve: its status is <code>calculating</code> with reason <code>grid_outage</code> and the last plan stays published. The blueprint engine writes 0 A in <code>HOLD</code>, so rolling back to it loses the outage safety.</p>
+      </article>
     </section>
 
     <section id="quality" aria-labelledby="quality-title">
@@ -599,7 +606,7 @@
       </section>
       <p>Calibration attributes are <code>unvalidated</code> or <code>verified</code>. They reflect configured validation status, not an automatic measurement or certification. Detailed input/solver failures can appear as other reason strings.</p>
       <div class="note caution"><p><strong>Unavailable is not zero, HOLD or NORMAL.</strong> Do not replace missing recommendations with a favorable default. An absent window may simply mean no matching period is known within current coverage.</p></div>
-      <p>For consumption-driven automations, check Forecast valid is on and <code>current_guidance_valid</code> is true, then compare stable uppercase levels. Window notifications are sent by the integration only when you turn them on: Notify enabled plus at least one target in Notification preferences. Try a target with the action <code>energy_compass.send_test_notification</code>; three failed attempts in a row raise the repair issue <code>notify_send_failed</code>. With the Deye controller on, the same targets get one message per episode of a skewed inverter clock. The older <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#blueprint-deprecated">notification blueprint</a> is deprecated and goes silent once a target is set (issues <code>notify_blueprint_deprecated</code> and <code>notify_blueprint_suppressed</code>); see <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/guide.en.md#migrating-from-the-blueprint">migrating from the blueprint</a>.</p>
+      <p>For consumption-driven automations, check Forecast valid is on and <code>current_guidance_valid</code> is true, then compare stable uppercase levels. Window notifications are sent by the integration only when you turn them on: Notify enabled plus at least one target in Notification preferences. Try a target with the action <code>energy_compass.send_test_notification</code>; three failed attempts in a row raise the repair issue <code>notify_send_failed</code>. With the Deye controller on, the same targets get one message per episode of a skewed inverter clock, and one when a grid outage starts and one when it ends (quiet hours, the cap and the cooldown do not apply). The older <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/installation.md#blueprint-deprecated">notification blueprint</a> is deprecated and goes silent once a target is set (issues <code>notify_blueprint_deprecated</code> and <code>notify_blueprint_suppressed</code>); see <a href="https://github.com/datamindzio/ha-energy-compass/blob/main/docs/guide.en.md#migrating-from-the-blueprint">migrating from the blueprint</a>.</p>
     </section>
 
     <section id="examples" aria-labelledby="examples-title">

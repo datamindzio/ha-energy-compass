@@ -308,6 +308,8 @@ przycisk na stronie integracji w <strong>Ustawienia → Urządzenia i usługi</s
   (zużyte wiersze znikają, zegary trybów biegną) bez uruchamiania solvera.</li>
 <li><strong>Ważność planu:</strong> nowy plan jest ważny do <code>generated_at + 2 × refresh_minutes</code>, nie dłużej niż
   pokrycie prognozy.</li>
+<li><strong>Awaria sieci:</strong> gdy sterownik Deye zgłasza <a href="#awaria-sieci">awarię sieci</a>, żadne liczenie nie rusza, cokolwiek je
+  wywołuje; gdy awaria się kończy, liczenie rusza od razu.</li>
 </ul>
 <h3 id="prognoza-zużycia">Prognoza zużycia</h3>
 <p>Prognoza z historii to średnia godzinowa z pełnych godzin ostatnich <code>lookback_days</code>, w lokalnej
@@ -1494,6 +1496,12 @@ witryny), bez restartu jego kolejki wysyłki. <strong>Rekonfiguracja</strong> za
 <td>Wstrzymaj zapisy do falownika</td>
 <td><code>on</code> / <code>off</code>; tylko przy silniku natywnym</td>
 </tr>
+<tr>
+<td><code>binary_sensor.&lt;name&gt;_grid_outage</code></td>
+<td>Grid outage</td>
+<td>Awaria sieci</td>
+<td><code>on</code> / <code>off</code> (problem); tylko przy włączonym sterowniku i znalezionej encji obecności sieci lub napięciu fazy (<a href="#awaria-sieci">Awaria sieci</a>)</td>
+</tr>
 </tbody>
 </table></section>
 <p>Cena zakupu i sprzedaży teraz to <code>buy_per_kwh</code> i <code>sell_per_kwh</code> z wiersza <code>plan.intervals</code>, którego
@@ -1529,8 +1537,8 @@ i <code>threshold_percent</code>.</p>
 <tr>
 <td><code>calculating</code></td>
 <td>Calculating / Obliczanie</td>
-<td>Obliczenie czeka w kolejce lub trwa. <code>reason</code> mówi dlaczego: <code>inputs_changed</code> (zmiana wejść), <code>interval_boundary</code> (termin odświeżenia okresowego), <code>inputs_recovered</code> (wejścia wróciły), <code>calculating</code> (worker wystartował), <code>soc_rebase_pending</code> (skok SOC w górę czeka na potwierdzenie).</td>
-<td>Poprzedni plan, dopóki pokrywa bieżący czas, z <code>refreshing: true</code>. Istniejący alert pozostaje włączony.</td>
+<td>Obliczenie czeka w kolejce lub trwa. <code>reason</code> mówi dlaczego: <code>inputs_changed</code> (zmiana wejść), <code>interval_boundary</code> (termin odświeżenia okresowego), <code>inputs_recovered</code> (wejścia wróciły), <code>calculating</code> (worker wystartował), <code>soc_rebase_pending</code> (skok SOC w górę czeka na potwierdzenie), <code>grid_outage</code> (sieci nie ma: żadne liczenie nie rusza, dopóki nie wróci, zobacz <a href="#awaria-sieci">Awaria sieci</a>), <code>grid_restored</code> (awaria się skończyła, liczenie rusza od razu).</td>
+<td>Poprzedni plan, dopóki pokrywa bieżący czas, z <code>refreshing: true</code> (<code>plan_retained: true</code> w czasie awarii). Istniejący alert pozostaje włączony; awaria żadnego nie zgłasza.</td>
 </tr>
 <tr>
 <td><code>invalid_input</code></td>
@@ -2983,6 +2991,14 @@ powiadomienia.</p>
 <td>okno <code>LIMIT</code> zaczyna się w czasie wyprzedzenia albo już trwa</td>
 </tr>
 <tr>
+<td><strong>Awaria sieci: dom działa na baterii</strong> / <em>Grid outage: the house runs on the battery</em></td>
+<td>sterownik Deye ogłosił <a href="#awaria-sieci">awarię sieci</a></td>
+</tr>
+<tr>
+<td><strong>Sieć wróciła</strong> / <em>Grid is back</em></td>
+<td>ta awaria się skończyła</td>
+</tr>
+<tr>
 <td><strong>Test Energy Compass</strong> / <em>Energy Compass test</em></td>
 <td>tylko akcja testowa</td>
 </tr>
@@ -2997,6 +3013,43 @@ czas). Epizod zaczyna się, gdy włączy się alert z <a href="#zegar-falownika"
 spadnie poniżej progu; przeładowanie wpisu w trakcie epizodu nie wysyła go ponownie. Używa tych samych celów, języka
 i zgody co wiadomości o oknach i czeka na koniec godzin ciszy, ale nie liczy się do dziennego limitu ani nie
 uruchamia przerwy, a wysyłana jest także przy włączonym alercie optymalizatora.</p>
+<h3 id="wiadomości-o-awarii-sieci">Wiadomości o awarii sieci</h3>
+<p>Przy włączonym sterowniku Deye ten sam nadawca informuje, gdy <a href="#awaria-sieci">awaria sieci</a> się zaczyna i gdy się
+kończy. Wymaga tylko włączonej opcji <strong>Włącz powiadomienia</strong> i ustawionego celu (nadawcą jest integracja): godziny ciszy, dzienny
+limit i przerwa go nie wstrzymują i nie liczą się do nich, a alert optymalizatora nie ma znaczenia. Treść zależy od
+<strong>Języka powiadomień</strong>:</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Wiadomość</th>
+<th>Treść</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>początek, z czasem pracy</td>
+<td><em>Sieć zanikła o 14:05. Bateria 82 %, wystarczy na ok. 6 godz. 10 min przy obecnym poborze 1.2 kW.</em></td>
+</tr>
+<tr>
+<td>początek, pobór nieznany lub zbyt mały</td>
+<td><em>Sieć zanikła o 14:05. Bateria 82 %.</em></td>
+</tr>
+<tr>
+<td>początek, bateria nieznana</td>
+<td><em>Sieć zanikła o 14:05.</em></td>
+</tr>
+<tr>
+<td>koniec</td>
+<td><em>Sieć wróciła o 14:40 po 35 min. Bateria 79 %.</em></td>
+</tr>
+</tbody>
+</table></section>
+<p>Czas pracy to użyteczna energia powyżej 10 % (tyle zostawia falownik) przy poborze bieżącego przedziału planu; pomijany,
+gdy pobór jest poniżej 0,05 kW albo pojemność lub SOC baterii są nieznane. Godzina to pierwszy odczyt braku sieci (nie
+koniec zwłoki), a wiadomość końcowa używa chwili powrotu sieci, nie końca oczekiwania na stabilność. Początek jest
+zgłaszany raz na awarię i zapamiętany w magazynie, więc restart go nie powtarza, a koniec tylko wtedy, gdy początek
+zgłoszono: awaria, która zaczęła się bez ustawionego celu, zostaje cicha. Początek, który nie znalazł celu, nie jest
+zużyty, więc zostanie wysłany, gdy dodasz cel w trakcie awarii.</p>
 <h3 id="akcja-testowa">Akcja testowa</h3>
 <p><code>energy_compass.send_test_notification</code> wysyła teraz jedną stałą wiadomość do każdego celu wpisu.
 Pomija warunki, godziny ciszy, przerwę, dzienny limit i zapamiętane okno i niczego z tego nie zmienia.
@@ -3315,7 +3368,7 @@ i godzinę w panelu falownika albo w aplikacji Deye; alert gaśnie po odczycie p
 interwału odpytywania. Jeśli <code>tou_problem</code> jest pusty, a okna nadal są przesunięte, porównaj atrybut <code>tou</code> z
 encjami programów urządzenia.</p>
 <h3 id="encje-sterownika">Encje sterownika</h3>
-<p>Trzy encje istnieją tylko przy włączonym sterowniku, czwarta przy silniku natywnym; należą do urządzenia
+<p>Cztery encje istnieją tylko przy włączonym sterowniku, piąta przy silniku natywnym; należą do urządzenia
 Energy Compass. <code>&lt;name&gt;</code> to tytuł wpisu.</p>
 <section class="table-scroll"><table>
 <thead>
@@ -3345,6 +3398,11 @@ Energy Compass. <code>&lt;name&gt;</code> to tytuł wpisu.</p>
 <td><code>deye_pause</code></td>
 <td><code>switch.&lt;name&gt;_pause_inverter_writes</code></td>
 <td><strong>Wstrzymaj zapisy do falownika</strong>; tylko przy silniku natywnym. Gdy włączony, sterownik liczy i publikuje decyzję, ale nie wysyła żadnego zapisu; <code>restore_pending</code> i niepewne rejestry pozostają bez zmian, a kod stanu to <code>paused</code>. Przebieg w toku zatrzymuje się przed kolejnym zapisem; wyłączenie przełącznika zleca przebieg. Tryb <code>Off</code> zachowuje znaczenie: gdy nie ma czego przywracać, przebieg zgłasza zwolnienie także przy pauzie, a gdy przywrócenie oczekuje, pauza wygrywa i przywrócenie czeka. Flaga jest zapisywana od razu, przeżywa przeładowanie i jest zerowana po przełączeniu silnika na <code>blueprint</code></td>
+</tr>
+<tr>
+<td><code>grid_outage</code></td>
+<td><code>binary_sensor.&lt;name&gt;_grid_outage</code> (problem)</td>
+<td><strong>Awaria sieci</strong>; oba silniki. Włączony, gdy sieci nie ma (<a href="#awaria-sieci">Awaria sieci</a>); niedostępny, dopóki nie da się odczytać encji obecności ani napięcia fazy. Atrybuty: <code>since</code> (kiedy ogłoszono awarię), <code>lost_at</code> (pierwszy odczyt braku sieci, zostaje po awarii), <code>restored_pending_since</code> (sieć wróciła i trwa oczekiwanie na stabilność), <code>source</code> (<code>entity</code> albo <code>voltage</code>) i <code>source_state</code> (co zgłosiło to źródło)</td>
 </tr>
 </tbody>
 </table></section>
@@ -3377,7 +3435,7 @@ sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.</p>
 </tr>
 <tr>
 <td><code>plan_reason</code></td>
-<td>czy zaakceptowany plan wolno wykonać: <code>ok</code>, <code>session</code>, <code>revoked</code> albo <code>sources</code> (niżej)</td>
+<td>czy zaakceptowany plan wolno wykonać: <code>ok</code>, <code>session</code>, <code>revoked</code>, <code>grid_outage</code> albo <code>sources</code> (niżej)</td>
 </tr>
 <tr>
 <td><code>status</code></td>
@@ -3420,6 +3478,10 @@ sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.</p>
 <td>kontrola zegara falownika (<a href="#zegar-falownika">Zegar falownika</a>): <code>clock_skew_seconds</code>, <code>clock_skew_minutes</code>, <code>inverter_clock</code>, <code>clock_read_at</code>, <code>over_threshold_since</code> i <code>alert</code>; puste (<code>null</code>), gdy urządzenie nie ma encji daty i godziny</td>
 </tr>
 <tr>
+<td><code>grid</code></td>
+<td>obserwacja sieci (<a href="#awaria-sieci">Awaria sieci</a>): <code>source</code>, <code>raw</code>, <code>present</code>, <code>active</code>, <code>since</code>, <code>lost_at</code>, <code>off_since</code>, <code>on_since</code> i <code>restored_at</code>; puste (<code>null</code>), gdy nie znaleziono ani encji obecności, ani napięcia fazy</td>
+</tr>
+<tr>
 <td><code>hardware</code></td>
 <td>falownik według sensora <code>device</code> Solarman: typ urządzenia, protokół, oprogramowanie płyty sterującej i komunikacyjnej, moc znamionowa, model z rejestru urządzeń oraz <code>verified</code> (para typ i protokół jest na <a href="#obsługiwany-sprzęt">liście przetestowanych</a>); bez numeru seryjnego</td>
 </tr>
@@ -3459,7 +3521,7 @@ działa przy każdym odświeżeniu Energy Compass. Wpis w dzienniku zdarzeń pod
 </tbody>
 </table></section>
 <h3 id="tryby">Tryby</h3>
-<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-ac9c2721d676-dark.svg"><img src="assets/diagrams/diagram-ac9c2721d676.svg" alt="Diagram 15" loading="lazy"></picture></figure>
+<figure class="diagram"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/diagram-f94a4325859e-dark.svg"><img src="assets/diagrams/diagram-f94a4325859e.svg" alt="Diagram 15" loading="lazy"></picture></figure>
 <p><strong>Auto</strong> zapisuje; <strong>Simulation</strong> oblicza wszystkie cele i zapisuje je w <code>runtime</code>, nie dotykając
 falownika; <strong>Off</strong> zwalnia sterowanie. Przejście z Auto do Off raz przywraca profil bazowy, potwierdza
 go i zostawia późniejsze ręczne nastawy. Wyłączenie samej <em>automatyzacji</em> pomija to przywrócenie.
@@ -3501,6 +3563,10 @@ porzucany przy zmianie sesji. Zapis opcji integracji zwykle nie przeładowuje wp
 <td>zaakceptowana generacja została unieważniona po błędzie; potrzebny nowy plan</td>
 </tr>
 <tr>
+<td><code>grid_outage</code></td>
+<td>sieci nie ma (tylko silnik natywny): zaakceptowany plan jest nadal dobry, a sterownik wykonuje zamiast niego <a href="#awaria-sieci">BACKUP</a>, dopóki sieć nie wróci na czas stabilizacji</td>
+</tr>
+<tr>
 <td><code>sources</code></td>
 <td>Alert jest włączony albo ostatnia publikacja nie jest ani zachowanym planem, ani zaakceptowanym planem <code>ready</code></td>
 </tr>
@@ -3515,6 +3581,10 @@ w ciągu 30 s, napięcie baterii 400–610 V i SOC 0–100 %. Każda automatyzac
 wyłączona i nieuruchomiona. Plan bez parametrów baterii blokuje sterowanie z powodem <code>plan: brak
 parametrów baterii (pojemność, sprawność) w planie</code>.</p>
 <h3 id="profile">Profile</h3>
+<p>Prąd baterii nigdy nie jest zapisywany jako 0 A: prąd ładowania lub rozładowania, który tabela podaje jako <code>0 A</code>, jest
+zapisywany jako <code>min_buffer_current</code> (domyślnie 1 A; <code>0</code> to ekspercka rezygnacja, zobacz <a href="#limity-i-wartości-domyślne-silnik-natywny">Limity i wartości domyślne</a>),
+więc bateria zostaje podłączona jako bufor domu. Profil bazowy zapisuje zamiast tego <code>relinquish_current</code>. Prąd
+ładowania z sieci nie jest limitem baterii i zostaje 0 A.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -3539,13 +3609,13 @@ parametrów baterii (pojemność, sprawność) w planie</code>.</p>
 </tr>
 <tr>
 <td><code>HOLD</code>, <code>CHARGE_PV</code>, <code>SELF_CONSUME</code> i ładujący <code>CURTAIL</code> przy SOC ≥ 100 % w trybie Voltage (<code>HOLD</code>: utrzymany do SOC ≤ 99 %)</td>
-<td>limit / 0 A w <code>HOLD</code> i <code>CURTAIL</code>, limit w pozostałych</td>
+<td>limit / limit w <code>CHARGE_PV</code> i <code>SELF_CONSUME</code>, limit / limit rozładowania w <code>HOLD</code> i <code>CURTAIL</code></td>
 <td>0 A</td>
 <td>wszystkie Disabled, SOC 10 %</td>
 </tr>
 <tr>
 <td><code>CHARGE_GRID</code></td>
-<td>limit / 0 A</td>
+<td>limit / limit</td>
 <td>planowana część sieciowa, ≤ <code>max_grid_current</code></td>
 <td>Grid w aktywnym programie, cel SOC z planu; w trybie Voltage napięcie TOU <code>voltage_grid_charge_ceiling</code></td>
 </tr>
@@ -3557,9 +3627,15 @@ parametrów baterii (pojemność, sprawność) w planie</code>.</p>
 </tr>
 <tr>
 <td><code>HOLD</code>, <code>CURTAIL</code> z <code>charge_kwh</code> do 0,000001 kWh</td>
-<td><code>hold_grid_current</code> / 0 A</td>
-<td><code>hold_grid_current</code></td>
-<td>Grid, cel SOC = końcowy SOC planu zaokrąglony w dół</td>
+<td>większa z wartości <code>hold_grid_current</code> i <code>min_buffer_current</code> / limit rozładowania</td>
+<td>0 A</td>
+<td>Grid, cel SOC = niższy z końcowego SOC planu (zaokrąglonego w dół) i bieżącego poziomu, zatrzaśnięty (niżej)</td>
+</tr>
+<tr>
+<td><code>BACKUP</code> (awaria sieci, silnik natywny)</td>
+<td>limit / limit</td>
+<td>0 A</td>
+<td>wszystkie Disabled, SOC 10 %, 49,6 (496 V), moc <code>max_power_w</code></td>
 </tr>
 <tr>
 <td>bazowy (zwolnienie, nieważny plan)</td>
@@ -3586,13 +3662,13 @@ poniżej tolerancji 0,05 kWh (eksport planowany z PV) jest osiągnięty od razu.
 <code>balance_grid_current</code>. W trybie <code>Voltage</code> falownik kończy ładowanie na napięciu pakietu, a źródło SOC oparte na
 liczniku może pokazać 100 % przed pełnym naładowaniem. Dlatego przy SOC ≥ 100 % w <code>HOLD</code>, <code>CHARGE_PV</code> i
 <code>SELF_CONSUME</code> sterownik zostawia zwykły limit prądu ładowania (z tą samą histerezą, więc bez zapisów 0 A
-wokół granicy) zamiast 0 A (lub <code>hold_grid_current</code> w <code>HOLD</code>). Prąd sieciowy wynosi 0 A, więc jedynym
-źródłem jest PV, rozładowanie wynika z wiersza planu (0 A w <code>HOLD</code>), nie jest zapisywany cel SOC ani
+wokół granicy) zamiast prądu bufora. Prąd sieciowy wynosi 0 A, więc jedynym
+źródłem jest PV, rozładowanie w <code>HOLD</code> to limit, nie jest zapisywany cel SOC ani
 zatrzaskiwany stan „osiągnięto”. W <code>HOLD</code> przełączenie ma histerezę: profil pełnego pakietu zaczyna się przy SOC ≥ 100 %
 i zostaje w kolejnych przebiegach <code>HOLD</code>, dopóki SOC nie spadnie do 99 % lub niżej, więc źródło SOC drgające między
 99,9 % a 100 % nie przepisuje profilu przy każdym przejściu. Każde przełączenie to jedna transakcja zapisu, która
 zaczyna się od ładowania 0 A, i przypada najwyżej jedna na punkt procentowy zmiany SOC; bez PV pakiet opada na
-poborze własnym falownika, a <code>HOLD</code> doładowuje go z sieci, w cyklu liczonym w godzinach. <code>CHARGE_PV</code> i <code>SELF_CONSUME</code>
+poborze własnym falownika, a <code>HOLD</code> trzyma go na poziomie, na którym jest, w cyklu liczonym w godzinach. <code>CHARGE_PV</code> i <code>SELF_CONSUME</code>
 nie potrzebują histerezy, bo poniżej 100 % zapisują te same wartości. <code>CHARGE_GRID</code> (zachowuje
 <code>voltage_grid_charge_ceiling</code> i prąd ładowania 0 A przy 100 %), trzymanie balansu i tryb <code>Capacity</code> działają jak dotąd. Wiersz <code>CURTAIL</code>, który ładuje (<code>charge_kwh</code> powyżej 0,000001 kWh: PV ponad to,
 co przepuszcza instalacja, jest większe niż pakiet przyjmuje przy mocy ładowania), działa jak <code>CHARGE_PV</code> bez
@@ -3606,8 +3682,15 @@ a nie powyżej. Sterownik nigdy nie kupuje w takim wierszu energii z sieci. Przy
 jako zero: plan publikuje przepływy solwera bez zaokrągleń, a wiersz <code>CURTAIL</code>, który nie ładuje, może tam nieść do około
 5e-13 kWh (około jeden taki wiersz na dwanaście w przeglądzie z ADR-0005), i nie wolno mu ładować. Każdy inny wiersz <code>CURTAIL</code>
 (<code>charge_kwh</code> do 0,000001 kWh) wykonuje profil <code>HOLD</code> z ostrzeżeniem <code>CURTAIL nieobsługiwany: zastosowano HOLD</code>,
-bo sterownik nie ogranicza PV: zapisuje <code>hold_grid_current</code> (domyślnie 1 A) jako prąd ładowania i prąd z sieci i trzyma
-planowany końcowy stan naładowania.</p>
+bo sterownik nie ogranicza PV: trzyma pakiet progiem TOU (niżej) i zapisuje większą z wartości <code>hold_grid_current</code>
+(domyślnie 1 A) i <code>min_buffer_current</code> jako prąd ładowania.</p>
+<p><code>HOLD</code> nie kupuje energii: program zostaje aktywny w kierunku Grid, prąd z sieci wynosi 0 A, a cel to niższy z końcowego
+SOC planu (zaokrąglonego w dół) i poziomu, na którym pakiet jest teraz. Próg powyżej bieżącego SOC kazałby falownikowi
+ładować z sieci, więc cel nigdy nie przekracza poziomu odczytanego na początku wstrzymania; ten poziom (SOC i napięcie)
+jest zatrzaskiwany w stanie pracy, dopóki stan to <code>HOLD</code> lub <code>CURTAIL</code>, więc cel nie wędruje razem z SOC i nie przepisuje
+encji TOU przy każdym procencie. Prąd rozładowania to limit rozładowania, więc bateria niesie dom, dopóki próg jest
+powyżej niej. <code>CHARGE_GRID</code> zapisuje też limit rozładowania zamiast 0 A, więc obciążenie domu, które pojawi się w trakcie
+ładowania z sieci, obsługuje bateria, a nie sieć.</p>
 <p>Sterowane są tylko tryby baterii z listy <code>commissioned_battery_modes</code>; każdy inny tryb (np. Voltage
 przed potwierdzeniem progów) zostaje na profilu bazowym. Przy dopuszczonym Voltage cel poza zakresem
 495–560 V jest odrzucany.</p>
@@ -3633,11 +3716,86 @@ wierszem balansowania) zapisuje zamiast tego jako napięcie TOU <code>voltage_gr
 gdy pakiet dojdzie do sufitu. Licznik ładowania Solarman odświeża się co ok. 10 minut, za wolno, by
 kończyć 15-minutowy przedział, więc nie jest używany. Sufit trzymaj na poziomie limitu napięcia ładowania
 BMS albo niżej.</p>
+<h3 id="awaria-sieci">Awaria sieci</h3>
+<p>Gdy sieci nie ma, jedynym źródłem domu jest bateria. Plan nie opisuje już niczego, co falownik może zrobić, a limit
+prądu baterii 0 A (tyle zapisuje blueprint w <code>HOLD</code>) odciąłby dom. Dlatego Energy Compass obserwuje sieć, przy
+włączonym sterowniku, na obu silnikach. Stan <code>BACKUP</code> i poniższe zapisy dotyczą tylko silnika natywnego.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Krok</th>
+<th>Co się dzieje</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Źródło</td>
+<td>opcja <code>grid_presence_entity</code>, a w jej braku binarny sensor <code>grid</code> urządzenia Solarman (włączony = sieć jest); gdy nie da się go odczytać, napięcia faz: <code>grid_voltage_entities</code>, a w ich braku <code>grid_l1_voltage</code>, <code>grid_l2_voltage</code> i <code>grid_l3_voltage</code>. Każda liczbowa faza poniżej 100 V to brak, dowolna od 100 V wzwyż to obecność. Nieczytelne źródło zachowuje ostatni znany stan</td>
+</tr>
+<tr>
+<td>Wejście</td>
+<td>sieci nie może być bez przerwy przez <code>outage_enter_seconds</code> (domyślnie 15 s, 5–600); binarny sensor <code>grid_outage</code> się włącza</td>
+</tr>
+<tr>
+<td>W trakcie</td>
+<td>sterownik wykonuje <code>BACKUP</code>; planista nie liczy (niżej); powiadomienie o tym informuje (zobacz <a href="#wiadomości-o-awarii-sieci">Wiadomości o awarii sieci</a>)</td>
+</tr>
+<tr>
+<td>Wyjście</td>
+<td>sieć musi być bez przerwy przez <code>outage_stable_minutes</code> (domyślnie 5 min, 1–120); przerwa zaczyna oczekiwanie od nowa. <code>restored_pending_since</code> na sensorze pokazuje, kiedy się zaczęło</td>
+</tr>
+<tr>
+<td>Potem</td>
+<td>zachowany plan jest wykonywany do czasu, aż planista opublikuje świeży, co robi od razu</td>
+</tr>
+</tbody>
+</table></section>
+<p><code>BACKUP</code> zapisuje oba prądy baterii na limitach, ładowanie z sieci 0 A, wszystkie sześć programów Disabled, SOC 10 %,
+49,6 (496 V) i moc <code>max_power_w</code>, niezależnie od planu (także bez planu). Kod stanu pracy to <code>ok</code>, <code>reason_code</code> to
+<code>grid_outage</code>, a <code>confirmed_mode</code> to <code>BACKUP</code>. Zapisy tworzą osobną fazę: najpierw limit rozładowania (bateria musi
+być wolna do zasilania domu), potem ładowania, potem ładowanie z sieci, potem selecty programów, na końcu reszta;
+żaden zapis nie obniża prądu, a zatrzymanie ochronne przed zmianą profilu pomija limity baterii, gdy sieci nie ma.
+Pozostałe zatrzymanie zapisuje <code>min_buffer_current</code>, nigdy 0 A.</p>
+<section class="table-scroll"><table>
+<thead>
+<tr>
+<th>Warunek</th>
+<th>Wynik</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tryb <code>Auto</code></td>
+<td><code>BACKUP</code> jest zapisywany</td>
+</tr>
+<tr>
+<td>Tryb <code>Simulation</code></td>
+<td><code>BACKUP</code> jest liczony i widoczny w stanie pracy, nic nie jest zapisywane</td>
+</tr>
+<tr>
+<td>Tryb <code>Off</code>, włączone wstrzymanie</td>
+<td>ręce precz, jak zawsze</td>
+</tr>
+<tr>
+<td>Nieświeża telemetria, sześć czasów startu TOU nie różnych i rosnących albo tryb baterii inny niż Capacity lub Voltage</td>
+<td>profil bazowy, jak bez awarii (<code>telemetry_stale</code>, <code>tou_times</code>, <code>operation_mode</code>)</td>
+</tr>
+</tbody>
+</table></section>
+<p>Planista też wstrzymuje pracę. Gdy sieci nie ma, nie rozpoczyna żadnego liczenia, cokolwiek się zmieni (wejścia,
+ustawienia, granica przedziału, restart): status to <code>calculating</code> z powodem <code>grid_outage</code>, ostatni plan zostaje na
+sensorze planu z <code>plan_retained</code>, a Alert nie jest zgłaszany. Gdy awaria się kończy, status zmienia się na <code>calculating</code>
+z powodem <code>grid_restored</code> i od razu rusza liczenie. Restart Home Assistant w środku awarii odtwarza obserwację
+z magazynu, więc też nie liczy.</p>
+<p>Obserwacja sieci jest zapisana w magazynie sterownika, więc restart zachowuje trwającą awarię. Dwa ograniczenia:
+przy wyłączonym sterowniku nikt sieci nie obserwuje, a <strong>blueprint zapisuje 0 A w <code>HOLD</code></strong>. Wycofanie do silnika
+blueprintowego (albo uruchomienie automatyzacji blueprintu) traci więc zabezpieczenie na czas awarii: nie ma <code>BACKUP</code>,
+a wstrzymany pakiet może być odcięty od domu. Binarny sensor, wstrzymanie planisty i powiadomienia zostają.</p>
 <h3 id="zapis-i-potwierdzenie">Zapis i potwierdzenie</h3>
 <p>Każda zmiana zapisuje jedną encję przez <code>number.set_value</code> lub <code>select.select_option</code>, a potem
 odczytuje rejestry 108–177 z urządzenia Solarman sterownika (<code>device_id</code>) i porównuje surową wartość. Rejestr bez potwierdzenia
-trafia do <code>runtime.uncertain</code> i jest ponawiany; zmiana kierunku lub celu najpierw zeruje prądy, potem
-ustawia progi, na końcu włącza kierunek.</p>
+trafia do <code>runtime.uncertain</code> i jest ponawiany; zmiana kierunku lub celu najpierw obniża prądy
+do <code>min_buffer_current</code>, potem ustawia progi, na końcu włącza kierunek.</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -3715,6 +3873,10 @@ Assistant (po polsku dla <code>pl</code>, w pozostałych przypadkach po angielsk
 <td>zaakceptowana generacja została unieważniona po błędzie</td>
 </tr>
 <tr>
+<td><code>grid_outage</code></td>
+<td>sieci nie ma, a stan to <code>BACKUP</code>: oba prądy na limitach, ładowanie z sieci 0 A, wszystkie programy Disabled</td>
+</tr>
+<tr>
 <td><code>plan_sources</code></td>
 <td>Alert jest włączony albo publikacja nie jest gotowa</td>
 </tr>
@@ -3790,7 +3952,7 @@ Assistant (po polsku dla <code>pl</code>, w pozostałych przypadkach po angielsk
 <ul>
 <li><code>reason</code> i <code>reason_code</code> sensora stanu pracy oraz jego atrybut <code>last_run</code> (nie jest zapisywany w historii): wyzwalacz,
   decyzja, planowane polecenia, każdy zapis z wynikiem (wysłany, nieudany, potwierdzony, zablokowany) i jak przebieg się zakończył;</li>
-<li>diagnostyka integracji (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code>, <code>clock</code> (<code>clock_skew_seconds</code>, <code>clock_read_at</code>, <code>inverter_clock</code>), <code>run_history</code>, ostatnie 50 przebiegów, oraz
+<li>diagnostyka integracji (<code>deye_controller</code>): <code>engine</code>, <code>hardware</code>, <code>clock</code> (<code>clock_skew_seconds</code>, <code>clock_read_at</code>, <code>inverter_clock</code>), <code>grid</code> (źródła, oba czasy, obserwacja i ostatnie 10 krawędzi awarii; z licznikiem planisty <code>grid_outage_hold</code> w <code>recalculation_cadence</code>), <code>run_history</code>, ostatnie 50 przebiegów, oraz
   <code>run_history_notable</code>, ostatnie 20, które zapisały lub zakończyły się kodem innym niż <code>ok</code> (oba w pamięci, więc
   restart je czyści);</li>
 <li>wpis w dzienniku zdarzeń sensora stanu pracy za każdym razem, gdy zmieni się kod stanu pracy lub potwierdzony tryb;</li>
@@ -3838,6 +4000,26 @@ a zmiana działa od następnego przebiegu bez przeładowania. W kodzie nie ma wp
 <td>1 A, 1 A, 2 A</td>
 </tr>
 <tr>
+<td><code>min_buffer_current</code></td>
+<td>1 A; najniższy prąd ładowania lub rozładowania zapisywany poza profilem bazowym; <code>0</code> znów dopuszcza 0 A (ekspercka rezygnacja)</td>
+</tr>
+<tr>
+<td><code>grid_presence_entity</code></td>
+<td>binarny sensor <code>grid</code> urządzenia Solarman (włączony = sieć jest)</td>
+</tr>
+<tr>
+<td><code>grid_voltage_entities</code></td>
+<td>sensory <code>grid_l1_voltage</code>, <code>grid_l2_voltage</code> i <code>grid_l3_voltage</code> urządzenia</td>
+</tr>
+<tr>
+<td><code>outage_enter_seconds</code></td>
+<td>15 s (5–600): jak długo sieci nie może być, by ogłosić awarię</td>
+</tr>
+<tr>
+<td><code>outage_stable_minutes</code></td>
+<td>5 min (1–120): jak długo musi być, by awaria się skończyła</td>
+</tr>
+<tr>
 <td><code>voltage_grid_charge_ceiling</code></td>
 <td>55,2 V</td>
 </tr>
@@ -3865,7 +4047,9 @@ a zmiana działa od następnego przebiegu bez przeładowania. W kodzie nie ma wp
 </table></section>
 <p>Gdy moc lub któryś limit prądu wyszedłby zerowy (na przykład moc ładowania 0 w ustawieniach baterii), krok opcji
 go nie zapisze: pokaże grupę i poprosi o wpisanie limitów. Włączenie silnika natywnego wymaga też liczbowego odczytu
-napięcia baterii, bo po nim odróżnia pakiet od 48 V.</p>
+napięcia baterii, bo po nim odróżnia pakiet od 48 V. <code>min_buffer_current</code> musi leżeć między 0 a mniejszą z wartości
+<code>max_current</code> i <code>relinquish_current</code> (<code>controller_min_buffer_range</code>), a czasy awarii w swoich zakresach
+(<code>controller_outage_range</code>).</p>
 <h3 id="wejścia">Wejścia</h3>
 <p>To wejścia przestarzałego blueprintu, z jego własnymi wartościami domyślnymi; silnik natywny bierze wartości z
 powyższej tabeli.</p>
@@ -4023,6 +4207,9 @@ Wczytanie działa, gdy silnikiem nadal jest <code>blueprint</code>.</p>
 </ol>
 <p>Wycofanie: wybierz <code>Off</code>, poczekaj na <code>restored</code>, ustaw silnik na <code>blueprint</code>, włącz automatyzację, potem wybierz tryb.
 Flaga wstrzymania jest zerowana, gdy silnik wraca na <code>blueprint</code>.</p>
+<p>Ostrzeżenie: blueprint (zamrożony na 0.1.38) zapisuje 0 A jako limit prądu baterii w <code>HOLD</code> i nie ma stanu awarii
+sieci, więc wycofanie traci <a href="#awaria-sieci">zabezpieczenie na czas awarii sieci</a>: w trakcie awarii bateria może zostać
+odłączona od domu. Na instalacji, która może stracić sieć, zostań przy silniku natywnym.</p>
 <h3 id="przykładowe-dashboardy">Przykładowe dashboardy</h3>
 <p>Generuje je <code>tools/dashboards/build.py</code> z zastępczymi identyfikatorami encji:</p>
 <section class="table-scroll"><table>

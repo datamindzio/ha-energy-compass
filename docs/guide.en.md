@@ -213,6 +213,8 @@ flowchart TD
   dropped, mode clocks tick) without a solve.
 - **Plan lifetime:** a new plan is valid until `generated_at + 2 × refresh_minutes`, capped by
   forecast coverage.
+- **Grid outage:** while the Deye controller reports a [grid outage](#grid-outage) no solve starts, whatever
+  triggers it; when the outage ends a solve starts at once.
 
 ### Load forecast
 
@@ -889,6 +891,7 @@ reloads.
 | `select.<name>_deye_mode` | Deye mode | Tryb sterownika Deye | `Off` / `Simulation` / `Auto`; only with the controller enabled |
 | `sensor.<name>_deye_controller_runtime` | Deye controller runtime | Stan pracy sterownika Deye | runtime code; only with the controller enabled |
 | `switch.<name>_deye_pause` | Pause inverter writes | Wstrzymaj zapisy do falownika | `on` / `off`; only with the native engine |
+| `binary_sensor.<name>_grid_outage` | Grid outage | Awaria sieci | `on` / `off` (problem); only with the controller enabled and a grid presence entity or phase voltage found ([Grid outage](#grid-outage)) |
 
 Buy and sell price now read `buy_per_kwh` and `sell_per_kwh` of the `plan.intervals` row whose
 [start, end) contains the current time, whatever the price source (fixed, entity, forecast such as RCE or
@@ -948,7 +951,7 @@ stateDiagram-v2
 | State | EN / PL label | When it occurs | What stays published |
 | --- | --- | --- | --- |
 | `ready` | Ready / Gotowy | The last calculation produced a validated base plan and it was published: proven optimal, or the best solution found within `solve_time_limit_s` (`time_limited: true`). | The new plan. `ready` does not guarantee complete reference coverage — check `reason`. |
-| `calculating` | Calculating / Obliczanie | A calculation is queued or running. `reason` says why: `inputs_changed`, `interval_boundary` (periodic refresh due), `inputs_recovered`, `calculating` (worker started), `soc_rebase_pending` (upward SOC jump awaiting confirmation). | The previous plan while it covers now, with `refreshing: true`. An existing alert stays on. |
+| `calculating` | Calculating / Obliczanie | A calculation is queued or running. `reason` says why: `inputs_changed`, `interval_boundary` (periodic refresh due), `inputs_recovered`, `calculating` (worker started), `soc_rebase_pending` (upward SOC jump awaiting confirmation), `grid_outage` (the grid is out: no solve starts until it is back, see [Grid outage](#grid-outage)), `grid_restored` (the outage ended, a solve starts at once). | The previous plan while it covers now, with `refreshing: true` (`plan_retained: true` during an outage). An existing alert stays on; an outage raises none. |
 | `invalid_input` | Invalid input / Niepoprawne dane | A required source is missing, unavailable, stale, in wrong units, out of range, SOC disagrees with BMS or jumped, daily counters are from the previous day, settings are invalid; also `no_current_interval` and `expired_inputs` when the retained plan no longer covers now. | The previous plan while it covers now (`plan_retained: true`); otherwise nothing. |
 | `timeout` | Timeout / Przekroczony czas | The base solve reached `solve_time_limit_s` (default 10 s) without any feasible solution, or the worker exceeded `total_time_limit_s + 1` (reason `worker_deadline`). | Previous plan within coverage. |
 | `infeasible` | Infeasible / Brak rozwiązania | The solver proved no plan satisfies every hard constraint (e.g. SOC reserve, terminal rule, a carried mode commitment, Sell only PV deficit, grid limits). | Previous plan within coverage. |
@@ -1993,6 +1996,8 @@ flowchart TD
 | **Use the cheap energy** / *Wykorzystaj tanią energię* | a favorable window is running and the whole rest of it is `BOOST` |
 | **A good time for household appliances** / *Dobry moment na domowe urządzenia* | a favorable window is running, not all `BOOST` |
 | **Plan heavy use for later** / *Zaplanuj większe zużycie na później* | a `LIMIT` window starts within the lead time, or is already running |
+| **Grid outage: the house runs on the battery** / *Awaria sieci: dom działa na baterii* | the Deye controller declared a [grid outage](#grid-outage) |
+| **Grid is back** / *Sieć wróciła* | that outage ended |
 | **Energy Compass test** / *Test Energy Compass* | only the test action |
 
 The message names the window's local times (`HH:MM–HH:MM`, or `dd.mm HH:MM–dd.mm HH:MM` when the
@@ -2006,6 +2011,27 @@ time). An episode starts when the alert of the [Inverter clock](#inverter-clock)
 skew is back under the threshold; a reload of the entry in the middle of one does not send it again. It uses
 the same targets, language and opt-in as window messages and waits for the end of the quiet hours, but it
 neither counts against the daily cap nor starts the cooldown, and it is sent while the optimizer alert is on.
+
+### Outage messages
+
+With the Deye controller on, the same sender tells you when a [grid outage](#grid-outage) starts and when it ends. It
+needs only that **Notify enabled** is on and a target is set (the integration is the sender): quiet hours, the daily
+cap and the cooldown do not hold it back and it does not count against them, and the optimizer alert does not
+matter. The text follows **Notification language**:
+
+| Message | Text |
+| --- | --- |
+| start, with runtime | *Grid lost at 14:05. Battery 82 %, about 6 h 10 min at the current 1.2 kW.* |
+| start, load unknown or too low | *Grid lost at 14:05. Battery 82 %.* |
+| start, battery unknown | *Grid lost at 14:05.* |
+| end | *Grid back at 14:40 after 35 min. Battery 79 %.* |
+
+The runtime is the usable energy above 10 % (the inverter keeps that much) at the load of the plan's current interval;
+it is left out when the load is under 0.05 kW or the battery capacity or SOC is unknown. The time is the first absent
+reading (not the end of the debounce), and the end message uses the moment the grid came back, not the end of the stable
+wait. The start is told once per outage, remembered in the store so a restart does not repeat it, and the end only
+when the start was told: an outage that began while no target was set stays silent. A start that found no target is
+not spent, so it is sent when you add one during the outage.
 
 ### Test action
 
@@ -2245,7 +2271,7 @@ off, compare the `tou` attribute with the program entities of the device.
 
 ### Controller entities
 
-Three entities exist only while the controller is enabled, a fourth with the native engine; they sit on
+Four entities exist only while the controller is enabled, a fifth with the native engine; they sit on
 the Energy Compass device. `<name>` is the entry title.
 
 | Key | Entity | Role |
@@ -2254,6 +2280,7 @@ the Energy Compass device. `<name>` is the entry title.
 | `deye_mode` | `select.<name>_deye_mode` | **Off** / **Simulation** / **Auto**; the only switch you operate; the options are not translated |
 | `deye_runtime` | `sensor.<name>_deye_controller_runtime` | runtime code (below); attribute `runtime` holds state, reason, confirmed values and uncertain registers |
 | `deye_pause` | `switch.<name>_pause_inverter_writes` | **Pause inverter writes**; only with the native engine. While on, the controller computes and publishes the decision but sends no write; `restore_pending` and the uncertain registers stay as they are and the runtime code is `paused`. A run in flight stops before its next write; turning the switch off requests a run. Mode `Off` keeps its meaning: with nothing to restore the run reports released even when paused, and with a restore pending the pause wins and the restore waits. The flag is saved at once, survives a reload and is cleared when the engine is switched to `blueprint` |
+| `grid_outage` | `binary_sensor.<name>_grid_outage` (problem) | **Grid outage**; either engine. On while the grid is out ([Grid outage](#grid-outage)); unavailable until a presence entity or a phase voltage is read. Attributes: `since` (when the outage was declared), `lost_at` (the first absent reading, kept after the outage), `restored_pending_since` (the grid is back and the stable-presence wait has begun), `source` (`entity` or `voltage`) and `source_state` (what that source reported) |
 
 The IDs depend on the entry name and the language the entities were created in (a Polish instance gets
 names such as `…_sterownik_deye`); read them from the device page. The blueprint engine needs only the controller
@@ -2265,7 +2292,7 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.
 | `mode`, `mode_entity` | the mode (mirrored from the select, so a change runs the blueprint) and the select's entity ID |
 | `restore_pending` | on from the first write until the base profile is confirmed again |
 | `session` | session stamp of this Home Assistant run (a float timestamp) |
-| `plan_reason` | whether the accepted plan may be executed: `ok`, `session`, `revoked` or `sources` (below) |
+| `plan_reason` | whether the accepted plan may be executed: `ok`, `session`, `revoked`, `grid_outage` or `sources` (below) |
 | `status` | optimizer status of the latest publication |
 | `retained` | the latest publication is a retained plan (status `calculating`) |
 | `generation`, `valid_until`, `coverage_end`, `accepted_at` | the accepted plan: `generated_at`, original deadline, end of the last interval and acceptance time |
@@ -2276,6 +2303,7 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.
 | `accepted` | the accepted plan snapshot (rows, dispatch policy, battery); not recorded |
 | `tou` | state of the 30 TOU entities; a change re-runs the blueprint; not recorded |
 | `clock` | the inverter clock check ([Inverter clock](#inverter-clock)): `clock_skew_seconds`, `clock_skew_minutes`, `inverter_clock`, `clock_read_at`, `over_threshold_since` and `alert`; empty (`null`) when the device has no date and time entity |
+| `grid` | the grid watch ([Grid outage](#grid-outage)): `source`, `raw`, `present`, `active`, `since`, `lost_at`, `off_since`, `on_since` and `restored_at`; empty (`null`) when neither a presence entity nor a phase voltage is found |
 | `hardware` | the inverter as the Solarman `device` sensor reports it: device type, protocol, control and communication board firmware, rated power, registry model and `verified` (the type and protocol pair is on the [tested list](#supported-hardware)); no serial number |
 
 The runtime sensor carries the recorded attributes `restore_pending`, `reason`, `state`, `requested_mode`,
@@ -2314,7 +2342,9 @@ flowchart TD
     P -- yes --> W{old writers off and idle?}
     M -- Auto --> W
     W -- no --> BLK[takeover blocked<br/>no writes]
-    W -- yes --> V{Auto and plan<br/>accepted and valid?}
+    W -- yes --> O{Auto, grid out, telemetry<br/>and TOU times sound?}
+    O -- yes --> BK[write BACKUP: both currents at the cap,<br/>programs off, runtime ok]
+    O -- no --> V{Auto and plan<br/>accepted and valid?}
     V -- no --> BASE[write and confirm the base profile<br/>runtime restored]
     V -- yes --> APPLY[write the planned profile,<br/>read back every register<br/>runtime ok]
 ```
@@ -2352,6 +2382,7 @@ cases ([Saving options](#saving-options)), and when it does, the accepted plan i
 | --- | --- |
 | `session` | nothing is accepted in this session yet (after a restart or before the first plan) |
 | `revoked` | the accepted generation was revoked after an error; a new plan is required |
+| `grid_outage` | the grid is out (native engine only): the accepted plan is still good, and the controller runs [BACKUP](#grid-outage) instead of it until the grid has been back for the stable time |
 | `sources` | an Alert is on, or the latest publication is neither a retained plan nor the accepted ready plan |
 | `ok` | the accepted plan may be executed |
 
@@ -2362,14 +2393,20 @@ baterii (pojemność, sprawność) w planie`.
 
 ### Profiles
 
+A battery current is never written as 0 A: a charge or discharge current the table lists as `0 A` is written as
+`min_buffer_current` (1 A by default; `0` is the expert opt-out, see [Limits and defaults](#limits-and-defaults-native-engine)),
+so the battery stays connected as the buffer of the house. The base profile writes `relinquish_current` instead. The
+grid charge current is not a battery limit and stays 0 A.
+
 | Plan state | Charge / discharge current | Grid charge current | TOU direction, target |
 | --- | --- | --- | --- |
 | `CHARGE_PV`, `SELF_CONSUME` | cap / cap | 0 A | all Disabled, SOC 10 % |
 | `CURTAIL` with `charge_kwh` above 0.000001 kWh | planned, from `hold_grid_current` to the cap / 0 A | 0 A | all Disabled, SOC 10 % |
-| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` and a charging `CURTAIL` at SOC ≥ 100 % in Voltage mode (`HOLD`: kept until SOC ≤ 99 %) | cap / 0 A in `HOLD` and `CURTAIL`, cap otherwise | 0 A | all Disabled, SOC 10 % |
-| `CHARGE_GRID` | cap / 0 A | planned grid share, ≤ `max_grid_current` | Grid on the active program, target SOC from the plan; in Voltage mode TOU voltage `voltage_grid_charge_ceiling` |
+| `HOLD`, `CHARGE_PV`, `SELF_CONSUME` and a charging `CURTAIL` at SOC ≥ 100 % in Voltage mode (`HOLD`: kept until SOC ≤ 99 %) | cap / cap in `CHARGE_PV` and `SELF_CONSUME`, cap / discharge cap in `HOLD` and `CURTAIL` | 0 A | all Disabled, SOC 10 % |
+| `CHARGE_GRID` | cap / cap | planned grid share, ≤ `max_grid_current` | Grid on the active program, target SOC from the plan; in Voltage mode TOU voltage `voltage_grid_charge_ceiling` |
 | `DISCHARGE_GRID` | 0 A / planned, ≤ cap; after the target is reached `reached_discharge_current`, ≤ cap | 0 A | Sell on the active program, target SOC from the plan, power = planned, ≤ `max_power_w`; Disabled after the target is reached |
-| `HOLD`, `CURTAIL` with `charge_kwh` up to 0.000001 kWh | `hold_grid_current` / 0 A | `hold_grid_current` | Grid, target SOC = planned end SOC rounded down |
+| `HOLD`, `CURTAIL` with `charge_kwh` up to 0.000001 kWh | the larger of `hold_grid_current` and `min_buffer_current` / discharge cap | 0 A | Grid, target SOC = the lower of the planned end SOC (rounded down) and the live level, latched (below) |
+| `BACKUP` (grid outage, native engine) | cap / cap | 0 A | all Disabled, SOC 10 %, 49.6 (496 V), power `max_power_w` |
 | base (release, invalid plan) | `relinquish_current` / `relinquish_current` | 0 A | all Disabled, SOC 10 %, 49.6 (496 V), power `max_power_w` |
 
 The cap is `min(max_current, max_power_w / V)` for charging and `min(max_current, max_power_w × eta_discharge / V)`
@@ -2389,13 +2426,13 @@ at once. In an LFP balance row
 current is at least `balance_grid_current`. In `Voltage` mode the inverter ends charging on pack voltage, and a
 counter-based SOC source can read 100 % before the pack is full. So at SOC ≥ 100 % in `HOLD`, `CHARGE_PV` and
 `SELF_CONSUME` the controller keeps the normal charge current cap (with the same hysteresis, so there are no 0 A
-rewrites around the ceiling) instead of 0 A (or the `hold_grid_current` of `HOLD`). The grid current is 0 A,
-so PV is the only source, discharge follows the plan row (0 A in `HOLD`), and no SOC target is written and
+rewrites around the ceiling) instead of the buffer current. The grid current is 0 A,
+so PV is the only source, discharge is the cap in `HOLD`, and no SOC target is written and
 no "reached" state is latched. In `HOLD` the switch has hysteresis: the full-pack profile starts at SOC ≥ 100 % and
 stays through the following `HOLD` runs until SOC is 99 % or lower, so an SOC source that dithers between 99.9 %
 and 100 % does not rewrite the profile on every crossing. Each switch is one write transaction that begins with
 charge 0 A, and there is at most one per percentage point of SOC movement; without PV the pack drifts down on the
-inverter's own draw and `HOLD` tops it up from the grid, a cycle of hours. `CHARGE_PV` and `SELF_CONSUME` need no
+inverter's own draw and `HOLD` holds it at the level it is at, a cycle of hours. `CHARGE_PV` and `SELF_CONSUME` need no
 hysteresis, because below 100 % they write the same values. `CHARGE_GRID` (it keeps `voltage_grid_charge_ceiling`
 and its 0 A charge current at 100 %), the balance hold and `Capacity` mode behave as before. A `CURTAIL` row that charges (`charge_kwh` above 0.000001 kWh: the PV
 above what the site passes is more than the pack takes at the charge power) runs like `CHARGE_PV` without discharge, at the
@@ -2409,8 +2446,16 @@ mode, the cap in `Voltage` mode) and it raises no warning. The threshold is the 
 as zero: the plan publishes the solver's flows unrounded, and a `CURTAIL` row that does not charge can carry up to about
 5e-13 kWh there (about one such row in twelve in the sweep of ADR-0005), which must not charge. Any other `CURTAIL` row
 (`charge_kwh` up to 0.000001 kWh) runs the `HOLD` profile with the warning `CURTAIL is not supported: HOLD applied`, because
-the controller cannot limit PV: it writes `hold_grid_current` (1 A by default) as the charge current and the grid current
-and holds the planned end state of charge.
+the controller cannot limit PV: it holds the pack by the TOU floor (below) and writes the larger of `hold_grid_current`
+(1 A by default) and `min_buffer_current` as the charge current.
+
+`HOLD` does not buy energy: the program stays active in direction Grid, the grid current is 0 A and the target is the
+lower of the planned end SOC (rounded down) and the level the pack has now. A floor above the live SOC would make the
+inverter charge from the grid, so the target never exceeds the level read when the hold began; that level (SOC and
+voltage) is latched in the runtime while the state stays `HOLD` or `CURTAIL`, so the target does not creep with the SOC
+and does not rewrite the TOU entities on every percent. The discharge current is the discharge cap, so the battery
+carries the house while the floor is above it. `CHARGE_GRID` writes the discharge cap too, instead of 0 A, so a house
+load that appears during a grid charge is served by the battery and not pushed to the grid.
 
 Only battery modes listed in `commissioned_battery_modes` are controlled; any other mode (for example
 Voltage before its thresholds were proven) keeps the base profile. With Voltage allowed, a target
@@ -2440,12 +2485,52 @@ grid current sets how much each interval charges, and the interval is reached on
 the ceiling. The Solarman charge counter refreshes about every 10 minutes, too slowly to end a 15-minute
 interval, so it is not used. Keep the ceiling at or below the BMS charge voltage limit.
 
+### Grid outage
+
+When the grid is out the battery is the only source of the house. The plan no longer describes
+anything the inverter can do, and a battery limit of 0 A (what the blueprint writes in `HOLD`) would cut the
+house off. Energy Compass therefore watches the grid, with the controller enabled, on both engines. The
+`BACKUP` state and the writes below are native-engine only.
+
+| Step | What happens |
+| --- | --- |
+| Source | the `grid_presence_entity` option, else the device's Solarman `grid` binary sensor (on = present); when it is not readable, the phase voltages: `grid_voltage_entities`, else `grid_l1_voltage`, `grid_l2_voltage` and `grid_l3_voltage`. Every numeric phase under 100 V means absent, any phase at 100 V or more present. An unreadable source keeps the last known state |
+| Enter | the grid must be absent without a break for `outage_enter_seconds` (15 s by default, 5–600); the binary sensor `grid_outage` turns on |
+| During | the controller runs `BACKUP`; the planner does not solve (below); the notification says so (see [Outage messages](#outage-messages)) |
+| Leave | the grid must be present without a break for `outage_stable_minutes` (5 min by default, 1–120); a break starts the wait again. `restored_pending_since` on the sensor shows when it began |
+| After | the retained plan is followed until the planner has published a fresh one, which it does at once |
+
+`BACKUP` writes both battery currents at their caps, grid charging at 0 A, all six programs Disabled, SOC 10 %,
+49.6 (496 V) and the power `max_power_w`, whatever the plan says (even with no plan). The runtime code is `ok`,
+`reason_code` is `grid_outage` and `confirmed_mode` is `BACKUP`. The writes are their own phase: the discharge
+limit first (the battery must be free to feed the house), then charge, then grid charging, then the program selects,
+then the rest; no write lowers a current, and the protective stop before a profile change skips the battery limits
+while the grid is out. The stop that remains writes `min_buffer_current`, never 0 A.
+
+| Condition | Result |
+| --- | --- |
+| Mode `Auto` | `BACKUP` is written |
+| Mode `Simulation` | `BACKUP` is computed and shown in the runtime, nothing is written |
+| Mode `Off`, the pause switch on | hands off, as always |
+| Telemetry stale, the six TOU start times not different and rising, or a battery mode other than Capacity or Voltage | the base profile, as without an outage (`telemetry_stale`, `tou_times`, `operation_mode`) |
+
+The planner holds too. While the grid is out it starts no solve, whatever changes (inputs, settings, the interval
+boundary, a restart): the status is `calculating` with the reason `grid_outage`, the last plan stays on the plan
+sensor with `plan_retained` set, and no Alert is raised. When the outage ends the status changes to `calculating`
+with the reason `grid_restored` and a solve starts at once. A Home Assistant restart in the middle of an outage
+restores the watch from the store, so it does not solve either.
+
+The grid watch is saved in the controller store, so a restart keeps an outage that is running. Two limits: with the
+controller disabled nothing watches the grid, and the **blueprint writes 0 A in `HOLD`**. Rolling back to the blueprint
+engine (or running the blueprint automation) therefore loses the outage safety: no `BACKUP`, and a held pack can be
+cut off from the house. The binary sensor, the planner hold and the notifications stay.
+
 ### Writes and confirmation
 
 Each change writes one entity through `number.set_value` or `select.select_option`, then reads holding
 registers 108–177 from the controller's Solarman device (`device_id`) and compares the raw value. A register that does not confirm
-is listed in `runtime.uncertain` and retried; a direction or target change first zeroes the currents,
-then sets thresholds, then enables the direction.
+is listed in `runtime.uncertain` and retried; a direction or target change first lowers the currents
+to `min_buffer_current`, then sets thresholds, then enables the direction.
 
 | Runtime code | Meaning |
 | --- | --- |
@@ -2469,6 +2554,7 @@ the Home Assistant language (Polish for `pl`, English otherwise); the blueprint 
 | `tou_times` | the six TOU start times are not different and rising |
 | `session_wait` | no plan accepted yet in this session |
 | `plan_revoked` | the accepted generation was revoked after an error |
+| `grid_outage` | the grid is out and the state is `BACKUP`: both currents at their caps, grid charge 0 A, every program Disabled |
 | `plan_sources` | an Alert is on or the publication is not ready |
 | `battery_params` | the accepted plan has no battery parameters |
 | `plan_expired` | the original validity ended or no interval covers now |
@@ -2495,7 +2581,7 @@ The blueprint left an automation trace per run; the native engine replaces it wi
 
 - the runtime sensor's `reason` and `reason_code`, and its attribute `last_run` (not recorded): trigger,
   decision, planned commands, each write with its outcome (sent, failed, confirmed, blocked) and how the run ended;
-- the integration's diagnostics (`deye_controller`): `engine`, `hardware`, `clock` (`clock_skew_seconds`, `clock_read_at`, `inverter_clock`), `run_history`, the last 50 runs, and
+- the integration's diagnostics (`deye_controller`): `engine`, `hardware`, `clock` (`clock_skew_seconds`, `clock_read_at`, `inverter_clock`), `grid` (the sources, both times, the watch and the last 10 outage edges; with the planner's `grid_outage_hold` count under `recalculation_cadence`), `run_history`, the last 50 runs, and
   `run_history_notable`, the last 20 that wrote or ended with a code other than `ok` (both kept in memory, so a restart
   empties them);
 - a logbook entry on the runtime sensor whenever the runtime code or the confirmed mode changes;
@@ -2528,6 +2614,11 @@ and a change applies on the next run without a reload. No household value is bui
 | `max_current`, `relinquish_current` | the `max` attribute of the charge-current entity, capped at `max_power_w` / 400 V |
 | `max_grid_current` | the `max` attribute of the grid-current entity, capped the same way |
 | `hold_grid_current`, `reached_discharge_current`, `balance_grid_current` | 1 A, 1 A, 2 A |
+| `min_buffer_current` | 1 A; the lowest charge or discharge current ever written outside the base profile; `0` allows 0 A again (expert opt-out) |
+| `grid_presence_entity` | the device's Solarman `grid` binary sensor (on = grid present) |
+| `grid_voltage_entities` | the device's `grid_l1_voltage`, `grid_l2_voltage` and `grid_l3_voltage` sensors |
+| `outage_enter_seconds` | 15 s (5–600): how long the grid must be absent before an outage is declared |
+| `outage_stable_minutes` | 5 min (1–120): how long it must be back before the outage ends |
 | `voltage_grid_charge_ceiling` | 55.2 V |
 | `commissioned_battery_modes` | Capacity |
 | `old_writers` | none |
@@ -2538,7 +2629,8 @@ and a change applies on the next run without a reload. No household value is bui
 When the power or a current limit would come out as zero (for example a charge power of 0 in the battery
 settings), the options step does not store it: it shows the group and asks you to enter the limits.
 Enabling the native engine also needs a numeric battery voltage reading, because the pack is told from a
-48 V one by it.
+48 V one by it. `min_buffer_current` must lie between 0 and the smaller of `max_current` and `relinquish_current`
+(`controller_min_buffer_range`), and the outage times in their ranges (`controller_outage_range`).
 
 ### Inputs
 
@@ -2632,6 +2724,10 @@ nothing.
 
 Rollback: select `Off`, wait for `restored`, set the engine to `blueprint`, turn the automation on, then
 choose the mode. A paused flag is cleared when the engine returns to `blueprint`.
+
+Warning: the blueprint (frozen at 0.1.38) writes 0 A as the battery current limit in `HOLD` and has no outage
+state, so a rollback loses the [grid outage safety](#grid-outage): during an outage the battery may be disconnected
+from the house. Stay on the native engine on a site that can lose the grid.
 
 ### Dashboard examples
 

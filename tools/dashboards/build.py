@@ -495,7 +495,7 @@ PANEL_TEXT = {
         "l_discharge": "Discharge limit",
         "l_grid": "Grid charge limit",
         "l_tou": "Next TOU change",
-        "states": "{'CHARGE_PV':'Charging from PV','CHARGE_GRID':'Charging from grid','DISCHARGE_GRID':'Selling to grid','SELF_CONSUME':'Powering the house','HOLD':'Holding','CURTAIL':'Holding (PV curtailment)','BASE':'Base mode'}",
+        "states": "{'CHARGE_PV':'Charging from PV','CHARGE_GRID':'Charging from grid','DISCHARGE_GRID':'Selling to grid','SELF_CONSUME':'Powering the house','HOLD':'Holding','CURTAIL':'Holding (PV curtailment)','BASE':'Base mode','BACKUP':'Grid outage: battery backup'}",
         "modes": "{'Auto':'Automatic','Simulation':'Simulation','Off':'Off'}",
         "levels": "{'BOOST':'🟢 Use more','CHEAP':'🟢 Cheap use','NORMAL':'⚪ Normal use','LIMIT':'🔴 Limit use'}",
         "levels_lc": "{'BOOST':'use more','CHEAP':'cheap use','NORMAL':'normal use','LIMIT':'limit use'}",
@@ -585,7 +585,7 @@ PANEL_TEXT = {
         "l_discharge": "Limit rozładowania",
         "l_grid": "Limit ładowania z sieci",
         "l_tou": "Następna zmiana TOU",
-        "states": "{'CHARGE_PV':'Ładowanie z PV','CHARGE_GRID':'Ładowanie z sieci','DISCHARGE_GRID':'Sprzedaż do sieci','SELF_CONSUME':'Zasilanie domu','HOLD':'Podtrzymanie','CURTAIL':'Podtrzymanie (ograniczenie PV)','BASE':'Tryb bazowy'}",
+        "states": "{'CHARGE_PV':'Ładowanie z PV','CHARGE_GRID':'Ładowanie z sieci','DISCHARGE_GRID':'Sprzedaż do sieci','SELF_CONSUME':'Zasilanie domu','HOLD':'Podtrzymanie','CURTAIL':'Podtrzymanie (ograniczenie PV)','BASE':'Tryb bazowy','BACKUP':'Awaria sieci: zasilanie z baterii'}",
         "modes": "{'Auto':'Automatyczne','Simulation':'Symulacja','Off':'Wyłączone'}",
         "levels": "{'BOOST':'🟢 Zwiększ zużycie','CHEAP':'🟢 Tanie zużycie','NORMAL':'⚪ Zwykłe zużycie','LIMIT':'🔴 Ogranicz zużycie'}",
         "levels_lc": "{'BOOST':'zwiększ zużycie','CHEAP':'tanie zużycie','NORMAL':'zwykłe zużycie','LIMIT':'ogranicz zużycie'}",
@@ -648,7 +648,7 @@ PANEL_TEXT = {
         "currency": "zł",
     },
 }
-COLORS = "{'CHARGE_PV':'🟢','CHARGE_GRID':'🔵','DISCHARGE_GRID':'🟠','SELF_CONSUME':'🟣','HOLD':'⚪','CURTAIL':'⚪','BASE':'⚪'}"
+COLORS = "{'CHARGE_PV':'🟢','CHARGE_GRID':'🔵','DISCHARGE_GRID':'🟠','SELF_CONSUME':'🟣','HOLD':'⚪','CURTAIL':'⚪','BASE':'⚪','BACKUP':'🔴'}"
 
 
 def _fill(text, e, t, capacity=None):

@@ -9,9 +9,9 @@ cards:
   title: Energy Compass diagnostics
   content: '{% set labels = {''CHARGE_PV'':''Charging from PV'',''CHARGE_GRID'':''Charging from grid'',''DISCHARGE_GRID'':''Selling
     to grid'',''SELF_CONSUME'':''Powering the house'',''HOLD'':''Holding'',''CURTAIL'':''Holding (PV curtailment)'',''BASE'':''Base
-    mode''} %}
+    mode'',''BACKUP'':''Grid outage: battery backup''} %}
 
-    {% set colors = {''CHARGE_PV'':''🟢'',''CHARGE_GRID'':''🔵'',''DISCHARGE_GRID'':''🟠'',''SELF_CONSUME'':''🟣'',''HOLD'':''⚪'',''CURTAIL'':''⚪'',''BASE'':''⚪''}
+    {% set colors = {''CHARGE_PV'':''🟢'',''CHARGE_GRID'':''🔵'',''DISCHARGE_GRID'':''🟠'',''SELF_CONSUME'':''🟣'',''HOLD'':''⚪'',''CURTAIL'':''⚪'',''BASE'':''⚪'',''BACKUP'':''🔴''}
     %}
 
     {% set rt = state_attr(''sensor.energy_compass_deye_controller_runtime'',''runtime'') or {} %}
