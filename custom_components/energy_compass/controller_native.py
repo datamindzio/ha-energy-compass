@@ -169,6 +169,7 @@ class HassPort:
             paused=self.controller.state.paused,
             blueprint_active=tuple(active_blueprint_automations(self.hass)),
             full_candidate=self._full_candidate(setup),
+            grid_outage=self.controller.state.grid.active,
         )
 
     def _full_candidate(self, setup: NativeSetup | None) -> bool:
@@ -490,8 +491,12 @@ class NativeHost:
         part of the view.
         """
         controller = self.controller
+        # The grid attribute carries raw readings that move with every voltage tick;
+        # only the outage flag is a fact a run depends on.
+        view = {k: v for k, v in controller.view()[1].items() if k != "grid"}
         return (
-            controller.view()[1],
+            view,
+            controller.state.grid.active,
             controller.advances,
             controller.state.mode,
             controller.state.paused,

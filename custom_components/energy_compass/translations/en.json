@@ -1136,6 +1136,10 @@
           "old_writers": "Previous battery automations",
           "telemetry_entities": "Telemetry entities",
           "discharge_energy_entity": "Discharge energy counter",
+          "grid_presence_entity": "Grid presence entity",
+          "grid_voltage_entities": "Grid voltage entities",
+          "outage_enter_seconds": "Grid outage detection delay (s)",
+          "outage_stable_minutes": "Grid stable time before the outage ends (min)",
           "charge_entity": "Charge current entity",
           "discharge_entity": "Discharge current entity",
           "grid_entity": "Grid charging current entity",
@@ -1206,6 +1210,7 @@
       "controller_voltage_unavailable": "The battery voltage sensor ({entity}) has no numeric reading, so the pack cannot be told from a 48 V one. Wait until the inverter reports a voltage and save again.",
       "controller_limits_required": "The maximum power and currents cannot be derived (the charge or discharge power in the battery settings, or the inverter's current limit, is zero). Enter them in the Limits and takeover group.",
       "controller_min_buffer_range": "The minimum buffer current must be between 0 and the maximum and relinquish currents.",
+      "controller_outage_range": "The outage detection delay must be 5 to 600 seconds and the stable time 1 to 120 minutes.",
       "soc_estimator_capacity_mode": "The counter SOC estimator cannot be used while the inverter is in Capacity mode: in that mode the inverter compares its own program SOC thresholds with the BMS SOC. Switch the inverter battery mode to Voltage first, or keep an SOC entity as the SOC source.",
       "invalid_notify_target": "A notification target is not a valid notify service name or notify entity."
     },

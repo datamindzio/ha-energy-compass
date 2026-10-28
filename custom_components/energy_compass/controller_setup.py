@@ -39,6 +39,10 @@ LIMIT_FIELDS = (
     "old_writers",
     "telemetry_entities",
     "discharge_energy_entity",
+    "grid_presence_entity",
+    "grid_voltage_entities",
+    "outage_enter_seconds",
+    "outage_stable_minutes",
 )
 
 

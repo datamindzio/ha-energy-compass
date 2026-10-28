@@ -13,6 +13,9 @@ from datetime import UTC, datetime, time, timedelta
 from types import MappingProxyType
 from typing import Any, Literal
 
+from .controller_grid import GridWatch
+from .controller_grid import from_dict as grid_from_dict
+
 PLAN_STATES = (
     "CHARGE_GRID",
     "CHARGE_PV",
@@ -112,6 +115,7 @@ CONTROLLER_ATTRIBUTES = (
     "tou",
     "hardware",
     "clock",
+    "grid",
 )
 RUNTIME_SUMMARY_KEYS = (
     "reason",
@@ -155,6 +159,7 @@ class Event:
         "imported",
         "auto_enabled",
         "device",
+        "grid",
     ]
     generation: str | None = None
     detail: str = ""
@@ -171,6 +176,7 @@ class ControllerState:
     imported_at: str | None = None
     history: tuple[Event, ...] = field(default=())
     paused: bool = False
+    grid: GridWatch = field(default_factory=GridWatch)
 
     def to_dict(self) -> dict:
         return {
@@ -188,6 +194,7 @@ class ControllerState:
             "runtime_written_at": self.runtime_written_at,
             "imported_at": self.imported_at,
             "paused": self.paused,
+            "grid": self.grid.to_dict(),
             "history": [
                 {
                     "at": event.at,
@@ -397,7 +404,7 @@ def plan_reason(
     return "ok" if live_ok else "sources"
 
 
-def _remember(history: tuple[Event, ...], event: Event) -> tuple[Event, ...]:
+def remember(history: tuple[Event, ...], event: Event) -> tuple[Event, ...]:
     return (*history, event)[-HISTORY_LIMIT:]
 
 
@@ -415,7 +422,7 @@ def step(
     revocation = revoke(data, accepted=state.accepted, revoked=revoked, now=now)
     if revocation is not None:
         if revoked is None or revoked.generation != revocation.generation:
-            history = _remember(
+            history = remember(
                 history,
                 Event(
                     _utc_iso(now),
@@ -436,7 +443,7 @@ def step(
     )
     if snapshot is not None:
         accepted = snapshot
-        history = _remember(
+        history = remember(
             history, Event(_utc_iso(now), "accepted", snapshot["generated_at"])
         )
     if (accepted, revoked, history) == (state.accepted, state.revoked, state.history):
@@ -535,12 +542,13 @@ def load_state(
         imported_at=raw.get("imported_at"),
         history=tuple(history[-HISTORY_LIMIT:]),
         paused=raw.get("paused") is True,
+        grid=grid_from_dict(raw.get("grid")),
     )
     if state.accepted is not None and state.accepted["session"] != session:
         state = replace(
             state,
             accepted=None,
-            history=_remember(
+            history=remember(
                 state.history,
                 Event(_utc_iso(now), "dropped", state.accepted["generated_at"]),
             ),
@@ -744,6 +752,7 @@ def controller_attributes(
     next_tou_at: datetime | None,
     hardware: Mapping[str, Any] | None = None,
     clock: Mapping[str, Any] | None = None,
+    grid: Mapping[str, Any] | None = None,
 ) -> dict:
     """The controller sensor attributes, in `CONTROLLER_ATTRIBUTES` order."""
     accepted = state.accepted or {}
@@ -779,5 +788,6 @@ def controller_attributes(
         "tou": dict(tou),
         "hardware": None if hardware is None else dict(hardware),
         "clock": None if clock is None else dict(clock),
+        "grid": None if grid is None else dict(grid),
     }
     return {key: values[key] for key in CONTROLLER_ATTRIBUTES}

@@ -1136,6 +1136,10 @@
           "old_writers": "Dawne automatyzacje baterii",
           "telemetry_entities": "Encje telemetrii",
           "discharge_energy_entity": "Licznik energii rozładowania",
+          "grid_presence_entity": "Encja obecności sieci",
+          "grid_voltage_entities": "Encje napięcia sieci",
+          "outage_enter_seconds": "Opóźnienie wykrycia awarii sieci (s)",
+          "outage_stable_minutes": "Czas stabilnej sieci do końca awarii (min)",
           "charge_entity": "Encja prądu ładowania",
           "discharge_entity": "Encja prądu rozładowania",
           "grid_entity": "Encja prądu ładowania z sieci",
@@ -1206,6 +1210,7 @@
       "controller_voltage_unavailable": "Czujnik napięcia baterii ({entity}) nie ma odczytu liczbowego, więc nie da się odróżnić pakietu od 48 V. Poczekaj, aż falownik poda napięcie, i zapisz ponownie.",
       "controller_limits_required": "Nie da się wyliczyć maksymalnej mocy i prądów (moc ładowania lub rozładowania w ustawieniach baterii albo limit prądu falownika wynosi zero). Wpisz je w grupie Limity i przejęcie.",
       "controller_min_buffer_range": "Minimalny prąd bufora musi mieścić się między 0 a prądem maksymalnym i prądem zwolnienia.",
+      "controller_outage_range": "Opóźnienie wykrycia awarii musi wynosić od 5 do 600 sekund, a czas stabilnej sieci od 1 do 120 minut.",
       "soc_estimator_capacity_mode": "Estymator SOC z liczników nie może działać, gdy falownik jest w trybie Capacity: w tym trybie falownik porównuje własne progi SOC programów z SOC z BMS. Najpierw przełącz tryb baterii falownika na Voltage albo zostaw encję SOC jako źródło SOC.",
       "invalid_notify_target": "Cel powiadomień nie jest poprawną nazwą usługi notify ani encją notify."
     },

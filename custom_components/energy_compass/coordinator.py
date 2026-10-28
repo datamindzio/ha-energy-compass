@@ -1022,6 +1022,10 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             self.entry, options={**self.entry.options, "configuration": config}
         )
 
+    @callback
+    def async_grid_changed(self, outage: bool) -> None:
+        """The grid outage state changed; the planner's reaction is wired in a later step."""
+
     async def async_recalculate(self) -> None:
         """Snapshot on the event loop, calculate off-loop, and publish one generation."""
         if self._closed:
