@@ -2017,7 +2017,9 @@ neither counts against the daily cap nor starts the cooldown, and it is sent whi
 With the Deye controller on, the same sender tells you when a [grid outage](#grid-outage) starts and when it ends. It
 needs only that **Notify enabled** is on and a target is set (the integration is the sender): quiet hours, the daily
 cap and the cooldown do not hold it back and it does not count against them, and the optimizer alert does not
-matter. The text follows **Notification language**:
+matter. They do not wait for a published plan either: when the plan carries no `notification_preferences` (a long
+outage leaves none), the live options decide whether the integration is the sender. The text follows
+**Notification language**:
 
 | Message | Text |
 | --- | --- |

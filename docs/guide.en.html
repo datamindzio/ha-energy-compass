@@ -920,7 +920,7 @@ dashboard's two grid meters resolve to the inverter's counter.</p>
 </tr>
 <tr>
 <td><code>load_power</code></td>
-<td><code>solarman</code> <code>load_power</code>; used only for <a href="#energy-atlas-optional">Energy Atlas</a> telemetry, never by the load forecast or the optimizer</td>
+<td><code>solarman</code> <code>load_power</code>; used only for <a href="#energy-atlas-optional">Energy Atlas</a> telemetry and the runtime in the <a href="#outage-messages">outage start message</a>, never by the load forecast or the optimizer</td>
 </tr>
 <tr>
 <td><code>grid_import_power</code>, <code>grid_export_power</code></td>
@@ -1484,7 +1484,7 @@ reloads.</p>
 <td><code>binary_sensor.&lt;name&gt;_grid_outage</code></td>
 <td>Grid outage</td>
 <td>Awaria sieci</td>
-<td><code>on</code> / <code>off</code> (problem); only with the controller enabled and a grid presence entity or phase voltage found (<a href="#grid-outage">Grid outage</a>)</td>
+<td><code>on</code> / <code>off</code> (problem); only with the controller enabled, and unavailable until a grid presence entity or phase voltage is read (<a href="#grid-outage">Grid outage</a>)</td>
 </tr>
 </tbody>
 </table></section>
@@ -2973,7 +2973,9 @@ neither counts against the daily cap nor starts the cooldown, and it is sent whi
 <p>With the Deye controller on, the same sender tells you when a <a href="#grid-outage">grid outage</a> starts and when it ends. It
 needs only that <strong>Notify enabled</strong> is on and a target is set (the integration is the sender): quiet hours, the daily
 cap and the cooldown do not hold it back and it does not count against them, and the optimizer alert does not
-matter. The text follows <strong>Notification language</strong>:</p>
+matter. They do not wait for a published plan either: when the plan carries no <code>notification_preferences</code> (a long
+outage leaves none), the live options decide whether the integration is the sender. The text follows
+<strong>Notification language</strong>:</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -3000,8 +3002,11 @@ matter. The text follows <strong>Notification language</strong>:</p>
 </tr>
 </tbody>
 </table></section>
-<p>The runtime is the usable energy above 10 % (the inverter keeps that much) at the load of the plan's current interval;
-it is left out when the load is under 0.05 kW or the battery capacity or SOC is unknown. The time is the first absent
+<p>The runtime is the usable energy at the measured house load: (SOC − 10 %) × battery capacity × discharge efficiency
+(<code>eta_discharge</code>) ÷ load, where 10 % is what the inverter keeps. The SOC is the one the plan acts on (the counter
+estimator in counter mode, otherwise the inverter's SOC entity) and the load is the <code>load_power</code> measurement, not the
+plan's forecast, which can be far below a real evening load. The runtime is left out, leaving the battery line, when
+the load measurement is not set or unavailable, under 0.05 kW, or the battery capacity or SOC is unknown. The time is the first absent
 reading (not the end of the debounce), and the end message uses the moment the grid came back, not the end of the stable
 wait. The start is told once per outage, remembered in the store so a restart does not repeat it, and the end only
 when the start was told: an outage that began while no target was set stays silent. A start that found no target is
@@ -3437,7 +3442,7 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.</p>
 </tr>
 <tr>
 <td><code>grid</code></td>
-<td>the grid watch (<a href="#grid-outage">Grid outage</a>): <code>source</code>, <code>raw</code>, <code>present</code>, <code>active</code>, <code>since</code>, <code>lost_at</code>, <code>off_since</code>, <code>on_since</code> and <code>restored_at</code>; empty (<code>null</code>) when neither a presence entity nor a phase voltage is found</td>
+<td>the grid watch (<a href="#grid-outage">Grid outage</a>): <code>source</code>, <code>raw</code>, <code>present</code>, <code>outage</code>, <code>since</code>, <code>lost_at</code>, <code>off_since</code>, <code>restored_pending_since</code> and <code>restored_at</code>; empty (<code>null</code>) when neither a presence entity nor a phase voltage is found</td>
 </tr>
 <tr>
 <td><code>hardware</code></td>

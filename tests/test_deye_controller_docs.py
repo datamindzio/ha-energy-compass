@@ -154,9 +154,7 @@ def test_guides_list_exactly_the_grid_attribute_keys_the_sensor_publishes(guide)
     from custom_components.energy_compass.controller_grid import GridWatch
 
     row = next(
-        line
-        for line in guide.read_text().splitlines()
-        if line.startswith("| `grid` |")
+        line for line in guide.read_text().splitlines() if line.startswith("| `grid` |")
     )
     documented = set(re.findall(r"`([a-z_]+)`", row.split("|")[2])) - {"null"}
     published = set(GridWatch().as_attribute())

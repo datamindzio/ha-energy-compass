@@ -2060,8 +2060,9 @@ uruchamia przerwy, a wysyłana jest także przy włączonym alercie optymalizato
 
 Przy włączonym sterowniku Deye ten sam nadawca informuje, gdy [awaria sieci](#awaria-sieci) się zaczyna i gdy się
 kończy. Wymaga tylko włączonej opcji **Włącz powiadomienia** i ustawionego celu (nadawcą jest integracja): godziny ciszy, dzienny
-limit i przerwa go nie wstrzymują i nie liczą się do nich, a alert optymalizatora nie ma znaczenia. Treść zależy od
-**Języka powiadomień**:
+limit i przerwa go nie wstrzymują i nie liczą się do nich, a alert optymalizatora nie ma znaczenia. Nie czekają też na
+opublikowany plan: gdy plan nie niesie `notification_preferences` (długa awaria go nie zostawia), o tym, czy nadawcą
+jest integracja, decydują bieżące opcje. Treść zależy od **Języka powiadomień**:
 
 | Wiadomość | Treść |
 | --- | --- |

@@ -163,9 +163,7 @@ def measure(entry, hass, load="2.0", soc=64.0, capacity=10.0, eta=0.9):
         entity=EntityBinding("sensor.house_load"), unit="kW"
     ).to_dict()
     configuration["settings"].update(capacity_kwh=capacity, eta_discharge=eta)
-    configuration["sources"].update(
-        battery_enabled=True, soc_mode="counter_estimator"
-    )
+    configuration["sources"].update(battery_enabled=True, soc_mode="counter_estimator")
     hass.states.async_set("sensor.house_load", load, {"unit_of_measurement": "kW"})
     estimator = SimpleNamespace(view=lambda: {"fraction": soc / 100})
     return patch.object(entry.runtime_data, "soc_estimator", estimator)
@@ -189,9 +187,7 @@ async def test_the_runtime_uses_the_measured_load_and_the_estimator(make, hass):
     )
 
 
-async def test_the_inverter_soc_is_not_read_when_the_estimator_is_in_charge(
-    make, hass
-):
+async def test_the_inverter_soc_is_not_read_when_the_estimator_is_in_charge(make, hass):
     load, phones = make
     entry = await load()
     phones.register("mobile_app_a", "mobile_app_b")

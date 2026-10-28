@@ -940,7 +940,7 @@ falownika.</p>
 </tr>
 <tr>
 <td><code>load_power</code></td>
-<td><code>solarman</code> <code>load_power</code>; używana tylko do telemetrii <a href="#energy-atlas-opcjonalnie">Energy Atlas</a>, nigdy przez prognozę zużycia ani optymalizator</td>
+<td><code>solarman</code> <code>load_power</code>; używana tylko do telemetrii <a href="#energy-atlas-opcjonalnie">Energy Atlas</a> i czasu pracy w <a href="#wiadomości-o-awarii-sieci">wiadomości o początku awarii</a>, nigdy przez prognozę zużycia ani optymalizator</td>
 </tr>
 <tr>
 <td><code>grid_import_power</code>, <code>grid_export_power</code></td>
@@ -1500,7 +1500,7 @@ witryny), bez restartu jego kolejki wysyłki. <strong>Rekonfiguracja</strong> za
 <td><code>binary_sensor.&lt;name&gt;_grid_outage</code></td>
 <td>Grid outage</td>
 <td>Awaria sieci</td>
-<td><code>on</code> / <code>off</code> (problem); tylko przy włączonym sterowniku i znalezionej encji obecności sieci lub napięciu fazy (<a href="#awaria-sieci">Awaria sieci</a>)</td>
+<td><code>on</code> / <code>off</code> (problem); tylko przy włączonym sterowniku, a niedostępny, dopóki nie da się odczytać encji obecności sieci ani napięcia fazy (<a href="#awaria-sieci">Awaria sieci</a>)</td>
 </tr>
 </tbody>
 </table></section>
@@ -3016,8 +3016,9 @@ uruchamia przerwy, a wysyłana jest także przy włączonym alercie optymalizato
 <h3 id="wiadomości-o-awarii-sieci">Wiadomości o awarii sieci</h3>
 <p>Przy włączonym sterowniku Deye ten sam nadawca informuje, gdy <a href="#awaria-sieci">awaria sieci</a> się zaczyna i gdy się
 kończy. Wymaga tylko włączonej opcji <strong>Włącz powiadomienia</strong> i ustawionego celu (nadawcą jest integracja): godziny ciszy, dzienny
-limit i przerwa go nie wstrzymują i nie liczą się do nich, a alert optymalizatora nie ma znaczenia. Treść zależy od
-<strong>Języka powiadomień</strong>:</p>
+limit i przerwa go nie wstrzymują i nie liczą się do nich, a alert optymalizatora nie ma znaczenia. Nie czekają też na
+opublikowany plan: gdy plan nie niesie <code>notification_preferences</code> (długa awaria go nie zostawia), o tym, czy nadawcą
+jest integracja, decydują bieżące opcje. Treść zależy od <strong>Języka powiadomień</strong>:</p>
 <section class="table-scroll"><table>
 <thead>
 <tr>
@@ -3044,8 +3045,11 @@ limit i przerwa go nie wstrzymują i nie liczą się do nich, a alert optymaliza
 </tr>
 </tbody>
 </table></section>
-<p>Czas pracy to użyteczna energia powyżej 10 % (tyle zostawia falownik) przy poborze bieżącego przedziału planu; pomijany,
-gdy pobór jest poniżej 0,05 kW albo pojemność lub SOC baterii są nieznane. Godzina to pierwszy odczyt braku sieci (nie
+<p>Czas pracy to użyteczna energia przy zmierzonym poborze domu: (SOC − 10 %) × pojemność baterii × sprawność rozładowania
+(<code>eta_discharge</code>) ÷ pobór, gdzie 10 % zostawia falownik. SOC jest tym, na którym działa plan (estymator licznikowy w
+trybie licznikowym, w przeciwnym razie encja SOC falownika), a pobór to pomiar <code>load_power</code>, nie prognoza planu, która
+bywa dużo niższa od rzeczywistego wieczornego poboru. Czas pracy jest pomijany, zostaje wiersz o baterii, gdy pomiar
+poboru nie jest ustawiony albo jest niedostępny, jest poniżej 0,05 kW albo pojemność lub SOC baterii są nieznane. Godzina to pierwszy odczyt braku sieci (nie
 koniec zwłoki), a wiadomość końcowa używa chwili powrotu sieci, nie końca oczekiwania na stabilność. Początek jest
 zgłaszany raz na awarię i zapamiętany w magazynie, więc restart go nie powtarza, a koniec tylko wtedy, gdy początek
 zgłoszono: awaria, która zaczęła się bez ustawionego celu, zostaje cicha. Początek, który nie znalazł celu, nie jest
@@ -3479,7 +3483,7 @@ sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.</p>
 </tr>
 <tr>
 <td><code>grid</code></td>
-<td>obserwacja sieci (<a href="#awaria-sieci">Awaria sieci</a>): <code>source</code>, <code>raw</code>, <code>present</code>, <code>active</code>, <code>since</code>, <code>lost_at</code>, <code>off_since</code>, <code>on_since</code> i <code>restored_at</code>; puste (<code>null</code>), gdy nie znaleziono ani encji obecności, ani napięcia fazy</td>
+<td>obserwacja sieci (<a href="#awaria-sieci">Awaria sieci</a>): <code>source</code>, <code>raw</code>, <code>present</code>, <code>outage</code>, <code>since</code>, <code>lost_at</code>, <code>off_since</code>, <code>restored_pending_since</code> i <code>restored_at</code>; puste (<code>null</code>), gdy nie znaleziono ani encji obecności, ani napięcia fazy</td>
 </tr>
 <tr>
 <td><code>hardware</code></td>
