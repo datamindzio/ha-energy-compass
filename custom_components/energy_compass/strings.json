@@ -1600,6 +1600,26 @@
             "name": "Last successful plan"
           }
         }
+      },
+      "grid_outage": {
+        "name": "Grid outage",
+        "state_attributes": {
+          "since": {
+            "name": "Since"
+          },
+          "lost_at": {
+            "name": "Grid lost at"
+          },
+          "restored_pending_since": {
+            "name": "Grid back since"
+          },
+          "source": {
+            "name": "Source"
+          },
+          "source_state": {
+            "name": "Source state"
+          }
+        }
       }
     }
   },

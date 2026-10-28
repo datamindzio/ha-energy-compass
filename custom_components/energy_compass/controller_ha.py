@@ -980,8 +980,13 @@ class DeyeController:
             },
         )
 
+    @property
+    def grid_watched(self) -> bool:
+        """Whether a presence entity or phase voltage is being read."""
+        return self._grid_presence is not None or bool(self._grid_voltages)
+
     def _grid_attribute(self) -> dict | None:
-        if self._grid_presence is None and not self._grid_voltages:
+        if not self.grid_watched:
             return None
         return self.state.grid.as_attribute()
 

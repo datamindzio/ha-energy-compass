@@ -2,6 +2,10 @@
 
 from typing import ClassVar
 
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.components.select import SelectEntity
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.core import callback
@@ -143,3 +147,31 @@ class DeyeRuntimeSensor(DeyeControllerEntity, SensorEntity):
         if self._timer is not None:
             self._timer()
             self._timer = None
+
+
+class DeyeGridOutageSensor(DeyeControllerEntity, BinarySensorEntity):
+    """On while the controller treats the grid as out; unavailable without a grid source."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, controller):
+        super().__init__(controller, "grid_outage")
+
+    @property
+    def available(self):
+        return self.controller.grid_watched
+
+    @property
+    def is_on(self):
+        return self.controller.state.grid.active
+
+    @property
+    def extra_state_attributes(self):
+        watch = self.controller.state.grid
+        return {
+            "since": watch.since,
+            "lost_at": watch.lost_at,
+            "restored_pending_since": watch.on_since,
+            "source": watch.source,
+            "source_state": watch.raw,
+        }

@@ -1600,6 +1600,26 @@
             "name": "Ostatni poprawny plan"
           }
         }
+      },
+      "grid_outage": {
+        "name": "Awaria sieci",
+        "state_attributes": {
+          "since": {
+            "name": "Od"
+          },
+          "lost_at": {
+            "name": "Sieć utracona o"
+          },
+          "restored_pending_since": {
+            "name": "Sieć wróciła od"
+          },
+          "source": {
+            "name": "Źródło"
+          },
+          "source_state": {
+            "name": "Stan źródła"
+          }
+        }
       }
     }
   },
