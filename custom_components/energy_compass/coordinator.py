@@ -686,7 +686,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
 
     @callback
     def _source_changed(self, event):
-        if self._closed:
+        if self._closed or self.grid_outage:
             return
         try:
             _, states, _, values = self._inputs()
@@ -781,6 +781,10 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         @callback
         def refresh():
             self._boundary = None
+            if self.grid_outage:
+                self._invalidate("calculating", "grid_outage")
+                self._next_boundary(values)
+                return
             now = dt_util.utcnow()
             if self._refresh_due and now >= self._refresh_due and self._runner is None:
                 self._generation += 1
@@ -1022,9 +1026,34 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             self.entry, options={**self.entry.options, "configuration": config}
         )
 
+    @property
+    def grid_outage(self) -> bool:
+        """The grid is out (the controller's watch, which survives a restart)."""
+        controller = self.controller
+        return controller is not None and controller.state.grid.active
+
     @callback
     def async_grid_changed(self, outage: bool) -> None:
-        """The grid outage state changed; the planner's reaction is wired in a later step."""
+        """No plan is calculated while the grid is out; calculate at once when it is back.
+
+        The retained plan keeps advancing meanwhile. An outage discards a solve that is
+        still running (new epoch); the end starts over from fresh inputs: new generation,
+        no fingerprint, an immediate solve.
+        """
+        if self._closed:
+            return
+        if self._debounce is not None:
+            self._debounce.cancel()
+            self._debounce = None
+        self._pending = False
+        self._generation += 1
+        self._fingerprint = None
+        if outage:
+            self._epoch += 1
+            self._invalidate("calculating", "grid_outage")
+            return
+        self._invalidate("calculating", "grid_restored")
+        self._schedule(0)
 
     async def async_recalculate(self) -> None:
         """Snapshot on the event loop, calculate off-loop, and publish one generation."""
@@ -1040,6 +1069,10 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         cancelled = False
         try:
             while not self._closed:
+                if self.grid_outage:
+                    self._pending = False
+                    self._invalidate("calculating", "grid_outage")
+                    break
                 self._pending = False
                 generation = self._generation
                 epoch = self._epoch

@@ -780,6 +780,8 @@ class DeyeController:
                 hardware=self.hardware.as_attribute() if self.hardware.known else None,
                 clock=self._clock_attribute(),
                 grid=self._grid_attribute(),
+                # The blueprint engine keeps its own behaviour (and reads plan_reason).
+                outage=self.engine == "native" and self.state.grid.active,
             ),
         )
         if self._timer:

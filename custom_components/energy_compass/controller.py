@@ -40,7 +40,7 @@ SIGNED_ROW_NUMBERS = frozenset({"buy_per_kwh", "sell_per_kwh"})
 MODES = ("Off", "Simulation", "Auto")
 ENGINES = ("blueprint", "native")
 DEFAULT_ENGINE = "blueprint"
-PLAN_REASONS = ("ok", "session", "revoked", "sources")
+PLAN_REASONS = ("ok", "session", "revoked", "sources", "grid_outage")
 BATTERY_KEYS = (
     "capacity_kwh",
     "eta_charge",
@@ -385,11 +385,14 @@ def plan_reason(
     accepted: Mapping | None,
     revoked: Revocation | None,
     now: datetime,
+    outage: bool = False,
 ) -> str:
     if not accepted or accepted.get("session") != session:
         return "session"
     if revoked is not None and accepted.get("generated_at") == revoked.generation:
         return "revoked"
+    if outage:
+        return "grid_outage"
     status = data.get("status")
     live_ok = not data.get("alert") and (
         status == "calculating"
@@ -753,6 +756,7 @@ def controller_attributes(
     hardware: Mapping[str, Any] | None = None,
     clock: Mapping[str, Any] | None = None,
     grid: Mapping[str, Any] | None = None,
+    outage: bool = False,
 ) -> dict:
     """The controller sensor attributes, in `CONTROLLER_ATTRIBUTES` order."""
     accepted = state.accepted or {}
@@ -769,6 +773,7 @@ def controller_attributes(
             accepted=state.accepted,
             revoked=state.revoked,
             now=now,
+            outage=outage,
         ),
         "status": data.get("status"),
         "retained": data.get("status") == "calculating",

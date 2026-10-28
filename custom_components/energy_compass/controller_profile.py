@@ -350,7 +350,9 @@ def decide(
         reason = "session_wait"
     elif c.get("plan_reason") == "revoked":
         reason = "plan_revoked"
-    elif c.get("plan_reason") != "ok":
+    elif c.get("plan_reason") not in ("ok", "grid_outage"):
+        # grid_outage: the planner holds during an outage, the plan itself is as good as
+        # it was; the BACKUP state below decides what the outage means.
         reason = "plan_sources"
     elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1):
         reason = "battery_params"
