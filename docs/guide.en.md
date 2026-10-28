@@ -562,7 +562,7 @@ dashboard's two grid meters resolve to the inverter's counter.
 | `soc_estimator` | one Solarman Deye config entry with `total_battery_charge`, `total_battery_discharge`, `battery_voltage` and `battery_current` (and `battery_power` when present); never preselected; see [Counter SOC estimator](#counter-soc-estimator) |
 | `battery_power` | the dashboard battery power; `battery_power` |
 | `pv_power` | the dashboard solar power; `pv_power` |
-| `load_power` | `solarman` `load_power`; used only for [Energy Atlas](#energy-atlas-optional) telemetry, never by the load forecast or the optimizer |
+| `load_power` | `solarman` `load_power`; used only for [Energy Atlas](#energy-atlas-optional) telemetry and the runtime in the [outage start message](#outage-messages), never by the load forecast or the optimizer |
 | `grid_import_power`, `grid_export_power` | the dashboard grid power (sign +1 for import, −1 for export); `grid_power` with the same signs |
 | `pv_energy` | the dashboard solar energy; `total_production` |
 | `grid_import_energy` | the dashboard grid import; `total_energy_import` |
@@ -891,7 +891,7 @@ reloads.
 | `select.<name>_deye_mode` | Deye mode | Tryb sterownika Deye | `Off` / `Simulation` / `Auto`; only with the controller enabled |
 | `sensor.<name>_deye_controller_runtime` | Deye controller runtime | Stan pracy sterownika Deye | runtime code; only with the controller enabled |
 | `switch.<name>_deye_pause` | Pause inverter writes | Wstrzymaj zapisy do falownika | `on` / `off`; only with the native engine |
-| `binary_sensor.<name>_grid_outage` | Grid outage | Awaria sieci | `on` / `off` (problem); only with the controller enabled and a grid presence entity or phase voltage found ([Grid outage](#grid-outage)) |
+| `binary_sensor.<name>_grid_outage` | Grid outage | Awaria sieci | `on` / `off` (problem); only with the controller enabled, and unavailable until a grid presence entity or phase voltage is read ([Grid outage](#grid-outage)) |
 
 Buy and sell price now read `buy_per_kwh` and `sell_per_kwh` of the `plan.intervals` row whose
 [start, end) contains the current time, whatever the price source (fixed, entity, forecast such as RCE or
@@ -2026,8 +2026,11 @@ matter. The text follows **Notification language**:
 | start, battery unknown | *Grid lost at 14:05.* |
 | end | *Grid back at 14:40 after 35 min. Battery 79 %.* |
 
-The runtime is the usable energy above 10 % (the inverter keeps that much) at the load of the plan's current interval;
-it is left out when the load is under 0.05 kW or the battery capacity or SOC is unknown. The time is the first absent
+The runtime is the usable energy at the measured house load: (SOC − 10 %) × battery capacity × discharge efficiency
+(`eta_discharge`) ÷ load, where 10 % is what the inverter keeps. The SOC is the one the plan acts on (the counter
+estimator in counter mode, otherwise the inverter's SOC entity) and the load is the `load_power` measurement, not the
+plan's forecast, which can be far below a real evening load. The runtime is left out, leaving the battery line, when
+the load measurement is not set or unavailable, under 0.05 kW, or the battery capacity or SOC is unknown. The time is the first absent
 reading (not the end of the debounce), and the end message uses the moment the grid came back, not the end of the stable
 wait. The start is told once per outage, remembered in the store so a restart does not repeat it, and the end only
 when the start was told: an outage that began while no target was set stays silent. A start that found no target is
@@ -2303,7 +2306,7 @@ sensor; it finds the mode entity and the TOU prefix through its attributes.
 | `accepted` | the accepted plan snapshot (rows, dispatch policy, battery); not recorded |
 | `tou` | state of the 30 TOU entities; a change re-runs the blueprint; not recorded |
 | `clock` | the inverter clock check ([Inverter clock](#inverter-clock)): `clock_skew_seconds`, `clock_skew_minutes`, `inverter_clock`, `clock_read_at`, `over_threshold_since` and `alert`; empty (`null`) when the device has no date and time entity |
-| `grid` | the grid watch ([Grid outage](#grid-outage)): `source`, `raw`, `present`, `active`, `since`, `lost_at`, `off_since`, `on_since` and `restored_at`; empty (`null`) when neither a presence entity nor a phase voltage is found |
+| `grid` | the grid watch ([Grid outage](#grid-outage)): `source`, `raw`, `present`, `outage`, `since`, `lost_at`, `off_since`, `restored_pending_since` and `restored_at`; empty (`null`) when neither a presence entity nor a phase voltage is found |
 | `hardware` | the inverter as the Solarman `device` sensor reports it: device type, protocol, control and communication board firmware, rated power, registry model and `verified` (the type and protocol pair is on the [tested list](#supported-hardware)); no serial number |
 
 The runtime sensor carries the recorded attributes `restore_pending`, `reason`, `state`, `requested_mode`,

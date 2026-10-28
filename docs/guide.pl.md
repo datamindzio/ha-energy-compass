@@ -582,7 +582,7 @@ falownika.
 | `soc_estimator` | jeden wpis Solarman Deye z `total_battery_charge`, `total_battery_discharge`, `battery_voltage` i `battery_current` (oraz `battery_power`, gdy jest); nigdy nie jest wstępnie wybrany; zob. [Estymator SOC z liczników](#estymator-soc-z-liczników) |
 | `battery_power` | moc baterii z panelu; `battery_power` |
 | `pv_power` | moc PV z panelu; `pv_power` |
-| `load_power` | `solarman` `load_power`; używana tylko do telemetrii [Energy Atlas](#energy-atlas-opcjonalnie), nigdy przez prognozę zużycia ani optymalizator |
+| `load_power` | `solarman` `load_power`; używana tylko do telemetrii [Energy Atlas](#energy-atlas-opcjonalnie) i czasu pracy w [wiadomości o początku awarii](#wiadomości-o-awarii-sieci), nigdy przez prognozę zużycia ani optymalizator |
 | `grid_import_power`, `grid_export_power` | moc sieci z panelu (znak +1 dla importu, −1 dla eksportu); `grid_power` z tymi samymi znakami |
 | `pv_energy` | energia PV z panelu; `total_production` |
 | `grid_import_energy` | import z sieci z panelu; `total_energy_import` |
@@ -907,7 +907,7 @@ witryny), bez restartu jego kolejki wysyłki. **Rekonfiguracja** zawsze przeład
 | `select.<name>_deye_mode` | Deye mode | Tryb sterownika Deye | `Off` / `Simulation` / `Auto`; tylko przy włączonym sterowniku |
 | `sensor.<name>_deye_controller_runtime` | Deye controller runtime | Stan pracy sterownika Deye | kod przebiegu; tylko przy włączonym sterowniku |
 | `switch.<name>_deye_pause` | Pause inverter writes | Wstrzymaj zapisy do falownika | `on` / `off`; tylko przy silniku natywnym |
-| `binary_sensor.<name>_grid_outage` | Grid outage | Awaria sieci | `on` / `off` (problem); tylko przy włączonym sterowniku i znalezionej encji obecności sieci lub napięciu fazy ([Awaria sieci](#awaria-sieci)) |
+| `binary_sensor.<name>_grid_outage` | Grid outage | Awaria sieci | `on` / `off` (problem); tylko przy włączonym sterowniku, a niedostępny, dopóki nie da się odczytać encji obecności sieci ani napięcia fazy ([Awaria sieci](#awaria-sieci)) |
 
 Cena zakupu i sprzedaży teraz to `buy_per_kwh` i `sell_per_kwh` z wiersza `plan.intervals`, którego
 [początek, koniec) zawiera bieżący czas, niezależnie od źródła ceny (stała, encja, prognoza jak RCE czy
@@ -2070,8 +2070,11 @@ limit i przerwa go nie wstrzymują i nie liczą się do nich, a alert optymaliza
 | początek, bateria nieznana | *Sieć zanikła o 14:05.* |
 | koniec | *Sieć wróciła o 14:40 po 35 min. Bateria 79 %.* |
 
-Czas pracy to użyteczna energia powyżej 10 % (tyle zostawia falownik) przy poborze bieżącego przedziału planu; pomijany,
-gdy pobór jest poniżej 0,05 kW albo pojemność lub SOC baterii są nieznane. Godzina to pierwszy odczyt braku sieci (nie
+Czas pracy to użyteczna energia przy zmierzonym poborze domu: (SOC − 10 %) × pojemność baterii × sprawność rozładowania
+(`eta_discharge`) ÷ pobór, gdzie 10 % zostawia falownik. SOC jest tym, na którym działa plan (estymator licznikowy w
+trybie licznikowym, w przeciwnym razie encja SOC falownika), a pobór to pomiar `load_power`, nie prognoza planu, która
+bywa dużo niższa od rzeczywistego wieczornego poboru. Czas pracy jest pomijany, zostaje wiersz o baterii, gdy pomiar
+poboru nie jest ustawiony albo jest niedostępny, jest poniżej 0,05 kW albo pojemność lub SOC baterii są nieznane. Godzina to pierwszy odczyt braku sieci (nie
 koniec zwłoki), a wiadomość końcowa używa chwili powrotu sieci, nie końca oczekiwania na stabilność. Początek jest
 zgłaszany raz na awarię i zapamiętany w magazynie, więc restart go nie powtarza, a koniec tylko wtedy, gdy początek
 zgłoszono: awaria, która zaczęła się bez ustawionego celu, zostaje cicha. Początek, który nie znalazł celu, nie jest
@@ -2345,7 +2348,7 @@ sterownika; encję trybu i prefiks TOU znajduje w jego atrybutach.
 | `accepted` | zaakceptowany plan (wiersze, polityka dyspozycji, bateria); nie jest zapisywany w historii |
 | `tou` | stany 30 encji TOU; zmiana uruchamia blueprint ponownie; nie jest zapisywany w historii |
 | `clock` | kontrola zegara falownika ([Zegar falownika](#zegar-falownika)): `clock_skew_seconds`, `clock_skew_minutes`, `inverter_clock`, `clock_read_at`, `over_threshold_since` i `alert`; puste (`null`), gdy urządzenie nie ma encji daty i godziny |
-| `grid` | obserwacja sieci ([Awaria sieci](#awaria-sieci)): `source`, `raw`, `present`, `active`, `since`, `lost_at`, `off_since`, `on_since` i `restored_at`; puste (`null`), gdy nie znaleziono ani encji obecności, ani napięcia fazy |
+| `grid` | obserwacja sieci ([Awaria sieci](#awaria-sieci)): `source`, `raw`, `present`, `outage`, `since`, `lost_at`, `off_since`, `restored_pending_since` i `restored_at`; puste (`null`), gdy nie znaleziono ani encji obecności, ani napięcia fazy |
 | `hardware` | falownik według sensora `device` Solarman: typ urządzenia, protokół, oprogramowanie płyty sterującej i komunikacyjnej, moc znamionowa, model z rejestru urządzeń oraz `verified` (para typ i protokół jest na [liście przetestowanych](#obsługiwany-sprzęt)); bez numeru seryjnego |
 
 Sensor stanu pracy ma zapisywane atrybuty `restore_pending`, `reason`, `state`, `requested_mode`,

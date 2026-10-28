@@ -150,6 +150,23 @@ def test_guides_document_the_grid_outage_surface(guide, identifier):
 
 
 @pytest.mark.parametrize("guide", GUIDES, ids=lambda path: path.name)
+def test_guides_list_exactly_the_grid_attribute_keys_the_sensor_publishes(guide):
+    from custom_components.energy_compass.controller_grid import GridWatch
+
+    row = next(
+        line
+        for line in guide.read_text().splitlines()
+        if line.startswith("| `grid` |")
+    )
+    documented = set(re.findall(r"`([a-z_]+)`", row.split("|")[2])) - {"null"}
+    published = set(GridWatch().as_attribute())
+    assert documented == published, (
+        f"{guide.name}: the `grid` attribute row lists {sorted(documented)}, "
+        f"the controller sensor publishes {sorted(published)}"
+    )
+
+
+@pytest.mark.parametrize("guide", GUIDES, ids=lambda path: path.name)
 def test_guides_warn_that_the_blueprint_loses_the_outage_safety(guide):
     heading, link, messages = OUTAGE_SECTIONS[guide.name]
     text = guide.read_text()

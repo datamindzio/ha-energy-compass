@@ -568,7 +568,7 @@
 
       <article id="grid_outage">
         <h3>Grid outage</h3>
-        <p class="entity-meta"><code>grid_outage</code> · <span lang="pl">Awaria sieci</span> · Binary sensor (problem), only with the controller enabled and a grid presence entity or phase voltage found; either engine</p>
+        <p class="entity-meta"><code>grid_outage</code> · <span lang="pl">Awaria sieci</span> · Binary sensor (problem), only with the controller enabled and unavailable until a grid presence entity or phase voltage is read; either engine</p>
         <p>On while the grid is out: the grid presence entity (the option <code>grid_presence_entity</code>, else the Solarman <code>grid</code> binary sensor) or, when it cannot be read, the phase voltages (every numeric phase under 100 V) has reported it absent for <code>outage_enter_seconds</code> (15 s by default). It turns off after the grid has been present for <code>outage_stable_minutes</code> (5 min by default). Attributes: <code>since</code>, <code>lost_at</code>, <code>restored_pending_since</code>, <code>source</code> and <code>source_state</code>. With the native engine the controller writes the <code>BACKUP</code> state meanwhile (both battery currents at their caps, all programs Disabled) and the planner starts no solve: its status is <code>calculating</code> with reason <code>grid_outage</code> and the last plan stays published. The blueprint engine writes 0 A in <code>HOLD</code>, so rolling back to it loses the outage safety.</p>
       </article>
     </section>
