@@ -110,7 +110,9 @@ def test_an_outage_still_stops_the_grid_current_and_the_selects():
     h, _ = _running("CHARGE_GRID")
     h.data[h.ctx["grid_entity"]]["state"] = "4"
     _hold(h)
-    _, _, commands = _plan(h, outage=True)
+    # Islanded, only a BASE restore (Off, stale telemetry) still uses the protective
+    # stop; a plan state becomes BACKUP (T5).
+    _, _, commands = _plan(h, outage=True, base=True)
     stops = {c.entity: c.value for c in commands if c.phase == "disable"}
     assert stops[h.ctx["grid_entity"]] == 0
     assert h.ctx["charge_entity"] not in stops

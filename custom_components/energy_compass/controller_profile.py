@@ -368,9 +368,25 @@ def decide(
     state = row.get("state", "BASE") if valid else "BASE"
     if base or snapshot.mode == "Off":
         state = "BASE"
+    # While the grid is out the battery is the house's only source: BACKUP holds both
+    # currents at their caps and every program off, whatever the plan says (even with no
+    # plan). Only the controller acts on it (Auto; Simulation computes it, the guard
+    # keeps it from writing) and only with telemetry to trust, six sound TOU times and a
+    # usable operation mode; otherwise the BASE restore above stays.
+    if (
+        snapshot.grid_outage
+        and not base
+        and snapshot.mode in ("Auto", "Simulation")
+        and telemetry
+        and times_ok
+        and operation in ("Capacity", "Voltage")
+    ):
+        valid = True
+        reason = "grid_outage"
+        state = "BACKUP"
     # Deliberate divergence from the 0.1.38 blueprint, whose template raises on such a
     # row: the native controller holds BASE instead of acting on invented zeros.
-    if valid and _row_malformed(row, state):
+    if valid and state != "BACKUP" and _row_malformed(row, state):
         valid = False
         reason = "plan_malformed"
         state = "BASE"
@@ -429,12 +445,12 @@ def decide(
     charge = (
         relinquish
         if state == "BASE"
-        else (charge_cap if state in FORCING_STATES else 0)
+        else (charge_cap if state in FORCING_STATES or state == "BACKUP" else 0)
     )
     discharge = (
         relinquish
         if state == "BASE"
-        else (discharge_cap if state in FORCING_STATES else 0)
+        else (discharge_cap if state in FORCING_STATES or state == "BACKUP" else 0)
     )
     grid: float = 0
     direction = "Disabled"
@@ -669,7 +685,7 @@ def decide(
 
     desired: dict[str, Any] = {e.charge: charge, e.discharge: discharge, e.grid: grid}
     for i in TOU_PROGRAMS:
-        on = i == active and state != "BASE"
+        on = i == active and state not in ("BASE", "BACKUP")
         prefix = f"number.{e.prefix}{i}_"
         desired[prefix + "soc"] = target_soc if on else BASE_SOC
         desired[prefix + "voltage"] = target_voltage if on else BASE_VOLTAGE
@@ -766,10 +782,33 @@ def _equal(snapshot: Snapshot, entity: str, value: Any) -> bool:
     )
 
 
+def _backup_commands(
+    snapshot: Snapshot, target: Decision, dirty: list[str]
+) -> list[Command]:
+    """The writes to BACKUP: no stop, nothing lowers a current.
+
+    The discharge limit goes first (the battery must be free to feed the house), then
+    the charge limit, grid charging off, the programs and last their TOU targets.
+    """
+    e = snapshot.entities
+    order = (e.discharge, e.charge, e.grid)
+    rest = [entity for entity in target.desired if entity not in order]
+    selects = [entity for entity in rest if entity.startswith("select.")]
+    others = [entity for entity in rest if not entity.startswith("select.")]
+    return [
+        Command(entity, target.desired[entity], "backup")
+        for entity in (*order, *selects, *others)
+        if entity in target.desired
+        and (not _equal(snapshot, entity, target.desired[entity]) or entity in dirty)
+    ]
+
+
 def diff(snapshot: Snapshot, target: Decision) -> list[Command]:
     """The ordered write plan from the live states to `target` (DIFF)."""
     e = snapshot.entities
     dirty = list(snapshot.runtime.get("uncertain", []))
+    if target.state == "BACKUP":
+        return _backup_commands(snapshot, target, dirty)
     active = f"select.{e.prefix}{target.active_tou}_charging"
     changed = [
         entity
@@ -846,6 +885,16 @@ def guard(
     """Whether `command` may still be sent (GUARD); re-evaluated before every write."""
     if snapshot.paused:
         return False
+    if command.phase == "backup":
+        return bool(
+            fresh.writers_safe
+            and snapshot.mode != "Simulation"
+            and fresh.state == "BACKUP"
+            and fresh.valid
+            and fresh.settings_ok
+            and fresh.requested_mode == "Auto"
+            and not failed
+        )
     confirmed = snapshot.runtime.get("confirmed", {})
     current = baseline if cleanup else fresh
     prerequisites = True
