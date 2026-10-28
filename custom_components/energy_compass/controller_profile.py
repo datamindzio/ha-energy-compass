@@ -1,11 +1,10 @@
 """Pure Deye profile: the decision, the write plan and the register layout.
 
-No Home Assistant imports. Every rule is a port of the 0.1.38 blueprint templates (0.1.37 plus #41 and #46)
+No Home Assistant imports. Every rule started as a port of the 0.1.38 blueprint templates (0.1.37 plus #41 and #46)
 (`tools/deye_controller/build.py` DECISION, BASE_DECISION, DIFF, GUARD,
-CAP_ONLY_REPLAN, WRITE) and is proven against the frozen blueprint by
-`tests/test_controller_native_parity.py`. The order of operations, rounding modes
-and tolerances are those of the templates on purpose; change them only together
-with a new oracle.
+CAP_ONLY_REPLAN, WRITE); the native engine has since moved on (grid outage safety: no 0 A,
+HOLD by TOU floor, BACKUP) and is no longer held to the blueprint. The order of operations,
+rounding modes and tolerances are those of the templates unless a test says otherwise.
 
 All Deye-specific numbers live here, so the executor and the options stay free of
 inverter knowledge.

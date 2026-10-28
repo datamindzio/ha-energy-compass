@@ -81,9 +81,10 @@ against a sanitized state sample, with `tests/deye_harness.py` playing Energy Co
 (the integration-owned state) and `tests/test_controller_parity.py` (acceptance against the frozen v0.1.35
 blueprint in `tests/golden/`, which must never change). The native engine (`controller_profile.py`,
 `controller_run.py`, `controller_native.py`, `controller_hardware.py`, `controller_setup.py`,
-`controller_texts.py`) is covered by `tests/test_controller_native_parity.py` (every scenario of the blueprint
-tests against the blueprint of release 0.1.38 (frozen from main at 7888645: 0.1.37 plus #41 and #46) in `tests/golden/deye_controller_v0137.yaml` and its harness
-`tests/deye_oracle_v0137.py`; both must never change), `tests/test_controller_run.py`,
+`controller_texts.py`) is covered by `tests/test_deye_controller.py` (each scenario also runs against the native
+engine; `tests/deye_oracle_v0137.py` and `tests/golden/deye_controller_v0137.yaml` stay as the harness base and must
+never change; the native engine is no longer held to the 0.1.38 blueprint, which keeps the 0 A behaviour),
+`tests/test_controller_run.py`,
 `tests/test_controller_hardware.py`, `tests/test_controller_texts.py`, `tests/test_controller_native.py`,
 `tests/test_controller_native_review.py`, `tests/test_controller_native_guards.py`,
 `tests/test_controller_native_options.py` (a fake inverter in `tests/native_site.py`; the executor harness is
