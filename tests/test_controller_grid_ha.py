@@ -1,5 +1,6 @@
 """The grid presence watch inside Home Assistant: sources, debounce, edges, persistence."""
 
+import asyncio
 from unittest.mock import Mock
 
 from controller_support import controller_of, tick
@@ -184,6 +185,31 @@ async def test_an_outage_survives_a_restart(controller_site, hass, freezer):
     restored, valid = core.load_state(saved, session=controller.session, now=None)
     assert valid
     assert restored.grid == controller.state.grid
+
+
+async def saved(hass):
+    """The write scheduled for now runs on the next turn of the loop, not a second later."""
+    await asyncio.sleep(0)
+    await hass.async_block_till_done()
+
+
+async def test_an_edge_is_saved_before_the_delayed_save_runs(
+    controller_site, hass, hass_storage, freezer
+):
+    """A crash within a second of the edge must not forget it."""
+    key = f"energy_compass.{controller_site.entry_id}.controller"
+    add_grid(hass, controller_site)
+    hass.states.async_set(GRID, "off")
+    controller = await attach(hass, controller_site)
+    await tick(hass, freezer, 16)
+    assert controller.state.grid.active is True
+    await saved(hass)
+    assert hass_storage[key]["data"]["grid"]["active"] is True
+    hass.states.async_set(GRID, "on")
+    await tick(hass, freezer, 301)
+    assert controller.state.grid.active is False
+    await saved(hass)
+    assert hass_storage[key]["data"]["grid"]["active"] is False
 
 
 async def test_an_unreadable_source_keeps_the_known_state(

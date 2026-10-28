@@ -1040,6 +1040,9 @@ class DeyeController:
                     history, core.Event(now.isoformat(), "grid", detail=detail)
                 )
             self._replace(replace(self.state, grid=watch, history=history))
+            if watch.active != before.active:
+                # An edge must survive a crash within the one-second delay of _save.
+                self._store.async_delay_save(self.state.to_dict, 0)
         if self._grid_timer:
             self._grid_timer()
             self._grid_timer = None
