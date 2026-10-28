@@ -32,6 +32,7 @@ LIMIT_FIELDS = (
     "max_grid_current",
     "hold_grid_current",
     "reached_discharge_current",
+    "min_buffer_current",
     "balance_grid_current",
     "voltage_grid_charge_ceiling",
     "commissioned_battery_modes",
@@ -129,6 +130,7 @@ def derive_limits(
     for key in (
         "hold_grid_current",
         "reached_discharge_current",
+        "min_buffer_current",
         "balance_grid_current",
         "voltage_grid_charge_ceiling",
     ):

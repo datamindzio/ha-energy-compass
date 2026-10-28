@@ -48,6 +48,11 @@ def h():
     return Harness()
 
 
+def buffer_floor(h):
+    """The lowest current limit a state writes: 0 A on the blueprint, the buffer natively."""
+    return h.ctx.get("min_buffer_current", 0)
+
+
 def test_full_profile(h):
     assert h.accept()["generated_at"]
     d = h.decision()
@@ -82,8 +87,10 @@ def test_state_table(h, state, charging, charge, discharge):
     d = h.decision()
     values = d["desired"]
     assert values["select.inverter_deye_program_3_charging"] == charging
-    assert (values[h.ctx["charge_entity"]] > 0) == charge
-    assert (values[h.ctx["discharge_entity"]] > 0) == discharge
+    # A HOLD charges at the hold current, which is the buffer too.
+    low = 0 if state in ("HOLD", "CURTAIL") else buffer_floor(h)
+    assert (values[h.ctx["charge_entity"]] > low) == charge
+    assert (values[h.ctx["discharge_entity"]] > buffer_floor(h)) == discharge
 
 
 def test_frozen_expiry_and_revoke(h):
@@ -129,7 +136,7 @@ def test_unknown(h, entity, value):
     assert not h.decision()["valid"]
 
 
-def test_no_catchup_and_current_floor(h):
+def test_no_catchup_and_current_buffer_floor(h):
     row = h.data[P]["attributes"]["intervals"][0]
     row.update(state="CHARGE_GRID", charge_kwh=0.0001, pv_kwh=0, end_soc_kwh=25)
     h.accept()
@@ -411,7 +418,7 @@ def test_reached_sell_row_keeps_small_discharge_for_house():
     assert d["desired"][h.ctx["grid_entity"]] == 0
     # 0 A restores the previous profile; the floor never exceeds the power cap.
     h.ctx["reached_discharge_current"] = 0
-    assert h.decision()["desired"][h.ctx["discharge_entity"]] == 0
+    assert h.decision()["desired"][h.ctx["discharge_entity"]] == buffer_floor(h)
     h.ctx["reached_discharge_current"] = 50
     assert h.decision()["desired"][h.ctx["discharge_entity"]] <= h.ctx["max_current"]
 
@@ -529,7 +536,8 @@ def test_target_reached_latches_same_row(h):
     values = d["desired"]
     assert d["target_reached"]
     assert values[h.ctx["charge_entity"]] == 14
-    assert values[h.ctx["grid_entity"]] == values[h.ctx["discharge_entity"]] == 0
+    assert values[h.ctx["grid_entity"]] == 0
+    assert values[h.ctx["discharge_entity"]] == buffer_floor(h)
     assert values["select.inverter_deye_program_3_charging"] == "Disabled"
 
 
@@ -1030,7 +1038,7 @@ def test_grid_charge_leaves_full_charge_ceiling_for_pv(h):
     values = d["desired"]
     assert values[h.ctx["charge_entity"]] == 14
     assert 0 < values[h.ctx["grid_entity"]] < values[h.ctx["charge_entity"]]
-    assert values[h.ctx["discharge_entity"]] == 0
+    assert values[h.ctx["discharge_entity"]] == buffer_floor(h)
     assert values["select.inverter_deye_program_3_charging"] == "Grid"
     assert d["target_soc"] == 80 and d["target_voltage"] == 53.1
     assert "grid_current_limit_commissioned" not in h.ctx
@@ -1064,7 +1072,8 @@ def test_grid_charge_at_full_soc_stops_charging(h):
     h.data[h.ctx["soc_entity"]]["state"] = "100"
     h.accept()
     values = h.decision()["desired"]
-    assert values[h.ctx["charge_entity"]] == values[h.ctx["grid_entity"]] == 0
+    assert values[h.ctx["charge_entity"]] == buffer_floor(h)
+    assert values[h.ctx["grid_entity"]] == 0
     assert values["select.inverter_deye_program_3_charging"] == "Disabled"
 
 
@@ -1175,7 +1184,7 @@ def test_pv_buffer_at_full_soc_only_stops_charging(h):
     h.accept()
     d = h.decision()
     assert d["valid"] and d["state"] == "CHARGE_PV"
-    assert d["desired"][h.ctx["charge_entity"]] == 0
+    assert d["desired"][h.ctx["charge_entity"]] == buffer_floor(h)
     assert d["desired"][h.ctx["discharge_entity"]] > 0
     assert d["desired"][h.ctx["grid_entity"]] == 0
     assert all(
@@ -1229,7 +1238,10 @@ def test_self_consume_stops_charging_at_full_battery(h):
     h.data[h.ctx["soc_entity"]]["state"] = "100"
     h.accept()
     values = h.decision()["desired"]
-    assert values[h.ctx["charge_entity"]] == 0 and values[h.ctx["discharge_entity"]] > 0
+    assert (
+        values[h.ctx["charge_entity"]] == buffer_floor(h)
+        and values[h.ctx["discharge_entity"]] > 0
+    )
 
 
 def voltage_full(state, soc="100", **row):
@@ -1253,7 +1265,7 @@ def test_voltage_full_soc_keeps_charging_from_pv(state):
     assert values[h.ctx["charge_entity"]] == 14
     assert values[h.ctx["grid_entity"]] == 0
     discharge = values[h.ctx["discharge_entity"]]
-    assert (discharge == 0) if state == "HOLD" else (discharge > 0)
+    assert (discharge == buffer_floor(h)) if state == "HOLD" else (discharge > 0)
     assert d["target_soc"] == 10 and d["target_voltage"] == 49.6
     for i in range(1, 7):
         assert values[f"number.inverter_deye_program_{i}_soc"] == 10
@@ -1388,7 +1400,7 @@ def test_capacity_full_soc_unchanged(state):
         assert values[h.ctx["charge_entity"]] == h.ctx["hold_grid_current"]
         assert values[h.ctx["grid_entity"]] == h.ctx["hold_grid_current"]
     else:
-        assert values[h.ctx["charge_entity"]] == 0
+        assert values[h.ctx["charge_entity"]] == buffer_floor(h)
 
 
 def test_voltage_full_soc_grid_charge_unchanged():
@@ -1397,7 +1409,7 @@ def test_voltage_full_soc_grid_charge_unchanged():
     h.accept()
     values = h.decision()["desired"]
     # CHARGE_GRID keeps its ceiling rule and the 100 % charge stop (not covered here).
-    assert values[h.ctx["charge_entity"]] == 0
+    assert values[h.ctx["charge_entity"]] == buffer_floor(h)
     assert values[h.ctx["grid_entity"]] == 15
     assert values["select.inverter_deye_program_3_charging"] == "Grid"
 
@@ -1451,7 +1463,7 @@ def test_pv_buffer_hold_round_trip_and_ten_noops(h):
     currents = [h.ctx["charge_entity"], h.ctx["discharge_entity"], h.ctx["grid_entity"]]
     hold = {
         h.ctx["charge_entity"]: h.ctx["hold_grid_current"],
-        h.ctx["discharge_entity"]: 0,
+        h.ctx["discharge_entity"]: buffer_floor(h),
         h.ctx["grid_entity"]: h.ctx["hold_grid_current"],
     }
     assert all(float(h.data[entity]["state"]) == hold[entity] for entity in currents)
@@ -1611,7 +1623,9 @@ def test_voltage_rebound_replans_lower_current_without_base(h, phase):
     assert h.data[RT]["attributes"]["runtime"]["confirmed_mode"] == "DISCHARGE_GRID"
     assert h.data["select.inverter_deye_program_3_charging"]["state"] == "Sell"
     assert float(h.data[h.ctx["discharge_entity"]]["state"]) == 14
-    assert not any(e == h.ctx["charge_entity"] and v > 0 for e, v in r.writes)
+    assert not any(
+        e == h.ctx["charge_entity"] and v > buffer_floor(h) for e, v in r.writes
+    )
     assert all(
         v <= 14 for e, v in r.writes[changed[0] :] if e == h.ctx["discharge_entity"]
     )
@@ -1637,7 +1651,9 @@ def test_current_retry_never_raises_ceiling_when_voltage_returns(h):
     assert changes == [15, 14]
     assert h.data[RT]["attributes"]["runtime"]["confirmed_mode"] == "DISCHARGE_GRID"
     assert float(h.data[h.ctx["discharge_entity"]]["state"]) == 14
-    assert not any(e == h.ctx["charge_entity"] and v > 0 for e, v in r.writes)
+    assert not any(
+        e == h.ctx["charge_entity"] and v > buffer_floor(h) for e, v in r.writes
+    )
 
 
 @pytest.mark.parametrize(
@@ -1861,7 +1877,7 @@ def test_hold_zero_currents_recover_once_telemetry_returns(h):
     row["state"] = "HOLD"
     r.run()
     currents = [h.ctx["charge_entity"], h.ctx["discharge_entity"]]
-    assert float(h.data[h.ctx["discharge_entity"]]["state"]) == 0
+    assert float(h.data[h.ctx["discharge_entity"]]["state"]) == buffer_floor(h)
     for e in currents:
         h.data[e]["state"] = "0"
     fresh = h.data[h.ctx["voltage_entity"]]["last_reported"]
@@ -1905,7 +1921,7 @@ def test_hold_freezes_battery_at_plan_soc_on_discharge_curve(
     assert d["valid"] and d["state"] == state
     assert d["target_soc"] == soc and d["target_voltage"] == voltage
     assert d["desired"][h.ctx["charge_entity"]] == band
-    assert d["desired"][h.ctx["discharge_entity"]] == 0
+    assert d["desired"][h.ctx["discharge_entity"]] == buffer_floor(h)
     assert d["desired"][h.ctx["grid_entity"]] == band
     assert (
         d["desired"][f"select.inverter_deye_program_{d['active_tou']}_charging"]
@@ -1942,7 +1958,7 @@ def test_hold_is_not_latched_by_reached_target(h):
     band = h.ctx["hold_grid_current"]
     assert not again["target_reached"]
     assert again["desired"][h.ctx["charge_entity"]] == band
-    assert again["desired"][h.ctx["discharge_entity"]] == 0
+    assert again["desired"][h.ctx["discharge_entity"]] == buffer_floor(h)
     assert again["desired"][h.ctx["grid_entity"]] == band
 
 
@@ -2056,7 +2072,7 @@ def test_balance_grid_charge_at_full_soc_keeps_absorbing(h):
     values = d["desired"]
     assert values[h.ctx["charge_entity"]] > 0
     assert values[h.ctx["grid_entity"]] == h.ctx["balance_grid_current"] == 2
-    assert values[h.ctx["discharge_entity"]] == 0
+    assert values[h.ctx["discharge_entity"]] == buffer_floor(h)
     assert values["select.inverter_deye_program_3_charging"] == "Grid"
     assert values["number.inverter_deye_program_3_soc"] == 100
     assert not d["target_reached"]

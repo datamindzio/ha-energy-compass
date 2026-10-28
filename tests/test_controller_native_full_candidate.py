@@ -78,8 +78,8 @@ def test_a_candidate_keeps_the_charge_current_at_the_cap(state, operation, soc):
 
 def test_the_closed_profiles_without_a_candidate_are_what_the_candidate_opens():
     cases = {
-        ("CHARGE_PV", "Capacity", "100"): 0,
-        ("SELF_CONSUME", "Capacity", "100"): 0,
+        ("CHARGE_PV", "Capacity", "100"): 1,
+        ("SELF_CONSUME", "Capacity", "100"): 1,
         ("HOLD", "Capacity", "90"): 1,
         ("HOLD", "Voltage", "99"): 1,
     }
@@ -104,7 +104,8 @@ def test_hold_with_a_candidate_never_opens_grid_charging_the_plan_did_not_ask_fo
 def test_the_charge_stop_at_a_full_grid_charge_row_is_kept_open_for_the_candidate():
     h = _site("CHARGE_GRID", soc="100", charge_kwh=0.5, pv_kwh=0.3, load_kwh=0.05)
     plain, open_ = _decide(h, False), _decide(h, True)
-    assert _charge(h, plain) == _grid(h, plain) == 0
+    assert _charge(h, plain) == 1
+    assert _grid(h, plain) == 0
     assert _charge(h, open_) == 14
     assert _grid(h, open_) == 0
     assert _program(open_) == _program(plain)

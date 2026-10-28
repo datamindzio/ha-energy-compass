@@ -23,7 +23,7 @@ from homeassistant.util import dt as dt_util
 from . import controller as core
 from . import controller_clock as clock
 from . import controller_hardware as hardware
-from .controller_profile import PACK_VOLTAGE_RANGE
+from .controller_profile import PACK_VOLTAGE_RANGE, Limits
 from .controller_run import ControllerUnavailable
 from .controller_setup import (
     LIMIT_FIELDS,
@@ -242,6 +242,29 @@ def estimator_capacity_conflict(
     return state is not None and state.state == "Capacity"
 
 
+def _derived_limits(
+    hass: HomeAssistant,
+    device_id: str,
+    battery: Mapping[str, float],
+    limits: Mapping[str, Any] | None,
+    overrides=None,
+) -> Limits:
+    resolved = resolve_device(hass, device_id, overrides)
+
+    def maximum(role: str) -> Any:
+        state = hass.states.get(resolved.entities.get(role, ""))
+        return state.attributes.get("max") if state else None
+
+    return derive_limits(
+        limits,
+        charge_kw=battery["charge_kw"],
+        discharge_kw=battery["discharge_kw"],
+        charge_max=maximum("charge"),
+        grid_max=maximum("grid"),
+        resolved=resolved,
+    )
+
+
 def limits_underivable(
     hass: HomeAssistant,
     device_id: str,
@@ -253,20 +276,7 @@ def limits_underivable(
 
     Zero limits would make every plan invalid, so the user has to enter them.
     """
-    resolved = resolve_device(hass, device_id, overrides)
-
-    def maximum(role: str) -> Any:
-        state = hass.states.get(resolved.entities.get(role, ""))
-        return state.attributes.get("max") if state else None
-
-    derived = derive_limits(
-        limits,
-        charge_kw=battery["charge_kw"],
-        discharge_kw=battery["discharge_kw"],
-        charge_max=maximum("charge"),
-        grid_max=maximum("grid"),
-        resolved=resolved,
-    )
+    derived = _derived_limits(hass, device_id, battery, limits, overrides)
     return (
         min(
             derived.max_power_w,
@@ -275,6 +285,23 @@ def limits_underivable(
             derived.relinquish_current,
         )
         <= 0
+    )
+
+
+def buffer_current_invalid(
+    hass: HomeAssistant,
+    device_id: str,
+    battery: Mapping[str, float],
+    limits: Mapping[str, Any] | None,
+    overrides=None,
+) -> bool:
+    """Whether the minimum buffer current is negative, above the maximum current, or
+    above the relinquish current (BASE would then write a lower limit than any state)."""
+    derived = _derived_limits(hass, device_id, battery, limits, overrides)
+    return not (
+        0
+        <= derived.min_buffer_current
+        <= min(derived.max_current, derived.relinquish_current)
     )
 
 

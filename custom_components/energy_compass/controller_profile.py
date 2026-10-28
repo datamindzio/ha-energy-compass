@@ -111,6 +111,9 @@ class Limits:
     relinquish_current: float
     hold_grid_current: float = 1
     reached_discharge_current: float = 1
+    # Islanded, the battery is the inverter's only buffer for load and PV steps: no
+    # state writes a charge or discharge limit below this (0 opts out).
+    min_buffer_current: float = 1
     balance_grid_current: float = 2
     voltage_grid_charge_ceiling: float = 55.2
     commissioned_battery_modes: tuple[str, ...] = ("Capacity",)
@@ -138,6 +141,7 @@ class Snapshot:
     `blueprint_active` lists switched-on automations of the retired blueprint, whose
     writes would collide with ours. `full_candidate` is set while the SOC estimator
     holds a full-pack candidate: the decision then keeps the charge path open.
+    `grid_outage` is set while the grid watch reports an outage.
     """
 
     now: datetime
@@ -149,6 +153,7 @@ class Snapshot:
     paused: bool = False
     blueprint_active: tuple[str, ...] = ()
     full_candidate: bool = False
+    grid_outage: bool = False
 
     def state(self, entity: str) -> str:
         fact = self.states.get(entity)
@@ -195,6 +200,8 @@ class Decision:
     discharged_kwh: float
     slot_energy: Any
     warning_code: str = ""
+    buffer_current: float = 0.0
+    grid_outage: bool = False
 
 
 class Command(NamedTuple):
@@ -581,6 +588,13 @@ def decide(
     ):
         charge = charge_cap if snapshot.full_candidate else 0
 
+    # DD-1: never 0 A. Whatever the state asked for, the battery stays connected as
+    # the buffer of the house (BASE relinquishes to the inverter's own limit instead).
+    buffer = max(0.0, limits.min_buffer_current)
+    if state != "BASE":
+        charge = max(charge, buffer)
+        discharge = max(discharge, buffer)
+
     reason_args = {}
     if operation == "Voltage" and not (
         APPROVED_TOU_VOLTAGE_RANGE[0] <= target_voltage <= APPROVED_TOU_VOLTAGE_RANGE[1]
@@ -694,6 +708,8 @@ def decide(
         warning_code="curtail_unsupported"
         if state == "CURTAIL" and not curtail_charges
         else "",
+        buffer_current=buffer,
+        grid_outage=snapshot.grid_outage,
     )
 
 

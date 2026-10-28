@@ -1129,6 +1129,7 @@
           "max_grid_current": "Maximum grid charging current (A)",
           "hold_grid_current": "Grid charging current in HOLD (A)",
           "reached_discharge_current": "Discharge current after a target is reached (A)",
+          "min_buffer_current": "Minimum buffer current (A)",
           "balance_grid_current": "Balance grid current (A)",
           "voltage_grid_charge_ceiling": "Grid-charge voltage ceiling (V)",
           "commissioned_battery_modes": "Commissioned battery modes",
@@ -1204,6 +1205,7 @@
       "controller_low_voltage_pack": "This controller supports high-voltage packs (400–610 V). Measured: {voltage} V. 48 V Deye models are not supported yet.",
       "controller_voltage_unavailable": "The battery voltage sensor ({entity}) has no numeric reading, so the pack cannot be told from a 48 V one. Wait until the inverter reports a voltage and save again.",
       "controller_limits_required": "The maximum power and currents cannot be derived (the charge or discharge power in the battery settings, or the inverter's current limit, is zero). Enter them in the Limits and takeover group.",
+      "controller_min_buffer_range": "The minimum buffer current must be between 0 and the maximum and relinquish currents.",
       "soc_estimator_capacity_mode": "The counter SOC estimator cannot be used while the inverter is in Capacity mode: in that mode the inverter compares its own program SOC thresholds with the BMS SOC. Switch the inverter battery mode to Voltage first, or keep an SOC entity as the SOC source.",
       "invalid_notify_target": "A notification target is not a valid notify service name or notify entity."
     },

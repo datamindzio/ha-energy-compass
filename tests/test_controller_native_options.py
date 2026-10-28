@@ -193,6 +193,7 @@ async def test_the_expert_fields_appear_only_with_expert_settings(hass, freezer)
         "max_grid_current",
         "hold_grid_current",
         "reached_discharge_current",
+        "min_buffer_current",
         "balance_grid_current",
         "voltage_grid_charge_ceiling",
         "commissioned_battery_modes",
@@ -242,6 +243,24 @@ async def test_limits_apply_live_without_a_reload(hass, freezer):
     await submit(hass, form, {"enabled": True, "device_id": device, "engine": "native"})
     await hass.async_block_till_done()
     assert "limits" not in entry.options["controller"]
+
+
+async def test_the_minimum_buffer_current_is_validated_and_applies_live(hass, freezer):
+    entry, _ = await native_site(hass, freezer)
+    controller = controller_of(entry)
+    device = entry.options["controller"]["device_id"]
+    data = {"enabled": True, "device_id": device, "engine": "native"}
+    form = await open_step(hass, entry, expert=True)
+    # Above the maximum current (18 A on the sample inverter).
+    result = await submit(hass, form, data | {"min_buffer_current": 99})
+    assert result["errors"] == {"base": "controller_min_buffer_range"}
+    result = await submit(hass, result, data | {"min_buffer_current": 2})
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done()
+    assert entry.options["controller"]["limits"] == {"min_buffer_current": 2}
+    controller.host.request("test")
+    await controller.host.async_wait_idle()
+    assert controller.host.port.setup.limits.min_buffer_current == 2
 
 
 async def test_an_entity_override_replaces_the_resolved_one(hass, freezer):

@@ -1129,6 +1129,7 @@
           "max_grid_current": "Maksymalny prąd ładowania z sieci (A)",
           "hold_grid_current": "Prąd ładowania z sieci w HOLD (A)",
           "reached_discharge_current": "Prąd rozładowania po osiągnięciu celu (A)",
+          "min_buffer_current": "Minimalny prąd bufora (A)",
           "balance_grid_current": "Prąd sieci przy balansowaniu (A)",
           "voltage_grid_charge_ceiling": "Sufit napięcia ładowania z sieci (V)",
           "commissioned_battery_modes": "Zatwierdzone tryby baterii",
@@ -1204,6 +1205,7 @@
       "controller_low_voltage_pack": "Ten sterownik obsługuje pakiety wysokonapięciowe (400–610 V). Zmierzono: {voltage} V. Modele Deye 48 V nie są jeszcze obsługiwane.",
       "controller_voltage_unavailable": "Czujnik napięcia baterii ({entity}) nie ma odczytu liczbowego, więc nie da się odróżnić pakietu od 48 V. Poczekaj, aż falownik poda napięcie, i zapisz ponownie.",
       "controller_limits_required": "Nie da się wyliczyć maksymalnej mocy i prądów (moc ładowania lub rozładowania w ustawieniach baterii albo limit prądu falownika wynosi zero). Wpisz je w grupie Limity i przejęcie.",
+      "controller_min_buffer_range": "Minimalny prąd bufora musi mieścić się między 0 a prądem maksymalnym i prądem zwolnienia.",
       "soc_estimator_capacity_mode": "Estymator SOC z liczników nie może działać, gdy falownik jest w trybie Capacity: w tym trybie falownik porównuje własne progi SOC programów z SOC z BMS. Najpierw przełącz tryb baterii falownika na Voltage albo zostaw encję SOC jako źródło SOC.",
       "invalid_notify_target": "Cel powiadomień nie jest poprawną nazwą usługi notify ani encją notify."
     },
