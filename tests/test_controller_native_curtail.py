@@ -8,7 +8,7 @@ that blueprint holds every CURTAIL row, which is the divergence pinned here.
 from pathlib import Path
 
 import pytest
-from deye_engines import Harness, use
+from deye_engines import Harness, hold_discharge, hold_grid, use
 from deye_harness import INPUTS, P
 
 from custom_components.energy_compass.controller_profile import CURTAIL_CHARGE_MIN_KWH
@@ -49,6 +49,11 @@ QUARTER = {
 }
 
 
+def floor(h):
+    """The lowest current limit a state writes: 0 A on the blueprint, the buffer natively."""
+    return h.ctx.get("min_buffer_current", 0)
+
+
 def planned_kwh(h, amps):
     """The charge_kwh of a quarter hour that takes `amps` into the pack."""
     return (
@@ -70,7 +75,7 @@ def test_charging_curtail_at_charge_power_runs_the_charge_cap():
     assert (
         values[h.ctx["charge_entity"]] == reference["desired"][h.ctx["charge_entity"]]
     )
-    assert values[h.ctx["discharge_entity"]] == 0
+    assert values[h.ctx["discharge_entity"]] == floor(h)
     assert values[h.ctx["grid_entity"]] == 0
     assert program(d, "select:charging") == "Disabled"
     assert d["target_soc"] == 10 and d["target_voltage"] == 49.6
@@ -89,7 +94,7 @@ def test_charging_curtail_charges_at_the_planned_current_rounded_up_to_the_step(
     d = decide(h, state="CURTAIL", charge_kwh=planned_kwh(h, amps), **QUARTER)
     assert d["desired"][h.ctx["charge_entity"]] == written
     assert d["desired"][h.ctx["grid_entity"]] == 0
-    assert d["desired"][h.ctx["discharge_entity"]] == 0
+    assert d["desired"][h.ctx["discharge_entity"]] == floor(h)
     assert program(d, "select:charging") == "Disabled"
     assert d["warning"] == ""
 
@@ -119,7 +124,7 @@ def test_solver_noise_in_charge_kwh_holds_the_planned_soc(charge_kwh):
     d = decide(h, state="CURTAIL", charge_kwh=charge_kwh, **QUARTER)
     band = h.ctx["hold_grid_current"]
     assert d["desired"][h.ctx["charge_entity"]] == band
-    assert d["desired"][h.ctx["grid_entity"]] == band
+    assert d["desired"][h.ctx["grid_entity"]] == hold_grid(h)
     assert program(d, "select:charging") == "Grid"
     assert d["warning"] == HOLD_WARNING
 
@@ -144,15 +149,15 @@ def test_a_curtail_that_does_not_charge_holds_the_planned_soc():
     band = h.ctx["hold_grid_current"]
     assert d["valid"] and d["state"] == "CURTAIL"
     assert d["desired"][h.ctx["charge_entity"]] == band
-    assert d["desired"][h.ctx["grid_entity"]] == band
-    assert d["desired"][h.ctx["discharge_entity"]] == 0
+    assert d["desired"][h.ctx["grid_entity"]] == hold_grid(h)
+    assert d["desired"][h.ctx["discharge_entity"]] == hold_discharge(h, floor(h))
     assert program(d, "select:charging") == "Grid"
     assert d["warning"] == HOLD_WARNING
 
 
 @pytest.mark.parametrize(
     "operation,charge",
-    [("Voltage", 14), ("Capacity", 0)],
+    [("Voltage", 14), ("Capacity", None)],
 )
 def test_charging_curtail_on_a_full_pack_follows_charge_pv(operation, charge):
     """Full pack: Voltage keeps the PV charge cap (the SOC estimate drifts), Capacity stops."""
@@ -161,7 +166,9 @@ def test_charging_curtail_on_a_full_pack_follows_charge_pv(operation, charge):
     h.data[h.ctx["soc_entity"]]["state"] = "100"
     d = decide(h, state="CURTAIL", charge_kwh=0.5)
     assert d["valid"] and d["state"] == "CURTAIL"
-    assert d["desired"][h.ctx["charge_entity"]] == charge
+    assert d["desired"][h.ctx["charge_entity"]] == (
+        floor(h) if charge is None else charge
+    )
     assert d["desired"][h.ctx["grid_entity"]] == 0
-    assert d["desired"][h.ctx["discharge_entity"]] == 0
+    assert d["desired"][h.ctx["discharge_entity"]] == floor(h)
     assert program(d, "select:charging") == "Disabled"

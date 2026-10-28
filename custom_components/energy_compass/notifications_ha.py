@@ -29,8 +29,13 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import notifications as core
+from .config_models import NumericSetting, resolve_numeric
+from .controller_native import NativeSetup, native_setup
+from .engine.models import InputError
+from .flow_schema import snapshot
 from .notifications import FAILED_ATTEMPTS_FOR_ISSUE, SEND_TIMEOUT_S
-from .settings import DOMAIN, native_notifications_active
+from .settings import DOMAIN, NUMBERS, native_notifications_active
+from .soc_estimator_config import counter_mode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -360,6 +365,7 @@ class WindowNotifier:
             str(settings.get("notify_language") or "auto"), self.hass.config.language
         )
         await self._evaluate_clock(data, now, tz, bool(configured), language)
+        await self._evaluate_outage(data, now, tz, bool(configured), language)
         decision = core.evaluate(
             data, self.state, now, tz, has_target=bool(configured), language=language
         )
@@ -461,6 +467,125 @@ class WindowNotifier:
                 [result["target"] for result in failed], failed[-1].get("error", "")
             )
             await self._persist()
+
+    def _outage_watch(self) -> Any | None:
+        """The grid watch of the controller, None when no grid source is read."""
+        controller = self.coordinator.controller
+        if controller is None or not getattr(controller, "grid_watched", False):
+            return None
+        return controller.state.grid
+
+    def _outage_facts(self, now: datetime) -> core.OutageFacts:
+        """The battery as the message states it; whatever cannot be read stays unknown."""
+        settings = self.coordinator.configuration.get("settings", {})
+        capacity = settings.get("capacity_kwh", NUMBERS["capacity_kwh"][1])
+        eta = settings.get("eta_discharge", NUMBERS["eta_discharge"][1])
+        return core.OutageFacts(
+            soc=self._soc_percent(),
+            load_kw=self._load_kw(now),
+            capacity_kwh=float(capacity) if capacity else None,
+            eta_discharge=float(eta) if eta else 1.0,
+        )
+
+    def _soc_percent(self) -> float | None:
+        """The SOC the planner and controller act on: the estimator, else the inverter's."""
+        value = None
+        if counter_mode(self.coordinator.configuration):
+            view = self.coordinator.soc_estimator.view()
+            if view is not None:
+                value = view["fraction"] * 100
+        else:
+            found = native_setup(self.hass, self.coordinator.controller)
+            if isinstance(found, NativeSetup):
+                state = self.hass.states.get(found.entities.soc)
+                try:
+                    value = float(state.state) if state is not None else None
+                except ValueError:
+                    value = None
+        return value if value is not None and 0 <= value <= 100 else None
+
+    def _load_kw(self, now: datetime) -> float | None:
+        """The measured house load in kW; unknown without the load power measurement.
+
+        The plan's load is a forecast: on a cold evening the real load is far above
+        it, and a runtime from the forecast is optimistic exactly when it matters.
+        """
+        setting = (self.coordinator.configuration.get("measurements") or {}).get(
+            "load_power"
+        )
+        if not setting or not setting.get("entity"):
+            return None
+        states = snapshot(self.hass, {"measurements": {"load_power": setting}})
+        try:
+            return resolve_numeric(NumericSetting.from_dict(setting), states, now)
+        except InputError, KeyError, TypeError, ValueError:
+            return None
+
+    async def _evaluate_outage(
+        self, data: Mapping, now: datetime, tz: Any, has_target: bool, language: str
+    ) -> None:
+        """One message per grid outage start and end, spent before the call."""
+        watch = self._outage_watch()
+        if watch is None:
+            return
+        decision = core.evaluate_outage(
+            data,
+            self.state,
+            active=watch.active,
+            since=watch.since,
+            lost_at=watch.lost_at,
+            restored_at=watch.restored_at,
+            facts=self._outage_facts(now),
+            now=now,
+            tz=tz,
+            has_target=has_target,
+            language=language,
+            live_sender=native_notifications_active(self._settings),
+        )
+        if decision.code == "outage_clear":
+            self.state = decision.state
+            await self._persist()
+            return
+        if decision.code != "send":
+            return
+        self.state = decision.state
+        try:
+            await self._store.async_save(core.dump_state(self.state))
+        except Exception as err:
+            _LOGGER.warning(
+                "Could not save the notification state: %s", err, exc_info=True
+            )
+            self._attempt_failed([], _cut(err))
+            return
+        if not self._outage_still_allowed():
+            return
+        results = await async_send(
+            self.hass, self._settings, decision.title, decision.message
+        )
+        sent = sum(1 for result in results if result["ok"])
+        self._log_entry(
+            "grid outage" if watch.active else "grid back",
+            f"sent to {sent} of {len(results)} targets",
+        )
+        if sent == len(results):
+            await self._attempt_ok()
+        else:
+            failed = [result for result in results if not result["ok"]]
+            self._attempt_failed(
+                [result["target"] for result in failed], failed[-1].get("error", "")
+            )
+            await self._persist()
+
+    def _outage_still_allowed(self) -> bool:
+        """The final gate of an outage message: notifications on and a target left."""
+        return bool(
+            core.outage_sender(
+                self.coordinator.data or {},
+                native_notifications_active(self._settings),
+            )
+            and targets(self._settings)
+            and self._outage_watch() is not None
+        )
 
     def _clock_still_allowed(self) -> bool:
         """The final gate of a clock message, on the state and settings of now."""

@@ -1,23 +1,17 @@
 """Pick the controller engine a scenario test runs against.
 
 `test_deye_controller.py` runs every scenario against the generated blueprint and
-the native controller; `test_controller_native_parity.py` runs it against the frozen
-0.1.38 blueprint ("oracle"; 0.1.37 plus #41 and #46) and the native controller. All three expose the same
-harness API; `use` selects the active one and `Harness`/`Runner` build from it.
+the native controller. Both expose the same harness API; `use` selects the active one
+and `Harness`/`Runner` build from it.
 """
 
 import copy
 
 import deye_harness as blueprint
 import deye_native_harness as native
-import deye_oracle_v0137 as oracle
 
-MODULES = {"blueprint": blueprint, "native": native, "oracle": oracle}
-ControllerGone = (
-    blueprint.ControllerGone,
-    native.ControllerGone,
-    oracle.ControllerGone,
-)
+MODULES = {"blueprint": blueprint, "native": native}
+ControllerGone = (blueprint.ControllerGone, native.ControllerGone)
 _active = ["blueprint"]
 # A list while a parity run records what each harness decided and did.
 TRACE = None
@@ -82,3 +76,22 @@ def Harness(*args, **kwargs):
 
 def Runner(harness):
     return _runner_class(_active[0])(harness)
+
+
+def is_native(harness):
+    """True for the native harness: only its context carries the buffer limit."""
+    return "min_buffer_current" in harness.ctx
+
+
+# The full-pack current cap of the sample inverter (the harness entities' ceiling).
+CURRENT_CAP = 14
+
+
+def hold_grid(harness):
+    """Grid charge current of a HOLD/CURTAIL row: the TOU floor holds natively (0 A)."""
+    return 0 if is_native(harness) else harness.ctx["hold_grid_current"]
+
+
+def hold_discharge(harness, blueprint=0):
+    """Discharge limit of a HOLD/CURTAIL row (and of CHARGE_GRID): the cap natively."""
+    return CURRENT_CAP if is_native(harness) else blueprint

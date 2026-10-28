@@ -10,7 +10,14 @@ from custom_components.energy_compass import controller as core
 from custom_components.energy_compass import controller_texts as texts
 
 # Texts of this release that the blueprint never had.
-NEW = {"layout_mismatch", "paused", "plan_malformed", "blueprint_active", "run_failed"}
+NEW = {
+    "layout_mismatch",
+    "paused",
+    "plan_malformed",
+    "blueprint_active",
+    "run_failed",
+    "grid_outage",
+}
 CODES = (*texts.REASONS, *texts.STOPS, *texts.WARNINGS)
 
 
@@ -46,6 +53,7 @@ def test_the_reason_codes_are_the_documented_ones():
         "simulation_blocked",
         "blueprint_active",
         "run_failed",
+        "grid_outage",
     )
 
 

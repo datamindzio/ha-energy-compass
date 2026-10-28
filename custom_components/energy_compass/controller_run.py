@@ -160,6 +160,7 @@ class DeyeExecutor:
             "reached_key": decision.reached_key
             if decision.target_reached
             else runtime.get("reached_key"),
+            "hold_level": decision.hold_level,
             "slot_energy": decision.slot_energy,
             "desired": decision.desired,
             "requested_mode": decision.requested_mode,

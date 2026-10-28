@@ -32,6 +32,7 @@ REASONS = (
     "simulation_blocked",
     "blueprint_active",
     "run_failed",
+    "grid_outage",
 )
 STOPS = (
     "controller_unavailable",
@@ -65,6 +66,7 @@ PL: Mapping[str, str] = {
     "simulation_blocked": "Najpierw przywróć bazę w Off; po potwierdzeniu wybierz Simulation ponownie",
     "blueprint_active": "Włączona automatyzacja blueprintu pisałaby do tego samego falownika: {automation}. Energy Compass nie zapisuje nic, nawet przywrócenia, dopóki jest włączona, więc falownik zachowuje ostatni nadany profil. Wyłącz ją i zatrzymaj jej wykonania; sterownik wtedy kontynuuje albo przywraca BASE przy następnym przebiegu",
     "run_failed": "Przebieg sterownika nie powiódł się: szczegóły w dzienniku Home Assistanta",
+    "grid_outage": "awaria sieci: bateria zasila dom (BACKUP)",
     "controller_unavailable": "Energy Compass niedostępny: sterowanie wstrzymane bez zapisów",
     "simulation_rejected": "Simulation odrzucone: pozostał obowiązek przywrócenia, wybrano Off",
     "simulation": "Symulacja: profil obliczony, bez zapisów falownika",
@@ -95,6 +97,7 @@ EN: Mapping[str, str] = {
     "simulation_blocked": "Restore the base in Off first; select Simulation again after it is confirmed",
     "blueprint_active": "A blueprint automation is on and would write to the same inverter: {automation}. Energy Compass writes nothing, not even the restore, while it is on, so the inverter keeps the last profile it was given. Switch it off and stop its runs; the controller then continues or restores BASE on its next run",
     "run_failed": "The controller run failed: details are in the Home Assistant log",
+    "grid_outage": "grid outage: the battery powers the house (BACKUP)",
     "controller_unavailable": "Energy Compass unavailable: control held without writes",
     "simulation_rejected": "Simulation rejected: a restore obligation remains, Off selected",
     "simulation": "Simulation: profile computed, no inverter writes",

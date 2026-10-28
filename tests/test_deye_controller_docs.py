@@ -55,9 +55,12 @@ def controller_surface():
         if key.startswith("deye_")
     ]
     services = [name for name in strings["services"] if name.startswith("controller_")]
+    outage = strings["entity"]["binary_sensor"]["grid_outage"]
     return sorted(
         {
             *keys,
+            "grid_outage",
+            *outage["state_attributes"],
             *controller.CONTROLLER_ATTRIBUTES,
             *controller.PLAN_REASONS,
             *(f"energy_compass.{name}" for name in services),
@@ -98,7 +101,8 @@ def test_extraction_finds_the_known_surface():
         "energy_compass.controller_runtime",
         "energy_compass.controller_import_package",
     } <= set(surface)
-    assert {"ok", "session", "revoked", "sources"} <= set(surface)
+    assert {"ok", "session", "revoked", "sources", "grid_outage"} <= set(surface)
+    assert {"grid_outage", "restored_pending_since", "source_state"} <= set(surface)
     assert {"ok", "blocked", "restored", "waiting", "write_failed"} <= set(
         runtime_codes()
     )
@@ -113,6 +117,65 @@ def test_extraction_finds_the_known_surface():
 def test_guides_document_controller_surface(guide, identifier):
     assert f"`{identifier}`" in guide.read_text(), (
         f"{guide.name} does not mention `{identifier}`; follow AGENTS.md Documentation sweep"
+    )
+
+
+OUTAGE_IDENTIFIERS = [
+    "BACKUP",
+    "min_buffer_current",
+    "grid_presence_entity",
+    "grid_voltage_entities",
+    "outage_enter_seconds",
+    "outage_stable_minutes",
+    "grid_restored",
+    "controller_min_buffer_range",
+    "controller_outage_range",
+]
+OUTAGE_SECTIONS = {
+    "guide.en.md": ("### Grid outage", "(#grid-outage)", "### Outage messages"),
+    "guide.pl.md": (
+        "### Awaria sieci",
+        "(#awaria-sieci)",
+        "### Wiadomości o awarii sieci",
+    ),
+}
+
+
+@pytest.mark.parametrize("guide", GUIDES, ids=lambda path: path.name)
+@pytest.mark.parametrize("identifier", OUTAGE_IDENTIFIERS)
+def test_guides_document_the_grid_outage_surface(guide, identifier):
+    assert f"`{identifier}`" in guide.read_text(), (
+        f"{guide.name} does not mention `{identifier}`; follow AGENTS.md Documentation sweep"
+    )
+
+
+@pytest.mark.parametrize("guide", GUIDES, ids=lambda path: path.name)
+def test_guides_list_exactly_the_grid_attribute_keys_the_sensor_publishes(guide):
+    from custom_components.energy_compass.controller_grid import GridWatch
+
+    row = next(
+        line for line in guide.read_text().splitlines() if line.startswith("| `grid` |")
+    )
+    documented = set(re.findall(r"`([a-z_]+)`", row.split("|")[2])) - {"null"}
+    published = set(GridWatch().as_attribute())
+    assert documented == published, (
+        f"{guide.name}: the `grid` attribute row lists {sorted(documented)}, "
+        f"the controller sensor publishes {sorted(published)}"
+    )
+
+
+@pytest.mark.parametrize("guide", GUIDES, ids=lambda path: path.name)
+def test_guides_warn_that_the_blueprint_loses_the_outage_safety(guide):
+    heading, link, messages = OUTAGE_SECTIONS[guide.name]
+    text = guide.read_text()
+    assert heading in text and messages in text
+    rollback = text.split("\n### ")
+    migrating = [
+        part for part in rollback if "restored" in part and "blueprint" in part
+    ]
+    assert any(link in part and "0 A" in part for part in migrating), (
+        f"{guide.name}: the rollback in the migration section must warn about the 0 A "
+        "of the blueprint and link the grid outage section"
     )
 
 

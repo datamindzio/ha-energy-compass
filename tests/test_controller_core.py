@@ -473,6 +473,7 @@ def test_runtime_allow_list_is_exact():
         "since",
         "battery_mode_commissioned",
         "reached_key",
+        "hold_level",
         "slot_energy",
         "owned_session",
         "uncertain",

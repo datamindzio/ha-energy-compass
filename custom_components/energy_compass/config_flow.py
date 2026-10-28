@@ -14,10 +14,12 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.util import dt as dt_util
 
+from . import controller_grid
 from .atlas_env import BASE_URLS, ENROLLMENT_SECRETS
 from .controller import ENGINES, controller_engine, controller_options_change
 from .controller_ha import (
     blueprint_prefill,
+    buffer_current_invalid,
     default_device,
     device_in_use,
     device_resolution,
@@ -541,6 +543,24 @@ class Editor(SocEstimatorFlow, SourceEditor):
                 ):
                     errors["base"] = "controller_limits_required"
                     self._show_expert = expert = True
+                elif engine == "native" and buffer_current_invalid(
+                    self.hass,
+                    device_id,
+                    running.fallback_battery()
+                    if running is not None
+                    else {
+                        key: NUMBERS[key][1] for key in ("charge_kw", "discharge_kw")
+                    },
+                    stored_limits,
+                    stored_entities,
+                ):
+                    errors["base"] = "controller_min_buffer_range"
+                    self._show_expert = expert = True
+                elif engine == "native" and controller_grid.range_invalid(
+                    stored_limits
+                ):
+                    errors["base"] = "controller_outage_range"
+                    self._show_expert = expert = True
             # Keys the 0.1.37 form never wrote are stored only for a native
             # controller, so saving an untouched entry changes nothing.
             native = enabled and engine == "native"
@@ -706,6 +726,7 @@ class Editor(SocEstimatorFlow, SourceEditor):
             number("max_grid_current", 1000, "A"),
             number("hold_grid_current", 100, "A"),
             number("reached_discharge_current", 100, "A"),
+            number("min_buffer_current", 100, "A"),
             number("balance_grid_current", 100, "A"),
             number("voltage_grid_charge_ceiling", 100, "V"),
             (
@@ -726,6 +747,10 @@ class Editor(SocEstimatorFlow, SourceEditor):
             entities("old_writers", "automation", True),
             entities("telemetry_entities", "sensor", True),
             entities("discharge_energy_entity", "sensor"),
+            entities("grid_presence_entity", ["binary_sensor", "input_boolean"]),
+            entities("grid_voltage_entities", "sensor", True),
+            number("outage_enter_seconds", 600, "s"),
+            number("outage_stable_minutes", 120, "min"),
             entities("charge_entity", "number"),
             entities("discharge_entity", "number"),
             entities("grid_entity", "number"),

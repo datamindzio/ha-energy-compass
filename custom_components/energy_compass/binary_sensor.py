@@ -7,18 +7,21 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.util import dt as dt_util
 
 from . import controller_clock as clock
+from .controller_entity import DeyeGridOutageSensor
 from .entity import EnergyCompassEntity
 from .sources.bindings import parse_timestamp
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Publish the validity gate used by notification and dashboard consumers."""
-    async_add_entities(
-        [
-            EnergyCompassValidity(entry.runtime_data, "forecast_valid"),
-            EnergyCompassAlert(entry.runtime_data, "alert"),
-        ]
-    )
+    entities = [
+        EnergyCompassValidity(entry.runtime_data, "forecast_valid"),
+        EnergyCompassAlert(entry.runtime_data, "alert"),
+    ]
+    controller = entry.runtime_data.controller
+    if controller is not None:
+        entities.append(DeyeGridOutageSensor(controller))
+    async_add_entities(entities)
 
 
 class EnergyCompassAlert(EnergyCompassEntity, BinarySensorEntity):

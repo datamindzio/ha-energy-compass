@@ -167,13 +167,14 @@ async def test_a_candidate_keeps_the_written_charge_current_at_the_cap_into_hold
     assert controller.state.runtime["state"] == "HOLD"
     assert float(hass.states.get(CHARGE).state) == cap
     # The switch to HOLD's Grid program stops the writers for the length of one
-    # transaction (the shared write order), so time passes between 0 A and the
-    # cap; the hold current is never written.
+    # transaction (the shared write order), so time passes between the stop and the
+    # cap; the stop parks at the 1 A buffer, never at 0 A, and the closed hold
+    # current is not written on top of it.
     charge_writes = [value for entity, value in inverter.writes if entity == CHARGE]
-    assert charge_writes[-1] == cap
-    assert 1 not in charge_writes
-    # HOLD keeps its own grid current and Grid program: nothing extra was opened.
-    assert float(hass.states.get(GRID).state) == 1
+    assert charge_writes == [1, cap]
+    # HOLD keeps the TOU floor (grid current 0) and the Grid program: nothing extra
+    # was opened.
+    assert float(hass.states.get(GRID).state) == 0
     assert [hass.states.get(e).state for e in PROGRAM_SELECTS].count("Grid") == 1
     # The candidate survived the plan row that the estimator would exclude.
     assert estimator.full_candidate

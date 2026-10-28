@@ -1,11 +1,10 @@
 """Pure Deye profile: the decision, the write plan and the register layout.
 
-No Home Assistant imports. Every rule is a port of the 0.1.38 blueprint templates (0.1.37 plus #41 and #46)
+No Home Assistant imports. Every rule started as a port of the 0.1.38 blueprint templates (0.1.37 plus #41 and #46)
 (`tools/deye_controller/build.py` DECISION, BASE_DECISION, DIFF, GUARD,
-CAP_ONLY_REPLAN, WRITE) and is proven against the frozen blueprint by
-`tests/test_controller_native_parity.py`. The order of operations, rounding modes
-and tolerances are those of the templates on purpose; change them only together
-with a new oracle.
+CAP_ONLY_REPLAN, WRITE); the native engine has since moved on (grid outage safety: no 0 A,
+HOLD by TOU floor, BACKUP) and is no longer held to the blueprint. The order of operations,
+rounding modes and tolerances are those of the templates unless a test says otherwise.
 
 All Deye-specific numbers live here, so the executor and the options stay free of
 inverter knowledge.
@@ -112,6 +111,9 @@ class Limits:
     relinquish_current: float
     hold_grid_current: float = 1
     reached_discharge_current: float = 1
+    # Islanded, the battery is the inverter's only buffer for load and PV steps: no
+    # state writes a charge or discharge limit below this (0 opts out).
+    min_buffer_current: float = 1
     balance_grid_current: float = 2
     voltage_grid_charge_ceiling: float = 55.2
     commissioned_battery_modes: tuple[str, ...] = ("Capacity",)
@@ -139,6 +141,7 @@ class Snapshot:
     `blueprint_active` lists switched-on automations of the retired blueprint, whose
     writes would collide with ours. `full_candidate` is set while the SOC estimator
     holds a full-pack candidate: the decision then keeps the charge path open.
+    `grid_outage` is set while the grid watch reports an outage.
     """
 
     now: datetime
@@ -150,6 +153,7 @@ class Snapshot:
     paused: bool = False
     blueprint_active: tuple[str, ...] = ()
     full_candidate: bool = False
+    grid_outage: bool = False
 
     def state(self, entity: str) -> str:
         fact = self.states.get(entity)
@@ -196,6 +200,9 @@ class Decision:
     discharged_kwh: float
     slot_energy: Any
     warning_code: str = ""
+    buffer_current: float = 0.0
+    grid_outage: bool = False
+    hold_level: Mapping[str, float] | None = None
 
 
 class Command(NamedTuple):
@@ -343,7 +350,9 @@ def decide(
         reason = "session_wait"
     elif c.get("plan_reason") == "revoked":
         reason = "plan_revoked"
-    elif c.get("plan_reason") != "ok":
+    elif c.get("plan_reason") not in ("ok", "grid_outage"):
+        # grid_outage: the planner holds during an outage, the plan itself is as good as
+        # it was; the BACKUP state below decides what the outage means.
         reason = "plan_sources"
     elif not (capacity_kwh > 0 and 0 < eta_charge <= 1 and 0 < eta_discharge <= 1):
         reason = "battery_params"
@@ -361,9 +370,25 @@ def decide(
     state = row.get("state", "BASE") if valid else "BASE"
     if base or snapshot.mode == "Off":
         state = "BASE"
+    # While the grid is out the battery is the house's only source: BACKUP holds both
+    # currents at their caps and every program off, whatever the plan says (even with no
+    # plan). Only the controller acts on it (Auto; Simulation computes it, the guard
+    # keeps it from writing) and only with telemetry to trust, six sound TOU times and a
+    # usable operation mode; otherwise the BASE restore above stays.
+    if (
+        snapshot.grid_outage
+        and not base
+        and snapshot.mode in ("Auto", "Simulation")
+        and telemetry
+        and times_ok
+        and operation in ("Capacity", "Voltage")
+    ):
+        valid = True
+        reason = "grid_outage"
+        state = "BACKUP"
     # Deliberate divergence from the 0.1.38 blueprint, whose template raises on such a
     # row: the native controller holds BASE instead of acting on invented zeros.
-    if valid and _row_malformed(row, state):
+    if valid and state != "BACKUP" and _row_malformed(row, state):
         valid = False
         reason = "plan_malformed"
         state = "BASE"
@@ -422,12 +447,12 @@ def decide(
     charge = (
         relinquish
         if state == "BASE"
-        else (charge_cap if state in FORCING_STATES else 0)
+        else (charge_cap if state in FORCING_STATES or state == "BACKUP" else 0)
     )
     discharge = (
         relinquish
         if state == "BASE"
-        else (discharge_cap if state in FORCING_STATES else 0)
+        else (discharge_cap if state in FORCING_STATES or state == "BACKUP" else 0)
     )
     grid: float = 0
     direction = "Disabled"
@@ -462,6 +487,9 @@ def decide(
                 max(0, charge_kwh - surplus) / h * 1000 * eta_charge / v,
             )
             charge = charge_cap
+            # On-grid the charge target blocks discharge (DD-3); islanded the battery
+            # must be free to feed the house.
+            discharge = discharge_cap
             direction = "Grid" if grid >= 1 and planned >= 1 else "Disabled"
             if balance:
                 grid = max(limits.balance_grid_current, grid)
@@ -505,6 +533,7 @@ def decide(
     # (the SOC ends where the plan says, the rest stays curtailed). The planned current
     # is rounded up to the charge step, so a row at charge_kw x h gets the whole cap.
     # Every other HOLD/CURTAIL row holds the SOC.
+    hold_level: Mapping[str, float] | None = None
     curtail_charges = (
         state == "CURTAIL"
         and bool(row)
@@ -524,19 +553,57 @@ def decide(
         )
         discharge = 0
     elif state in ("HOLD", "CURTAIL") and row:
-        target_soc = _round(
+        # DD-2: hold by the TOU floor, not by 0 A. The program stays active in direction
+        # Grid with its target at the plan's SOC, but never above the level the pack is at
+        # now (2026-09-21: a floor above the SOC makes the inverter charge from the grid).
+        # The level is latched while the state stays HOLD/CURTAIL, so the target does not
+        # creep with the SOC and retrigger the protective steps of `diff`.
+        plan_soc = _round(
             min(100, max(10, _float(row.get("end_soc_kwh")) / capacity_kwh * 100)),
             0,
             "floor",
         )
+        latched = (
+            rt.get("hold_level") if rt.get("state") in ("HOLD", "CURTAIL") else None
+        )
+        if (
+            isinstance(latched, Mapping)
+            and _is_number(latched.get("soc"))
+            and _is_number(latched.get("voltage"))
+        ):
+            hold_level = {
+                "soc": _float(latched["soc"]),
+                "voltage": _float(latched["voltage"]),
+            }
+        else:
+            level_soc = min(100, max(10, _round(soc, 0, "floor")))
+            hold_level = {
+                "soc": level_soc,
+                "voltage": max(
+                    BASE_VOLTAGE,
+                    min(
+                        _knot_voltage(level_soc, DISCHARGE_KNOTS, "floor"),
+                        _round(v / 10, 1, "floor"),
+                    ),
+                ),
+            }
+        target_soc = max(10, min(plan_soc, hold_level["soc"]))
         target_voltage = _knot_voltage(target_soc, DISCHARGE_KNOTS, "floor")
+        if operation == "Voltage":
+            target_voltage = max(
+                BASE_VOLTAGE,
+                min(
+                    _knot_voltage(plan_soc, DISCHARGE_KNOTS, "floor"),
+                    hold_level["voltage"],
+                ),
+            )
         charge = (
             charge_cap
             if snapshot.full_candidate and state == "HOLD"
-            else limits.hold_grid_current
+            else max(limits.hold_grid_current, limits.min_buffer_current)
         )
-        discharge = 0
-        grid = limits.hold_grid_current
+        discharge = discharge_cap
+        grid = 0
         direction = "Grid"
 
     if (
@@ -546,7 +613,7 @@ def decide(
     ):
         charge = charge_cap if state == "CHARGE_GRID" else 0
         grid = 0
-        discharge = reached_discharge if state == "DISCHARGE_GRID" else 0
+        discharge = discharge_cap if state == "CHARGE_GRID" else reached_discharge
         direction = "Disabled"
         reached = True
 
@@ -582,6 +649,13 @@ def decide(
     ):
         charge = charge_cap if snapshot.full_candidate else 0
 
+    # DD-1: never 0 A. Whatever the state asked for, the battery stays connected as
+    # the buffer of the house (BASE relinquishes to the inverter's own limit instead).
+    buffer = max(0.0, limits.min_buffer_current)
+    if state != "BASE":
+        charge = max(charge, buffer)
+        discharge = max(discharge, buffer)
+
     reason_args = {}
     if operation == "Voltage" and not (
         APPROVED_TOU_VOLTAGE_RANGE[0] <= target_voltage <= APPROVED_TOU_VOLTAGE_RANGE[1]
@@ -613,7 +687,7 @@ def decide(
 
     desired: dict[str, Any] = {e.charge: charge, e.discharge: discharge, e.grid: grid}
     for i in TOU_PROGRAMS:
-        on = i == active and state != "BASE"
+        on = i == active and state not in ("BASE", "BACKUP")
         prefix = f"number.{e.prefix}{i}_"
         desired[prefix + "soc"] = target_soc if on else BASE_SOC
         desired[prefix + "voltage"] = target_voltage if on else BASE_VOLTAGE
@@ -695,6 +769,9 @@ def decide(
         warning_code="curtail_unsupported"
         if state == "CURTAIL" and not curtail_charges
         else "",
+        buffer_current=buffer,
+        grid_outage=snapshot.grid_outage,
+        hold_level=hold_level,
     )
 
 
@@ -707,10 +784,33 @@ def _equal(snapshot: Snapshot, entity: str, value: Any) -> bool:
     )
 
 
+def _backup_commands(
+    snapshot: Snapshot, target: Decision, dirty: list[str]
+) -> list[Command]:
+    """The writes to BACKUP: no stop, nothing lowers a current.
+
+    The discharge limit goes first (the battery must be free to feed the house), then
+    the charge limit, grid charging off, the programs and last their TOU targets.
+    """
+    e = snapshot.entities
+    order = (e.discharge, e.charge, e.grid)
+    rest = [entity for entity in target.desired if entity not in order]
+    selects = [entity for entity in rest if entity.startswith("select.")]
+    others = [entity for entity in rest if not entity.startswith("select.")]
+    return [
+        Command(entity, target.desired[entity], "backup")
+        for entity in (*order, *selects, *others)
+        if entity in target.desired
+        and (not _equal(snapshot, entity, target.desired[entity]) or entity in dirty)
+    ]
+
+
 def diff(snapshot: Snapshot, target: Decision) -> list[Command]:
     """The ordered write plan from the live states to `target` (DIFF)."""
     e = snapshot.entities
     dirty = list(snapshot.runtime.get("uncertain", []))
+    if target.state == "BACKUP":
+        return _backup_commands(snapshot, target, dirty)
     active = f"select.{e.prefix}{target.active_tou}_charging"
     changed = [
         entity
@@ -736,10 +836,16 @@ def diff(snapshot: Snapshot, target: Decision) -> list[Command]:
             protective = True
     stop: list[Command] = []
     stopped: list[str] = []
+    # DD-1: the protective stop parks the battery limits at the buffer, never at 0 A, and
+    # not at all while islanded: the battery is then the house's only source.
+    battery = (e.charge, e.discharge)
     if protective:
         for entity in (e.charge, e.grid, e.discharge):
-            if _float(snapshot.state(entity), -1) != 0 or entity in dirty:
-                stop.append(Command(entity, 0, "disable"))
+            if target.grid_outage and entity in battery:
+                continue
+            level = target.buffer_current if entity in battery else 0
+            if _float(snapshot.state(entity), -1) != level or entity in dirty:
+                stop.append(Command(entity, level, "disable"))
                 stopped.append(entity)
         for i in TOU_PROGRAMS:
             entity = f"select.{e.prefix}{i}_charging"
@@ -759,7 +865,9 @@ def diff(snapshot: Snapshot, target: Decision) -> list[Command]:
         elif entity in (e.grid, e.charge, e.discharge):
             if value > 0:
                 enable.append(Command(entity, value, "enable"))
-            elif entity not in stopped:
+            elif entity not in stopped and not (
+                target.grid_outage and entity in battery
+            ):
                 stop.append(Command(entity, 0, "disable"))
         else:
             limits.append(Command(entity, value, "limits"))
@@ -779,14 +887,28 @@ def guard(
     """Whether `command` may still be sent (GUARD); re-evaluated before every write."""
     if snapshot.paused:
         return False
+    if command.phase == "backup":
+        return bool(
+            fresh.writers_safe
+            and snapshot.mode != "Simulation"
+            and fresh.state == "BACKUP"
+            and fresh.valid
+            and fresh.settings_ok
+            and fresh.requested_mode == "Auto"
+            and not failed
+        )
     confirmed = snapshot.runtime.get("confirmed", {})
     current = baseline if cleanup else fresh
     prerequisites = True
     if command.phase == "enable":
         number_prefix = f"number.{snapshot.entities.prefix}"
+        buffered = (snapshot.entities.charge, snapshot.entities.discharge)
         for entity, value in target.desired.items():
             if (
-                entity.startswith(number_prefix) or value == 0 or value == "Disabled"
+                entity.startswith(number_prefix)
+                or value == 0
+                or value == "Disabled"
+                or (entity in buffered and value == target.buffer_current)
             ) and confirmed.get(entity) != value:
                 prerequisites = False
     if not (prerequisites and current.writers_safe and snapshot.mode != "Simulation"):

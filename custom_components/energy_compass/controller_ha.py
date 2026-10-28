@@ -22,8 +22,9 @@ from homeassistant.util import dt as dt_util
 
 from . import controller as core
 from . import controller_clock as clock
+from . import controller_grid as grid
 from . import controller_hardware as hardware
-from .controller_profile import PACK_VOLTAGE_RANGE
+from .controller_profile import PACK_VOLTAGE_RANGE, Limits
 from .controller_run import ControllerUnavailable
 from .controller_setup import (
     LIMIT_FIELDS,
@@ -242,6 +243,29 @@ def estimator_capacity_conflict(
     return state is not None and state.state == "Capacity"
 
 
+def _derived_limits(
+    hass: HomeAssistant,
+    device_id: str,
+    battery: Mapping[str, float],
+    limits: Mapping[str, Any] | None,
+    overrides=None,
+) -> Limits:
+    resolved = resolve_device(hass, device_id, overrides)
+
+    def maximum(role: str) -> Any:
+        state = hass.states.get(resolved.entities.get(role, ""))
+        return state.attributes.get("max") if state else None
+
+    return derive_limits(
+        limits,
+        charge_kw=battery["charge_kw"],
+        discharge_kw=battery["discharge_kw"],
+        charge_max=maximum("charge"),
+        grid_max=maximum("grid"),
+        resolved=resolved,
+    )
+
+
 def limits_underivable(
     hass: HomeAssistant,
     device_id: str,
@@ -253,20 +277,7 @@ def limits_underivable(
 
     Zero limits would make every plan invalid, so the user has to enter them.
     """
-    resolved = resolve_device(hass, device_id, overrides)
-
-    def maximum(role: str) -> Any:
-        state = hass.states.get(resolved.entities.get(role, ""))
-        return state.attributes.get("max") if state else None
-
-    derived = derive_limits(
-        limits,
-        charge_kw=battery["charge_kw"],
-        discharge_kw=battery["discharge_kw"],
-        charge_max=maximum("charge"),
-        grid_max=maximum("grid"),
-        resolved=resolved,
-    )
+    derived = _derived_limits(hass, device_id, battery, limits, overrides)
     return (
         min(
             derived.max_power_w,
@@ -275,6 +286,23 @@ def limits_underivable(
             derived.relinquish_current,
         )
         <= 0
+    )
+
+
+def buffer_current_invalid(
+    hass: HomeAssistant,
+    device_id: str,
+    battery: Mapping[str, float],
+    limits: Mapping[str, Any] | None,
+    overrides=None,
+) -> bool:
+    """Whether the minimum buffer current is negative, above the maximum current, or
+    above the relinquish current (BASE would then write a lower limit than any state)."""
+    derived = _derived_limits(hass, device_id, battery, limits, overrides)
+    return not (
+        0
+        <= derived.min_buffer_current
+        <= min(derived.max_current, derived.relinquish_current)
     )
 
 
@@ -330,11 +358,15 @@ class DeyeController:
         self._unsub_coordinator: CALLBACK_TYPE | None = None
         self._unsub_tou: CALLBACK_TYPE | None = None
         self._unsub_registry: CALLBACK_TYPE | None = None
+        self._grid_key: tuple | None = None
         self._timer: CALLBACK_TYPE | None = None
         self.advances = 0
         self._stopped = False
         self._device_sensor: str | None = None
         self._clock_entity: str | None = None
+        self._grid_presence: str | None = None
+        self._grid_voltages: tuple[str, ...] = ()
+        self._grid_timer: CALLBACK_TYPE | None = None
         self.hardware = hardware.HardwareFacts()
         self.clock = clock.ClockWatch()
 
@@ -393,11 +425,13 @@ class DeyeController:
             self._unsub_tou,
             self._unsub_registry,
             self._timer,
+            self._grid_timer,
         ):
             if unsubscribe:
                 unsubscribe()
         self._unsub_coordinator = self._unsub_tou = None
-        self._unsub_registry = self._timer = None
+        self._unsub_registry = None
+        self._timer = self._grid_timer = None
         await self._store.async_save(self.state.to_dict())
 
     async def async_remove_store(self) -> None:
@@ -643,6 +677,7 @@ class DeyeController:
             "program_prefix": self.resolution.prefix,
             "tou_problem": self._tou_problem(),
             "clock": self._clock_attribute(),
+            "grid": self._grid_diagnostics(),
             "engine": self.engine,
             "hardware": self.hardware.as_attribute(),
             "run_history": self.host.history if self.host is not None else [],
@@ -718,6 +753,10 @@ class DeyeController:
         prefix = self.resolution.prefix
         self._read_hardware()
         self._read_clock(now)
+        if self._grid_option_key() != self._grid_key:
+            # A saved option may name other grid sources; the form does not reload.
+            self._resolve()
+        self._read_grid(now)
         times = [
             self._tou_values.get(f"time.{prefix}{number}_time")
             for number in range(1, 7)
@@ -740,6 +779,9 @@ class DeyeController:
                 next_tou_at=self._next_tou,
                 hardware=self.hardware.as_attribute() if self.hardware.known else None,
                 clock=self._clock_attribute(),
+                grid=self._grid_attribute(),
+                # The blueprint engine keeps its own behaviour (and reads plan_reason).
+                outage=self.engine == "native" and self.state.grid.active,
             ),
         )
         if self._timer:
@@ -772,14 +814,20 @@ class DeyeController:
         resolution = device_resolution(self.hass, self.device_id)
         sensor = self._find_device_sensor()
         clock_entity = self._find_clock_entity()
+        presence, voltages = self._find_grid_sources()
+        self._grid_key = self._grid_option_key()
         changed = (
             resolution.entities != self.resolution.entities
             or sensor != self._device_sensor
             or clock_entity != self._clock_entity
+            or presence != self._grid_presence
+            or voltages != self._grid_voltages
         )
         self.resolution = resolution
         self._device_sensor = sensor
         self._clock_entity = clock_entity
+        self._grid_presence = presence
+        self._grid_voltages = voltages
         if changed or self._unsub_tou is None:
             if self._unsub_tou:
                 self._unsub_tou()
@@ -788,6 +836,8 @@ class DeyeController:
                 *resolution.entities,
                 *([sensor] if sensor else []),
                 *([clock_entity] if clock_entity else []),
+                *([presence] if presence else []),
+                *voltages,
             ]
             if watched:
                 self._unsub_tou = async_track_state_change_event(
@@ -830,6 +880,55 @@ class DeyeController:
             ),
             None,
         )
+
+    def _grid_option_key(self) -> tuple:
+        options = self._options()
+        voltages = options.get("grid_voltage_entities")
+        return (
+            options.get("grid_presence_entity"),
+            tuple(voltages) if isinstance(voltages, list | tuple) else (),
+        )
+
+    def _find_grid_sources(self) -> tuple[str | None, tuple[str, ...]]:
+        """The grid presence entity and the phase voltages: options first, then the device."""
+        options = self._options()
+        presence = options.get("grid_presence_entity") or None
+        configured = options.get("grid_voltage_entities")
+        voltages: tuple[str, ...] = (
+            tuple(configured) if isinstance(configured, list | tuple) else ()
+        )
+        if self.device_id and (presence is None or not voltages):
+            registry = er.async_get(self.hass)
+            entries = [
+                item
+                for item in er.async_entries_for_device(registry, self.device_id)
+                if item.platform == "solarman"
+            ]
+            if presence is None:
+                presence = next(
+                    (
+                        item.entity_id
+                        for item in entries
+                        if item.domain == "binary_sensor"
+                        and (
+                            item.translation_key == grid.ENTITY_KEY
+                            or item.entity_id.endswith(f"_{grid.ENTITY_KEY}")
+                        )
+                    ),
+                    None,
+                )
+            if not voltages:
+                voltages = tuple(
+                    item.entity_id
+                    for key in grid.VOLTAGE_KEYS
+                    for item in entries
+                    if item.domain == "sensor"
+                    and (
+                        item.translation_key == key
+                        or item.entity_id.endswith(f"_{key}")
+                    )
+                )
+        return presence, voltages
 
     @property
     def _issue_id(self) -> str:
@@ -881,6 +980,94 @@ class DeyeController:
             },
         )
 
+    @property
+    def grid_watched(self) -> bool:
+        """Whether a presence entity or phase voltage is being read."""
+        return self._grid_presence is not None or bool(self._grid_voltages)
+
+    def _grid_attribute(self) -> dict | None:
+        if not self.grid_watched:
+            return None
+        return self.state.grid.as_attribute()
+
+    def _grid_diagnostics(self) -> dict:
+        return {
+            "presence_entity": self._grid_presence,
+            "voltage_entities": list(self._grid_voltages),
+            "enter_seconds": grid.enter_seconds_of(self._options()),
+            "stable_seconds": grid.stable_seconds_of(self._options()),
+            "watch": self.state.grid.as_attribute(),
+            "edges": [
+                {"at": event.at, "detail": event.detail}
+                for event in self.state.history
+                if event.kind == "grid"
+            ][-grid.HISTORY_LIMIT :],
+        }
+
+    def _options(self) -> Mapping[str, Any]:
+        """The expert limits of the controller: the grid sources and debounce live there."""
+        return (self.entry.options.get("controller") or {}).get("limits") or {}
+
+    def _grid_reading(self) -> grid.GridReading | None:
+        if self._grid_presence is None and not self._grid_voltages:
+            return None
+
+        def state_of(entity_id: str | None) -> str | None:
+            state = self.hass.states.get(entity_id) if entity_id else None
+            return state.state if state else None
+
+        return grid.read(
+            state_of(self._grid_presence),
+            [state_of(entity_id) for entity_id in self._grid_voltages],
+        )
+
+    def _read_grid(self, now: datetime) -> None:
+        """Judge the grid presence; an edge is persisted and wakes the run and the planner."""
+        options = self._options()
+        before = self.state.grid
+        watch = grid.observe(
+            before,
+            self._grid_reading(),
+            now,
+            enter_seconds=grid.enter_seconds_of(options),
+            stable_seconds=grid.stable_seconds_of(options),
+        )
+        if watch != before:
+            history = self.state.history
+            if watch.active != before.active:
+                detail = "started" if watch.active else "ended"
+                history = core.remember(
+                    history, core.Event(now.isoformat(), "grid", detail=detail)
+                )
+            self._replace(replace(self.state, grid=watch, history=history))
+            if watch.active != before.active:
+                # An edge must survive a crash within the one-second delay of _save, and
+                # a later _save (the coordinator update it causes) must not push it out:
+                # a delayed write is postponed by every later delayed write.
+                self.entry.async_create_task(
+                    self.hass, self.async_save_now(), "energy_compass_grid_edge"
+                )
+        if self._grid_timer:
+            self._grid_timer()
+            self._grid_timer = None
+        deadline = grid.next_deadline(
+            watch,
+            enter_seconds=grid.enter_seconds_of(options),
+            stable_seconds=grid.stable_seconds_of(options),
+        )
+        if deadline is not None:
+            self._grid_timer = async_track_point_in_utc_time(
+                self.hass, self._grid_due, max(deadline, now)
+            )
+        if watch.active != before.active:
+            _LOGGER.warning("Grid outage %s", "started" if watch.active else "ended")
+            self.coordinator.async_grid_changed(watch.active)
+
+    @callback
+    def _grid_due(self, now: datetime) -> None:
+        self._grid_timer = None
+        self._publish(now)
+
     def _read_hardware(self) -> None:
         state = (
             self.hass.states.get(self._device_sensor) if self._device_sensor else None
@@ -930,7 +1117,7 @@ class DeyeController:
             str(event.data.get(key) or "").partition(".")[0]
             for key in ("entity_id", "old_entity_id")
         }
-        if domains & (_TOU_DOMAINS | {"select", "datetime"}):
+        if domains & (_TOU_DOMAINS | {"select", "datetime", "binary_sensor", "sensor"}):
             if self.device_id:
                 self._resolve()
             self._publish()

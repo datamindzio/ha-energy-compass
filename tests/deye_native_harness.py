@@ -31,6 +31,7 @@ DEFAULTS = {
     "voltage_grid_charge_ceiling": 55.2,
     "hold_grid_current": 1,
     "reached_discharge_current": 1,
+    "min_buffer_current": 1,
     "balance_grid_current": 2,
     "max_power_w": 8000,
     "max_current": 18,
@@ -41,7 +42,7 @@ DEFAULTS = {
 
 
 def snapshot_of(
-    sim, ctx, runtime, paused=False, blueprint_active=()
+    sim, ctx, runtime, paused=False, blueprint_active=(), grid_outage=False
 ) -> profile.Snapshot:
     """The profile's view of the sample at this instant; later edits do not reach it."""
     sim.sync()
@@ -68,6 +69,7 @@ def snapshot_of(
         runtime=dict(runtime),
         paused=paused,
         blueprint_active=tuple(blueprint_active),
+        grid_outage=grid_outage,
     )
 
 
@@ -91,6 +93,7 @@ def limits_of(ctx) -> profile.Limits:
         relinquish_current=ctx["relinquish_current"],
         hold_grid_current=ctx["hold_grid_current"],
         reached_discharge_current=ctx["reached_discharge_current"],
+        min_buffer_current=ctx.get("min_buffer_current", 1),
         balance_grid_current=ctx["balance_grid_current"],
         voltage_grid_charge_ceiling=ctx["voltage_grid_charge_ceiling"],
         commissioned_battery_modes=tuple(ctx["commissioned_battery_modes"]),
@@ -143,6 +146,7 @@ class Harness(EnergyCompassSim):
             "device_id": "test_solarman_device",
         }
         self.paused = False
+        self.grid_outage = False
         self.blueprint_active = ()
         self.sync()
         self.ctx["program_prefix"] = self.prefix
@@ -160,7 +164,12 @@ class Harness(EnergyCompassSim):
 
     def snapshot(self):
         return snapshot_of(
-            self, self.ctx, self.stored_runtime(), self.paused, self.blueprint_active
+            self,
+            self.ctx,
+            self.stored_runtime(),
+            self.paused,
+            self.blueprint_active,
+            self.grid_outage,
         )
 
     def limits(self):
