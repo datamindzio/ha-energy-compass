@@ -56,6 +56,15 @@ def test_the_start_names_the_time_the_battery_and_the_runtime():
     assert decision.state == replace(FRESH, outage_since=SINCE)
 
 
+def test_the_runtime_counts_the_discharge_efficiency():
+    # (64 - 10) % of 10 kWh x 0.9 / 1.0 kW = 4.86 kWh -> 4 h 52 min
+    facts = replace(FACTS, eta_discharge=0.9)
+    assert core.outage_runtime_minutes(facts) == 292
+    assert start(facts=facts).message == (
+        "Grid lost at 10:00. Battery 64 %, about 4 h 52 min at the current 1.0 kW."
+    )
+
+
 def test_the_polish_start_text():
     decision = start(language="pl")
     assert decision.title == "Awaria sieci: dom działa na baterii"

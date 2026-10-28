@@ -60,6 +60,7 @@ class OutageFacts:
     soc: float | None = None  # percent
     load_kw: float | None = None  # house load now
     capacity_kwh: float | None = None
+    eta_discharge: float = 1.0  # share of the stored energy that reaches the house
 
 
 @dataclass(frozen=True)
@@ -333,7 +334,12 @@ def outage_runtime_minutes(facts: OutageFacts) -> int | None:
         return None
     if facts.load_kw < OUTAGE_MIN_LOAD_KW or facts.capacity_kwh <= 0:
         return None
-    usable = facts.capacity_kwh * max(facts.soc - OUTAGE_FLOOR_PERCENT, 0) / 100
+    usable = (
+        facts.capacity_kwh
+        * max(facts.soc - OUTAGE_FLOOR_PERCENT, 0)
+        / 100
+        * facts.eta_discharge
+    )
     return round(usable / facts.load_kw * 60) if usable > 0 else None
 
 

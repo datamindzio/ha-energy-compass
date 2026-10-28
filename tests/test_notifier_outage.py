@@ -1,11 +1,14 @@
 """One message at the start and one at the end of a grid outage through the native notifier."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import test_notifier as base
 from test_notifier import eligible, publish, settings_of, settle, stored
 
 from custom_components.energy_compass import controller_grid as grid
+from custom_components.energy_compass.config_models import NumericSetting
+from custom_components.energy_compass.sources.bindings import EntityBinding
 
 SINCE = "2026-09-17T09:59:00+00:00"
 LOST = "2026-09-17T09:58:45+00:00"
@@ -151,3 +154,81 @@ async def test_a_grid_that_never_left_sends_nothing(make, hass):
     publish(entry, no_window())
     await settle(hass)
     assert phones.calls == []
+
+
+def measure(entry, hass, load="2.0", soc=64.0, capacity=10.0, eta=0.9):
+    """A measured load, the estimator in charge of the SOC, and a known battery."""
+    configuration = entry.runtime_data.configuration
+    configuration["measurements"]["load_power"] = NumericSetting(
+        entity=EntityBinding("sensor.house_load"), unit="kW"
+    ).to_dict()
+    configuration["settings"].update(capacity_kwh=capacity, eta_discharge=eta)
+    configuration["sources"].update(
+        battery_enabled=True, soc_mode="counter_estimator"
+    )
+    hass.states.async_set("sensor.house_load", load, {"unit_of_measurement": "kW"})
+    estimator = SimpleNamespace(view=lambda: {"fraction": soc / 100})
+    return patch.object(entry.runtime_data, "soc_estimator", estimator)
+
+
+async def test_the_runtime_uses_the_measured_load_and_the_estimator(make, hass):
+    load, phones = make
+    entry = await load()
+    phones.register("mobile_app_a", "mobile_app_b")
+    attach(entry, OUT)
+    # (64 - 10) % of 10 kWh at eta 0.9 = 4.86 kWh; 2.0 kW -> 146 min
+    with measure(entry, hass):
+        # the forecast of the present interval must not be used
+        row = {"start": "2026-09-17T09:45:00+00:00", "end": "2026-09-17T10:15:00+00:00"}
+        publish(entry, no_window(intervals=[{**row, "load_kwh": 0.05}]))
+        await settle(hass)
+    message = phones.to("mobile_app_a")[0]["message"]
+    assert message == (
+        "Sieć zanikła o 11:58. Bateria 64 %, wystarczy na ok. 2 godz. 26 min "
+        "przy obecnym poborze 2.0 kW."
+    )
+
+
+async def test_the_inverter_soc_is_not_read_when_the_estimator_is_in_charge(
+    make, hass
+):
+    load, phones = make
+    entry = await load()
+    phones.register("mobile_app_a", "mobile_app_b")
+    attach(entry, OUT)
+    hass.states.async_set("sensor.inverter_soc", "7")
+    with measure(entry, hass, soc=2.0):
+        publish(entry, no_window())
+        await settle(hass)
+    # 2 % is below the 10 % floor: nothing is left to run on
+    assert phones.to("mobile_app_a")[0]["message"] == (
+        "Sieć zanikła o 11:58. Bateria 2 %."
+    )
+
+
+async def test_no_load_measurement_means_no_runtime(make, hass):
+    load, phones = make
+    entry = await load()
+    phones.register("mobile_app_a", "mobile_app_b")
+    attach(entry, OUT)
+    with measure(entry, hass):
+        entry.runtime_data.configuration["measurements"].pop("load_power")
+        row = {"start": "2026-09-17T09:45:00+00:00", "end": "2026-09-17T10:15:00+00:00"}
+        publish(entry, no_window(intervals=[{**row, "load_kwh": 0.5}]))
+        await settle(hass)
+    assert phones.to("mobile_app_a")[0]["message"] == (
+        "Sieć zanikła o 11:58. Bateria 64 %."
+    )
+
+
+async def test_an_unavailable_load_measurement_means_no_runtime(make, hass):
+    load, phones = make
+    entry = await load()
+    phones.register("mobile_app_a", "mobile_app_b")
+    attach(entry, OUT)
+    with measure(entry, hass, load="unavailable"):
+        publish(entry, no_window())
+        await settle(hass)
+    assert phones.to("mobile_app_a")[0]["message"] == (
+        "Sieć zanikła o 11:58. Bateria 64 %."
+    )
