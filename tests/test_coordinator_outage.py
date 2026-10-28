@@ -1,5 +1,6 @@
 """No plan is calculated while the grid is out; the end of the outage starts a solve."""
 
+from datetime import timedelta
 from unittest.mock import PropertyMock, patch
 
 import pytest
@@ -66,13 +67,51 @@ async def test_the_boundary_tick_solves_only_without_an_outage(
     coordinator._refresh_due = dt_util.utcnow()
     freezer.move_to("2026-09-17T10:20:00+00:00")
     coordinator._next_boundary(coordinator.configuration["settings"])
-    async_fire_time_changed(hass, dt_util.utcnow())
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=301))
     await hass.async_block_till_done()
     if held:
         assert coordinator._generation == generation
         assert coordinator.data["reason"] == "grid_outage"
     else:
         assert coordinator._generation > generation
+
+
+@pytest.mark.parametrize("rearm", ["boundary", "invalidate"])
+@pytest.mark.parametrize("held", [True, False])
+async def test_the_boundary_is_not_rearmed_in_a_busy_loop_during_an_outage(
+    published_entry, hass, freezer, outage, held, rearm
+):
+    """Missed refresh and input deadlines must not turn the tick into 10 per second."""
+    coordinator = published_entry.runtime_data
+    outage.return_value = held
+    freezer.move_to("2026-09-17T10:20:00+00:00")
+    coordinator._refresh_due = dt_util.utcnow() - timedelta(minutes=5)
+    coordinator._inputs_valid_until = dt_util.utcnow() - timedelta(minutes=1)
+    if rearm == "boundary":
+        coordinator._next_boundary(coordinator.configuration["settings"])
+    else:
+        coordinator._invalidate("calculating", "grid_outage")
+    delay = coordinator._boundary.when() - hass.loop.time()
+    if held:
+        assert delay >= 1
+    else:
+        assert delay < 1
+
+
+async def test_a_boundary_tick_during_an_outage_rearms_once_and_idles(
+    published_entry, hass, freezer, outage
+):
+    coordinator = published_entry.runtime_data
+    freezer.move_to("2026-09-17T10:20:00+00:00")
+    coordinator._refresh_due = dt_util.utcnow() - timedelta(minutes=5)
+    coordinator._next_boundary(coordinator.configuration["settings"])
+    with patch.object(
+        coordinator, "_next_boundary", wraps=coordinator._next_boundary
+    ) as rearm:
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+        await hass.async_block_till_done()
+    assert rearm.call_count <= 2
+    assert coordinator._boundary.when() - hass.loop.time() >= 1
 
 
 @pytest.mark.parametrize("calls", [1, 2])

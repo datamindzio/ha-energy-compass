@@ -744,9 +744,12 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
         if self._boundary:
             self._boundary.cancel()
         now = dt_util.utcnow()
+        # During an outage nothing is solved or re-read, so the refresh and input
+        # deadlines stay in the past; honouring them would re-arm every 0.1 s.
+        held = self.grid_outage
         delay = (
             max(0.1, (self._refresh_due - now).total_seconds())
-            if self._refresh_due and self._runner is None
+            if self._refresh_due and self._runner is None and not held
             else 300
         )
         if self.data.get("valid") and self.data.get("valid_until"):
@@ -757,7 +760,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
                     (parse_timestamp(self.data["valid_until"]) - now).total_seconds(),
                 ),
             )
-        if self._inputs_valid_until is not None:
+        if self._inputs_valid_until is not None and not held:
             delay = min(
                 delay, max(0.1, (self._inputs_valid_until - now).total_seconds())
             )
