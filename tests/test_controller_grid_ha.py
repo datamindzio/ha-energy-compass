@@ -212,6 +212,27 @@ async def test_an_edge_is_saved_before_the_delayed_save_runs(
     assert hass_storage[key]["data"]["grid"]["active"] is False
 
 
+async def test_a_later_save_does_not_postpone_the_edge(
+    controller_site, hass, hass_storage, freezer, monkeypatch
+):
+    """The coordinator update an edge causes saves the state again, one second later."""
+    key = f"energy_compass.{controller_site.entry_id}.controller"
+    add_grid(hass, controller_site)
+    hass.states.async_set(GRID, "off")
+    controller = await attach(hass, controller_site)
+    changed = controller.coordinator.async_grid_changed
+
+    def grid_changed(outage):
+        changed(outage)
+        controller._save()
+
+    monkeypatch.setattr(controller.coordinator, "async_grid_changed", grid_changed)
+    await tick(hass, freezer, 16)
+    assert controller.state.grid.active is True
+    await saved(hass)
+    assert hass_storage[key]["data"]["grid"]["active"] is True
+
+
 async def test_an_unreadable_source_keeps_the_known_state(
     controller_site, hass, freezer
 ):

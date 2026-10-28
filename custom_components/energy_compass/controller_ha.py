@@ -1041,8 +1041,12 @@ class DeyeController:
                 )
             self._replace(replace(self.state, grid=watch, history=history))
             if watch.active != before.active:
-                # An edge must survive a crash within the one-second delay of _save.
-                self._store.async_delay_save(self.state.to_dict, 0)
+                # An edge must survive a crash within the one-second delay of _save, and
+                # a later _save (the coordinator update it causes) must not push it out:
+                # a delayed write is postponed by every later delayed write.
+                self.entry.async_create_task(
+                    self.hass, self.async_save_now(), "energy_compass_grid_edge"
+                )
         if self._grid_timer:
             self._grid_timer()
             self._grid_timer = None
