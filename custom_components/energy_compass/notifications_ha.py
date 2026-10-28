@@ -540,6 +540,7 @@ class WindowNotifier:
             tz=tz,
             has_target=has_target,
             language=language,
+            live_sender=native_notifications_active(self._settings),
         )
         if decision.code == "outage_clear":
             self.state = decision.state
@@ -578,7 +579,10 @@ class WindowNotifier:
     def _outage_still_allowed(self) -> bool:
         """The final gate of an outage message: notifications on and a target left."""
         return bool(
-            core.preferences(self.coordinator.data or {}) is not None
+            core.outage_sender(
+                self.coordinator.data or {},
+                native_notifications_active(self._settings),
+            )
             and targets(self._settings)
             and self._outage_watch() is not None
         )

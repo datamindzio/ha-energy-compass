@@ -549,6 +549,17 @@ def _moment(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def outage_sender(data: Mapping, live_sender: bool) -> bool:
+    """Whether the integration sends outage messages.
+
+    The published plan's word when it has spoken; a plan that is not covered (a long
+    outage) publishes none, and then the live options decide.
+    """
+    if isinstance(data.get("notification_preferences"), Mapping):
+        return preferences(data) is not None
+    return live_sender
+
+
 def evaluate_outage(
     data: Mapping,
     state: SenderState,
@@ -562,6 +573,7 @@ def evaluate_outage(
     tz: tzinfo,
     has_target: bool,
     language: str,
+    live_sender: bool = False,
 ) -> Decision:
     """One message when a grid outage starts and one when it ends.
 
@@ -570,16 +582,19 @@ def evaluate_outage(
     was. Unlike window advice an outage is not held back by quiet hours, the daily cap
     or the cooldown, and it leaves their counters alone.
 
+    Who sends is `outage_sender`: the outage messages must not wait for the next plan.
+
     Codes: `outage_told` (nothing to do), `disabled`, `no_target` (the start is not
     spent, the end is forgotten as `outage_clear`) and `send`.
     """
+    sends = outage_sender(data, live_sender)
     if active:
         if since is None or state.outage_since == since:
             return Decision("outage_told", state)
         started = _moment(lost_at) or _moment(since)
         if started is None:
             return Decision("outage_told", state)
-        if preferences(data) is None:
+        if not sends:
             return Decision("disabled", state)
         if not has_target:
             return Decision("no_target", state)
@@ -591,7 +606,7 @@ def evaluate_outage(
         return Decision("outage_told", state)
     cleared = replace(state, outage_since=None)
     started, back = _moment(lost_at), _moment(restored_at)
-    if started is None or back is None or preferences(data) is None or not has_target:
+    if started is None or back is None or not sends or not has_target:
         return Decision("outage_clear", cleared)
     title, message = outage_end_texts(started, back, facts, tz, language)
     return Decision("send", cleared, None, None, title, message)

@@ -197,3 +197,25 @@ def test_the_episode_survives_the_store():
 def test_a_damaged_episode_is_a_fresh_state(bad):
     raw = {**core.dump_state(FRESH), "outage_since": bad}
     assert core.load_state(raw) == (FRESH, False)
+
+
+@pytest.mark.parametrize("live", [True, False])
+def test_a_plan_that_is_not_published_leaves_the_sender_to_the_options(live):
+    """A long outage can leave no covered plan, so no preferences are published."""
+    nothing = {"valid": False, "status": "calculating", "reason": "grid_outage"}
+    told = start().state
+    ended = end(told, nothing, live_sender=live)
+    started = start(nothing, live_sender=live)
+    if live:
+        assert ended.code == "send"
+        assert ended.state.outage_since is None
+        assert started.code == "send"
+    else:
+        assert ended.code == "outage_clear"
+        assert started.code == "disabled"
+
+
+def test_a_published_sender_overrules_the_options():
+    blueprint = data(prefs={"notify_sender": "blueprint"})
+    assert start(blueprint, live_sender=True).code == "disabled"
+    assert end(start().state, blueprint, live_sender=True).code == "outage_clear"

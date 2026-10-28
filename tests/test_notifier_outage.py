@@ -232,3 +232,21 @@ async def test_an_unavailable_load_measurement_means_no_runtime(make, hass):
     assert phones.to("mobile_app_a")[0]["message"] == (
         "Sieć zanikła o 11:58. Bateria 64 %."
     )
+
+
+async def test_the_end_is_told_when_no_plan_is_published(make, hass, hass_storage):
+    """The plan expired during a long outage: the restore message must not be dropped."""
+    load, phones = make
+    entry = await load()
+    phones.register("mobile_app_a", "mobile_app_b")
+    inverter = attach(entry, OUT)
+    publish(entry, no_window())
+    await settle(hass)
+    assert len(phones.to("mobile_app_a")) == 1
+
+    inverter.state.grid = BACK
+    publish(entry, {"valid": False, "status": "calculating", "reason": "grid_restored"})
+    await settle(hass)
+    assert len(phones.to("mobile_app_a")) == 2
+    assert phones.to("mobile_app_a")[1]["title"] == "Sieć wróciła"
+    assert "outage_since" not in stored(hass_storage, entry)
