@@ -795,10 +795,16 @@ def diff(snapshot: Snapshot, target: Decision) -> list[Command]:
             protective = True
     stop: list[Command] = []
     stopped: list[str] = []
+    # DD-1: the protective stop parks the battery limits at the buffer, never at 0 A, and
+    # not at all while islanded: the battery is then the house's only source.
+    battery = (e.charge, e.discharge)
     if protective:
         for entity in (e.charge, e.grid, e.discharge):
-            if _float(snapshot.state(entity), -1) != 0 or entity in dirty:
-                stop.append(Command(entity, 0, "disable"))
+            if target.grid_outage and entity in battery:
+                continue
+            level = target.buffer_current if entity in battery else 0
+            if _float(snapshot.state(entity), -1) != level or entity in dirty:
+                stop.append(Command(entity, level, "disable"))
                 stopped.append(entity)
         for i in TOU_PROGRAMS:
             entity = f"select.{e.prefix}{i}_charging"
@@ -818,7 +824,9 @@ def diff(snapshot: Snapshot, target: Decision) -> list[Command]:
         elif entity in (e.grid, e.charge, e.discharge):
             if value > 0:
                 enable.append(Command(entity, value, "enable"))
-            elif entity not in stopped:
+            elif entity not in stopped and not (
+                target.grid_outage and entity in battery
+            ):
                 stop.append(Command(entity, 0, "disable"))
         else:
             limits.append(Command(entity, value, "limits"))
@@ -843,9 +851,13 @@ def guard(
     prerequisites = True
     if command.phase == "enable":
         number_prefix = f"number.{snapshot.entities.prefix}"
+        buffered = (snapshot.entities.charge, snapshot.entities.discharge)
         for entity, value in target.desired.items():
             if (
-                entity.startswith(number_prefix) or value == 0 or value == "Disabled"
+                entity.startswith(number_prefix)
+                or value == 0
+                or value == "Disabled"
+                or (entity in buffered and value == target.buffer_current)
             ) and confirmed.get(entity) != value:
                 prerequisites = False
     if not (prerequisites and current.writers_safe and snapshot.mode != "Simulation"):

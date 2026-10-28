@@ -185,7 +185,7 @@ def test_action_order_and_ten_noops(h):
         if e.endswith(("_voltage", "_soc", "_power"))
     ]
     assert max(limits) < enable
-    assert runner.writes[0] == (h.ctx["charge_entity"], 0)
+    assert runner.writes[0] == (h.ctx["charge_entity"], buffer_floor(h))
     count = len(runner.writes)
     reads = len(runner.reads)
     for _ in range(10):
@@ -986,7 +986,11 @@ def test_switch_to_uncommissioned_mode_stops_owned_profile(h, mode):
     )
     assert float(h.data[h.ctx["grid_entity"]]["state"]) == 0
     for entity in [h.ctx["charge_entity"], h.ctx["discharge_entity"]]:
-        assert all(value in (0, relinquish) for e, value in r.writes if e == entity)
+        assert all(
+            value in (buffer_floor(h), relinquish)
+            for e, value in r.writes
+            if e == entity
+        )
         assert float(h.data[entity]["state"]) == relinquish
 
 
@@ -1015,7 +1019,11 @@ def test_uncommissioned_mode_mid_sequence_never_enables_forcing(h, phase):
     )
     assert float(h.data[h.ctx["grid_entity"]]["state"]) == 0
     for entity in [h.ctx["charge_entity"], h.ctx["discharge_entity"]]:
-        assert all(value in (0, relinquish) for e, value in r.writes if e == entity)
+        assert all(
+            value in (buffer_floor(h), relinquish)
+            for e, value in r.writes
+            if e == entity
+        )
         assert float(h.data[entity]["state"]) == relinquish
 
 
@@ -1033,7 +1041,7 @@ def test_total_charge_stops_before_grid_current_is_cleared(h, transition):
             "SELF_CONSUME"
         )
     r.run()
-    charge_stop = r.writes.index((h.ctx["charge_entity"], 0))
+    charge_stop = r.writes.index((h.ctx["charge_entity"], buffer_floor(h)))
     grid_clear = r.writes.index((h.ctx["grid_entity"], 0))
     assert charge_stop < grid_clear
 
@@ -1142,7 +1150,7 @@ def test_grid_charge_transition_preserves_full_pv_charge(h):
     assert float(h.data[h.ctx["charge_entity"]]["state"]) == 14
     assert float(h.data[h.ctx["grid_entity"]]["state"]) == 0
     assert h.data["select.inverter_deye_program_3_charging"]["state"] == "Disabled"
-    assert r.writes.index((h.ctx["charge_entity"], 0)) < r.writes.index(
+    assert r.writes.index((h.ctx["charge_entity"], buffer_floor(h))) < r.writes.index(
         (h.ctx["grid_entity"], 0)
     )
 
@@ -1905,7 +1913,8 @@ def test_hold_zero_currents_recover_once_telemetry_returns(h):
     row["state"] = "CHARGE_PV"
     r.writes.clear()
     r.run()
-    assert all(float(h.data[e]["state"]) == 0 for e in currents)
+    # The stop step parks the limits at the buffer natively, at 0 A on the blueprint.
+    assert all(float(h.data[e]["state"]) == buffer_floor(h) for e in currents)
     h.data[h.ctx["voltage_entity"]]["last_reported"] = fresh
     r.run()
     assert h.data[RT]["attributes"]["runtime"]["confirmed_mode"] == "CHARGE_PV"
@@ -1996,7 +2005,7 @@ def test_hold_band_threshold_change_zeroes_total_charge_before_grid(h):
     snapshot = h.data[CACHE]["attributes"]["snapshot"]["intervals"][0]
     snapshot.update(state="HOLD", end_soc_kwh=12)
     r.run()
-    assert r.writes.index((h.ctx["charge_entity"], 0)) < r.writes.index(
+    assert r.writes.index((h.ctx["charge_entity"], buffer_floor(h))) < r.writes.index(
         (h.ctx["grid_entity"], 0)
     )
     band = h.ctx["hold_grid_current"]
