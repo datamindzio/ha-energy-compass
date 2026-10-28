@@ -104,3 +104,10 @@ async def test_a_restart_during_an_outage_does_not_solve(
         await coordinator.async_recalculate()
     compute.assert_not_called()
     assert coordinator.data["reason"] == "grid_outage"
+
+
+async def test_diagnostics_say_the_planner_is_held(published_entry, outage):
+    coordinator = published_entry.runtime_data
+    assert coordinator.calculation_counts()["grid_outage_hold"] is True
+    outage.return_value = False
+    assert coordinator.calculation_counts()["grid_outage_hold"] is False

@@ -682,6 +682,7 @@ class EnergyCompassCoordinator(DataUpdateCoordinator):
             ),
             "calculations_last_24h": len(self._calculation_starts),
             "calculations_since_load": self._calculations,
+            "grid_outage_hold": self.grid_outage,
         }
 
     @callback
