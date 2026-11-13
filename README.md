@@ -9,6 +9,10 @@
 
 Energy Compass is an advisory Home Assistant integration. It estimates the incremental cost of one more kWh of household use against an optimized battery and grid plan, classifies near-term use as `BOOST`, `CHEAP`, `NORMAL`, or `LIMIT`, and exposes upcoming windows as native entities. It sends notifications only when you turn them on, and writes inverter settings only when you enable the optional Deye controller (off by default), through the Solarman integration.
 
+New to Energy Compass? [Install it from HACS and set it up](https://energycompass.pl/home-assistant?z=ha) in a few minutes.
+
+To run the plan on your inverter, see the [EMS list](https://energycompass.pl/ems?z=ha): an EMS (energy management system) is a device that executes the plan on the inverter for you, with a planned price (*cena planowana*) of 249 zł.
+
 ## Install
 
 A step-by-step walkthrough, from HACS to the first plan, is the [Installation](docs/guide.en.md#installation) section of the user guide.
