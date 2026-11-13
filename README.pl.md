@@ -9,6 +9,10 @@
 
 Energy Compass to doradcza integracja Home Assistant. Szacuje koszt krańcowy jednej kWh więcej zużycia domowego względem zoptymalizowanego planu pracy baterii i sieci, klasyfikuje najbliższe zużycie jako `BOOST`, `CHEAP`, `NORMAL` lub `LIMIT` i udostępnia nadchodzące okna jako natywne encje. Wysyła powiadomienia tylko po ich włączeniu, a ustawienia falownika zapisuje tylko po włączeniu opcjonalnego sterownika Deye (domyślnie wyłączony), przez integrację Solarman.
 
+Pierwszy raz z Energy Compass? [Zainstaluj go przez HACS i skonfiguruj](https://energycompass.pl/home-assistant?z=ha) w kilka minut.
+
+Żeby plan wykonywał się na falowniku, zobacz [listę EMS](https://energycompass.pl/ems?z=ha): EMS (system zarządzania energią) to urządzenie, które wykonuje plan na falowniku za Ciebie, w planowanej cenie 249 zł.
+
 ## Instalacja
 
 Krok po kroku, od HACS do pierwszego planu, opisuje sekcja [Instalacja](docs/guide.pl.md#instalacja) przewodnika użytkownika.

@@ -14,6 +14,10 @@ and it writes inverter settings only when you enable the optional Deye controlle
 which does so through the Solarman integration; other controllers decide for themselves whether to
 act on the plan. See [Deye inverter controller](#deye-inverter-controller-solarman).
 
+New to Energy Compass? [Install it from HACS and set it up](https://energycompass.pl/home-assistant?z=ha) in a few minutes.
+
+To run the plan on your inverter, see the [EMS list](https://energycompass.pl/ems?z=ha): an EMS (energy management system) is a device that executes the plan on the inverter for you, with a planned price (*cena planowana*) of 249 zł.
+
 ## Contents
 
 1. [Installation](#installation)

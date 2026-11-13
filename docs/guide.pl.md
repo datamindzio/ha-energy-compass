@@ -13,6 +13,10 @@ ustawienia falownika zapisuje tylko wtedy, gdy włączysz opcjonalny sterownik D
 wyłączony), i robi to przez integrację Solarman; inne sterowniki same decydują, czy wykonać plan.
 Zob. [Sterownik falownika Deye](#sterownik-falownika-deye-solarman).
 
+Pierwszy raz z Energy Compass? [Zainstaluj go przez HACS i skonfiguruj](https://energycompass.pl/home-assistant?z=ha) w kilka minut.
+
+Żeby plan wykonywał się na falowniku, zobacz [listę EMS](https://energycompass.pl/ems?z=ha): EMS (system zarządzania energią) to urządzenie, które wykonuje plan na falowniku za Ciebie, w planowanej cenie 249 zł.
+
 ## Spis treści
 
 1. [Instalacja](#instalacja)
